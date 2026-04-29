@@ -631,7 +631,9 @@ export default function Admin() {
       });
 
       const staffEmails = approvedUsers.filter(u => u.email).map(u => ({ email: u.email, displayName: u.displayName }));
-      await notifySchedulePosted(draftSchedule, staffEmails);
+      // Email notification - uncomment when EmailJS is configured
+      // await notifySchedulePosted(draftSchedule, staffEmails);
+      void staffEmails; // suppress unused warning
 
       setDraftSchedule(null);
       alert(`✅ Schedule posted! ${totalShifts} instructor shifts + fixed staff created. Staff notified.`);

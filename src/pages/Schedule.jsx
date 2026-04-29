@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
-  getDay, addMonths, subMonths, isSameMonth, isToday as dateFnsIsToday,
+  getDay, addMonths, subMonths, isSameMonth,
 } from 'date-fns';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
