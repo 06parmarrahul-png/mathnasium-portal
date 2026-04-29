@@ -8,10 +8,11 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
+  Clock, Loader2,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
-  getDay, addMonths, subMonths, isSameMonth,
+  getDay, addMonths, subMonths, isSameMonth, isToday as dateFnsIsToday,
 } from 'date-fns';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -32,75 +33,145 @@ const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
 function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
-  const [mode, setMode] = useState('main'); // 'main' | 'avail' | 'timeoff'
+  const [mode, setMode] = useState('main');
   const [startTime, setStartTime] = useState('15:00');
-  const [endTime, setEndTime]     = useState('20:00');
-  const [reason, setReason]       = useState('');
-  const [toStart, setToStart]     = useState(format(date, 'yyyy-MM-dd'));
-  const [toEnd, setToEnd]         = useState(format(date, 'yyyy-MM-dd'));
+  const [endTime, setEndTime] = useState('20:00');
+  const [reason, setReason] = useState('');
+  const [toStart, setToStart] = useState(format(date, 'yyyy-MM-dd'));
+  const [toEnd, setToEnd] = useState(format(date, 'yyyy-MM-dd'));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const dateStr = format(date, 'yyyy-MM-dd');
   const hasTimeOff = timeOffDates.has(dateStr);
 
+  const handleSave = async () => {
+    setError('');
+    if (!startTime || !endTime) {
+      setError('Please select both a start and end time.');
+      return;
+    }
+    if (startTime >= endTime) {
+      setError('End time must be after start time.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSaveAvail(dateStr, startTime, endTime);
+    } catch (err) {
+      setError('Failed to save availability. Please try again.');
+      setSaving(false);
+    }
+  };
+
+  const handleTimeOffSubmit = async () => {
+    setError('');
+    if (!reason.trim()) {
+      setError('Please enter a reason.');
+      return;
+    }
+    if (toStart > toEnd) {
+      setError('End date must be on or after start date.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onRequestTimeOff(toStart, toEnd, reason.trim());
+    } catch (err) {
+      setError('Failed to submit request. Please try again.');
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden animate-slide-up"
+        onClick={e => e.stopPropagation()}
+        style={{ animation: 'slideUp 0.2s ease-out' }}
+      >
         {/* Header */}
-        <div className="flex items-center justify-between border-b px-5 py-4">
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 bg-gradient-to-r from-gray-50 to-white">
           <div>
-            <p className="text-xs text-gray-400 uppercase tracking-wide">{format(date, 'EEEE')}</p>
-            <h3 className="text-lg font-bold text-gray-900">{format(date, 'MMMM d, yyyy')}</h3>
+            <p className="text-xs font-semibold text-red-500 uppercase tracking-widest">{format(date, 'EEEE')}</p>
+            <h3 className="text-xl font-bold text-gray-900 mt-0.5">{format(date, 'MMMM d, yyyy')}</h3>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-gray-100"><X size={18} /></button>
+          <button
+            onClick={onClose}
+            className="rounded-full w-8 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors text-gray-400 hover:text-gray-600"
+          >
+            <X size={16} />
+          </button>
         </div>
 
-        <div className="p-5 space-y-3">
+        <div className="p-5 space-y-3 max-h-[70vh] overflow-y-auto">
+          {/* Error banner */}
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+              <AlertTriangle size={15} className="shrink-0" />
+              {error}
+            </div>
+          )}
+
           {mode === 'main' && (
             <>
               {/* My Shift */}
               {myShift && (
-                <div className="rounded-xl bg-blue-50 border border-blue-200 p-3">
-                  <div className="flex items-center gap-2 mb-1">
-                    <Briefcase size={14} className="text-blue-600" />
-                    <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Your Shift</span>
+                <div className="rounded-xl bg-blue-50 border border-blue-200 p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
+                      <Briefcase size={12} className="text-white" />
+                    </div>
+                    <span className="text-xs font-bold text-blue-700 uppercase tracking-widest">Your Shift</span>
                   </div>
-                  <p className="text-sm font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
-                  {myShift.role && <p className="text-xs text-blue-600 mt-0.5">{myShift.role}</p>}
+                  <p className="text-base font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
+                  {myShift.role && <p className="text-xs text-blue-500 mt-0.5 font-medium">{myShift.role}</p>}
                   <button
                     onClick={() => onPostSwap(myShift)}
-                    className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg bg-orange-100 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-200 transition-colors">
+                    className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
+                  >
                     <ArrowRightLeft size={12} /> Post for Swap
                   </button>
                 </div>
               )}
 
-              {/* Time Off */}
+              {/* Time Off badge */}
               {hasTimeOff && (
-                <div className="rounded-xl bg-red-50 border border-red-200 p-3">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle size={14} className="text-red-500" />
-                    <span className="text-xs font-semibold text-red-700">Time Off Requested</span>
-                  </div>
+                <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex items-center gap-2">
+                  <AlertTriangle size={14} className="text-red-500 shrink-0" />
+                  <span className="text-xs font-semibold text-red-700">Time Off Requested</span>
                 </div>
               )}
 
               {/* My Availability */}
               {myAvailability ? (
-                <div className="rounded-xl bg-green-50 border border-green-200 p-3">
+                <div className="rounded-xl bg-green-50 border border-green-200 p-4">
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <Check size={14} className="text-green-600" />
-                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">Available</span>
+                      <div className="flex items-center gap-2 mb-1">
+                        <div className="w-6 h-6 rounded-full bg-green-500 flex items-center justify-center">
+                          <Check size={12} className="text-white" />
+                        </div>
+                        <span className="text-xs font-bold text-green-700 uppercase tracking-widest">Available</span>
                       </div>
-                      <p className="text-sm font-bold text-green-900">{fmtTime(myAvailability.startTime)} – {fmtTime(myAvailability.endTime)}</p>
+                      <p className="text-base font-bold text-green-900">{fmtTime(myAvailability.startTime)} – {fmtTime(myAvailability.endTime)}</p>
                     </div>
-                    <button onClick={() => onDeleteAvail(myAvailability.id)} className="text-gray-400 hover:text-red-500 p-1"><X size={14} /></button>
+                    <button
+                      onClick={() => onDeleteAvail(myAvailability.id)}
+                      className="rounded-full w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+                    >
+                      <X size={14} />
+                    </button>
                   </div>
                 </div>
               ) : !myShift && !hasTimeOff && (
-                <button onClick={() => setMode('avail')}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-green-300 px-4 py-3 text-sm font-medium text-green-700 hover:bg-green-50 transition-colors">
+                <button
+                  onClick={() => { setMode('avail'); setError(''); }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border-2 border-dashed border-green-300 px-4 py-3.5 text-sm font-semibold text-green-700 hover:bg-green-50 hover:border-green-400 active:scale-95 transition-all"
+                >
                   <Plus size={15} /> Set Availability
                 </button>
               )}
@@ -108,16 +179,18 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
               {/* Open Shifts */}
               {openShifts.length > 0 && (
                 <div className="space-y-2">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Open Shifts</p>
+                  <p className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Open Shifts</p>
                   {openShifts.map(s => (
                     <div key={s.id} className="rounded-xl bg-orange-50 border border-orange-200 p-3">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-bold text-orange-900">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</p>
-                          {s.role && <p className="text-xs text-orange-600">{s.role}</p>}
+                          {s.role && <p className="text-xs text-orange-600 font-medium">{s.role}</p>}
                         </div>
-                        <button onClick={() => onClaimOpenShift(s)}
-                          className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-semibold text-white hover:bg-orange-600 transition-colors">
+                        <button
+                          onClick={() => onClaimOpenShift(s)}
+                          className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
+                        >
                           Claim
                         </button>
                       </div>
@@ -126,10 +199,12 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
                 </div>
               )}
 
-              {/* Request Time Off button */}
+              {/* Request Time Off */}
               {!hasTimeOff && (
-                <button onClick={() => setMode('timeoff')}
-                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-colors">
+                <button
+                  onClick={() => { setMode('timeoff'); setError(''); }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl border border-gray-200 px-4 py-2.5 text-sm text-gray-500 hover:bg-red-50 hover:text-red-600 hover:border-red-200 active:scale-95 transition-all"
+                >
                   <AlertTriangle size={14} /> Request Time Off
                 </button>
               )}
@@ -138,65 +213,112 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
 
           {mode === 'avail' && (
             <>
-              <p className="text-sm font-medium text-gray-700">Set your availability for this day</p>
+              <div className="flex items-center gap-2 mb-1">
+                <Clock size={15} className="text-green-600" />
+                <p className="text-sm font-semibold text-gray-800">Set your availability for this day</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">From</label>
-                  <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:border-green-500 focus:outline-none" />
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
+                  <input
+                    type="time"
+                    value={startTime}
+                    onChange={e => { setStartTime(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">To</label>
-                  <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:border-green-500 focus:outline-none" />
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">To</label>
+                  <input
+                    type="time"
+                    value={endTime}
+                    onChange={e => { setEndTime(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors"
+                  />
                 </div>
               </div>
               <div className="flex gap-2 pt-1">
-                <button onClick={() => onSaveAvail(dateStr, startTime, endTime)}
-                  className="flex-1 rounded-lg bg-green-600 py-2 text-sm font-semibold text-white hover:bg-green-700">Save</button>
-                <button onClick={() => setMode('main')}
-                  className="flex-1 rounded-lg border py-2 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+                <button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-60 active:scale-95 transition-all"
+                >
+                  {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save</>}
+                </button>
+                <button
+                  onClick={() => { setMode('main'); setError(''); }}
+                  className="flex-1 rounded-xl border-2 border-gray-200 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 active:scale-95 transition-all"
+                >
+                  Cancel
+                </button>
               </div>
             </>
           )}
 
           {mode === 'timeoff' && (
             <>
-              <p className="text-sm font-medium text-gray-700">Request time off</p>
+              <div className="flex items-center gap-2 mb-1">
+                <AlertTriangle size={15} className="text-red-500" />
+                <p className="text-sm font-semibold text-gray-800">Request time off</p>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">From</label>
-                  <input type="date" value={toStart} onChange={e => setToStart(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
+                  <input
+                    type="date"
+                    value={toStart}
+                    onChange={e => { setToStart(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-red-500 focus:outline-none transition-colors"
+                  />
                 </div>
                 <div>
-                  <label className="block text-xs text-gray-500 mb-1">To</label>
-                  <input type="date" value={toEnd} onChange={e => setToEnd(e.target.value)}
-                    className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">To</label>
+                  <input
+                    type="date"
+                    value={toEnd}
+                    onChange={e => { setToEnd(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-red-500 focus:outline-none transition-colors"
+                  />
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Reason <span className="text-red-500">*</span></label>
-                <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)}
-                  placeholder="e.g. Family event, exam, personal..."
-                  className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none resize-none" />
+                <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                  Reason <span className="text-red-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={reason}
+                  onChange={e => { setReason(e.target.value); setError(''); }}
+                  placeholder="e.g. Family event, exam, personal…"
+                  className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none resize-none transition-colors"
+                />
               </div>
               <div className="flex gap-2 pt-1">
                 <button
-                  onClick={() => {
-                    if (!reason.trim()) { alert('Please enter a reason.'); return; }
-                    onRequestTimeOff(toStart, toEnd, reason.trim());
-                  }}
-                  className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700">
-                  Submit Request
+                  onClick={handleTimeOffSubmit}
+                  disabled={saving}
+                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60 active:scale-95 transition-all"
+                >
+                  {saving ? <><Loader2 size={14} className="animate-spin" /> Submitting…</> : 'Submit Request'}
                 </button>
-                <button onClick={() => setMode('main')}
-                  className="flex-1 rounded-lg border py-2 text-sm text-gray-500 hover:bg-gray-50">Cancel</button>
+                <button
+                  onClick={() => { setMode('main'); setError(''); }}
+                  className="flex-1 rounded-xl border-2 border-gray-200 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 active:scale-95 transition-all"
+                >
+                  Cancel
+                </button>
               </div>
             </>
           )}
         </div>
       </div>
+
+      <style>{`
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
     </div>
   );
 }
@@ -207,9 +329,9 @@ export default function Schedule() {
   const { profile } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
-  const [availability, setAvailability]  = useState([]);
-  const [shifts, setShifts]              = useState([]);
-  const [openShifts, setOpenShifts]      = useState([]);
+  const [availability, setAvailability] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [openShifts, setOpenShifts] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
 
   // ── Firestore listeners ──
@@ -233,15 +355,16 @@ export default function Schedule() {
   const monthStart = startOfMonth(currentMonth);
   const monthEnd   = endOfMonth(currentMonth);
   const days       = eachDayOfInterval({ start: monthStart, end: monthEnd });
-  const startPad   = getDay(monthStart); // 0=Sun blanks before first day
+  const startPad   = getDay(monthStart);
 
   // ── My data ──
-  const myShifts      = useMemo(() => shifts.filter(s => s.userId === profile?.uid), [shifts, profile]);
-  const myAvailMap    = useMemo(() => {
+  const myShifts = useMemo(() => shifts.filter(s => s.userId === profile?.uid), [shifts, profile]);
+  const myAvailMap = useMemo(() => {
     const m = {};
     availability.filter(a => a.userId === profile?.uid).forEach(a => { m[a.date] = a; });
     return m;
   }, [availability, profile]);
+
   const myTimeOffDates = useMemo(() => {
     const dates = new Set();
     timeOffRequests
@@ -257,14 +380,16 @@ export default function Schedule() {
     return dates;
   }, [timeOffRequests, profile]);
 
-  // ── Handlers ──
+  // ── Handlers (now throw on error so modal can catch) ──
   const handleSaveAvail = async (dateStr, startTime, endTime) => {
-    // Remove existing first
     const existing = myAvailMap[dateStr];
     if (existing) await deleteDoc(doc(db, 'availability', existing.id));
     await addDoc(collection(db, 'availability'), {
-      userId: profile.uid, userName: profile.displayName,
-      date: dateStr, startTime, endTime,
+      userId: profile.uid,
+      userName: profile.displayName,
+      date: dateStr,
+      startTime,
+      endTime,
     });
     setSelectedDate(null);
   };
@@ -280,38 +405,54 @@ export default function Schedule() {
     });
     await addDoc(collection(db, 'chat'), {
       text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}${shift.role ? ` (${shift.role})` : ''}`,
-      userId: profile.uid, userName: profile.displayName, userRole: profile.role,
-      createdAt: serverTimestamp(), type: 'shift_swap',
-      shiftId: shift.id, shiftDate: shift.date,
-      shiftStartTime: shift.startTime, shiftEndTime: shift.endTime,
-      shiftRole: shift.role || '', swapStatus: 'open',
-      acceptedBy: null, acceptedByName: null,
+      userId: profile.uid,
+      userName: profile.displayName,
+      userRole: profile.role,
+      createdAt: serverTimestamp(),
+      type: 'shift_swap',
+      shiftId: shift.id,
+      shiftDate: shift.date,
+      shiftStartTime: shift.startTime,
+      shiftEndTime: shift.endTime,
+      shiftRole: shift.role || '',
+      swapStatus: 'open',
+      acceptedBy: null,
+      acceptedByName: null,
     });
     setSelectedDate(null);
     alert('Shift posted to chat for swap!');
   };
 
   const handleClaimOpenShift = async (openShift) => {
-    if (openShift.status !== 'open') { alert('This shift has already been claimed.'); return; }
-    // Mark open shift as claimed
+    if (openShift.status !== 'open') {
+      alert('This shift has already been claimed.');
+      return;
+    }
     await updateDoc(doc(db, 'openShifts', openShift.id), {
-      status: 'claimed', claimedBy: profile.uid, claimedByName: profile.displayName,
+      status: 'claimed',
+      claimedBy: profile.uid,
+      claimedByName: profile.displayName,
     });
-    // Create a real shift for this instructor
     await addDoc(collection(db, 'shifts'), {
-      userId: profile.uid, userName: profile.displayName,
-      date: openShift.date, startTime: openShift.startTime, endTime: openShift.endTime,
+      userId: profile.uid,
+      userName: profile.displayName,
+      date: openShift.date,
+      startTime: openShift.startTime,
+      endTime: openShift.endTime,
       role: openShift.role || profile.instructorType || 'Instructor',
-      status: 'live', autoScheduled: false,
+      status: 'live',
+      autoScheduled: false,
     });
-    // Post to chat
     const dateFormatted = new Date(openShift.date + 'T00:00:00').toLocaleDateString('en-US', {
       weekday: 'long', month: 'short', day: 'numeric',
     });
     await addDoc(collection(db, 'chat'), {
       text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
-      userId: 'system', userName: 'Mathnasium Langley', userRole: 'system',
-      createdAt: serverTimestamp(), type: 'shift_confirmation',
+      userId: 'system',
+      userName: 'Mathnasium Langley',
+      userRole: 'system',
+      createdAt: serverTimestamp(),
+      type: 'shift_confirmation',
     });
     setSelectedDate(null);
     alert('Shift claimed! It has been added to your schedule.');
@@ -319,8 +460,11 @@ export default function Schedule() {
 
   const handleRequestTimeOff = async (startDate, endDate, reason) => {
     await addDoc(collection(db, 'timeOffRequests'), {
-      userId: profile.uid, userName: profile.displayName,
-      startDate, endDate, reason,
+      userId: profile.uid,
+      userName: profile.displayName,
+      startDate,
+      endDate,
+      reason,
       status: 'pending',
       createdAt: serverTimestamp(),
     });
@@ -340,113 +484,178 @@ export default function Schedule() {
     return { type: 'empty' };
   };
 
-  const today = format(new Date(), 'yyyy-MM-dd');
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  // ── Monthly stats ──
+  const monthShifts = myShifts.filter(s =>
+    s.date >= format(monthStart, 'yyyy-MM-dd') && s.date <= format(monthEnd, 'yyyy-MM-dd')
+  );
+  const monthHours = monthShifts.reduce((sum, s) => {
+    if (!s.startTime || !s.endTime) return sum;
+    const [sh, sm] = s.startTime.split(':').map(Number);
+    const [eh, em] = s.endTime.split(':').map(Number);
+    return sum + ((eh + em / 60) - (sh + sm / 60));
+  }, 0);
+  const monthOpenShifts = openShifts.filter(s =>
+    s.status === 'open' &&
+    s.date >= format(monthStart, 'yyyy-MM-dd') &&
+    s.date <= format(monthEnd, 'yyyy-MM-dd')
+  ).length;
 
   return (
     <div className="mx-auto max-w-5xl">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
-        <div className="rounded-lg bg-blue-100 p-2 text-blue-600"><CalendarDays size={22} /></div>
+        <div className="rounded-xl bg-blue-100 p-2.5 text-blue-600">
+          <CalendarDays size={22} />
+        </div>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">My Schedule</h1>
           <p className="text-sm text-gray-500">View shifts, set availability, and manage time off</p>
         </div>
       </div>
 
-      {/* Legend */}
-      <div className="mb-4 flex flex-wrap items-center gap-4 text-xs text-gray-500">
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-blue-400 inline-block" /> Assigned Shift</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-green-400 inline-block" /> Available</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-orange-400 inline-block" /> Open Shift</span>
-        <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-300 inline-block" /> Time Off</span>
+      {/* Stats row */}
+      <div className="mb-5 grid grid-cols-3 gap-3">
+        {[
+          { label: 'Shifts This Month', value: monthShifts.length, color: 'text-blue-600', bg: 'bg-blue-50', border: 'border-blue-100' },
+          { label: 'Hours This Month', value: `${monthHours.toFixed(1)}h`, color: 'text-emerald-600', bg: 'bg-emerald-50', border: 'border-emerald-100' },
+          { label: 'Open Shifts', value: monthOpenShifts, color: 'text-orange-600', bg: 'bg-orange-50', border: 'border-orange-100' },
+        ].map(stat => (
+          <div key={stat.label} className={`rounded-xl border ${stat.border} ${stat.bg} p-4 text-center`}>
+            <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
+            <p className="text-xs text-gray-500 mt-0.5 font-medium">{stat.label}</p>
+          </div>
+        ))}
       </div>
 
       {/* Calendar */}
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-gray-200 bg-white shadow-sm overflow-hidden">
         {/* Month nav */}
-        <div className="flex items-center justify-between border-b px-5 py-3">
-          <button onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
-            className="rounded-lg p-1.5 hover:bg-gray-100 text-gray-600"><ChevronLeft size={18} /></button>
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 bg-white">
+          <button
+            onClick={() => setCurrentMonth(subMonths(currentMonth, 1))}
+            className="rounded-xl w-8 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors text-gray-500"
+          >
+            <ChevronLeft size={18} />
+          </button>
           <h2 className="text-base font-bold text-gray-900">{format(currentMonth, 'MMMM yyyy')}</h2>
-          <button onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
-            className="rounded-lg p-1.5 hover:bg-gray-100 text-gray-600"><ChevronRight size={18} /></button>
+          <button
+            onClick={() => setCurrentMonth(addMonths(currentMonth, 1))}
+            className="rounded-xl w-8 h-8 flex items-center justify-center hover:bg-gray-100 transition-colors text-gray-500"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </div>
+
+        {/* Legend */}
+        <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-gray-100 bg-gray-50/50">
+          {[
+            { color: 'bg-blue-500', label: 'Assigned Shift' },
+            { color: 'bg-emerald-500', label: 'Available' },
+            { color: 'bg-orange-400', label: 'Open Shift' },
+            { color: 'bg-red-300', label: 'Time Off' },
+          ].map(item => (
+            <span key={item.label} className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
+              <span className={`w-2.5 h-2.5 rounded-sm inline-block ${item.color}`} />
+              {item.label}
+            </span>
+          ))}
         </div>
 
         {/* Day headers */}
-        <div className="grid grid-cols-7 border-b">
+        <div className="grid grid-cols-7 border-b border-gray-100">
           {DAY_HEADERS.map(d => (
-            <div key={d} className="py-2 text-center text-xs font-semibold text-gray-400 uppercase tracking-wide">{d}</div>
+            <div key={d} className="py-2.5 text-center text-xs font-bold text-gray-400 uppercase tracking-widest">
+              {d}
+            </div>
           ))}
         </div>
 
         {/* Grid */}
         <div className="grid grid-cols-7">
-          {/* Blank padding cells */}
+          {/* Padding cells */}
           {Array.from({ length: startPad }).map((_, i) => (
-            <div key={`pad-${i}`} className="min-h-[90px] border-b border-r bg-gray-50/50" />
+            <div key={`pad-${i}`} className="min-h-[88px] border-b border-r border-gray-100 bg-gray-50/30" />
           ))}
 
           {/* Day cells */}
           {days.map((day) => {
             const dateStr = format(day, 'yyyy-MM-dd');
-            const isToday = dateStr === today;
+            const isToday = dateStr === todayStr;
             const inMonth = isSameMonth(day, currentMonth);
-            const state   = getCellState(dateStr);
-            const isPast  = day < new Date() && !isToday;
+            const state = getCellState(dateStr);
+            const isPast = dateStr < todayStr;
 
-            // Cell background & content
-            let cellBg = 'bg-white hover:bg-gray-50';
+            let cellBg = 'bg-white hover:bg-gray-50/80';
             let content = null;
+            let clickable = !isPast;
 
             if (state.type === 'shift') {
-              cellBg = 'bg-blue-50 hover:bg-blue-100 cursor-pointer';
+              cellBg = 'bg-blue-50/60 hover:bg-blue-50 cursor-pointer';
               content = (
-                <div className="mt-1 rounded-md bg-blue-500 px-1.5 py-1">
+                <div className="mt-1 rounded-lg bg-blue-500 px-1.5 py-1 shadow-sm">
                   <p className="text-white text-xs font-bold leading-tight">
-                    {fmtTime(state.shift.startTime)}–{fmtTime(state.shift.endTime)}
+                    {fmtTime(state.shift.startTime)}
+                  </p>
+                  <p className="text-blue-100 text-xs leading-tight">
+                    {fmtTime(state.shift.endTime)}
                   </p>
                   {state.shift.role && (
-                    <p className="text-blue-100 text-xs uppercase tracking-wide leading-tight">{state.shift.role}</p>
+                    <p className="text-blue-200 text-xs uppercase tracking-wide leading-tight mt-0.5" style={{ fontSize: '10px' }}>
+                      {state.shift.role}
+                    </p>
                   )}
                 </div>
               );
             } else if (state.type === 'available') {
-              cellBg = 'bg-green-50 hover:bg-green-100 cursor-pointer';
+              cellBg = 'bg-emerald-50/60 hover:bg-emerald-50 cursor-pointer';
               content = (
-                <div className="mt-1 rounded-md bg-green-500 px-1.5 py-1">
-                  <p className="text-white text-xs font-semibold leading-tight">Available</p>
-                  <p className="text-green-100 text-xs leading-tight">
-                    {fmtTime(state.avail.startTime)}–{fmtTime(state.avail.endTime)}
+                <div className="mt-1 rounded-lg bg-emerald-500 px-1.5 py-1 shadow-sm">
+                  <p className="text-white text-xs font-bold leading-tight">Available</p>
+                  <p className="text-emerald-100 text-xs leading-tight">
+                    {fmtTime(state.avail.startTime)}
                   </p>
                 </div>
               );
             } else if (state.type === 'open') {
-              cellBg = 'bg-orange-50 hover:bg-orange-100 cursor-pointer';
+              cellBg = 'bg-orange-50/60 hover:bg-orange-50 cursor-pointer';
               content = (
-                <div className="mt-1 rounded-md bg-orange-400 px-1.5 py-1">
-                  <p className="text-white text-xs font-semibold leading-tight">
-                    {state.openShifts.length} Open Shift{state.openShifts.length > 1 ? 's' : ''}
+                <div className="mt-1 rounded-lg bg-orange-400 px-1.5 py-1 shadow-sm">
+                  <p className="text-white text-xs font-bold leading-tight">
+                    {state.openShifts.length} Open
                   </p>
                 </div>
               );
             } else if (state.type === 'timeoff') {
-              cellBg = 'bg-red-50 cursor-pointer';
+              cellBg = 'bg-red-50/60 cursor-pointer';
               content = (
-                <div className="mt-1 rounded-md bg-red-300 px-1.5 py-1">
-                  <p className="text-white text-xs font-semibold leading-tight">Time Off</p>
+                <div className="mt-1 rounded-lg bg-red-300 px-1.5 py-1 shadow-sm">
+                  <p className="text-white text-xs font-bold leading-tight">Time Off</p>
                 </div>
               );
             } else if (!isPast) {
               cellBg = 'bg-white hover:bg-gray-50 cursor-pointer';
+            } else {
+              clickable = false;
             }
 
             return (
               <div
                 key={dateStr}
-                onClick={() => !isPast && setSelectedDate(day)}
-                className={`min-h-[90px] border-b border-r p-1.5 transition-colors ${cellBg} ${!inMonth ? 'opacity-30' : ''} ${isToday ? 'ring-2 ring-inset ring-red-400' : ''}`}
+                onClick={() => clickable && setSelectedDate(day)}
+                className={`
+                  min-h-[88px] border-b border-r border-gray-100 p-1.5 transition-colors
+                  ${cellBg}
+                  ${!inMonth ? 'opacity-25' : ''}
+                  ${isToday ? 'ring-2 ring-inset ring-red-400' : ''}
+                  ${isPast && state.type === 'empty' ? 'bg-gray-50/50' : ''}
+                `}
               >
-                <span className={`text-xs font-semibold ${isToday ? 'text-red-600' : 'text-gray-700'}`}>
+                <span className={`
+                  inline-flex items-center justify-center text-xs font-bold w-6 h-6 rounded-full
+                  ${isToday ? 'bg-red-500 text-white' : 'text-gray-600'}
+                `}>
                   {format(day, 'd')}
                 </span>
                 {content}
@@ -454,43 +663,6 @@ export default function Schedule() {
             );
           })}
         </div>
-      </div>
-
-      {/* Summary stats */}
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        {[
-          {
-            label: 'Shifts This Month',
-            value: myShifts.filter(s => s.date >= format(monthStart, 'yyyy-MM-dd') && s.date <= format(monthEnd, 'yyyy-MM-dd')).length,
-            color: 'text-blue-600', bg: 'bg-blue-50',
-          },
-          {
-            label: 'Hours This Month',
-            value: myShifts
-              .filter(s => s.date >= format(monthStart, 'yyyy-MM-dd') && s.date <= format(monthEnd, 'yyyy-MM-dd'))
-              .reduce((sum, s) => {
-                if (!s.startTime || !s.endTime) return sum;
-                const [sh, sm] = s.startTime.split(':').map(Number);
-                const [eh, em] = s.endTime.split(':').map(Number);
-                return sum + ((eh + em / 60) - (sh + sm / 60));
-              }, 0).toFixed(1) + 'h',
-            color: 'text-green-600', bg: 'bg-green-50',
-          },
-          {
-            label: 'Open Shifts Available',
-            value: openShifts.filter(s =>
-              s.status === 'open' &&
-              s.date >= format(monthStart, 'yyyy-MM-dd') &&
-              s.date <= format(monthEnd, 'yyyy-MM-dd')
-            ).length,
-            color: 'text-orange-600', bg: 'bg-orange-50',
-          },
-        ].map(stat => (
-          <div key={stat.label} className={`rounded-xl border ${stat.bg} p-4 text-center`}>
-            <p className={`text-2xl font-bold ${stat.color}`}>{stat.value}</p>
-            <p className="text-xs text-gray-500 mt-0.5">{stat.label}</p>
-          </div>
-        ))}
       </div>
 
       {/* Day Modal */}
