@@ -1063,7 +1063,8 @@ export default function Admin() {
                               {/* Existing shifts */}
                               {dayShifts.map(s => {
                                 const { bg, text } = roleColor(s.role);
-                                const hrs = shiftHours(s);\n                                const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
+                                const hrs = shiftHours(s);
+                                const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
