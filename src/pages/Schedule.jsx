@@ -41,6 +41,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
   const [toEnd, setToEnd] = useState(format(date, 'yyyy-MM-dd'));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [useCustom, setUseCustom] = useState(false);
 
   const dateStr = format(date, 'yyyy-MM-dd');
   const hasTimeOff = timeOffDates.has(dateStr);
@@ -212,8 +213,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
           )}
 
           {mode === 'avail' && (() => {
-            // Determine day of week for smart preset filtering
-            const dow = date.getDay(); // 0=Sun,1=Mon,...,6=Sat
+            const dow = date.getDay();
             const isFri = dow === 5;
             const isSat = dow === 6;
             const isSun = dow === 0;
@@ -237,8 +237,6 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
               { label: '4:00 PM – 7:00 PM', start: '16:00', end: '19:00' },
               { label: '4:00 PM – 6:30 PM', start: '16:00', end: '18:30' },
             ];
-
-            const [useCustom, setUseCustom] = useState(false);
 
             return (
               <>
