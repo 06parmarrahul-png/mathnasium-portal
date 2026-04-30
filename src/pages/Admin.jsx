@@ -7,7 +7,7 @@ import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
-  ChevronLeft, ChevronRight, Table, Wand2, CheckCircle,
+  ChevronLeft, ChevronRight, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, User, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange,
 } from 'lucide-react';
