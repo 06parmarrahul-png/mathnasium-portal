@@ -725,6 +725,63 @@ export default function Schedule() {
         </div>
       </div>
 
+      {/* My Requests */}
+      {(() => {
+        const myRequests = timeOffRequests
+          .filter(r => r.userId === profile?.uid)
+          .sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0));
+
+        if (myRequests.length === 0) return null;
+
+        const statusConfig = {
+          pending:  { label: 'Pending',  bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-400' },
+          approved: { label: 'Approved', bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500' },
+          denied:   { label: 'Denied',   bg: 'bg-red-100',    text: 'text-red-600',    dot: 'bg-red-400'   },
+        };
+
+        return (
+          <div className="mt-6">
+            <h2 className="text-base font-bold text-gray-900 mb-3 flex items-center gap-2">
+              <AlertTriangle size={16} className="text-orange-500" />
+              My Time Off Requests
+            </h2>
+            <div className="space-y-3">
+              {myRequests.map(req => {
+                const s = statusConfig[req.status] || statusConfig.pending;
+                const startLabel = req.startDate ? new Date(req.startDate + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+                const endLabel   = req.endDate   ? new Date(req.endDate   + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
+                const sameDay = req.startDate === req.endDate;
+
+                return (
+                  <div key={req.id} className={`rounded-xl border bg-white p-4 shadow-sm flex items-start justify-between gap-4 ${req.status === 'denied' ? 'opacity-60' : ''}`}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1">
+                        <CalendarDays size={14} className="text-gray-400 shrink-0" />
+                        <span className="text-sm font-semibold text-gray-800">
+                          {sameDay ? startLabel : `${startLabel} – ${endLabel}`}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-500 mb-2 truncate">
+                        <span className="font-medium text-gray-600">Reason:</span> {req.reason}
+                      </p>
+                      {req.status === 'denied' && (
+                        <p className="text-xs text-red-500 font-medium">This request was denied — dates are available again.</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 flex items-center gap-1.5">
+                      <div className={`w-2 h-2 rounded-full ${s.dot}`} />
+                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${s.bg} ${s.text}`}>
+                        {s.label}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Day Modal */}
       {selectedDate && (
         <DayModal
