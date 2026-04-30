@@ -1040,18 +1040,30 @@ export default function Admin() {
                         {weekDays.map(d => {
                           const ds = format(d, 'yyyy-MM-dd');
                           const dayShifts = shifts.filter(s => s.userId === u.uid && s.date === ds);
-                          // Check availability for visual indicator
-                          const hasAvail = availability.some(a => a.userId === u.uid && a.date === ds);
+                          const dayAvail = availability.filter(a => a.userId === u.uid && a.date === ds);
+                          const hasAvail = dayAvail.length > 0;
                           return (
                             <td
                               key={ds}
                               className={`px-1 py-1 align-top relative ${hasAvail && dayShifts.length === 0 ? 'bg-green-50/40' : ''}`}
                             >
+                              {/* Green triangle availability indicator */}
+                              {hasAvail && (
+                                <div className="group/avail absolute top-0 right-0 z-10">
+                                  <div className="w-0 h-0 border-l-[14px] border-l-transparent border-t-[14px] border-t-green-400 cursor-pointer" />
+                                  {/* Hover tooltip showing availability times */}
+                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-44 rounded-lg border border-green-200 bg-white shadow-lg p-2">
+                                    <p className="text-xs font-semibold text-green-700 mb-1">Available</p>
+                                    {dayAvail.map((a, i) => (
+                                      <p key={i} className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
                               {/* Existing shifts */}
                               {dayShifts.map(s => {
                                 const { bg, text } = roleColor(s.role);
-                                const hrs = shiftHours(s);
-                                const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
+                                const hrs = shiftHours(s);\n                                const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
@@ -1062,14 +1074,10 @@ export default function Admin() {
                                   </div>
                                 );
                               })}
-                              {/* Add shift button — always visible on hover, or when no shift */}
+                              {/* Add shift button */}
                               <button
                                 onClick={() => setAddShiftModal({ date: ds, user: u })}
-                                className={`w-full rounded border border-dashed py-0.5 transition-colors flex items-center justify-center gap-0.5
-                                  ${dayShifts.length === 0
-                                    ? 'border-gray-200 text-gray-300 hover:border-red-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100'
-                                    : 'border-gray-200 text-gray-300 hover:border-red-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100'
-                                  }`}
+                                className="w-full rounded border border-dashed py-0.5 transition-colors flex items-center justify-center gap-0.5 border-gray-200 text-gray-300 hover:border-red-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100"
                                 title={`Add shift for ${u.displayName}`}
                               >
                                 <Plus size={10} />

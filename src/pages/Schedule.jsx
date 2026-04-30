@@ -211,49 +211,111 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
             </>
           )}
 
-          {mode === 'avail' && (
-            <>
-              <div className="flex items-center gap-2 mb-1">
-                <Clock size={15} className="text-green-600" />
-                <p className="text-sm font-semibold text-gray-800">Set your availability for this day</p>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
-                  <input
-                    type="time"
-                    value={startTime}
-                    onChange={e => { setStartTime(e.target.value); setError(''); }}
-                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors"
-                  />
+          {mode === 'avail' && (() => {
+            // Determine day of week for smart preset filtering
+            const dow = date.getDay(); // 0=Sun,1=Mon,...,6=Sat
+            const isFri = dow === 5;
+            const isSat = dow === 6;
+            const isSun = dow === 0;
+
+            const PRESETS = isSun ? [] : isSat ? [
+              { label: '10:00 AM – 2:00 PM', start: '10:00', end: '14:00' },
+              { label: '10:30 AM – 2:00 PM', start: '10:30', end: '14:00' },
+              { label: '10:00 AM – 1:30 PM', start: '10:00', end: '13:30' },
+              { label: '10:30 AM – 1:30 PM', start: '10:30', end: '13:30' },
+            ] : isFri ? [
+              { label: '3:00 PM – 6:00 PM', start: '15:00', end: '18:00' },
+              { label: '3:30 PM – 6:00 PM', start: '15:30', end: '18:00' },
+              { label: '3:00 PM – 5:30 PM', start: '15:00', end: '17:30' },
+              { label: '3:30 PM – 5:30 PM', start: '15:30', end: '17:30' },
+              { label: '4:00 PM – 6:00 PM', start: '16:00', end: '18:00' },
+            ] : [
+              { label: '3:00 PM – 7:00 PM', start: '15:00', end: '19:00' },
+              { label: '3:30 PM – 7:00 PM', start: '15:30', end: '19:00' },
+              { label: '3:00 PM – 6:30 PM', start: '15:00', end: '18:30' },
+              { label: '3:30 PM – 6:30 PM', start: '15:30', end: '18:30' },
+              { label: '4:00 PM – 7:00 PM', start: '16:00', end: '19:00' },
+              { label: '4:00 PM – 6:30 PM', start: '16:00', end: '18:30' },
+            ];
+
+            const [useCustom, setUseCustom] = useState(false);
+
+            return (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <Clock size={15} className="text-green-600" />
+                  <p className="text-sm font-semibold text-gray-800">Set your availability</p>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-gray-500 mb-1.5">To</label>
-                  <input
-                    type="time"
-                    value={endTime}
-                    onChange={e => { setEndTime(e.target.value); setError(''); }}
-                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors"
-                  />
-                </div>
-              </div>
-              <div className="flex gap-2 pt-1">
-                <button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-60 active:scale-95 transition-all"
-                >
-                  {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save</>}
-                </button>
-                <button
-                  onClick={() => { setMode('main'); setError(''); }}
-                  className="flex-1 rounded-xl border-2 border-gray-200 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 active:scale-95 transition-all"
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          )}
+
+                {isSun ? (
+                  <p className="text-sm text-gray-400 text-center py-4">Mathnasium is closed on Sundays.</p>
+                ) : !useCustom ? (
+                  <>
+                    <div className="space-y-2 mb-3">
+                      {PRESETS.map(p => (
+                        <button
+                          key={p.label}
+                          onClick={() => { setStartTime(p.start); setEndTime(p.end); }}
+                          className={`w-full text-left rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-colors
+                            ${startTime === p.start && endTime === p.end
+                              ? 'border-green-500 bg-green-50 text-green-800'
+                              : 'border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50/50'}`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                      <button
+                        onClick={() => setUseCustom(true)}
+                        className="w-full text-left rounded-xl border-2 border-dashed border-gray-200 px-4 py-2.5 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
+                        Custom time…
+                      </button>
+                    </div>
+                    {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleSave}
+                        disabled={saving}
+                        className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-60 transition-all">
+                        {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save</>}
+                      </button>
+                      <button onClick={() => { setMode('main'); setError(''); }}
+                        className="flex-1 rounded-xl border-2 border-gray-200 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-all">
+                        Cancel
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-2 gap-3 mb-3">
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1.5">From</label>
+                        <input type="time" value={startTime}
+                          onChange={e => { setStartTime(e.target.value); setError(''); }}
+                          className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-semibold text-gray-500 mb-1.5">To</label>
+                        <input type="time" value={endTime}
+                          onChange={e => { setEndTime(e.target.value); setError(''); }}
+                          className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-green-500 focus:outline-none transition-colors" />
+                      </div>
+                    </div>
+                    {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
+                    <div className="flex gap-2">
+                      <button onClick={handleSave} disabled={saving}
+                        className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-60 transition-all">
+                        {saving ? <><Loader2 size={14} className="animate-spin" /> Saving…</> : <><Check size={14} /> Save</>}
+                      </button>
+                      <button onClick={() => setUseCustom(false)}
+                        className="flex-1 rounded-xl border-2 border-gray-200 py-2.5 text-sm font-semibold text-gray-500 hover:bg-gray-50 transition-all">
+                        ← Presets
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            );
+          })()}
 
           {mode === 'timeoff' && (
             <>
