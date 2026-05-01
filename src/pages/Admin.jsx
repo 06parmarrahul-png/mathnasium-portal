@@ -26,6 +26,15 @@ const ROLE_OPTIONS = [
   'Manager', 'Center Director', 'Dir. of Education',
 ];
 
+// Sub-roles (teaching specializations) — stackable like Discord roles
+const SUB_ROLES = ['Elementary', 'Highschool', 'Both'];
+
+const SUB_ROLE_STYLES = {
+  Elementary: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
+  Highschool: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
+  Both:       { bg: 'bg-emerald-100',text: 'text-emerald-700',dot: 'bg-emerald-500'},
+};
+
 const ROLE_COLORS = {
   'Instructor':        { bg: '#16a34a', text: '#fff' },  // green
   'Lead':              { bg: '#ea580c', text: '#fff' },  // orange
@@ -655,14 +664,10 @@ export default function Admin() {
   }, [openShiftsList]);
 
   // Payroll summary — all shifts in the selected pay period grouped by person
-  // Neeru Gill and Jasper Wu are salaried — excluded from hourly payroll
-  const SALARY_STAFF = new Set(['Neeru Gill', 'Jasper Wu']);
-
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
     const periodShifts = shifts.filter(s =>
-      s.date >= payStart && s.date <= payEnd && s.status !== 'draft' &&
-      !SALARY_STAFF.has(s.userName)
+      s.date >= payStart && s.date <= payEnd && s.status !== 'draft'
     );
 
     // Also include fixed staff from FIXED_SCHEDULES who may not have Firestore shifts yet
@@ -1206,7 +1211,7 @@ export default function Admin() {
                         <Trash2 size={15} />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-3 gap-2 mb-3">
                       <div>
                         <label className="mb-1 block text-xs text-gray-500">Role / Type</label>
                         <select value={u.instructorType || 'Instructor'}
@@ -1230,6 +1235,40 @@ export default function Admin() {
                         <input type="number" min={1} max={6} value={u.maxDaysPerWeek || 5}
                           onChange={e => handleUpdateUserField(u.uid, 'maxDaysPerWeek', Number(e.target.value))}
                           className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none" />
+                      </div>
+                    </div>
+
+                    {/* Sub-roles / Teaching specializations */}
+                    <div>
+                      <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
+                      <div className="flex flex-wrap gap-2">
+                        {SUB_ROLES.map(sr => {
+                          const active = (u.subRoles || []).includes(sr);
+                          const style = SUB_ROLE_STYLES[sr];
+                          return (
+                            <button
+                              key={sr}
+                              onClick={() => {
+                                const current = u.subRoles || [];
+                                const updated = active
+                                  ? current.filter(r => r !== sr)
+                                  : [...current, sr];
+                                handleUpdateUserField(u.uid, 'subRoles', updated);
+                              }}
+                              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
+                                active
+                                  ? `${style.bg} ${style.text} border-transparent`
+                                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
+                              <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
+                              {sr}
+                            </button>
+                          );
+                        })}
+                        {(u.subRoles || []).length === 0 && (
+                          <span className="text-xs text-gray-400 italic">No sub-roles assigned</span>
+                        )}
                       </div>
                     </div>
                   </div>

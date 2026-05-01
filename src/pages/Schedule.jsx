@@ -130,7 +130,14 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                     <span className="text-xs font-bold text-blue-700 uppercase tracking-widest">Your Shift</span>
                   </div>
                   <p className="text-base font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
-                  {myShift.role && <p className="text-xs text-blue-500 mt-0.5 font-medium">{myShift.role}</p>}
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {myShift.role && <p className="text-xs text-blue-500 font-medium">{myShift.role}</p>}
+                    {myShift.subRoleLabel && myShift.subRoleLabel !== 'Instructor' && (
+                      <span className="rounded-full bg-blue-200 px-2 py-0.5 text-xs font-bold text-blue-800">
+                        {myShift.subRoleLabel}
+                      </span>
+                    )}
+                  </div>
                   <button
                     onClick={() => onPostSwap(myShift)}
                     className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
@@ -671,9 +678,9 @@ export default function Schedule() {
                   <p className="text-blue-100 text-xs leading-tight">
                     {fmtTime(state.shift.endTime)}
                   </p>
-                  {state.shift.role && (
-                    <p className="text-blue-200 text-xs uppercase tracking-wide leading-tight mt-0.5" style={{ fontSize: '10px' }}>
-                      {state.shift.role}
+                  {state.shift.subRoleLabel && state.shift.subRoleLabel !== 'Instructor' && (
+                    <p className="text-blue-200 text-xs font-bold uppercase tracking-wide leading-tight mt-0.5" style={{ fontSize: '10px' }}>
+                      {state.shift.subRoleLabel}
                     </p>
                   )}
                 </div>

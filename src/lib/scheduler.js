@@ -171,6 +171,72 @@ const ROLE_ASSIGNMENTS = {};
 
 const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
 
+// ─── Sub-role helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns true if an instructor can cover a given side ('Elementary' | 'Highschool').
+ * An instructor tagged 'Both' can cover either side.
+ */
+export function canCoverSide(instructor, side) {
+  const subRoles = instructor.subRoles || [];
+  if (subRoles.includes('Both')) return true;
+  return subRoles.includes(side);
+}
+
+/**
+ * Given student counts per side, calculate minimum instructors needed.
+ * Ratio is 1:4 (1 instructor per 4 students, rounded up).
+ */
+export function calcInstructorsNeeded(studentCount, ratio = 4) {
+  if (!studentCount || studentCount <= 0) return 0;
+  return Math.ceil(studentCount / ratio);
+}
+
+/**
+ * Assign sub-role label to an instructor for a given day based on what sides need coverage.
+ * Returns 'Elementary', 'Highschool', or 'Flex'.
+ *
+ * Phase 2: when session data is available, pass elementaryNeeded and highschoolNeeded
+ * to get smarter assignments. For now defaults to 'Flex' if tagged Both.
+ */
+export function assignSubRoleLabel(instructor, elementaryShortfall = 0, highschoolShortfall = 0) {
+  const subRoles = instructor.subRoles || [];
+  if (subRoles.includes('Both')) {
+    if (elementaryShortfall > highschoolShortfall) return 'Elementary';
+    if (highschoolShortfall > elementaryShortfall) return 'Highschool';
+    return 'Flex';
+  }
+  if (subRoles.includes('Elementary')) return 'Elementary';
+  if (subRoles.includes('Highschool')) return 'Highschool';
+  return 'Instructor'; // no sub-role assigned yet
+}
+
+// ─── Phase 2 hook (guardian portal CSV) ──────────────────────────────────────
+/**
+ * PHASE 2 — plugs in here once the guardian portal CSV format is known.
+ *
+ * Expected input per day:
+ * sessionData: {
+ *   date: 'yyyy-MM-dd',
+ *   slots: [
+ *     { time: '15:00', gradeLevel: 'elementary' | 'highschool', studentCount: 3 },
+ *     ...
+ *   ]
+ * }
+ *
+ * This function will return per-30min-block instructor requirements broken
+ * down by side, enabling mid-shift side switches.
+ *
+ * @param {Object} sessionData
+ * @param {number} ratio
+ * @returns {Object} blockRequirements
+ */
+export function parseSessionRequirements(sessionData, ratio = 4) {
+  // TODO: implement in Phase 2 when CSV format is confirmed
+  // For now returns empty — scheduler falls back to tag-based assignment
+  return { elementaryNeeded: 0, highschoolNeeded: 0, blocks: [] };
+}
+
 function getFixedStaffForDay(dayName, weekOfMonth) {
   const result = [];
   for (const [name, sched] of Object.entries(FIXED_SCHEDULES)) {
@@ -317,10 +383,18 @@ export function generateSchedule({ instructors, availability, month, year, confi
 
     const assignedInstructors = eligible.slice(0, numToAssign);
 
+    // Calculate shortfalls for sub-role label assignment
+    const elemAssigned = assignedInstructors.filter(a => canCoverSide(a.inst, 'Elementary')).length;
+    const hsAssigned   = assignedInstructors.filter(a => canCoverSide(a.inst, 'Highschool')).length;
+    const elemShortfall = Math.max(0, hsAssigned - elemAssigned);
+    const hsShortfall   = Math.max(0, elemAssigned - hsAssigned);
+
+    const subRoleLabels = {};
     for (const { inst, shiftStr } of assignedInstructors) {
       assignedNames.push(inst.displayName);
       roles[inst.displayName] = getRole(inst);
       if (shiftStr) shiftTimes[inst.displayName] = shiftStr;
+      subRoleLabels[inst.displayName] = assignSubRoleLabel(inst, elemShortfall, hsShortfall);
       totalAssignments[inst.uid] = (totalAssignments[inst.uid] || 0) + 1;
       if (!weeklyAssignments[inst.uid]) weeklyAssignments[inst.uid] = {};
       weeklyAssignments[inst.uid][isoWeek] = (weeklyAssignments[inst.uid][isoWeek] || 0) + 1;
@@ -345,6 +419,7 @@ export function generateSchedule({ instructors, availability, month, year, confi
       availableEmployees: availableForm.map(a => a.inst.displayName),
       shiftTimes,
       roles,
+      subRoleLabels,  // e.g. { 'Jane Smith': 'Elementary', 'Bob Lee': 'Highschool', 'Alex T': 'Flex' }
       countingStaffCount: countingTotal,
     });
   }
