@@ -1,53 +1,281 @@
+import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { Megaphone, CalendarDays, MessageSquare, Users } from 'lucide-react';
+import {
+  CalendarDays, MessageSquare, Users, Clock,
+  ChevronRight, Megaphone, Pin, ArrowRight,
+} from 'lucide-react';
+
+const CATEGORY_STYLES = {
+  general:  { bg: 'bg-gray-100',   text: 'text-gray-700',   label: 'General' },
+  'fun-day':{ bg: 'bg-green-100',  text: 'text-green-700',  label: 'Fun Day' },
+  policy:   { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Policy' },
+  urgent:   { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Urgent' },
+};
+
+function fmtTime(t) {
+  if (!t) return '';
+  const [hStr, mStr] = t.split(':');
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  if (h > 12) h -= 12;
+  if (h === 0) h = 12;
+  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+function fmtShiftDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const today = new Date();
+  const tomorrow = new Date();
+  tomorrow.setDate(today.getDate() + 1);
+
+  const isSameDay = (a, b) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  if (isSameDay(d, today)) return 'Today';
+  if (isSameDay(d, tomorrow)) return 'Tomorrow';
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+}
+
+function daysUntil(dateStr) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + 'T00:00:00');
+  return Math.round((d - today) / 86400000);
+}
 
 const quickLinks = [
-  { to: '/announcements', label: 'Announcements', desc: 'View latest news, fun days, and policies', icon: Megaphone, color: 'bg-red-50 text-red-600' },
-  { to: '/schedule', label: 'Scheduling', desc: 'Submit availability and view shifts', icon: CalendarDays, color: 'bg-blue-50 text-blue-600' },
-  { to: '/chat', label: 'Chat', desc: 'Talk with your team and swap shifts', icon: MessageSquare, color: 'bg-green-50 text-green-600' },
+  { to: '/schedule', label: 'Scheduling', desc: 'Submit availability and view shifts', icon: CalendarDays, color: 'bg-blue-50 text-blue-600', border: 'border-blue-100' },
+  { to: '/chat',     label: 'Chat',       desc: 'Talk with your team and swap shifts', icon: MessageSquare, color: 'bg-green-50 text-green-600', border: 'border-green-100' },
 ];
 
 export default function Home() {
   const { profile } = useAuth();
+  const [shifts, setShifts] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+
+  useEffect(() => onSnapshot(
+    query(collection(db, 'shifts'), orderBy('date', 'asc')),
+    snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), []);
+
+  useEffect(() => onSnapshot(
+    query(collection(db, 'announcements'), orderBy('date', 'desc'), limit(10)),
+    snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Pinned first, then by date
+      data.sort((a, b) => (a.pinned && !b.pinned ? -1 : !a.pinned && b.pinned ? 1 : 0));
+      setAnnouncements(data);
+    }
+  ), []);
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  const upcomingShift = useMemo(() => {
+    return shifts
+      .filter(s => s.userId === profile?.uid && s.date >= todayStr)
+      .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
+  }, [shifts, profile, todayStr]);
+
+  const latestAnnouncement = announcements[0] || null;
+
+  const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Welcome back, {profile?.displayName?.split(' ')[0] || 'Instructor'}!</h1>
-        <p className="mt-1 text-gray-500">Mathnasium Langley Instructor Portal - Your hub for schedules, announcements, and team communication.</p>
+    <div className="mx-auto max-w-3xl space-y-6">
+
+      {/* Greeting */}
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Welcome back, {profile?.displayName?.split(' ')[0] || 'Instructor'}!
+        </h1>
+        <p className="mt-1 text-sm text-gray-500">
+          {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+        </p>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {quickLinks.map(item => (
-          <Link key={item.to} to={item.to} className="group rounded-xl border bg-white p-5 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
-            <div className={`mb-3 inline-flex rounded-lg p-2.5 ${item.color}`}>
-              <item.icon size={22} />
+
+      {/* ── Upcoming Shift Card ── */}
+      {profile?.role !== 'owner' && (
+        upcomingShift ? (
+          <Link to="/schedule" className="group block">
+            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 shadow-lg shadow-red-200 transition-all hover:shadow-xl hover:shadow-red-200 hover:-translate-y-0.5">
+              {/* Decorative circle */}
+              <div className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-white/10" />
+              <div className="pointer-events-none absolute -bottom-6 -right-2 h-24 w-24 rounded-full bg-white/5" />
+
+              <div className="relative">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg bg-white/20 p-1.5">
+                      <CalendarDays size={16} className="text-white" />
+                    </div>
+                    <span className="text-sm font-semibold text-red-100 uppercase tracking-widest">
+                      Upcoming Shift
+                    </span>
+                  </div>
+                  {days === 0 && (
+                    <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold text-white">
+                      TODAY
+                    </span>
+                  )}
+                  {days === 1 && (
+                    <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold text-white">
+                      TOMORROW
+                    </span>
+                  )}
+                  {days > 1 && (
+                    <span className="rounded-full bg-white/20 px-3 py-1 text-xs font-bold text-white">
+                      IN {days} DAYS
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-2xl font-bold text-white">
+                  {fmtShiftDate(upcomingShift.date)}
+                </p>
+
+                <div className="mt-2 flex items-center gap-2">
+                  <Clock size={14} className="text-red-200" />
+                  <p className="text-base font-medium text-red-100">
+                    {fmtTime(upcomingShift.startTime)} – {fmtTime(upcomingShift.endTime)}
+                  </p>
+                  {upcomingShift.role && (
+                    <>
+                      <span className="text-red-300">·</span>
+                      <span className="text-sm text-red-200">{upcomingShift.role}</span>
+                    </>
+                  )}
+                </div>
+
+                <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-red-200 group-hover:text-white transition-colors">
+                  View full schedule <ArrowRight size={13} className="transition-transform group-hover:translate-x-0.5" />
+                </div>
+              </div>
             </div>
-            <h3 className="font-semibold text-gray-900 group-hover:text-red-600 transition-colors">{item.label}</h3>
-            <p className="mt-1 text-sm text-gray-500">{item.desc}</p>
           </Link>
-        ))}
-        {profile?.role === 'owner' && (
-          <Link to="/admin" className="group rounded-xl border bg-white p-5 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5">
-            <div className="mb-3 inline-flex rounded-lg bg-purple-50 p-2.5 text-purple-600">
-              <Users size={22} />
+        ) : (
+          <Link to="/schedule" className="group block">
+            <div className="rounded-2xl border-2 border-dashed border-gray-200 bg-gray-50 p-6 text-center transition-colors hover:border-red-300 hover:bg-red-50">
+              <CalendarDays size={28} className="mx-auto mb-2 text-gray-300 group-hover:text-red-400 transition-colors" />
+              <p className="text-sm font-semibold text-gray-500 group-hover:text-red-600 transition-colors">No upcoming shifts</p>
+              <p className="text-xs text-gray-400 mt-0.5">Tap to set your availability</p>
             </div>
-            <h3 className="font-semibold text-gray-900 group-hover:text-red-600 transition-colors">Admin Panel</h3>
-            <p className="mt-1 text-sm text-gray-500">Manage instructors, approve accounts, assign shifts</p>
           </Link>
-        )}
-      </div>
-      <div className="mt-8 rounded-xl border bg-white p-6 shadow-sm">
-        <h2 className="mb-3 text-lg font-semibold text-gray-900">About This Portal</h2>
-        <div className="space-y-2 text-sm text-gray-600">
-          <p>This portal is designed for Mathnasium Langley instructors to stay connected and organized.</p>
-          <ul className="ml-4 list-disc space-y-1">
-            <li><strong>Announcements:</strong> Stay up to date with newsletters, fun days, and important notices.</li>
-            <li><strong>Scheduling:</strong> Submit your availability and view your assigned shifts on a calendar.</li>
-            <li><strong>Chat:</strong> Communicate with your team, swap shifts, and ask questions.</li>
-          </ul>
+        )
+      )}
+
+      {/* ── Latest Announcement ── */}
+      {latestAnnouncement && (
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+          <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5">
+            <div className="flex items-center gap-2">
+              <div className="rounded-lg bg-red-100 p-1.5 text-red-600">
+                <Megaphone size={15} />
+              </div>
+              <span className="text-sm font-bold text-gray-800">Latest Announcement</span>
+            </div>
+            <Link
+              to="/announcements"
+              className="flex items-center gap-1 text-xs font-semibold text-red-600 hover:text-red-700 transition-colors"
+            >
+              See all <ChevronRight size={13} />
+            </Link>
+          </div>
+
+          <div className="px-5 py-4">
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              {latestAnnouncement.pinned && (
+                <Pin size={12} className="text-red-500" />
+              )}
+              {(() => {
+                const cat = CATEGORY_STYLES[latestAnnouncement.category] || CATEGORY_STYLES.general;
+                return (
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${cat.bg} ${cat.text}`}>
+                    {cat.label}
+                  </span>
+                );
+              })()}
+              <span className="text-xs text-gray-400">
+                {latestAnnouncement.date
+                  ? new Date(latestAnnouncement.date).toLocaleDateString('en-US', {
+                      month: 'short', day: 'numeric', year: 'numeric',
+                    })
+                  : ''}
+              </span>
+            </div>
+
+            <h3 className="text-base font-bold text-gray-900 mb-1">
+              {latestAnnouncement.title}
+            </h3>
+            <p className="text-sm text-gray-600 line-clamp-3 whitespace-pre-wrap">
+              {latestAnnouncement.text}
+            </p>
+
+            <div className="mt-3 flex items-center justify-between">
+              <span className="text-xs text-gray-400">
+                Posted by {latestAnnouncement.author}
+              </span>
+              <Link
+                to="/announcements"
+                className="text-xs font-semibold text-red-600 hover:text-red-700 transition-colors"
+              >
+                Read more →
+              </Link>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Quick Actions ── */}
+      <div>
+        <p className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-400 px-0.5">
+          Quick Actions
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {quickLinks.map(item => (
+            <Link
+              key={item.to}
+              to={item.to}
+              className={`group flex items-center gap-4 rounded-xl border ${item.border} bg-white p-4 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5`}
+            >
+              <div className={`shrink-0 rounded-xl p-2.5 ${item.color}`}>
+                <item.icon size={20} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-gray-900 group-hover:text-red-600 transition-colors">
+                  {item.label}
+                </h3>
+                <p className="text-xs text-gray-500 truncate">{item.desc}</p>
+              </div>
+              <ChevronRight size={16} className="ml-auto shrink-0 text-gray-300 group-hover:text-red-400 transition-colors" />
+            </Link>
+          ))}
+
+          {profile?.role === 'owner' && (
+            <Link
+              to="/admin"
+              className="group flex items-center gap-4 rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5"
+            >
+              <div className="shrink-0 rounded-xl bg-purple-50 p-2.5 text-purple-600">
+                <Users size={20} />
+              </div>
+              <div className="min-w-0">
+                <h3 className="font-semibold text-gray-900 group-hover:text-red-600 transition-colors">
+                  Admin Panel
+                </h3>
+                <p className="text-xs text-gray-500 truncate">Manage instructors and shifts</p>
+              </div>
+              <ChevronRight size={16} className="ml-auto shrink-0 text-gray-300 group-hover:text-red-400 transition-colors" />
+            </Link>
+          )}
         </div>
       </div>
+
     </div>
   );
 }
