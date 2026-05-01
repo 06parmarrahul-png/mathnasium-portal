@@ -32,7 +32,7 @@ const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
   const [mode, setMode] = useState('main');
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
@@ -44,7 +44,8 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
   const [useCustom, setUseCustom] = useState(false);
 
   const dateStr = format(date, 'yyyy-MM-dd');
-  const hasTimeOff = timeOffDates.has(dateStr);
+  const timeOffStatus = timeOffMap.get(dateStr); // 'pending' | 'approved' | undefined
+  const hasTimeOff = !!timeOffStatus;
 
   const handleSave = async () => {
     setError('');
@@ -141,10 +142,17 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffDates, onC
 
               {/* Time Off badge */}
               {hasTimeOff && (
-                <div className="rounded-xl bg-red-50 border border-red-200 p-3 flex items-center gap-2">
-                  <AlertTriangle size={14} className="text-red-500 shrink-0" />
-                  <span className="text-xs font-semibold text-red-700">Time Off Requested</span>
-                </div>
+                timeOffStatus === 'approved' ? (
+                  <div className="rounded-xl bg-green-50 border border-green-200 p-3 flex items-center gap-2">
+                    <Check size={14} className="text-green-600 shrink-0" />
+                    <span className="text-xs font-semibold text-green-700">Time Off Approved ✓</span>
+                  </div>
+                ) : (
+                  <div className="rounded-xl bg-yellow-50 border border-yellow-200 p-3 flex items-center gap-2">
+                    <AlertTriangle size={14} className="text-yellow-500 shrink-0" />
+                    <span className="text-xs font-semibold text-yellow-700">Time Off — Pending Approval</span>
+                  </div>
+                )
               )}
 
               {/* My Availability */}
@@ -425,19 +433,19 @@ export default function Schedule() {
     return m;
   }, [availability, profile]);
 
-  const myTimeOffDates = useMemo(() => {
-    const dates = new Set();
+  const myTimeOffMap = useMemo(() => {
+    const map = new Map();
     timeOffRequests
       .filter(r => r.userId === profile?.uid && r.status !== 'denied' && r.startDate && r.endDate)
       .forEach(r => {
         let d = new Date(r.startDate + 'T00:00:00');
         const end = new Date(r.endDate + 'T00:00:00');
         while (d <= end) {
-          dates.add(format(d, 'yyyy-MM-dd'));
+          map.set(format(d, 'yyyy-MM-dd'), r.status); // 'pending' or 'approved'
           d.setDate(d.getDate() + 1);
         }
       });
-    return dates;
+    return map;
   }, [timeOffRequests, profile]);
 
   // ── Handlers (now throw on error so modal can catch) ──
@@ -536,7 +544,8 @@ export default function Schedule() {
   const getCellState = (dateStr) => {
     const shift = myShifts.find(s => s.date === dateStr);
     if (shift) return { type: 'shift', shift };
-    if (myTimeOffDates.has(dateStr)) return { type: 'timeoff' };
+    const toStatus = myTimeOffMap.get(dateStr);
+    if (toStatus) return { type: 'timeoff', approved: toStatus === 'approved' };
     const avail = myAvailMap[dateStr];
     if (avail) return { type: 'available', avail };
     const dayOpenShifts = openShifts.filter(s => s.date === dateStr && s.status === 'open');
@@ -614,7 +623,8 @@ export default function Schedule() {
             { color: 'bg-blue-500', label: 'Assigned Shift' },
             { color: 'bg-emerald-500', label: 'Available' },
             { color: 'bg-orange-400', label: 'Open Shift' },
-            { color: 'bg-red-300', label: 'Time Off' },
+            { color: 'bg-yellow-400', label: 'Time Off (Pending)' },
+            { color: 'bg-green-500', label: 'Time Off (Approved)' },
           ].map(item => (
             <span key={item.label} className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
               <span className={`w-2.5 h-2.5 rounded-sm inline-block ${item.color}`} />
@@ -688,9 +698,14 @@ export default function Schedule() {
                 </div>
               );
             } else if (state.type === 'timeoff') {
-              cellBg = 'bg-red-50/60 cursor-pointer';
-              content = (
-                <div className="mt-1 rounded-lg bg-red-300 px-1.5 py-1 shadow-sm">
+              cellBg = state.approved ? 'bg-green-50/60 cursor-pointer' : 'bg-red-50/60 cursor-pointer';
+              content = state.approved ? (
+                <div className="mt-1 rounded-lg bg-green-500 px-1.5 py-1 shadow-sm flex items-center gap-1">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                  <p className="text-white text-xs font-bold leading-tight">Approved</p>
+                </div>
+              ) : (
+                <div className="mt-1 rounded-lg bg-yellow-400 px-1.5 py-1 shadow-sm">
                   <p className="text-white text-xs font-bold leading-tight">Time Off</p>
                 </div>
               );
@@ -789,7 +804,7 @@ export default function Schedule() {
           myAvailability={myAvailMap[format(selectedDate, 'yyyy-MM-dd')]}
           myShift={myShifts.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))}
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
-          timeOffDates={myTimeOffDates}
+          timeOffMap={myTimeOffMap}
           onClose={() => setSelectedDate(null)}
           onSaveAvail={handleSaveAvail}
           onDeleteAvail={handleDeleteAvail}
