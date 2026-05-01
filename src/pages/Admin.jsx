@@ -655,10 +655,14 @@ export default function Admin() {
   }, [openShiftsList]);
 
   // Payroll summary — all shifts in the selected pay period grouped by person
+  // Neeru Gill and Jasper Wu are salaried — excluded from hourly payroll
+  const SALARY_STAFF = new Set(['Neeru Gill', 'Jasper Wu']);
+
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
     const periodShifts = shifts.filter(s =>
-      s.date >= payStart && s.date <= payEnd && s.status !== 'draft'
+      s.date >= payStart && s.date <= payEnd && s.status !== 'draft' &&
+      !SALARY_STAFF.has(s.userName)
     );
 
     // Also include fixed staff from FIXED_SCHEDULES who may not have Firestore shifts yet
