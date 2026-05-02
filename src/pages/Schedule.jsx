@@ -284,7 +284,6 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                         Custom time…
                       </button>
                     </div>
-                    {/* Comment field */}
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 mb-1.5">
                         Note for admin <span className="font-normal text-gray-400">(optional)</span>
@@ -328,19 +327,6 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                       </div>
                     </div>
                     {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
-                    {/* Comment field */}
-                    <div>
-                      <label className="block text-xs font-semibold text-gray-500 mb-1.5">
-                        Note for admin <span className="font-normal text-gray-400">(optional)</span>
-                      </label>
-                      <textarea
-                        value={comment}
-                        onChange={e => setComment(e.target.value)}
-                        placeholder="e.g. Prefer online this day, available earlier if needed..."
-                        rows={2}
-                        className="w-full rounded-xl border-2 border-gray-200 px-3 py-2 text-sm resize-none focus:border-green-500 focus:outline-none"
-                      />
-                    </div>
                     <div className="flex gap-2">
                       <button onClick={handleSave} disabled={saving}
                         className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-green-600 py-2.5 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-60 transition-all">

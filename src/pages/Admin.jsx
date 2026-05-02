@@ -134,7 +134,6 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const selectedProfile = users.find(u => u.uid === selectedUser);
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
-
   const handleSubmit = async () => {
     if (!selectedUser || !date) return;
     const profile = users.find(u => u.uid === selectedUser);
@@ -192,13 +191,6 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
           </div>
         )}
 
-        {/* Instructor comment from availability */}
-        {availComment && (
-          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
-            <span className="font-semibold">Instructor note: </span>{availComment}
-          </div>
-        )}
-
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Start Time</label>
@@ -217,6 +209,13 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
             />
           </div>
         </div>
+
+        {/* Instructor comment from availability */}
+        {availComment && (
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+            <span className="font-semibold">Instructor note: </span>{availComment}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -484,7 +483,6 @@ export default function Admin() {
   const handleGenerate = async () => {
     setGenerating(true); setSchedError(''); setDraftSchedule(null);
     try {
-      // Build a set of "userId-date" pairs that are approved time off
       const approvedTimeOff = new Set();
       timeOffRequests
         .filter(r => r.status === 'approved' && r.startDate && r.endDate)
@@ -497,14 +495,35 @@ export default function Admin() {
           }
         });
 
-      // Filter availability to exclude approved time off dates
       const filteredAvailability = availability.filter(a =>
         !approvedTimeOff.has(`${a.userId}-${a.date}`)
       );
 
+      // Build previous months availability fallback (up to 6 months back)
+      const previousMonthsAvail = [];
+      const MONTH_NAMES = ['january','february','march','april','may','june',
+        'july','august','september','october','november','december'];
+      const monthNum = MONTH_NAMES.indexOf(schedMonth.toLowerCase()) + 1;
+      for (let i = 1; i <= 6; i++) {
+        let prevMonth = monthNum - i;
+        let prevYear = Number(schedYear);
+        if (prevMonth <= 0) { prevMonth += 12; prevYear -= 1; }
+        const startStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
+        const endStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-31`;
+        const monthAvail = availability.filter(a =>
+          a.date >= startStr && a.date <= endStr &&
+          !approvedTimeOff.has(`${a.userId}-${a.date}`)
+        );
+        previousMonthsAvail.push(monthAvail);
+      }
+
       const result = generateSchedule({
-        instructors: approvedUsers, availability: filteredAvailability,
-        month: schedMonth, year: schedYear, config: schedConfig,
+        instructors: approvedUsers,
+        availability: filteredAvailability,
+        previousMonthsAvail,
+        month: schedMonth,
+        year: schedYear,
+        config: schedConfig,
       });
       setDraftSchedule(result);
     } catch (err) {
@@ -1097,13 +1116,11 @@ export default function Admin() {
                                 <div className="group/avail absolute top-0 right-0 z-10">
                                   <div className="w-0 h-0 border-l-[14px] border-l-transparent border-t-[14px] border-t-green-400 cursor-pointer" />
                                   {/* Hover tooltip showing availability times */}
-                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-52 rounded-lg border border-green-200 bg-white shadow-lg p-2">
+                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-44 rounded-lg border border-green-200 bg-white shadow-lg p-2">
                                     <p className="text-xs font-semibold text-green-700 mb-1">Available</p>
                                     {dayAvail.map((a, i) => (
-                                      <div key={i}>
-                                        <p className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
-                                        {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
-                                      </div>
+                                      <p key={i} className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
+                                      {a.comment && <p key={`c${i}`} className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
                                     ))}
                                   </div>
                                 </div>
@@ -1419,6 +1436,12 @@ export default function Admin() {
                   <div className="rounded-lg bg-gray-50 p-3 text-center">
                     <p className="text-2xl font-bold text-amber-600">{draftSchedule.warnings.length}</p>
                     <p className="text-xs text-gray-500">Warnings</p>
+                  </div>
+                  <div className="rounded-lg bg-gray-50 p-3 text-center">
+                    <p className="text-2xl font-bold text-orange-600">
+                      {draftSchedule.days.reduce((s,d) => s + (d.openSlotsNeeded || 0), 0)}
+                    </p>
+                    <p className="text-xs text-gray-500">Open Shifts Needed</p>
                   </div>
                 </div>
               </div>
