@@ -1019,8 +1019,9 @@ export default function Admin() {
                     {weekDays.map(d => {
                       const isToday = isSameDay(d, new Date());
                       const ds = format(d, 'yyyy-MM-dd');
+                      const portalNames = new Set(users.map(u => u.displayName));
                       const dayTotalHrs = shifts
-                        .filter(s => s.date === ds && s.status !== 'draft')
+                        .filter(s => s.date === ds && s.status !== 'draft' && portalNames.has(s.userName))
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       return (
@@ -1162,16 +1163,24 @@ export default function Admin() {
                     <td className="px-4 py-2 border-r text-xs font-semibold text-gray-600">Day Totals</td>
                     {weekDays.map(d => {
                       const ds = format(d, 'yyyy-MM-dd');
+                      const portalNames2 = new Set(users.map(u => u.displayName));
                       const dayShiftsAll = shifts.filter(s => s.date === ds && s.status !== 'draft');
+                      const dayShiftsPortal = dayShiftsAll.filter(s => portalNames2.has(s.userName));
+                      const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
                       const count = dayShiftsAll.length;
-                      const hrs = dayShiftsAll.reduce((sum, s) => sum + shiftHours(s), 0);
+                      const hrs = dayShiftsPortal.reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
                       return (
                         <td key={ds} className="text-center py-2 text-xs text-gray-500">
                           {count > 0 ? (
-                            <div>
+                            <div className="space-y-0.5">
                               <span className="font-semibold text-gray-700">{count} staff</span>
                               <div className="text-purple-600 font-semibold">{hrsDisplay}h total</div>
+                              {dayShiftsNoAccount.length > 0 && (
+                                <div className="text-gray-400 text-xs">
+                                  +{dayShiftsNoAccount.length} no account
+                                </div>
+                              )}
                             </div>
                           ) : '–'}
                         </td>
