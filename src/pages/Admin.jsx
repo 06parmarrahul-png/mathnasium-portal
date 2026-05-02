@@ -27,12 +27,12 @@ const ROLE_OPTIONS = [
 ];
 
 // Sub-roles (teaching specializations) — stackable like Discord roles
-const SUB_ROLES = ['Elementary', 'Highschool', 'Both'];
+const SUB_ROLES = ['Elementary', 'Highschool', 'Online'];
 
 const SUB_ROLE_STYLES = {
   Elementary: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
   Highschool: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
-  Both:       { bg: 'bg-emerald-100',text: 'text-emerald-700',dot: 'bg-emerald-500'},
+  Online:     { bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'   },
 };
 
 const ROLE_COLORS = {
@@ -129,9 +129,11 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
   const [role, setRole] = useState(user?.instructorType || '');
+  const [shiftType, setShiftType] = useState('In-Centre');
 
   const selectedProfile = users.find(u => u.uid === selectedUser);
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
+  const availComment = avail.find(a => a.comment)?.comment || '';
 
   const handleSubmit = async () => {
     if (!selectedUser || !date) return;
@@ -143,6 +145,7 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
       startTime,
       endTime,
       role,
+      shiftType,
       status: 'live',
     });
     onClose();
@@ -189,6 +192,13 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
           </div>
         )}
 
+        {/* Instructor comment from availability */}
+        {availComment && (
+          <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-800">
+            <span className="font-semibold">Instructor note: </span>{availComment}
+          </div>
+        )}
+
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Start Time</label>
@@ -208,16 +218,30 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Role</label>
-          <select
-            value={role}
-            onChange={e => setRole(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
-          >
-            <option value="">No role</option>
-            {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Role</label>
+            <select
+              value={role}
+              onChange={e => setRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            >
+              <option value="">No role</option>
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Shift Type</label>
+            <select
+              value={shiftType}
+              onChange={e => setShiftType(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            >
+              <option value="In-Centre">In-Centre</option>
+              <option value="Online">Online</option>
+              <option value="Both">In-Centre + Online</option>
+            </select>
+          </div>
         </div>
 
         <button
@@ -237,6 +261,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
   const [startTime, setStartTime] = useState(shift.startTime || '15:00');
   const [endTime, setEndTime] = useState(shift.endTime || '20:00');
   const [role, setRole] = useState(shift.role || '');
+  const [shiftType, setShiftType] = useState(shift.shiftType || 'In-Centre');
 
   return (
     <Modal
@@ -259,16 +284,27 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
           </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Role</label>
-          <select value={role} onChange={e => setRole(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
-            <option value="">No role</option>
-            {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Role</label>
+            <select value={role} onChange={e => setRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+              <option value="">No role</option>
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Shift Type</label>
+            <select value={shiftType} onChange={e => setShiftType(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+              <option value="In-Centre">In-Centre</option>
+              <option value="Online">Online</option>
+              <option value="Both">In-Centre + Online</option>
+            </select>
+          </div>
         </div>
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -1061,10 +1097,13 @@ export default function Admin() {
                                 <div className="group/avail absolute top-0 right-0 z-10">
                                   <div className="w-0 h-0 border-l-[14px] border-l-transparent border-t-[14px] border-t-green-400 cursor-pointer" />
                                   {/* Hover tooltip showing availability times */}
-                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-44 rounded-lg border border-green-200 bg-white shadow-lg p-2">
+                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-52 rounded-lg border border-green-200 bg-white shadow-lg p-2">
                                     <p className="text-xs font-semibold text-green-700 mb-1">Available</p>
                                     {dayAvail.map((a, i) => (
-                                      <p key={i} className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
+                                      <div key={i}>
+                                        <p className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
+                                        {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
+                                      </div>
                                     ))}
                                   </div>
                                 </div>
@@ -1080,7 +1119,7 @@ export default function Admin() {
                                     className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity"
                                     style={{ backgroundColor: bg, color: text }}>
                                     <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
-                                    {s.role && <div className="uppercase tracking-wide opacity-90" style={{fontSize:'10px'}}>{s.role}</div>}
+                                    {s.role && <div className="uppercase tracking-wide opacity-90" style={{fontSize:'10px'}}>{s.role}{s.shiftType && s.shiftType !== 'In-Centre' ? ` · ${s.shiftType}` : ''}</div>}
                                   </div>
                                 );
                               })}
