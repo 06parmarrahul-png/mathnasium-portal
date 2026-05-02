@@ -13,7 +13,7 @@
  * - Min/max counts only Leads + Instructors (in-centre).
  * - Dev Prasad and Bri MacDonald (Leads) DO count toward min/max.
  * - Jasper, Neeru: fixed, not counted.
- * - Sabrina, Vinod: fixed, not counted.
+ * - Sabrina: fixed, not counted. Vinod: manual scheduling (variable hours).
  * - Max shifts per week = Sun–Sat calendar week.
  * - If not enough staff to hit min, leave slots open (admin posts open shifts).
  */
@@ -56,12 +56,8 @@ export const FIXED_SCHEDULES = {
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
   },
-  'Vinod Bandla': {
-    role: 'Manager',
-    Monday: '11:00 AM - 7:00 PM', Tuesday: '11:00 AM - 7:00 PM',
-    Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
-    Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
-  },
+  // Vinod Bandla removed from fixed schedule — his hours vary week to week.
+  // Add his shifts manually in the weekly spreadsheet.
   'Rahul Parmar': {
     role: 'Host',
     countsTowardRatio: false,
