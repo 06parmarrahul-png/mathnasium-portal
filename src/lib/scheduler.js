@@ -62,21 +62,6 @@ export const FIXED_SCHEDULES = {
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
   },
-  'Dev Prasad': {
-    role: 'Lead',
-    countsTowardRatio: true,
-    Monday: '2:00 PM - 7:00 PM', Tuesday: 'Off',
-    Wednesday: '3:00 PM - 7:00 PM', Thursday: 'Off',
-    Friday: '2:00 PM - 7:00 PM', Saturday: '9:30 AM - 3:00 PM',
-  },
-  'Bri MacDonald': {
-    role: 'Lead',
-    countsTowardRatio: true,
-    Monday: 'Off', Tuesday: '11:00 AM - 7:00 PM',
-    Wednesday: 'Off', Thursday: 'Off',
-    Friday: '2:00 PM - 7:00 PM', Saturday: '9:30 AM - 3:00 PM',
-    saturday_weeks: [1, 3, 5],
-  },
   'Rahul Parmar': {
     role: 'Host',
     countsTowardRatio: false,
@@ -140,15 +125,26 @@ function getDaysInMonth(year, monthNumber) {
 function resolveAvailability(availabilityRecords, previousMonthsAvail, userId, dateStr, dayName) {
   const userRecords = availabilityRecords.filter(a => a.userId === userId);
 
-  // 1. Exact date match — highest priority
+  // 1. Exact date match in current month — highest priority
   const exact = userRecords.find(a => a.date === dateStr);
   if (exact) {
     return { available: true, startTime: exact.startTime, endTime: exact.endTime };
   }
 
-  // 2. No exact match — look in previous months for same day name
+  // 2. No current month record for this date.
+  // Only use previous months as fallback if the instructor has submitted
+  // ZERO availability for the current month entirely (not just this date).
+  // If they submitted for some days this month but not this one, they are NOT available today.
+  const hasAnyCurrentMonth = userRecords.length > 0;
+  if (hasAnyCurrentMonth) {
+    // They submitted availability this month but not for this specific date — skip them
+    return { available: false };
+  }
+
+  // 3. No current month availability at all — look back month by month
   for (const monthRecords of previousMonthsAvail) {
     const userPrev = monthRecords.filter(a => a.userId === userId);
+    if (userPrev.length === 0) continue;
     // Find a record for this day name
     const dayMatch = userPrev.find(a => {
       if (!a.date) return false;
@@ -162,6 +158,7 @@ function resolveAvailability(availabilityRecords, previousMonthsAvail, userId, d
     }
   }
 
+  // 4. Never submitted anything anywhere — not available
   return { available: false };
 }
 
