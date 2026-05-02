@@ -1116,11 +1116,13 @@ export default function Admin() {
                                 <div className="group/avail absolute top-0 right-0 z-10">
                                   <div className="w-0 h-0 border-l-[14px] border-l-transparent border-t-[14px] border-t-green-400 cursor-pointer" />
                                   {/* Hover tooltip showing availability times */}
-                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-44 rounded-lg border border-green-200 bg-white shadow-lg p-2">
+                                  <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-52 rounded-lg border border-green-200 bg-white shadow-lg p-2">
                                     <p className="text-xs font-semibold text-green-700 mb-1">Available</p>
                                     {dayAvail.map((a, i) => (
-                                      <p key={i} className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
-                                      {a.comment && <p key={`c${i}`} className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
+                                      <div key={i}>
+                                        <p className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
+                                        {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
+                                      </div>
                                     ))}
                                   </div>
                                 </div>
