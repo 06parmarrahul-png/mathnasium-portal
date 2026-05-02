@@ -37,6 +37,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
   const [reason, setReason] = useState('');
+  const [comment, setComment] = useState('');
   const [toStart, setToStart] = useState(format(date, 'yyyy-MM-dd'));
   const [toEnd, setToEnd] = useState(format(date, 'yyyy-MM-dd'));
   const [saving, setSaving] = useState(false);
@@ -59,7 +60,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
     }
     setSaving(true);
     try {
-      await onSaveAvail(dateStr, startTime, endTime);
+      await onSaveAvail(dateStr, startTime, endTime, comment);
     } catch (err) {
       setError('Failed to save availability. Please try again.');
       setSaving(false);
@@ -283,6 +284,18 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                         Custom time…
                       </button>
                     </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                        Note for admin <span className="font-normal text-gray-400">(optional)</span>
+                      </label>
+                      <textarea
+                        value={comment}
+                        onChange={e => setComment(e.target.value)}
+                        placeholder="e.g. Prefer online this day, available earlier if needed..."
+                        rows={2}
+                        className="w-full rounded-xl border-2 border-gray-200 px-3 py-2 text-sm resize-none focus:border-green-500 focus:outline-none"
+                      />
+                    </div>
                     {error && <p className="text-xs text-red-500 mb-2">{error}</p>}
                     <div className="flex gap-2">
                       <button
@@ -456,7 +469,7 @@ export default function Schedule() {
   }, [timeOffRequests, profile]);
 
   // ── Handlers (now throw on error so modal can catch) ──
-  const handleSaveAvail = async (dateStr, startTime, endTime) => {
+  const handleSaveAvail = async (dateStr, startTime, endTime, comment) => {
     const existing = myAvailMap[dateStr];
     if (existing) await deleteDoc(doc(db, 'availability', existing.id));
     await addDoc(collection(db, 'availability'), {
@@ -465,6 +478,7 @@ export default function Schedule() {
       date: dateStr,
       startTime,
       endTime,
+      comment: comment || '',
     });
     setSelectedDate(null);
   };

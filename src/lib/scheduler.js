@@ -1,12 +1,24 @@
 /**
- * scheduler.js
- * JavaScript port of the Python scheduling engine (scheduler.py + sheets_reader.py logic).
- * Reads availability from Firestore instead of Google Sheets.
+ * scheduler.js — Mathnasium Langley Auto-Scheduler v2
  *
- * Usage:
- *   import { generateSchedule } from './scheduler';
- *   const result = generateSchedule({ instructors, availability, month, year, config, staffConfig });
+ * Rules:
+ * - Purely availability-driven. No availability = no shift (their responsibility).
+ * - If no availability this month, look back month by month until found.
+ * - Priority 1 > 2 > 3. Lower number = higher priority = more likely to get shift.
+ * - Luke, Ainsley, Kaitlyn: guaranteed shift if available (treated as priority 0).
+ * - Sub-roles: Elementary, Highschool, Online.
+ *   - Online instructors are NOT counted in the in-centre min/max ratio.
+ *   - Prefer Highschool-capable instructors (can float) but respect priority.
+ *   - Balance elementary vs highschool count across the day.
+ * - Min/max counts only Leads + Instructors (in-centre).
+ * - Dev Prasad and Bri MacDonald (Leads) DO count toward min/max.
+ * - Jasper, Neeru: fixed, not counted.
+ * - Sabrina, Vinod: fixed, not counted.
+ * - Max shifts per week = Sun–Sat calendar week.
+ * - If not enough staff to hit min, leave slots open (admin posts open shifts).
  */
+
+// ─── Constants ───────────────────────────────────────────────────────────────
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -16,106 +28,16 @@ const MONTH_NAME_TO_NUMBER = {
   september: 9, october: 10, november: 11, december: 12,
 };
 
-const ROLE_DISPLAY_ORDER = {
-  'Center Director': 0,
-  'Dir. of Education': 1,
-  'Manager': 2,
-  'Lead': 3,
-  'Host': 4,
-  'Admin': 5,
-  'Instructor': 6,
+export const ROLE_DISPLAY_ORDER = {
+  'Center Director': 0, 'Dir. of Education': 1, 'Manager': 2,
+  'Lead': 3, 'Host': 4, 'Admin': 5, 'Instructor': 6,
 };
 
-// ─── Date helpers ────────────────────────────────────────────────────────────
+// Instructors who are guaranteed a shift if they submit availability
+const GUARANTEED_NAMES = new Set(['Luke', 'Ainsley', 'Kaitlyn']);
 
-function getWeekOfMonth(date) {
-  return Math.floor((date.getDate() - 1) / 7) + 1;
-}
-
-function getISOWeek(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  return Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-}
-
-function getDaysInMonth(year, monthNumber) {
-  // monthNumber is 1-based
-  const days = [];
-  const date = new Date(year, monthNumber - 1, 1);
-  while (date.getMonth() === monthNumber - 1) {
-    const dayOfWeek = date.getDay(); // 0=Sun,1=Mon,...,6=Sat
-    // Convert JS day (Sun=0) to Python weekday (Mon=0)
-    const pythonWeekday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
-    days.push({
-      date: new Date(date),
-      dateStr: date.toISOString().split('T')[0],
-      dayNumber: date.getDate(),
-      dayName: DAY_NAMES[pythonWeekday] || null,
-      pythonWeekday,
-      weekOfMonth: getWeekOfMonth(date),
-      isoWeek: getISOWeek(date),
-    });
-    date.setDate(date.getDate() + 1);
-  }
-  // Filter to working days: Mon(0) - Sat(5)
-  return days.filter(d => d.pythonWeekday >= 0 && d.pythonWeekday <= 5);
-}
-
-// ─── Availability resolver ────────────────────────────────────────────────────
-
-/**
- * Firestore availability docs look like:
- * {
- *   userId, userName,
- *   date: 'yyyy-MM-dd',         // specific date OR null for week-based
- *   week: 'All Weeks' | 'Week 1' ... 'Week 5',
- *   startTime: '15:00',
- *   endTime: '20:00',
- *   month: 'March',
- *   year: 2026,
- * }
- *
- * We need to resolve: for a given (userId, dayName, weekOfMonth), is the person available?
- *
- * Strategy:
- *   - If availability.date matches the specific date → use that
- *   - Else if availability.week matches → use that
- *   - Else if availability.week === 'All Weeks' → use that
- */
-function resolveAvailability(availabilityRecords, userId, dateStr, dayName, weekOfMonth) {
-  const userRecords = availabilityRecords.filter(a => a.userId === userId);
-
-  // 1. Exact date match (highest priority)
-  const dateMatch = userRecords.find(a => a.date === dateStr);
-  if (dateMatch) {
-    return { available: true, startTime: dateMatch.startTime, endTime: dateMatch.endTime };
-  }
-
-  // 2. Week-specific match
-  const weekLabel = `Week ${weekOfMonth}`;
-  const weekMatch = userRecords.find(a => a.week === weekLabel);
-  if (weekMatch) {
-    // Check if this record covers this day
-    if (weekMatch.dayName && weekMatch.dayName !== dayName) return { available: false };
-    return { available: true, startTime: weekMatch.startTime, endTime: weekMatch.endTime };
-  }
-
-  // 3. "All Weeks" fallback — find a record for this day name
-  const allWeeksForDay = userRecords.filter(
-    a => (a.week === 'All Weeks' || !a.week) && (!a.dayName || a.dayName === dayName)
-  );
-  if (allWeeksForDay.length > 0) {
-    const rec = allWeeksForDay[0];
-    return { available: true, startTime: rec.startTime, endTime: rec.endTime };
-  }
-
-  return { available: false };
-}
-
-// ─── Fixed-schedule staff helpers ────────────────────────────────────────────
-
-const FIXED_SCHEDULES = {
+// Fixed staff — not scheduled by engine, seeded separately
+export const FIXED_SCHEDULES = {
   'Jasper Wu': {
     role: 'Center Director',
     Monday: '11:00 AM - 7:00 PM', Tuesday: '11:00 AM - 7:00 PM',
@@ -140,101 +62,118 @@ const FIXED_SCHEDULES = {
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
   },
-  'Dev Prasad': {
-    role: 'Lead',
-    Monday: '2:00 PM - 7:00 PM', Tuesday: 'Off',
-    Wednesday: '3:00 PM - 7:00 PM', Thursday: 'Off',
-    Friday: '2:00 PM - 7:00 PM', Saturday: '9:30 AM - 3:00 PM',
-  },
-  'Bri MacDonald': {
-    role: 'Lead',
-    Monday: 'Off', Tuesday: '11:00 AM - 7:00 PM',
-    Wednesday: 'Off', Thursday: 'Off',
-    Friday: '2:00 PM - 7:00 PM', Saturday: '9:30 AM - 3:00 PM',
-    saturday_weeks: [1, 3, 5],
-  },
   'Rahul Parmar': {
     role: 'Host',
-    Monday: 'Off', Tuesday: 'Off',
-    Wednesday: 'Off', Thursday: 'Off',
-    Friday: 'Off', Saturday: 'Off',
+    countsTowardRatio: false,
+    Monday: 'Off', Tuesday: 'Off', Wednesday: 'Off',
+    Thursday: 'Off', Friday: 'Off', Saturday: 'Off',
   },
   'Rachel Rozelle': {
     role: 'Admin',
-    Monday: 'Off', Tuesday: 'Off',
-    Wednesday: 'Off', Thursday: 'Off',
-    Friday: 'Off', Saturday: 'Off',
+    countsTowardRatio: false,
+    Monday: 'Off', Tuesday: 'Off', Wednesday: 'Off',
+    Thursday: 'Off', Friday: 'Off', Saturday: 'Off',
   },
 };
 
-const ROLE_ASSIGNMENTS = {};
+export const ROLE_ASSIGNMENTS = {};
+export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
 
-const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
-// ─── Sub-role helpers ─────────────────────────────────────────────────────────
-
-/**
- * Returns true if an instructor can cover a given side ('Elementary' | 'Highschool').
- * An instructor tagged 'Both' can cover either side.
- */
-export function canCoverSide(instructor, side) {
-  const subRoles = instructor.subRoles || [];
-  if (subRoles.includes('Both')) return true;
-  return subRoles.includes(side);
+function getWeekOfMonth(date) {
+  return Math.floor((date.getDate() - 1) / 7) + 1;
 }
 
-/**
- * Given student counts per side, calculate minimum instructors needed.
- * Ratio is 1:4 (1 instructor per 4 students, rounded up).
- */
-export function calcInstructorsNeeded(studentCount, ratio = 4) {
-  if (!studentCount || studentCount <= 0) return 0;
-  return Math.ceil(studentCount / ratio);
+function getSunSatWeekKey(date) {
+  // Returns a string key for the Sun–Sat week containing this date
+  const d = new Date(date);
+  const day = d.getDay(); // 0=Sun
+  const sunday = new Date(d);
+  sunday.setDate(d.getDate() - day);
+  return sunday.toISOString().split('T')[0];
 }
 
-/**
- * Assign sub-role label to an instructor for a given day based on what sides need coverage.
- * Returns 'Elementary', 'Highschool', or 'Flex'.
- *
- * Phase 2: when session data is available, pass elementaryNeeded and highschoolNeeded
- * to get smarter assignments. For now defaults to 'Flex' if tagged Both.
- */
-export function assignSubRoleLabel(instructor, elementaryShortfall = 0, highschoolShortfall = 0) {
-  const subRoles = instructor.subRoles || [];
-  if (subRoles.includes('Both')) {
-    if (elementaryShortfall > highschoolShortfall) return 'Elementary';
-    if (highschoolShortfall > elementaryShortfall) return 'Highschool';
-    return 'Flex';
+function getDaysInMonth(year, monthNumber) {
+  const days = [];
+  const date = new Date(year, monthNumber - 1, 1);
+  while (date.getMonth() === monthNumber - 1) {
+    const dayOfWeek = date.getDay();
+    const pythonWeekday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Mon=0..Sat=5
+    days.push({
+      date: new Date(date),
+      dateStr: date.toISOString().split('T')[0],
+      dayNumber: date.getDate(),
+      dayName: DAY_NAMES[pythonWeekday] ?? null,
+      pythonWeekday,
+      weekOfMonth: getWeekOfMonth(date),
+      weekKey: getSunSatWeekKey(date),
+    });
+    date.setDate(date.getDate() + 1);
   }
-  if (subRoles.includes('Elementary')) return 'Elementary';
-  if (subRoles.includes('Highschool')) return 'Highschool';
-  return 'Instructor'; // no sub-role assigned yet
+  // Filter Mon–Sat only (pythonWeekday 0–5)
+  return days.filter(d => d.pythonWeekday >= 0 && d.pythonWeekday <= 5);
 }
 
-// ─── Phase 2 hook (guardian portal CSV) ──────────────────────────────────────
+// ─── Availability resolver ────────────────────────────────────────────────────
+
 /**
- * PHASE 2 — plugs in here once the guardian portal CSV format is known.
- *
- * Expected input per day:
- * sessionData: {
- *   date: 'yyyy-MM-dd',
- *   slots: [
- *     { time: '15:00', gradeLevel: 'elementary' | 'highschool', studentCount: 3 },
- *     ...
- *   ]
- * }
- *
- * This function will return per-30min-block instructor requirements broken
- * down by side, enabling mid-shift side switches.
- *
- * @param {Object} sessionData
- * @param {number} ratio
- * @returns {Object} blockRequirements
+ * Find availability for a user on a specific date.
+ * Looks for an exact date match in availabilityRecords.
+ * If none found, checks previousMonthsAvailability for the same dayName.
  */
-export function parseSessionRequirements(sessionData, ratio = 4) {
-  // TODO: implement in Phase 2 when CSV format is confirmed
-  // For now returns empty — scheduler falls back to tag-based assignment
-  return { elementaryNeeded: 0, highschoolNeeded: 0, blocks: [] };
+function resolveAvailability(availabilityRecords, previousMonthsAvail, userId, dateStr, dayName) {
+  const userRecords = availabilityRecords.filter(a => a.userId === userId);
+
+  // 1. Exact date match in current month — highest priority
+  const exact = userRecords.find(a => a.date === dateStr);
+  if (exact) {
+    return { available: true, startTime: exact.startTime, endTime: exact.endTime };
+  }
+
+  // 2. No current month record for this date.
+  // Only use previous months as fallback if the instructor has submitted
+  // ZERO availability for the current month entirely (not just this date).
+  // If they submitted for some days this month but not this one, they are NOT available today.
+  const hasAnyCurrentMonth = userRecords.length > 0;
+  if (hasAnyCurrentMonth) {
+    // They submitted availability this month but not for this specific date — skip them
+    return { available: false };
+  }
+
+  // 3. No current month availability at all — look back month by month
+  for (const monthRecords of previousMonthsAvail) {
+    const userPrev = monthRecords.filter(a => a.userId === userId);
+    if (userPrev.length === 0) continue;
+    // Find a record for this day name
+    const dayMatch = userPrev.find(a => {
+      if (!a.date) return false;
+      const d = new Date(a.date + 'T00:00:00');
+      const jsDay = d.getDay();
+      const pw = jsDay === 0 ? 6 : jsDay - 1;
+      return DAY_NAMES[pw] === dayName;
+    });
+    if (dayMatch) {
+      return { available: true, startTime: dayMatch.startTime, endTime: dayMatch.endTime, fromPreviousMonth: true };
+    }
+  }
+
+  // 4. Never submitted anything anywhere — not available
+  return { available: false };
+}
+
+// ─── Fixed staff helpers ──────────────────────────────────────────────────────
+
+function parseAMPMtoHHMM(timeStr) {
+  if (!timeStr || timeStr.toLowerCase() === 'off') return null;
+  const m = timeStr.trim().match(/^(\d+):(\d+)\s*(AM|PM)$/i);
+  if (!m) return null;
+  let h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  const ampm = m[3].toUpperCase();
+  if (ampm === 'PM' && h !== 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
 function getFixedStaffForDay(dayName, weekOfMonth) {
@@ -245,10 +184,48 @@ function getFixedStaffForDay(dayName, weekOfMonth) {
     if (dayName === 'Saturday' && sched.saturday_weeks) {
       if (!sched.saturday_weeks.includes(weekOfMonth)) continue;
     }
-    result.push({ name, role: sched.role, shift });
+    const parts = shift.split(' - ');
+    result.push({
+      name,
+      role: sched.role,
+      shift,
+      startTime: parts.length === 2 ? parseAMPMtoHHMM(parts[0]) : null,
+      endTime: parts.length === 2 ? parseAMPMtoHHMM(parts[1]) : null,
+      countsTowardRatio: sched.countsTowardRatio ?? false,
+    });
   }
   result.sort((a, b) => (ROLE_DISPLAY_ORDER[a.role] ?? 99) - (ROLE_DISPLAY_ORDER[b.role] ?? 99));
   return result;
+}
+
+// ─── Sub-role helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Returns instructor's sub-role capability score for sorting:
+ * Highschool = 0 (most flexible, preferred)
+ * Both Highschool+Elementary = 0 (same as Highschool)
+ * Elementary only = 1
+ * Online only = 2 (not counted in ratio, handled separately)
+ */
+function getSubRoleScore(instructor) {
+  const subs = instructor.subRoles || [];
+  const hasHS = subs.includes('Highschool');
+  const hasEL = subs.includes('Elementary');
+  const hasON = subs.includes('Online');
+  if (hasHS) return 0; // Can float — most preferred
+  if (hasEL) return 1; // Elementary only
+  if (hasON) return 2; // Online only
+  return 1; // Default to elementary treatment if no sub-role set
+}
+
+function isOnlineOnly(instructor) {
+  const subs = instructor.subRoles || [];
+  return subs.includes('Online') && !subs.includes('Highschool') && !subs.includes('Elementary');
+}
+
+function isGuaranteed(instructor) {
+  const firstName = (instructor.displayName || '').split(' ')[0];
+  return GUARANTEED_NAMES.has(firstName);
 }
 
 // ─── Main scheduling engine ───────────────────────────────────────────────────
@@ -257,22 +234,25 @@ function getFixedStaffForDay(dayName, weekOfMonth) {
  * generateSchedule
  *
  * @param {Object} params
- * @param {Array}  params.instructors   - Array of user profile objects from Firestore users collection
- *                                        Each: { uid, displayName, role, instructorType, priority, maxHoursPerWeek, ... }
- * @param {Array}  params.availability  - Array of availability docs from Firestore availability collection
- *                                        Each: { userId, date, dayName, startTime, endTime, week, month, year }
- * @param {string} params.month         - e.g. 'March'
- * @param {number} params.year          - e.g. 2026
- * @param {Object} params.config        - Scheduling config
- *                                        { minPerDay, maxPerDay, maxDaysPerWeek, fairDistribution }
- * @returns {Object} schedule
+ * @param {Array}  params.instructors          - Approved non-owner users from Firestore
+ * @param {Array}  params.availability         - Current month availability docs
+ * @param {Array}  params.previousMonthsAvail  - Array of arrays, each being one prior month's availability docs
+ * @param {string} params.month                - e.g. 'May'
+ * @param {number} params.year                 - e.g. 2026
+ * @param {Object} params.config               - { minPerDay, maxPerDay, maxDaysPerWeek }
  */
-export function generateSchedule({ instructors, availability, month, year, config = {} }) {
+export function generateSchedule({
+  instructors,
+  availability,
+  previousMonthsAvail = [],
+  month,
+  year,
+  config = {},
+}) {
   const {
     minPerDay = 8,
     maxPerDay = 11,
     maxDaysPerWeek = 5,
-    fairDistribution = true,
   } = config;
 
   const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
@@ -281,23 +261,14 @@ export function generateSchedule({ instructors, availability, month, year, confi
   const workingDays = getDaysInMonth(year, monthNumber);
   const fixedStaffNames = new Set(Object.keys(FIXED_SCHEDULES));
 
-  // Build instructor map (only approved, non-owner, non-fixed instructors)
+  // Eligible form instructors: approved, not owner, not fixed staff
   const formInstructors = instructors.filter(
     u => u.approved && u.role !== 'owner' && !fixedStaffNames.has(u.displayName)
   );
 
-  // Priority map: from profile field (1=highest, 2=medium, 3=lowest). Default 2.
-  const getPriority = (instructor) => instructor.priority ?? 2;
-
-  // Role for each form instructor
-  const getRole = (instructor) => {
-    if (ROLE_ASSIGNMENTS[instructor.displayName]) return ROLE_ASSIGNMENTS[instructor.displayName];
-    return instructor.instructorType || 'Instructor';
-  };
-
   // Tracking
-  const totalAssignments = {};
-  const weeklyAssignments = {}; // uid -> { isoWeek -> count }
+  const totalAssignments = {};   // uid -> total shifts assigned
+  const weeklyAssignments = {};  // uid -> { weekKey -> count }
 
   for (const inst of formInstructors) {
     totalAssignments[inst.uid] = 0;
@@ -306,109 +277,159 @@ export function generateSchedule({ instructors, availability, month, year, confi
 
   const scheduleDays = [];
   const warnings = [];
+  const openShiftNeeded = []; // Days that need open shift postings
 
   for (const day of workingDays) {
-    const { dateStr, dayName, dayNumber, weekOfMonth, isoWeek } = day;
+    const { dateStr, dayName, dayNumber, weekOfMonth, weekKey } = day;
 
-    // 1. Fixed staff
+    // ── 1. Fixed staff for this day ──────────────────────────────────────────
     const fixedToday = getFixedStaffForDay(dayName, weekOfMonth);
     const assignedNames = [];
     const shiftTimes = {};
     const roles = {};
 
-    let fixedCountingCount = 0;
-    for (const { name, role, shift } of fixedToday) {
-      assignedNames.push(name);
-      shiftTimes[name] = shift;
-      roles[name] = role;
-      if (STAFFING_COUNT_ROLES.has(role)) fixedCountingCount++;
+    let fixedRatioCount = 0;
+    for (const f of fixedToday) {
+      assignedNames.push(f.name);
+      shiftTimes[f.name] = f.shift;
+      roles[f.name] = f.role;
+      if (f.countsTowardRatio) fixedRatioCount++;
     }
 
-    // 2. Find available form instructors for this day
-    const availableForm = [];
+    // ── 2. Resolve availability for all form instructors ────────────────────
+    const availableInstructors = [];
     for (const inst of formInstructors) {
-      const avail = resolveAvailability(availability, inst.uid, dateStr, dayName, weekOfMonth);
-      if (avail.available) {
-        availableForm.push({
-          inst,
-          startTime: avail.startTime,
-          endTime: avail.endTime,
-          shiftStr: avail.startTime && avail.endTime ? `${avail.startTime} - ${avail.endTime}` : '',
-        });
+      const avail = resolveAvailability(availability, previousMonthsAvail, inst.uid, dateStr, dayName);
+      if (!avail.available) continue;
+
+      // Check weekly limit
+      const weekCount = (weeklyAssignments[inst.uid] || {})[weekKey] || 0;
+      if (weekCount >= maxDaysPerWeek) continue;
+
+      availableInstructors.push({
+        inst,
+        startTime: avail.startTime,
+        endTime: avail.endTime,
+        shiftStr: avail.startTime && avail.endTime ? `${avail.startTime} - ${avail.endTime}` : '',
+        fromPreviousMonth: avail.fromPreviousMonth || false,
+      });
+    }
+
+    // ── 3. Split into online-only vs in-centre ───────────────────────────────
+    const onlineOnly = availableInstructors.filter(a => isOnlineOnly(a.inst));
+    const inCentre   = availableInstructors.filter(a => !isOnlineOnly(a.inst));
+
+    // ── 4. Sort in-centre instructors by scheduling priority ─────────────────
+    // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
+    inCentre.sort((a, b) => {
+      // Guaranteed instructors always first
+      const ga = isGuaranteed(a.inst) ? 0 : 1;
+      const gb = isGuaranteed(b.inst) ? 0 : 1;
+      if (ga !== gb) return ga - gb;
+
+      // Then by priority
+      const pa = a.inst.priority ?? 2;
+      const pb = b.inst.priority ?? 2;
+      if (pa !== pb) return pa - pb;
+
+      // Then prefer Highschool-capable (sub-role score 0 beats 1)
+      const sa = getSubRoleScore(a.inst);
+      const sb = getSubRoleScore(b.inst);
+      if (sa !== sb) return sa - sb;
+
+      // Finally fairness — fewest total assignments first
+      return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
+    });
+
+    // ── 5. Assign in-centre instructors up to maxPerDay ──────────────────────
+    const remainingSlots = Math.max(0, maxPerDay - fixedRatioCount);
+    let assigned = 0;
+
+    // Track HS/EL balance for this day
+    let hsCount = 0;
+    let elCount = 0;
+
+    for (const candidate of inCentre) {
+      if (assigned >= remainingSlots) break;
+
+      const subScore = getSubRoleScore(candidate.inst);
+      const isHS = subScore === 0;
+      const isEL = subScore === 1;
+
+      // Soft balance: don't let elementary outnumber highschool by more than 2
+      // unless we have no choice (guaranteed instructors bypass this)
+      if (isEL && !isGuaranteed(candidate.inst)) {
+        if (elCount - hsCount >= 2) continue; // Skip for now, may add later
+      }
+
+      assignedNames.push(candidate.inst.displayName);
+      roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
+      if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+
+      totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
+      if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
+      weeklyAssignments[candidate.inst.uid][weekKey] = (weeklyAssignments[candidate.inst.uid][weekKey] || 0) + 1;
+
+      assigned++;
+      if (isHS) hsCount++;
+      if (isEL) elCount++;
+    }
+
+    // Second pass: fill remaining slots with skipped elementary if still under max
+    if (assigned < remainingSlots) {
+      for (const candidate of inCentre) {
+        if (assigned >= remainingSlots) break;
+        if (assignedNames.includes(candidate.inst.displayName)) continue; // already assigned
+
+        assignedNames.push(candidate.inst.displayName);
+        roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
+        if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+
+        totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
+        if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
+        weeklyAssignments[candidate.inst.uid][weekKey] = (weeklyAssignments[candidate.inst.uid][weekKey] || 0) + 1;
+
+        assigned++;
       }
     }
 
-    // 3. Separate counting vs non-counting
-    const formCounting = availableForm.filter(a => STAFFING_COUNT_ROLES.has(getRole(a.inst)));
-    const formNonCounting = availableForm.filter(a => !STAFFING_COUNT_ROLES.has(getRole(a.inst)));
-
-    // 4. Auto-assign non-counting (Host, Admin)
-    for (const { inst, shiftStr } of formNonCounting) {
-      const role = getRole(inst);
-      assignedNames.push(inst.displayName);
-      roles[inst.displayName] = role;
-      if (shiftStr) shiftTimes[inst.displayName] = shiftStr;
-      totalAssignments[inst.uid] = (totalAssignments[inst.uid] || 0) + 1;
-      if (!weeklyAssignments[inst.uid]) weeklyAssignments[inst.uid] = {};
-      weeklyAssignments[inst.uid][isoWeek] = (weeklyAssignments[inst.uid][isoWeek] || 0) + 1;
-    }
-
-    // 5. Assign counting instructors up to max, respecting priority + fairness
-    let eligible = formCounting.filter(({ inst }) => {
-      const weekCount = (weeklyAssignments[inst.uid] || {})[isoWeek] || 0;
-      return weekCount < maxDaysPerWeek;
+    // ── 6. Assign online-only instructors (don't count toward ratio) ─────────
+    // Sort by priority + fairness
+    onlineOnly.sort((a, b) => {
+      const pa = a.inst.priority ?? 2;
+      const pb = b.inst.priority ?? 2;
+      if (pa !== pb) return pa - pb;
+      return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
     });
 
-    if (eligible.length === 0 && formCounting.length > 0) {
+    for (const candidate of onlineOnly) {
+      const weekCount = (weeklyAssignments[candidate.inst.uid] || {})[weekKey] || 0;
+      if (weekCount >= maxDaysPerWeek) continue;
+
+      assignedNames.push(candidate.inst.displayName);
+      roles[candidate.inst.displayName] = 'Online Instructor';
+      if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+
+      totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
+      if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
+      weeklyAssignments[candidate.inst.uid][weekKey] = (weeklyAssignments[candidate.inst.uid][weekKey] || 0) + 1;
+    }
+
+    // ── 7. Warnings & open shift detection ───────────────────────────────────
+    const inCentreTotal = fixedRatioCount + assigned;
+
+    if (inCentreTotal < minPerDay) {
+      const shortfall = minPerDay - inCentreTotal;
       warnings.push(
-        `WARNING: All available instructors on ${dayName}, ${month} ${dayNumber} have reached their weekly max. Assigning anyway.`
+        `⚠ ${dayName} ${month} ${dayNumber}: Only ${inCentreTotal} in-centre staff (need ${minPerDay}). ${shortfall} open shift${shortfall > 1 ? 's' : ''} needed.`
       );
-      eligible = [...formCounting];
+      for (let i = 0; i < shortfall; i++) {
+        openShiftNeeded.push({ date: dateStr, dayName, dayNumber });
+      }
     }
 
-    if (fairDistribution) {
-      eligible.sort((a, b) => {
-        const pa = getPriority(a.inst), pb = getPriority(b.inst);
-        if (pa !== pb) return pa - pb;
-        return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
-      });
-    } else {
-      eligible.sort((a, b) => getPriority(a.inst) - getPriority(b.inst));
-    }
-
-    const remainingSlots = Math.max(0, maxPerDay - fixedCountingCount);
-    const needed = Math.max(0, minPerDay - fixedCountingCount);
-    let numToAssign = Math.min(remainingSlots, eligible.length);
-    numToAssign = Math.max(numToAssign, Math.min(needed, eligible.length));
-
-    const assignedInstructors = eligible.slice(0, numToAssign);
-
-    // Calculate shortfalls for sub-role label assignment
-    const elemAssigned = assignedInstructors.filter(a => canCoverSide(a.inst, 'Elementary')).length;
-    const hsAssigned   = assignedInstructors.filter(a => canCoverSide(a.inst, 'Highschool')).length;
-    const elemShortfall = Math.max(0, hsAssigned - elemAssigned);
-    const hsShortfall   = Math.max(0, elemAssigned - hsAssigned);
-
-    const subRoleLabels = {};
-    for (const { inst, shiftStr } of assignedInstructors) {
-      assignedNames.push(inst.displayName);
-      roles[inst.displayName] = getRole(inst);
-      if (shiftStr) shiftTimes[inst.displayName] = shiftStr;
-      subRoleLabels[inst.displayName] = assignSubRoleLabel(inst, elemShortfall, hsShortfall);
-      totalAssignments[inst.uid] = (totalAssignments[inst.uid] || 0) + 1;
-      if (!weeklyAssignments[inst.uid]) weeklyAssignments[inst.uid] = {};
-      weeklyAssignments[inst.uid][isoWeek] = (weeklyAssignments[inst.uid][isoWeek] || 0) + 1;
-    }
-
-    const countingTotal = fixedCountingCount + assignedInstructors.length;
-
-    // 6. Warnings
-    if (availableForm.length === 0 && fixedToday.length === 0) {
-      warnings.push(`WARNING: No staff available on ${dayName}, ${month} ${dayNumber}`);
-    } else if (countingTotal < minPerDay) {
-      warnings.push(
-        `WARNING: Only ${countingTotal} instructor(s)/lead(s) on ${dayName}, ${month} ${dayNumber} (min ${minPerDay}). LOW STAFF.`
-      );
+    if (inCentre.length === 0 && onlineOnly.length === 0 && fixedToday.length === 0) {
+      warnings.push(`⚠ ${dayName} ${month} ${dayNumber}: No staff available at all.`);
     }
 
     scheduleDays.push({
@@ -416,15 +437,15 @@ export function generateSchedule({ instructors, availability, month, year, confi
       dayOfWeek: dayName,
       dayNumber,
       assignedEmployees: assignedNames,
-      availableEmployees: availableForm.map(a => a.inst.displayName),
+      availableEmployees: availableInstructors.map(a => a.inst.displayName),
       shiftTimes,
       roles,
-      subRoleLabels,  // e.g. { 'Jane Smith': 'Elementary', 'Bob Lee': 'Highschool', 'Alex T': 'Flex' }
-      countingStaffCount: countingTotal,
+      countingStaffCount: inCentreTotal,
+      openSlotsNeeded: Math.max(0, minPerDay - inCentreTotal),
     });
   }
 
-  // Build employee summary
+  // ── Employee summary ────────────────────────────────────────────────────────
   const employeeSummary = {};
   for (const inst of formInstructors) {
     employeeSummary[inst.displayName] = totalAssignments[inst.uid] || 0;
@@ -442,8 +463,7 @@ export function generateSchedule({ instructors, availability, month, year, confi
     days: scheduleDays,
     employeeSummary,
     warnings,
+    openShiftNeeded,
     status: 'draft',
   };
 }
-
-export { FIXED_SCHEDULES, ROLE_ASSIGNMENTS, STAFFING_COUNT_ROLES, ROLE_DISPLAY_ORDER };
