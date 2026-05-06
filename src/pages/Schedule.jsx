@@ -8,11 +8,11 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
-  Clock, Loader2,
+  Clock, Loader2, Repeat, Trash2,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
-  getDay, addMonths, subMonths, isSameMonth,
+  getDay, addMonths, subMonths, isSameMonth, parseISO,
 } from 'date-fns';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -411,12 +411,301 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
   );
 }
 
+
+// ─── Weekly Availability Modal ───────────────────────────────────────────────
+
+const WEEK_DAYS = [
+  { label: 'Mon', value: 1 },
+  { label: 'Tue', value: 2 },
+  { label: 'Wed', value: 3 },
+  { label: 'Thu', value: 4 },
+  { label: 'Fri', value: 5 },
+  { label: 'Sat', value: 6 },
+];
+
+const RECURRENCE_OPTIONS = [
+  { value: 'every',       label: 'Every week' },
+  { value: 'odd',         label: 'Odd weeks (1, 3, 5)' },
+  { value: 'even',        label: 'Even weeks (2, 4)' },
+  { value: 'week1',       label: 'Week 1 only' },
+  { value: 'week2',       label: 'Week 2 only' },
+  { value: 'week3',       label: 'Week 3 only' },
+  { value: 'week4',       label: 'Week 4 only' },
+];
+
+function getWeekOfMonth(date) {
+  return Math.ceil(date.getDate() / 7);
+}
+
+function weekMatchesRecurrence(date, recurrence) {
+  const w = getWeekOfMonth(date);
+  if (recurrence === 'every') return true;
+  if (recurrence === 'odd')   return w % 2 !== 0;
+  if (recurrence === 'even')  return w % 2 === 0;
+  if (recurrence === 'week1') return w === 1;
+  if (recurrence === 'week2') return w === 2;
+  if (recurrence === 'week3') return w === 3;
+  if (recurrence === 'week4') return w === 4;
+  return false;
+}
+
+function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose, onSaveBulk }) {
+  const [selectedDays, setSelectedDays] = useState([]);
+  const [recurrence, setRecurrence] = useState('every');
+  const [startTime, setStartTime] = useState('15:00');
+  const [endTime, setEndTime] = useState('20:00');
+  const [scope, setScope] = useState('thisMonth'); // 'thisMonth' | 'nextMonth' | 'both'
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [preview, setPreview] = useState([]);
+
+  // Build preview dates whenever inputs change
+  useEffect(() => {
+    if (selectedDays.length === 0) { setPreview([]); return; }
+
+    const months = [];
+    if (scope === 'thisMonth' || scope === 'both') months.push(currentMonth);
+    if (scope === 'nextMonth' || scope === 'both') {
+      const next = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1);
+      months.push(next);
+    }
+
+    const todayStr = format(new Date(), 'yyyy-MM-dd');
+    const dates = [];
+
+    for (const month of months) {
+      const start = startOfMonth(month);
+      const end   = endOfMonth(month);
+      const allDays = eachDayOfInterval({ start, end });
+      for (const d of allDays) {
+        const dow = getDay(d); // 0=Sun
+        if (!selectedDays.includes(dow)) continue;
+        if (!weekMatchesRecurrence(d, recurrence)) continue;
+        const ds = format(d, 'yyyy-MM-dd');
+        if (ds < todayStr) continue;
+        dates.push(ds);
+      }
+    }
+    setPreview(dates);
+  }, [selectedDays, recurrence, scope, currentMonth]);
+
+  const toggleDay = (dow) => {
+    setSelectedDays(prev =>
+      prev.includes(dow) ? prev.filter(d => d !== dow) : [...prev, dow]
+    );
+  };
+
+  const existingDates = new Set(
+    availability.filter(a => a.userId === profile?.uid).map(a => a.date)
+  );
+  const overwriteCount = preview.filter(d => existingDates.has(d)).length;
+
+  const handleSave = async () => {
+    setError('');
+    if (selectedDays.length === 0) { setError('Select at least one day.'); return; }
+    if (!startTime || !endTime)    { setError('Set a start and end time.'); return; }
+    if (startTime >= endTime)      { setError('End time must be after start time.'); return; }
+    if (preview.length === 0)      { setError('No matching dates found — try different settings.'); return; }
+    setSaving(true);
+    try {
+      await onSaveBulk(preview, startTime, endTime);
+    } catch {
+      setError('Failed to save. Please try again.');
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-md rounded-2xl bg-white shadow-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}
+        style={{ animation: 'slideUp 0.2s ease-out', maxHeight: '90vh', overflowY: 'auto' }}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 bg-gradient-to-r from-emerald-50 to-white sticky top-0">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-emerald-100 p-1.5 text-emerald-600">
+              <Repeat size={16} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Set Weekly Availability</h3>
+              <p className="text-xs text-gray-500">Apply to multiple days at once</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-full w-8 h-8 flex items-center justify-center hover:bg-gray-100 text-gray-400">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+          {error && (
+            <div className="flex items-center gap-2 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+              <AlertTriangle size={14} className="shrink-0" /> {error}
+            </div>
+          )}
+
+          {/* Day picker */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Days of the Week</label>
+            <div className="flex gap-2 flex-wrap">
+              {WEEK_DAYS.map(({ label, value }) => {
+                const active = selectedDays.includes(value);
+                return (
+                  <button
+                    key={value}
+                    onClick={() => toggleDay(value)}
+                    className={`w-12 h-12 rounded-xl text-sm font-bold border-2 transition-all active:scale-95 ${
+                      active
+                        ? 'bg-emerald-500 border-emerald-500 text-white shadow-sm'
+                        : 'bg-white border-gray-200 text-gray-500 hover:border-emerald-300 hover:text-emerald-600'
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Time */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Time</label>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">From</label>
+                <input type="time" value={startTime} onChange={e => { setStartTime(e.target.value); setError(''); }}
+                  className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">To</label>
+                <input type="time" value={endTime} onChange={e => { setEndTime(e.target.value); setError(''); }}
+                  className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
+              </div>
+            </div>
+          </div>
+
+          {/* Recurrence */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Repeats</label>
+            <div className="grid grid-cols-2 gap-2">
+              {RECURRENCE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setRecurrence(opt.value)}
+                  className={`rounded-xl px-3 py-2.5 text-xs font-semibold border-2 text-left transition-all ${
+                    recurrence === opt.value
+                      ? 'bg-blue-50 border-blue-400 text-blue-700'
+                      : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Scope */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Apply To</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { value: 'thisMonth', label: format(currentMonth, 'MMM') },
+                { value: 'nextMonth', label: format(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1), 'MMM') },
+                { value: 'both',      label: 'Both' },
+              ].map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setScope(opt.value)}
+                  className={`rounded-xl px-3 py-2.5 text-xs font-bold border-2 transition-all ${
+                    scope === opt.value
+                      ? 'bg-purple-50 border-purple-400 text-purple-700'
+                      : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preview */}
+          {preview.length > 0 && (
+            <div className="rounded-xl bg-gray-50 border border-gray-200 p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-gray-600 uppercase tracking-widest">
+                  Preview — {preview.length} day{preview.length !== 1 ? 's' : ''}
+                </span>
+                {overwriteCount > 0 && (
+                  <span className="text-xs text-orange-600 font-semibold">
+                    ⚠ Overwrites {overwriteCount} existing
+                  </span>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                {preview.map(d => (
+                  <span
+                    key={d}
+                    className={`rounded-lg px-2 py-1 text-xs font-medium ${
+                      existingDates.has(d)
+                        ? 'bg-orange-100 text-orange-700'
+                        : 'bg-emerald-100 text-emerald-700'
+                    }`}
+                  >
+                    {new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {preview.length === 0 && selectedDays.length > 0 && (
+            <div className="rounded-xl bg-yellow-50 border border-yellow-200 px-4 py-3 text-xs text-yellow-700 font-medium">
+              No upcoming dates match your selection.
+            </div>
+          )}
+
+          {/* Actions */}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={handleSave}
+              disabled={saving || preview.length === 0}
+              className="flex-1 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 active:scale-95 transition-all"
+            >
+              {saving
+                ? <><Loader2 size={14} className="animate-spin" /> Saving {preview.length} days…</>
+                : <><Check size={14} /> Save {preview.length > 0 ? `${preview.length} days` : ''}</>
+              }
+            </button>
+            <button
+              onClick={onClose}
+              className="rounded-xl border-2 border-gray-200 px-5 py-3 text-sm font-semibold text-gray-500 hover:bg-gray-50 active:scale-95 transition-all"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+      <style>{`
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+      `}</style>
+    </div>
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Schedule() {
   const { profile } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
+  const [showWeeklyModal, setShowWeeklyModal] = useState(false);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [openShifts, setOpenShifts] = useState([]);
@@ -481,6 +770,24 @@ export default function Schedule() {
       comment: comment || '',
     });
     setSelectedDate(null);
+  };
+
+  const handleSaveBulk = async (dates, startTime, endTime) => {
+    // For each date: delete existing then write new
+    const writes = dates.map(async (dateStr) => {
+      const existing = myAvailMap[dateStr];
+      if (existing) await deleteDoc(doc(db, 'availability', existing.id));
+      await addDoc(collection(db, 'availability'), {
+        userId: profile.uid,
+        userName: profile.displayName,
+        date: dateStr,
+        startTime,
+        endTime,
+        bulkSet: true,
+      });
+    });
+    await Promise.all(writes);
+    setShowWeeklyModal(false);
   };
 
   const handleDeleteAvail = async (id) => {
@@ -595,14 +902,22 @@ export default function Schedule() {
   return (
     <div className="mx-auto max-w-5xl">
       {/* Header */}
-      <div className="mb-6 flex items-center gap-3">
-        <div className="rounded-xl bg-blue-100 p-2.5 text-blue-600">
-          <CalendarDays size={22} />
+      <div className="mb-6 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="rounded-xl bg-blue-100 p-2.5 text-blue-600">
+            <CalendarDays size={22} />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">My Schedule</h1>
+            <p className="text-sm text-gray-500">View shifts, set availability, and manage time off</p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">My Schedule</h1>
-          <p className="text-sm text-gray-500">View shifts, set availability, and manage time off</p>
-        </div>
+        <button
+          onClick={() => setShowWeeklyModal(true)}
+          className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
+        >
+          <Repeat size={15} /> Set Weekly
+        </button>
       </div>
 
       {/* Stats row */}
@@ -817,6 +1132,17 @@ export default function Schedule() {
           </div>
         );
       })()}
+
+      {/* Weekly Availability Modal */}
+      {showWeeklyModal && (
+        <WeeklyAvailabilityModal
+          currentMonth={currentMonth}
+          availability={availability}
+          profile={profile}
+          onClose={() => setShowWeeklyModal(false)}
+          onSaveBulk={handleSaveBulk}
+        />
+      )}
 
       {/* Day Modal */}
       {selectedDate && (
