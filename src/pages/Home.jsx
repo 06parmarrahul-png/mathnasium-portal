@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
+import { format } from 'date-fns';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -59,10 +60,21 @@ export default function Home() {
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
 
-  useEffect(() => onSnapshot(
-    query(collection(db, 'shifts'), orderBy('date', 'asc')),
-    snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  // Local-time today (avoids UTC edge cases for Pacific time)
+  const todayStr = format(new Date(), 'yyyy-MM-dd');
+
+  // Only subscribe to this user's shifts — much smaller payload than the whole collection.
+  // (Equality-only filter avoids needing a composite Firestore index.)
+  useEffect(() => {
+    if (!profile?.uid) return;
+    return onSnapshot(
+      query(
+        collection(db, 'shifts'),
+        where('userId', '==', profile.uid),
+      ),
+      snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+  }, [profile?.uid]);
 
   useEffect(() => onSnapshot(
     query(collection(db, 'announcements'), orderBy('date', 'desc'), limit(10)),
@@ -74,13 +86,11 @@ export default function Home() {
     }
   ), []);
 
-  const todayStr = new Date().toISOString().split('T')[0];
-
   const upcomingShift = useMemo(() => {
     return shifts
-      .filter(s => s.userId === profile?.uid && s.date >= todayStr)
+      .filter(s => s.date >= todayStr)
       .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
-  }, [shifts, profile, todayStr]);
+  }, [shifts, todayStr]);
 
   const latestAnnouncement = announcements[0] || null;
 

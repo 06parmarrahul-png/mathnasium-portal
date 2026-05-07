@@ -1,6 +1,7 @@
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
+import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
@@ -11,6 +12,21 @@ import Chat from './pages/Chat';
 import Admin from './pages/Admin';
 import NotificationPreferences from './pages/NotificationPreferences';
 
+function NotFound() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50 px-4">
+      <div className="mx-auto max-w-md rounded-xl bg-white p-8 shadow-sm text-center">
+        <p className="text-6xl mb-2">🤔</p>
+        <h1 className="text-2xl font-bold text-gray-900 mb-2">Page not found</h1>
+        <p className="text-sm text-gray-500 mb-4">The page you're looking for doesn't exist.</p>
+        <Link to="/" className="inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">
+          Back to Home
+        </Link>
+      </div>
+    </div>
+  );
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -20,18 +36,21 @@ function AppRoutes() {
       <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
       <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
-      <Route path="/admin" element={<ProtectedRoute><Layout><Admin /></Layout></ProtectedRoute>} />
+      <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
+      <Route path="*" element={<NotFound />} />
     </Routes>
   );
 }
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AuthProvider>
-        <AppRoutes />
-      </AuthProvider>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <AuthProvider>
+          <AppRoutes />
+        </AuthProvider>
+      </BrowserRouter>
+    </ErrorBoundary>
   );
 }

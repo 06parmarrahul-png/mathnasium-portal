@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, query, orderBy, limit, doc, updateDoc, getDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle } from 'lucide-react';
@@ -11,9 +11,16 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
 
+  // Load the latest 200 messages (newest first), then reverse to display chronologically.
+  // The previous code did orderBy asc + limit 200, which would have stopped showing
+  // new messages once chat passed 200 total (it returned the oldest 200 forever).
   useEffect(() => onSnapshot(
-    query(collection(db, 'chat'), orderBy('createdAt', 'asc'), limit(200)),
-    snap => setMessages(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
+    snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docs.reverse(); // newest at the bottom
+      setMessages(docs);
+    }
   ), []);
 
   useEffect(() => {
@@ -46,27 +53,39 @@ export default function Chat() {
       return;
     }
 
+    // Use a transaction so two people clicking "Take This Shift" at the same
+    // time can't both succeed. The transaction re-reads the chat doc and
+    // bails out if it's no longer 'open'.
     try {
-      // Update the chat message to mark as accepted
-      await updateDoc(doc(db, 'chat', msg.id), {
-        swapStatus: 'accepted',
-        acceptedBy: profile.uid,
-        acceptedByName: profile.displayName,
+      await runTransaction(db, async (tx) => {
+        const chatRef = doc(db, 'chat', msg.id);
+        const chatSnap = await tx.get(chatRef);
+        if (!chatSnap.exists()) throw new Error('Swap message no longer exists.');
+        const data = chatSnap.data();
+        if (data.swapStatus !== 'open') {
+          throw new Error('This shift has already been taken.');
+        }
+
+        tx.update(chatRef, {
+          swapStatus: 'accepted',
+          acceptedBy: profile.uid,
+          acceptedByName: profile.displayName,
+        });
+
+        // Transfer the shift assignment to the acceptor
+        if (msg.shiftId) {
+          const shiftRef = doc(db, 'shifts', msg.shiftId);
+          const shiftSnap = await tx.get(shiftRef);
+          if (shiftSnap.exists()) {
+            tx.update(shiftRef, {
+              userId: profile.uid,
+              userName: profile.displayName,
+            });
+          }
+        }
       });
 
-      // Update the shift assignment - transfer it to the acceptor
-      if (msg.shiftId) {
-        const shiftRef = doc(db, 'shifts', msg.shiftId);
-        const shiftSnap = await getDoc(shiftRef);
-        if (shiftSnap.exists()) {
-          await updateDoc(shiftRef, {
-            userId: profile.uid,
-            userName: profile.displayName,
-          });
-        }
-      }
-
-      // Post a confirmation message
+      // Confirmation message — outside the transaction (separate concern; OK to fail independently)
       await addDoc(collection(db, 'chat'), {
         text: `${profile.displayName} has taken ${msg.userName}'s shift on ${msg.shiftDate} (${msg.shiftStartTime} - ${msg.shiftEndTime}).`,
         userId: 'system',
@@ -75,8 +94,8 @@ export default function Chat() {
         createdAt: serverTimestamp(),
         type: 'shift_confirmation',
       });
-    } catch {
-      alert('Failed to accept shift. It may have already been taken.');
+    } catch (err) {
+      alert(err?.message || 'Failed to accept shift. It may have already been taken.');
     }
   };
 

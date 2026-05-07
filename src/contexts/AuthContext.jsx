@@ -1,5 +1,11 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from 'firebase/auth';
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendPasswordResetEmail,
+  signOut,
+} from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 
@@ -29,7 +35,11 @@ export function AuthProvider({ children }) {
   }), []);
 
   const login = async (email, password) => {
-    await signInWithEmailAndPassword(auth, email, password);
+    await signInWithEmailAndPassword(auth, email.trim(), password);
+  };
+
+  const resetPassword = async (email) => {
+    await sendPasswordResetEmail(auth, email.trim());
   };
 
   /**
@@ -40,15 +50,19 @@ export function AuthProvider({ children }) {
    * @param {Object} extras - { instructorType, phone }
    */
   const signup = async (email, password, displayName, extras = {}) => {
-    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const cleanEmail = email.trim();
+    const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
+    // Always default new accounts to plain "Instructor". The owner promotes
+    // people to Lead/Admin/Manager etc. from the admin panel after approval.
+    // Don't trust any role value passed in from the signup form.
     const profileData = {
       uid: cred.user.uid,
-      email,
-      displayName,
+      email: cleanEmail,
+      displayName: displayName.trim(),
       role: 'instructor',
       approved: false,
       // Scheduling fields (set defaults; admin can edit)
-      instructorType: extras.instructorType || 'Instructor',
+      instructorType: 'Instructor',
       priority: 2,           // Admin sets this (1=high, 2=medium, 3=low)
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',
@@ -64,7 +78,7 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, profile, loading, login, signup, logout, resetPassword }}>
       {children}
     </AuthContext.Provider>
   );

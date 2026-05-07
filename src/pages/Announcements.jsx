@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { db } from '../firebase';
+import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Megaphone, Plus, Trash2, Pin } from 'lucide-react';
 
@@ -30,8 +30,16 @@ export default function Announcements() {
     e.preventDefault();
     if (!title.trim() || !text.trim()) return;
     await addDoc(collection(db, 'announcements'), {
-      title, text, author: profile?.displayName || 'Unknown',
-      date: new Date().toISOString(), pinned, category,
+      title: title.trim(),
+      text: text.trim(),
+      author: profile?.displayName || 'Unknown',
+      authorId: profile?.uid || null,
+      // 'date' kept as ISO string for backwards-compatible orderBy.
+      // 'createdAt' uses the Firebase server clock — preferred for sorting.
+      date: new Date().toISOString(),
+      createdAt: serverTimestamp(),
+      pinned,
+      category,
     });
     setTitle(''); setText(''); setCategory('general'); setPinned(false); setShowForm(false);
   };

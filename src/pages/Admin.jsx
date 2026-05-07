@@ -12,7 +12,7 @@ import {
   DollarSign, Download, CalendarRange,
 } from 'lucide-react';
 import {
-  format, startOfWeek, endOfWeek, addWeeks, subWeeks, addDays, isSameDay,
+  format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 
@@ -47,39 +47,6 @@ const ROLE_COLORS = {
   'default':           { bg: '#16a34a', text: '#fff' },
 };
 
-// Parse "3:00 PM - 7:00 PM" or "11:30 AM - 7:30 PM" into decimal hours
-function parseFixedShiftHours(shiftStr) {
-  if (!shiftStr || shiftStr.toLowerCase() === 'off') return 0;
-  const parts = shiftStr.split(' - ');
-  if (parts.length !== 2) return 0;
-  const parseTime = (s) => {
-    const m = s.trim().match(/^(\d+):(\d+)\s*(AM|PM)$/i);
-    if (!m) return 0;
-    let h = parseInt(m[1], 10);
-    const min = parseInt(m[2], 10);
-    const ampm = m[3].toUpperCase();
-    if (ampm === 'PM' && h !== 12) h += 12;
-    if (ampm === 'AM' && h === 12) h = 0;
-    return h + min / 60;
-  };
-  const diff = parseTime(parts[1]) - parseTime(parts[0]);
-  return diff > 0 ? diff : 0;
-}
-
-// Get total hours from fixed staff on a given day name + week of month
-function fixedStaffHoursForDay(dayName, weekOfMonth) {
-  let total = 0;
-  for (const [, sched] of Object.entries(FIXED_SCHEDULES)) {
-    const shift = sched[dayName];
-    if (!shift || shift.toLowerCase() === 'off') continue;
-    if (dayName === 'Saturday' && sched.saturday_weeks) {
-      if (!sched.saturday_weeks.includes(weekOfMonth)) continue;
-    }
-    total += parseFixedShiftHours(shift);
-  }
-  return total;
-}
-
 function roleColor(role) {
   return ROLE_COLORS[role] || ROLE_COLORS['default'];
 }
@@ -101,6 +68,34 @@ function shiftHours(s) {
   const [eh, em] = s.endTime.split(':').map(Number);
   const result = ((eh * 60 + em) - (sh * 60 + sm)) / 60;
   return isNaN(result) || result < 0 ? 0 : result;
+}
+
+function normalizeTimeToHHMM(str) {
+  if (!str) return '';
+  str = str.trim();
+  if (/^\d{1,2}:\d{2}$/.test(str)) return str.padStart(5, '0');
+  if (/^\d{1,2}:\d{2}:\d{2}$/.test(str)) return str.slice(0, 5).padStart(5, '0');
+  const m = str.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)$/i);
+  if (m) {
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const ampm = m[4].toUpperCase();
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+  }
+  return str;
+}
+
+function calcTimeDiffHours(timeInStr, timeOutStr) {
+  const t1 = normalizeTimeToHHMM(timeInStr);
+  const t2 = normalizeTimeToHHMM(timeOutStr);
+  if (!t1 || !t2) return 0;
+  const [h1, m1] = t1.split(':').map(Number);
+  const [h2, m2] = t2.split(':').map(Number);
+  if (isNaN(h1) || isNaN(m1) || isNaN(h2) || isNaN(m2)) return 0;
+  const diff = ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60;
+  return diff > 0 ? Math.round(diff * 100) / 100 : 0;
 }
 
 // ── Shared Modal Shell ─────────────────────────────────────────────────────────
@@ -131,7 +126,6 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const [role, setRole] = useState(user?.instructorType || '');
   const [shiftType, setShiftType] = useState('In-Centre');
 
-  const selectedProfile = users.find(u => u.uid === selectedUser);
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
   const handleSubmit = async () => {
@@ -445,8 +439,8 @@ export default function Admin() {
     await addDoc(collection(db, 'shifts'), shiftData);
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role }) => {
-    await updateDoc(doc(db, 'shifts', editShiftModal.id), { startTime, endTime, role });
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType }) => {
+    await updateDoc(doc(db, 'shifts', editShiftModal.id), { startTime, endTime, role, shiftType });
     setEditShiftModal(null);
   };
 
@@ -708,16 +702,6 @@ export default function Admin() {
     }
   };
 
-  // Open shifts grouped by date for display
-  const openShiftsByDate = useMemo(() => {
-    const grouped = {};
-    openShiftsList.forEach(s => {
-      if (!grouped[s.date]) grouped[s.date] = [];
-      grouped[s.date].push(s);
-    });
-    return grouped;
-  }, [openShiftsList]);
-
   // Payroll summary — all shifts in the selected pay period grouped by person
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
@@ -757,16 +741,11 @@ export default function Admin() {
       byPerson[key].totalHours = Math.round(byPerson[key].totalHours * 100) / 100;
     }
 
-    // Sort people: by role display order then name
-    const ROLE_ORDER = {
-      'Center Director': 0, 'Dir. of Education': 1, 'Manager': 2,
-      'Lead': 3, 'Host': 4, 'Admin': 5, 'Instructor': 6,
-    };
+    // Sort people alphabetically by last name
     return Object.values(byPerson).sort((a, b) => {
-      const ra = ROLE_ORDER[a.role] ?? 7;
-      const rb = ROLE_ORDER[b.role] ?? 7;
-      if (ra !== rb) return ra - rb;
-      return a.name.localeCompare(b.name);
+      const lastA = a.name.split(' ').pop() || a.name;
+      const lastB = b.name.split(' ').pop() || b.name;
+      return lastA.localeCompare(lastB);
     });
   }, [shifts, users, payStart, payEnd]);
 
@@ -870,14 +849,34 @@ export default function Admin() {
     e.target.value = '';
   };
 
+  const updateRadiusEntry = (index, field, value) => {
+    setRadiusData(prev => {
+      const updated = [...prev];
+      updated[index] = { ...updated[index], [field]: value };
+      if (field === 'timeIn' || field === 'timeOut') {
+        const entry = updated[index];
+        updated[index] = { ...updated[index], actualHours: calcTimeDiffHours(entry.timeIn, entry.timeOut) };
+      }
+      return updated;
+    });
+  };
+
+  const deleteRadiusEntry = (index) => {
+    setRadiusData(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const addRadiusEntry = (name) => {
+    setRadiusData(prev => [...prev, { name, date: payStart, timeIn: '', timeOut: '', actualHours: 0 }]);
+  };
+
   // Build comparison: for each person in payroll, match Radius rows
   const comparisonSummary = useMemo(() => {
     if (radiusData.length === 0) return null;
     return payrollSummary.map(person => {
       // Fuzzy name match — Radius uses "First Last", portal uses "First Last"
-      const radiusRows = radiusData.filter(r =>
-        r.name.toLowerCase().trim() === person.name.toLowerCase().trim()
-      );
+      const radiusRows = radiusData
+        .map((r, idx) => ({ ...r, _idx: idx }))
+        .filter(r => r.name.toLowerCase().trim() === person.name.toLowerCase().trim());
       const actualHours = radiusRows.reduce((s, r) => s + r.actualHours, 0);
       const scheduledHours = person.totalHours;
       const diff = Math.round((actualHours - scheduledHours) * 100) / 100;
@@ -917,7 +916,6 @@ export default function Admin() {
     return <div className="text-center text-gray-500 py-16">Access denied. Owner only.</div>;
   }
 
-  const openCount = openShiftsList.filter(s => s.status === 'open').length;
   const pendingRequestsCount = timeOffRequests.filter(r => r.status === 'pending').length;
 
   const tabs = [
@@ -1753,7 +1751,19 @@ export default function Admin() {
                                 <td className="px-4 py-2.5 text-xs">
                                   {s.missingFromRadius
                                     ? <span className="text-red-500 font-medium">Not in Radius</span>
-                                    : <span className="text-blue-700">{s.actual.timeIn} – {s.actual.timeOut}</span>}
+                                    : <div className="flex items-center gap-1">
+                                        <input type="time" value={normalizeTimeToHHMM(s.actual.timeIn)}
+                                          onChange={e => updateRadiusEntry(s.actual._idx, 'timeIn', e.target.value)}
+                                          className="rounded border border-blue-200 px-1.5 py-0.5 text-xs text-blue-700 w-[90px] focus:border-blue-500 focus:outline-none" />
+                                        <span className="text-gray-400">–</span>
+                                        <input type="time" value={normalizeTimeToHHMM(s.actual.timeOut)}
+                                          onChange={e => updateRadiusEntry(s.actual._idx, 'timeOut', e.target.value)}
+                                          className="rounded border border-blue-200 px-1.5 py-0.5 text-xs text-blue-700 w-[90px] focus:border-blue-500 focus:outline-none" />
+                                        <button onClick={() => deleteRadiusEntry(s.actual._idx)}
+                                          className="ml-1 text-gray-300 hover:text-red-500 transition-colors" title="Remove entry">
+                                          <Trash2 size={12} />
+                                        </button>
+                                      </div>}
                                 </td>
                               )}
                               <td className="px-5 py-2.5 text-right font-semibold text-gray-800">{s.hours.toFixed(2)}h</td>
@@ -1772,11 +1782,27 @@ export default function Admin() {
                         })}
                         {hasRadius && person.unmatchedRadius?.map((r, i) => (
                           <tr key={`ur-${i}`} className="bg-amber-50 hover:bg-amber-100 transition-colors">
-                            <td className="px-5 py-2.5 text-gray-800 font-medium">
-                              {new Date(r.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                            <td className="px-5 py-2.5">
+                              <input type="date" value={r.date}
+                                onChange={e => updateRadiusEntry(r._idx, 'date', e.target.value)}
+                                className="rounded border border-amber-200 px-1.5 py-0.5 text-xs text-gray-800 font-medium focus:border-amber-500 focus:outline-none" />
                             </td>
                             <td className="px-4 py-2.5 text-xs text-amber-600 font-medium">Not scheduled</td>
-                            <td className="px-4 py-2.5 text-xs text-blue-700">{r.timeIn} – {r.timeOut}</td>
+                            <td className="px-4 py-2.5 text-xs">
+                              <div className="flex items-center gap-1">
+                                <input type="time" value={normalizeTimeToHHMM(r.timeIn)}
+                                  onChange={e => updateRadiusEntry(r._idx, 'timeIn', e.target.value)}
+                                  className="rounded border border-blue-200 px-1.5 py-0.5 text-xs text-blue-700 w-[90px] focus:border-blue-500 focus:outline-none" />
+                                <span className="text-gray-400">–</span>
+                                <input type="time" value={normalizeTimeToHHMM(r.timeOut)}
+                                  onChange={e => updateRadiusEntry(r._idx, 'timeOut', e.target.value)}
+                                  className="rounded border border-blue-200 px-1.5 py-0.5 text-xs text-blue-700 w-[90px] focus:border-blue-500 focus:outline-none" />
+                                <button onClick={() => deleteRadiusEntry(r._idx)}
+                                  className="ml-1 text-gray-300 hover:text-red-500 transition-colors" title="Remove entry">
+                                  <Trash2 size={12} />
+                                </button>
+                              </div>
+                            </td>
                             <td className="px-5 py-2.5 text-right text-gray-400">–</td>
                             <td className="px-5 py-2.5 text-right font-semibold text-blue-700">{r.actualHours.toFixed(2)}h</td>
                             <td className="px-5 py-2.5 text-right text-xs font-bold text-amber-600">⚠ unscheduled</td>
@@ -1796,6 +1822,14 @@ export default function Admin() {
                         </tr>
                       </tfoot>
                     </table>
+                    {hasRadius && (
+                      <div className="px-5 py-2.5 border-t bg-gray-50/50">
+                        <button onClick={() => addRadiusEntry(person.name)}
+                          className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors">
+                          <Plus size={14} /> Add Radius Entry
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })}

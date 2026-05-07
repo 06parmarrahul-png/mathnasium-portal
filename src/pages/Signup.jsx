@@ -3,18 +3,17 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import Logo from '../components/Logo';
 
-const INSTRUCTOR_TYPES = [
-  'Instructor',
-  'Lead',
-  'Host',
-  'Admin',
-];
+const SIGNUP_ERRORS = {
+  'auth/email-already-in-use':   'An account with this email already exists.',
+  'auth/invalid-email':          'That email address is not valid.',
+  'auth/weak-password':          'Password is too weak. Use at least 6 characters.',
+  'auth/network-request-failed': 'Network error. Please check your connection and try again.',
+};
 
 export default function Signup() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [instructorType, setInstructorType] = useState('Instructor');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
@@ -25,18 +24,18 @@ export default function Signup() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    if (!name.trim()) { setError('Please enter your full name.'); return; }
     if (password !== confirmPassword) { setError('Passwords do not match.'); return; }
     if (password.length < 6) { setError('Password must be at least 6 characters.'); return; }
     setLoading(true);
     try {
-      await signup(email, password, name, { instructorType, phone });
+      // Role is intentionally not user-selectable. New accounts are always
+      // created as plain "Instructor"; the owner promotes from the admin panel.
+      await signup(email, password, name, { phone });
       navigate('/');
     } catch (err) {
-      if (err instanceof Error && err.message.includes('email-already-in-use')) {
-        setError('An account with this email already exists.');
-      } else {
-        setError('Signup failed. Please try again.');
-      }
+      const code = err?.code || '';
+      setError(SIGNUP_ERRORS[code] || 'Signup failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -76,14 +75,6 @@ export default function Signup() {
               <input type="tel"
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
                 placeholder="+1 (604) 555-0123" value={phone} onChange={e => setPhone(e.target.value)} />
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-gray-700">Your Role</label>
-              <select value={instructorType} onChange={e => setInstructorType(e.target.value)}
-                className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20">
-                {INSTRUCTOR_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-              <p className="mt-1 text-xs text-gray-400">The owner can update this after approval.</p>
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-gray-700">Password</label>

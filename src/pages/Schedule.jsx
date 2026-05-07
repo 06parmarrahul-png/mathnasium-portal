@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
-  query, orderBy, updateDoc,
+  query, orderBy, runTransaction, setDoc, writeBatch,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
-  getDay, addMonths, subMonths, isSameMonth, parseISO,
+  getDay, addMonths, subMonths, isSameMonth,
 } from 'date-fns';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
     setSaving(true);
     try {
       await onSaveAvail(dateStr, startTime, endTime, comment);
-    } catch (err) {
+    } catch {
       setError('Failed to save availability. Please try again.');
       setSaving(false);
     }
@@ -80,7 +80,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
     setSaving(true);
     try {
       await onRequestTimeOff(toStart, toEnd, reason.trim());
-    } catch (err) {
+    } catch {
       setError('Failed to submit request. Please try again.');
       setSaving(false);
     }
@@ -457,11 +457,10 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
   const [scope, setScope] = useState('thisMonth'); // 'thisMonth' | 'nextMonth' | 'both'
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [preview, setPreview] = useState([]);
 
-  // Build preview dates whenever inputs change
-  useEffect(() => {
-    if (selectedDays.length === 0) { setPreview([]); return; }
+  // Build preview dates whenever inputs change (derived state, not effect-driven)
+  const preview = useMemo(() => {
+    if (selectedDays.length === 0) return [];
 
     const months = [];
     if (scope === 'thisMonth' || scope === 'both') months.push(currentMonth);
@@ -486,7 +485,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
         dates.push(ds);
       }
     }
-    setPreview(dates);
+    return dates;
   }, [selectedDays, recurrence, scope, currentMonth]);
 
   const toggleDay = (dow) => {
@@ -757,11 +756,20 @@ export default function Schedule() {
     return map;
   }, [timeOffRequests, profile]);
 
-  // ── Handlers (now throw on error so modal can catch) ──
+  // Deterministic id makes availability writes idempotent: writing the same
+  // (user, date) pair just overwrites — no delete-then-add race window.
+  const availDocId = (uid, dateStr) => `${uid}_${dateStr}`;
+
+  // ── Handlers (throw on error so modal can catch) ──
   const handleSaveAvail = async (dateStr, startTime, endTime, comment) => {
+    const id = availDocId(profile.uid, dateStr);
+    // If a legacy doc with a random ID exists for this date, remove it
+    // so we don't end up with two records for the same (user, date).
     const existing = myAvailMap[dateStr];
-    if (existing) await deleteDoc(doc(db, 'availability', existing.id));
-    await addDoc(collection(db, 'availability'), {
+    if (existing && existing.id !== id) {
+      await deleteDoc(doc(db, 'availability', existing.id));
+    }
+    await setDoc(doc(db, 'availability', id), {
       userId: profile.uid,
       userName: profile.displayName,
       date: dateStr,
@@ -773,20 +781,29 @@ export default function Schedule() {
   };
 
   const handleSaveBulk = async (dates, startTime, endTime) => {
-    // For each date: delete existing then write new
-    const writes = dates.map(async (dateStr) => {
-      const existing = myAvailMap[dateStr];
-      if (existing) await deleteDoc(doc(db, 'availability', existing.id));
-      await addDoc(collection(db, 'availability'), {
-        userId: profile.uid,
-        userName: profile.displayName,
-        date: dateStr,
-        startTime,
-        endTime,
-        bulkSet: true,
-      });
-    });
-    await Promise.all(writes);
+    // Use a batched write: all-or-nothing, no partial state if it fails.
+    // Firestore batch limit is 500 ops, so chunk if we somehow exceed that.
+    const CHUNK = 200; // leave headroom for possible legacy deletes within a chunk
+    for (let i = 0; i < dates.length; i += CHUNK) {
+      const batch = writeBatch(db);
+      for (const dateStr of dates.slice(i, i + CHUNK)) {
+        const id = availDocId(profile.uid, dateStr);
+        // Clean up any legacy random-id doc for this date in the same batch
+        const existing = myAvailMap[dateStr];
+        if (existing && existing.id !== id) {
+          batch.delete(doc(db, 'availability', existing.id));
+        }
+        batch.set(doc(db, 'availability', id), {
+          userId: profile.uid,
+          userName: profile.displayName,
+          date: dateStr,
+          startTime,
+          endTime,
+          bulkSet: true,
+        });
+      }
+      await batch.commit();
+    }
     setShowWeeklyModal(false);
   };
 
@@ -824,34 +841,56 @@ export default function Schedule() {
       alert('This shift has already been claimed.');
       return;
     }
-    await updateDoc(doc(db, 'openShifts', openShift.id), {
-      status: 'claimed',
-      claimedBy: profile.uid,
-      claimedByName: profile.displayName,
-    });
-    await addDoc(collection(db, 'shifts'), {
-      userId: profile.uid,
-      userName: profile.displayName,
-      date: openShift.date,
-      startTime: openShift.startTime,
-      endTime: openShift.endTime,
-      role: openShift.role || profile.instructorType || 'Instructor',
-      status: 'live',
-      autoScheduled: false,
-    });
-    const dateFormatted = new Date(openShift.date + 'T00:00:00').toLocaleDateString('en-US', {
-      weekday: 'long', month: 'short', day: 'numeric',
-    });
-    await addDoc(collection(db, 'chat'), {
-      text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
-      userId: 'system',
-      userName: 'Mathnasium Langley',
-      userRole: 'system',
-      createdAt: serverTimestamp(),
-      type: 'shift_confirmation',
-    });
-    setSelectedDate(null);
-    alert('Shift claimed! It has been added to your schedule.');
+    try {
+      // Atomically: re-check the openShift is still open, mark it claimed,
+      // and create the matching shifts doc in one transaction. Prevents two
+      // instructors clicking "Claim" at the same time from both succeeding.
+      const newShiftRef = doc(collection(db, 'shifts'));
+      await runTransaction(db, async (tx) => {
+        const openRef = doc(db, 'openShifts', openShift.id);
+        const openSnap = await tx.get(openRef);
+        if (!openSnap.exists()) throw new Error('This open shift no longer exists.');
+        const data = openSnap.data();
+        if (data.status !== 'open') {
+          throw new Error('This shift has already been claimed.');
+        }
+
+        tx.update(openRef, {
+          status: 'claimed',
+          claimedBy: profile.uid,
+          claimedByName: profile.displayName,
+          claimedAt: serverTimestamp(),
+        });
+
+        tx.set(newShiftRef, {
+          userId: profile.uid,
+          userName: profile.displayName,
+          date: openShift.date,
+          startTime: openShift.startTime,
+          endTime: openShift.endTime,
+          role: openShift.role || profile.instructorType || 'Instructor',
+          status: 'live',
+          autoScheduled: false,
+          fromOpenShiftId: openShift.id,
+        });
+      });
+
+      const dateFormatted = new Date(openShift.date + 'T00:00:00').toLocaleDateString('en-US', {
+        weekday: 'long', month: 'short', day: 'numeric',
+      });
+      await addDoc(collection(db, 'chat'), {
+        text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
+        userId: 'system',
+        userName: 'Mathnasium Langley',
+        userRole: 'system',
+        createdAt: serverTimestamp(),
+        type: 'shift_confirmation',
+      });
+      setSelectedDate(null);
+      alert('Shift claimed! It has been added to your schedule.');
+    } catch (err) {
+      alert(err?.message || 'Failed to claim shift. Please try again.');
+    }
   };
 
   const handleRequestTimeOff = async (startDate, endDate, reason) => {
