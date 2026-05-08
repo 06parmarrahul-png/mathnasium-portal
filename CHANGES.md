@@ -1,6 +1,53 @@
 # Changes Log
 
-## Pass 4 — Sub-role colors visible on every shift
+## Pass 5 — Host scheduling (Rahul) + per-user "Guaranteed shift" toggle
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+The Host position (you) is now scheduled like any other staff member with two pieces of special handling:
+
+1. **Always assigned when available** — when you submit availability, you always get a shift (no losing slots to higher-priority instructors).
+2. **Auto-promote on shortage** — by default your shift is tagged `role: Host` and doesn't count toward the per-day instructor minimum. But if a day's instructor count comes up short of `minPerDay` AND you have the Elementary sub-role, the scheduler tags your shift as `role: Instructor` for that day so you fill the gap. A warning is added to the draft so the admin sees who got promoted before posting.
+
+### What's new
+
+**Removed Rahul Parmar from `FIXED_SCHEDULES`.** You used to live in `lib/scheduler.js` as a fixed-staff entry with every day set to "Off" — which silently excluded you from the entire auto-scheduler. Now you're a regular schedulable user.
+
+**`isHostRole(instructor)` helper** in `lib/scheduler.js` — anyone with `instructorType: 'Host'` is now recognized and routed through the new Host pass.
+
+**Three-way split in `generateSchedule`.** Per day, available users are now split into:
+- **`onlineOnly`** — same as before, online-only instructors not counted toward in-centre ratio
+- **`hosts`** — new bucket (Host role users), assigned in their own pass with auto-promote logic
+- **`inCentre`** — regular instructors competing for slots
+
+**`promotedFromHost` counter** tracks how many Hosts were auto-promoted to Instructor for staffing math. The day's `inCentreTotal` now includes promoted Hosts so warnings about "only N staff (need M)" are accurate. A separate informational warning records each promotion ("ℹ Wednesday May 14: Rahul Parmar (Host) promoted to Instructor to cover staffing shortfall.") so it shows up in the draft review.
+
+**Per-user `guaranteed` flag.** `isGuaranteed()` now checks `instructor.guaranteed === true` on the user profile in addition to the hardcoded `GUARANTEED_NAMES` set. So Luke / Ainsley / Kaitlyn keep working from the hardcoded list, but any new guaranteed user — including you — can be marked from the admin panel without editing code.
+
+**"Guaranteed shift" toggle in Admin → Manage Users.** Each instructor card now has a green toggle near the bottom labelled "Guaranteed shift" with a short explainer. Hosts get an additional sentence about auto-promotion. Stored as `guaranteed: true | false` on the user doc.
+
+### Files touched
+
+```
+mod:   src/lib/scheduler.js   (Rahul removed from FIXED_SCHEDULES,
+                                isHostRole helper, host-pass + auto-promote,
+                                guaranteed flag check)
+mod:   src/pages/Admin.jsx     (Manage Users → "Guaranteed shift" toggle)
+```
+
+### How to set up your account
+
+(One-time setup, all done from the running portal — no code changes needed.)
+
+1. Log in to the portal with your **non-owner** Mathnasium account (the one you said you have separately).
+2. Have the owner go to **Admin → Manage Users**, find your row, and:
+   - **Role / Type** → set to **Host**
+   - **Teaching Sub-Roles** → click **Elementary** (so you can be auto-promoted on shortage days)
+   - **Guaranteed shift** → flip the toggle on
+3. Submit availability through Schedule like a regular instructor.
+
+The next time the auto-scheduler runs, you'll appear on every day you submitted availability — tagged "Host" by default, "Instructor" on shortage days.
 
 Lint status: ✅ 0 errors, 0 warnings
 Parse status: ✅ all source files parse clean

@@ -58,12 +58,10 @@ export const FIXED_SCHEDULES = {
   },
   // Vinod Bandla removed from fixed schedule — his hours vary week to week.
   // Add his shifts manually in the weekly spreadsheet.
-  'Rahul Parmar': {
-    role: 'Host',
-    countsTowardRatio: false,
-    Monday: 'Off', Tuesday: 'Off', Wednesday: 'Off',
-    Thursday: 'Off', Friday: 'Off', Saturday: 'Off',
-  },
+  // Rahul Parmar (Host) is now scheduled via the regular availability
+  // workflow with a `guaranteed` flag and special host-handling in
+  // generateSchedule(). He used to live here as an all-"Off" entry, which
+  // had the side effect of excluding him from the scheduler entirely.
   'Rachel Rozelle': {
     role: 'Admin',
     countsTowardRatio: false,
@@ -235,8 +233,21 @@ function shiftSubRoleFor(instructor) {
 }
 
 function isGuaranteed(instructor) {
+  // Per-user override (set via Admin → Manage Users → "Guaranteed shift" toggle)
+  if (instructor.guaranteed === true) return true;
   const firstName = (instructor.displayName || '').split(' ')[0];
   return GUARANTEED_NAMES.has(firstName);
+}
+
+/**
+ * True if this instructor is configured as a Host. Hosts get guaranteed
+ * shifts when they submit availability, default to role='Host' (so they
+ * don't count toward the in-centre instructor minimum), and on days where
+ * the day's instructor count is short of minPerDay they get auto-promoted
+ * to role='Instructor' so they fill the gap.
+ */
+function isHostRole(instructor) {
+  return (instructor.instructorType || '').toLowerCase() === 'host';
 }
 
 // ─── Main scheduling engine ───────────────────────────────────────────────────
@@ -330,9 +341,12 @@ export function generateSchedule({
       });
     }
 
-    // ── 3. Split into online-only vs in-centre ───────────────────────────────
+    // ── 3. Split into online-only / hosts / in-centre instructors ────────────
+    // Hosts are scheduled in their own pass below — they don't go through the
+    // priority/fairness ranking and they don't compete for Instructor slots.
     const onlineOnly = availableInstructors.filter(a => isOnlineOnly(a.inst));
-    const inCentre   = availableInstructors.filter(a => !isOnlineOnly(a.inst));
+    const hosts      = availableInstructors.filter(a => !isOnlineOnly(a.inst) && isHostRole(a.inst));
+    const inCentre   = availableInstructors.filter(a => !isOnlineOnly(a.inst) && !isHostRole(a.inst));
 
     // ── 4. Sort in-centre instructors by scheduling priority ─────────────────
     // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
@@ -410,7 +424,56 @@ export function generateSchedule({
       }
     }
 
-    // ── 6. Assign online-only instructors (don't count toward ratio) ─────────
+    // ── 6a. Host pass — auto-promote on shortage, otherwise assign as Host ──
+    // Hosts always get a shift when available. By default they don't count
+    // toward the per-day instructor minimum (their role tags as 'Host').
+    // BUT: if the day is short on instructors AND the host can teach
+    // Elementary, we promote their role to 'Instructor' for that day so they
+    // fill the gap and count toward the staffing ratio.
+    let promotedFromHost = 0;
+    if (hosts.length > 0) {
+      // Sort hosts by priority then fairness, same as online-only
+      hosts.sort((a, b) => {
+        const pa = a.inst.priority ?? 2;
+        const pb = b.inst.priority ?? 2;
+        if (pa !== pb) return pa - pb;
+        return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
+      });
+
+      const stillNeeded = () => Math.max(0, minPerDay - (fixedRatioCount + assigned + promotedFromHost));
+
+      for (const candidate of hosts) {
+        const weekCount = (weeklyAssignments[candidate.inst.uid] || {})[weekKey] || 0;
+        if (weekCount >= maxDaysPerWeek) continue;
+        if (assignedNames.includes(candidate.inst.displayName)) continue;
+
+        const subs = candidate.inst.subRoles || [];
+        const canTeachElementary = subs.includes('Elementary');
+        const promote = stillNeeded() > 0 && canTeachElementary;
+
+        assignedNames.push(candidate.inst.displayName);
+        if (promote) {
+          // Tag this shift as Instructor for the day so it counts toward staffing
+          roles[candidate.inst.displayName] = 'Instructor';
+          subRoles[candidate.inst.displayName] = 'Elementary';
+          promotedFromHost++;
+          warnings.push(
+            `ℹ ${dayName} ${month} ${dayNumber}: ${candidate.inst.displayName} (Host) promoted to Instructor to cover staffing shortfall.`
+          );
+        } else {
+          // Regular Host shift — doesn't count toward instructor min/max
+          roles[candidate.inst.displayName] = 'Host';
+          subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
+        }
+        if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+
+        totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
+        if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
+        weeklyAssignments[candidate.inst.uid][weekKey] = (weeklyAssignments[candidate.inst.uid][weekKey] || 0) + 1;
+      }
+    }
+
+    // ── 6b. Assign online-only instructors (don't count toward ratio) ────────
     // Sort by priority + fairness
     onlineOnly.sort((a, b) => {
       const pa = a.inst.priority ?? 2;
@@ -434,7 +497,9 @@ export function generateSchedule({
     }
 
     // ── 7. Warnings & open shift detection ───────────────────────────────────
-    const inCentreTotal = fixedRatioCount + assigned;
+    // Promoted Hosts count toward the staffing total (because they're tagged
+    // as Instructor). Non-promoted Hosts do not.
+    const inCentreTotal = fixedRatioCount + assigned + promotedFromHost;
 
     if (inCentreTotal < minPerDay) {
       const shortfall = minPerDay - inCentreTotal;
@@ -446,7 +511,7 @@ export function generateSchedule({
       }
     }
 
-    if (inCentre.length === 0 && onlineOnly.length === 0 && fixedToday.length === 0) {
+    if (inCentre.length === 0 && hosts.length === 0 && onlineOnly.length === 0 && fixedToday.length === 0) {
       warnings.push(`⚠ ${dayName} ${month} ${dayNumber}: No staff available at all.`);
     }
 

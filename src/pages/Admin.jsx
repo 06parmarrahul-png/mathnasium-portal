@@ -1427,6 +1427,27 @@ export default function Admin() {
                         )}
                       </div>
                     </div>
+
+                    {/* Guaranteed shift toggle — for Hosts and key staff who
+                        should always be scheduled when they submit availability. */}
+                    <div className="mt-3 flex items-start justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <div className="pr-3">
+                        <p className="text-xs font-semibold text-gray-700">Guaranteed shift</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Always scheduled when they submit availability — overrides priority and fairness rules.
+                          {u.instructorType === 'Host' && ' Hosts also auto-promote to Instructor on shortage days (Elementary required).'}
+                        </p>
+                      </div>
+                      <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={u.guaranteed === true}
+                          onChange={e => handleUpdateUserField(u.uid, 'guaranteed', e.target.checked)}
+                          className="peer sr-only"
+                        />
+                        <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+                      </label>
+                    </div>
                   </div>
                 ))}
               </div>
