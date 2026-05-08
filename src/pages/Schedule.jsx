@@ -30,6 +30,20 @@ function fmtTime(t) {
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Widest range an instructor could possibly be available on a given day —
+// covers admin prep before opening (binders, inventory, event setup) plus
+// cleanup after closing, not just teaching hours. Used by the "Full Day"
+// presets in both the single-day and weekly modals. Closed Sundays.
+// Edit this map if real-world hours change.
+const FULL_DAY_BY_DOW = {
+  1: { start: '10:00', end: '20:00' }, // Mon  10 AM – 8 PM
+  2: { start: '10:00', end: '20:00' }, // Tue
+  3: { start: '10:00', end: '20:00' }, // Wed
+  4: { start: '10:00', end: '20:00' }, // Thu
+  5: { start: '10:00', end: '19:00' }, // Fri  10 AM – 7 PM
+  6: { start: '09:00', end: '15:00' }, // Sat   9 AM – 3 PM
+};
+
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
 function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
@@ -234,18 +248,28 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
             const isSat = dow === 6;
             const isSun = dow === 0;
 
+            // First entry is the marquee "Full Day" option (covers admin prep
+            // and cleanup, not just teaching hours), rendered with a distinct
+            // style below so it's the obvious one-tap choice. Label is built
+            // from FULL_DAY_BY_DOW so editing that constant updates both
+            // modals automatically.
+            const fullDay = FULL_DAY_BY_DOW[dow];
+            const fullDayLabel = `Full Day (${fmtTime(fullDay.start)} – ${fmtTime(fullDay.end)})`;
             const PRESETS = isSun ? [] : isSat ? [
+              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
               { label: '10:00 AM – 2:00 PM', start: '10:00', end: '14:00' },
               { label: '10:30 AM – 2:00 PM', start: '10:30', end: '14:00' },
               { label: '10:00 AM – 1:30 PM', start: '10:00', end: '13:30' },
               { label: '10:30 AM – 1:30 PM', start: '10:30', end: '13:30' },
             ] : isFri ? [
+              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
               { label: '3:00 PM – 6:00 PM', start: '15:00', end: '18:00' },
               { label: '3:30 PM – 6:00 PM', start: '15:30', end: '18:00' },
               { label: '3:00 PM – 5:30 PM', start: '15:00', end: '17:30' },
               { label: '3:30 PM – 5:30 PM', start: '15:30', end: '17:30' },
               { label: '4:00 PM – 6:00 PM', start: '16:00', end: '18:00' },
             ] : [
+              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
               { label: '3:00 PM – 7:00 PM', start: '15:00', end: '19:00' },
               { label: '3:30 PM – 7:00 PM', start: '15:30', end: '19:00' },
               { label: '3:00 PM – 6:30 PM', start: '15:00', end: '18:30' },
@@ -266,18 +290,41 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                 ) : !useCustom ? (
                   <>
                     <div className="space-y-2 mb-3">
-                      {PRESETS.map(p => (
-                        <button
-                          key={p.label}
-                          onClick={() => { setStartTime(p.start); setEndTime(p.end); }}
-                          className={`w-full text-left rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-colors
-                            ${startTime === p.start && endTime === p.end
-                              ? 'border-green-500 bg-green-50 text-green-800'
-                              : 'border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50/50'}`}
-                        >
-                          {p.label}
-                        </button>
-                      ))}
+                      {PRESETS.map(p => {
+                        const selected = startTime === p.start && endTime === p.end;
+                        if (p.fullDay) {
+                          return (
+                            <button
+                              key={p.label}
+                              onClick={() => { setStartTime(p.start); setEndTime(p.end); }}
+                              className={`w-full flex items-center justify-between gap-2 rounded-xl border-2 px-4 py-3 text-sm font-bold transition-colors
+                                ${selected
+                                  ? 'border-emerald-500 bg-emerald-50 text-emerald-800 shadow-sm'
+                                  : 'border-emerald-300 bg-emerald-50/40 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-50'}`}
+                            >
+                              <span className="flex items-center gap-2">
+                                <span className="text-base">⏰</span>
+                                Full Day
+                              </span>
+                              <span className="text-xs font-medium text-emerald-600">
+                                {p.label.replace('Full Day ', '').replace(/[()]/g, '')}
+                              </span>
+                            </button>
+                          );
+                        }
+                        return (
+                          <button
+                            key={p.label}
+                            onClick={() => { setStartTime(p.start); setEndTime(p.end); }}
+                            className={`w-full text-left rounded-xl border-2 px-4 py-2.5 text-sm font-medium transition-colors
+                              ${selected
+                                ? 'border-green-500 bg-green-50 text-green-800'
+                                : 'border-gray-200 text-gray-700 hover:border-green-300 hover:bg-green-50/50'}`}
+                          >
+                            {p.label}
+                          </button>
+                        );
+                      })}
                       <button
                         onClick={() => setUseCustom(true)}
                         className="w-full text-left rounded-xl border-2 border-dashed border-gray-200 px-4 py-2.5 text-sm text-gray-400 hover:border-gray-300 hover:text-gray-600 transition-colors">
@@ -454,11 +501,14 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
   const [recurrence, setRecurrence] = useState('every');
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
+  const [useFullDay, setUseFullDay] = useState(false);
   const [scope, setScope] = useState('thisMonth'); // 'thisMonth' | 'nextMonth' | 'both'
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
-  // Build preview dates whenever inputs change (derived state, not effect-driven)
+  // Build preview as [{date, startTime, endTime}] — per-day times when "Full Day"
+  // is on (Saturday's 10–2 differs from Monday's 3–7), or the modal's chosen
+  // start/end repeated across every selected date when off.
   const preview = useMemo(() => {
     if (selectedDays.length === 0) return [];
 
@@ -470,7 +520,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
     }
 
     const todayStr = format(new Date(), 'yyyy-MM-dd');
-    const dates = [];
+    const items = [];
 
     for (const month of months) {
       const start = startOfMonth(month);
@@ -482,11 +532,18 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
         if (!weekMatchesRecurrence(d, recurrence)) continue;
         const ds = format(d, 'yyyy-MM-dd');
         if (ds < todayStr) continue;
-        dates.push(ds);
+
+        if (useFullDay) {
+          const r = FULL_DAY_BY_DOW[dow];
+          if (!r) continue; // Sundays etc. — skip
+          items.push({ date: ds, startTime: r.start, endTime: r.end, dow });
+        } else {
+          items.push({ date: ds, startTime, endTime, dow });
+        }
       }
     }
-    return dates;
-  }, [selectedDays, recurrence, scope, currentMonth]);
+    return items;
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime]);
 
   const toggleDay = (dow) => {
     setSelectedDays(prev =>
@@ -497,17 +554,19 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
   const existingDates = new Set(
     availability.filter(a => a.userId === profile?.uid).map(a => a.date)
   );
-  const overwriteCount = preview.filter(d => existingDates.has(d)).length;
+  const overwriteCount = preview.filter(item => existingDates.has(item.date)).length;
 
   const handleSave = async () => {
     setError('');
     if (selectedDays.length === 0) { setError('Select at least one day.'); return; }
-    if (!startTime || !endTime)    { setError('Set a start and end time.'); return; }
-    if (startTime >= endTime)      { setError('End time must be after start time.'); return; }
-    if (preview.length === 0)      { setError('No matching dates found — try different settings.'); return; }
+    if (!useFullDay) {
+      if (!startTime || !endTime) { setError('Set a start and end time.'); return; }
+      if (startTime >= endTime)   { setError('End time must be after start time.'); return; }
+    }
+    if (preview.length === 0)     { setError('No matching dates found — try different settings.'); return; }
     setSaving(true);
     try {
-      await onSaveBulk(preview, startTime, endTime);
+      await onSaveBulk(preview);
     } catch {
       setError('Failed to save. Please try again.');
       setSaving(false);
@@ -572,19 +631,44 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
 
           {/* Time */}
           <div>
-            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Time</label>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">From</label>
-                <input type="time" value={startTime} onChange={e => { setStartTime(e.target.value); setError(''); }}
-                  className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">To</label>
-                <input type="time" value={endTime} onChange={e => { setEndTime(e.target.value); setError(''); }}
-                  className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
-              </div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest">Time</label>
+              <label className="flex items-center gap-2 text-xs font-semibold text-emerald-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={useFullDay}
+                  onChange={e => { setUseFullDay(e.target.checked); setError(''); }}
+                  className="accent-emerald-600 h-4 w-4"
+                />
+                Full day for each
+              </label>
             </div>
+
+            {useFullDay ? (
+              <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/60 p-3 text-xs space-y-1">
+                <p className="font-semibold text-emerald-800 mb-1.5">
+                  Available the entire day (includes admin prep & cleanup, not just teaching):
+                </p>
+                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-emerald-700">
+                  <span>Mon–Thu · {fmtTime(FULL_DAY_BY_DOW[1].start)} – {fmtTime(FULL_DAY_BY_DOW[1].end)}</span>
+                  <span>Fri · {fmtTime(FULL_DAY_BY_DOW[5].start)} – {fmtTime(FULL_DAY_BY_DOW[5].end)}</span>
+                  <span>Sat · {fmtTime(FULL_DAY_BY_DOW[6].start)} – {fmtTime(FULL_DAY_BY_DOW[6].end)}</span>
+                </div>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">From</label>
+                  <input type="time" value={startTime} onChange={e => { setStartTime(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">To</label>
+                  <input type="time" value={endTime} onChange={e => { setEndTime(e.target.value); setError(''); }}
+                    className="w-full rounded-xl border-2 border-gray-200 px-3 py-2.5 text-sm font-medium focus:border-emerald-500 focus:outline-none" />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Recurrence */}
@@ -645,16 +729,17 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
                 )}
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {preview.map(d => (
+                {preview.map(item => (
                   <span
-                    key={d}
+                    key={item.date}
+                    title={`${fmtTime(item.startTime)} – ${fmtTime(item.endTime)}`}
                     className={`rounded-lg px-2 py-1 text-xs font-medium ${
-                      existingDates.has(d)
+                      existingDates.has(item.date)
                         ? 'bg-orange-100 text-orange-700'
                         : 'bg-emerald-100 text-emerald-700'
                     }`}
                   >
-                    {new Date(d + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    {new Date(item.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                   </span>
                 ))}
               </div>
@@ -780,25 +865,28 @@ export default function Schedule() {
     setSelectedDate(null);
   };
 
-  const handleSaveBulk = async (dates, startTime, endTime) => {
+  // Items shape: [{date, startTime, endTime}]. Per-day times let the weekly
+  // modal apply different hours to different days (e.g., Saturday's full-day
+  // range vs weekday's full-day range when "Full Day" is on).
+  const handleSaveBulk = async (items) => {
     // Use a batched write: all-or-nothing, no partial state if it fails.
     // Firestore batch limit is 500 ops, so chunk if we somehow exceed that.
     const CHUNK = 200; // leave headroom for possible legacy deletes within a chunk
-    for (let i = 0; i < dates.length; i += CHUNK) {
+    for (let i = 0; i < items.length; i += CHUNK) {
       const batch = writeBatch(db);
-      for (const dateStr of dates.slice(i, i + CHUNK)) {
-        const id = availDocId(profile.uid, dateStr);
+      for (const item of items.slice(i, i + CHUNK)) {
+        const id = availDocId(profile.uid, item.date);
         // Clean up any legacy random-id doc for this date in the same batch
-        const existing = myAvailMap[dateStr];
+        const existing = myAvailMap[item.date];
         if (existing && existing.id !== id) {
           batch.delete(doc(db, 'availability', existing.id));
         }
         batch.set(doc(db, 'availability', id), {
           userId: profile.uid,
           userName: profile.displayName,
-          date: dateStr,
-          startTime,
-          endTime,
+          date: item.date,
+          startTime: item.startTime,
+          endTime: item.endTime,
           bulkSet: true,
         });
       }

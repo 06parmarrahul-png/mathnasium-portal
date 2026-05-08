@@ -1,5 +1,43 @@
 # Changes Log
 
+## Pass 3 — "Full Day" availability shortcut
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Instructors asked for a way to mark themselves available all day instead of picking a specific time range. Added it to both availability modals.
+
+"Full Day" means the **entire day**, including admin prep before opening (binders, inventory, event setup) and cleanup after closing — not just the teaching window. The default ranges:
+
+- **Mon–Thu:** 10:00 AM – 8:00 PM
+- **Friday:** 10:00 AM – 7:00 PM
+- **Saturday:** 9:00 AM – 3:00 PM
+
+These live in a single `FULL_DAY_BY_DOW` constant at the top of `Schedule.jsx`. If real-world hours shift, edit one map and both modals update automatically.
+
+### What's new
+
+**Single-day modal (calendar cell → "Set Availability"):** the first preset on every day is the marquee **"Full Day"** option, with a distinct emerald style and a clock emoji so it's clearly the all-day pick. The label shows the actual range (e.g. "Full Day · 10:00 AM – 8:00 PM"). The shorter teaching-only ranges sit below as additional options for instructors who only want to be in for lessons.
+
+**Weekly bulk modal ("Set Weekly" button):** a new **"Full day for each"** checkbox sits next to the Time label. When toggled on:
+- The From/To time inputs are replaced with an explainer box clarifying that the range covers admin work + cleanup, not just teaching
+- Each selected date is saved with the appropriate hours for *that day* — Saturday gets 9 AM – 3 PM, weekdays get 10 AM – 8 PM, Friday 10 AM – 7 PM
+- Per-day chips in the preview show each day's specific time on hover
+
+### Implementation note
+
+`handleSaveBulk` was changed from `(dates, startTime, endTime)` to `(items)` where `items = [{date, startTime, endTime}]`. This was needed so the weekly modal can save different hours for different days in a single batched write. Single uniform-time saves still work — the modal just emits the same hours on every item.
+
+### Files touched
+
+```
+mod:   src/pages/Schedule.jsx   (FULL_DAY_BY_DOW constant, single-day preset
+                                 styling, weekly modal toggle, handleSaveBulk
+                                 signature)
+```
+
+---
+
 ## Pass 2 — Shift Board feature
 
 Lint status: ✅ 0 errors, 0 warnings
