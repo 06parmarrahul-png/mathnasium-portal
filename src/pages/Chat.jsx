@@ -14,10 +14,14 @@ export default function Chat() {
   // Load the latest 200 messages (newest first), then reverse to display chronologically.
   // The previous code did orderBy asc + limit 200, which would have stopped showing
   // new messages once chat passed 200 total (it returned the oldest 200 forever).
+  // Shift-swap requests and open-shift alerts are filtered out — those live on the
+  // Shift Board page now and would just be noise here.
   useEffect(() => onSnapshot(
     query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
     snap => {
-      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const docs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(m => m.type !== 'shift_swap' && m.type !== 'open_shift_alert');
       docs.reverse(); // newest at the bottom
       setMessages(docs);
     }

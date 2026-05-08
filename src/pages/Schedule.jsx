@@ -828,12 +828,13 @@ export default function Schedule() {
       shiftStartTime: shift.startTime,
       shiftEndTime: shift.endTime,
       shiftRole: shift.role || '',
+      shiftSubRole: shift.subRole || null, // gates who is allowed to take it
       swapStatus: 'open',
       acceptedBy: null,
       acceptedByName: null,
     });
     setSelectedDate(null);
-    alert('Shift posted to chat for swap!');
+    alert('Posted to the Shift Board! Other instructors with the same teaching level can take it.');
   };
 
   const handleClaimOpenShift = async (openShift) => {
@@ -869,6 +870,7 @@ export default function Schedule() {
           startTime: openShift.startTime,
           endTime: openShift.endTime,
           role: openShift.role || profile.instructorType || 'Instructor',
+          subRole: openShift.subRole || 'Elementary',
           status: 'live',
           autoScheduled: false,
           fromOpenShiftId: openShift.id,

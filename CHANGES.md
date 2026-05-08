@@ -1,4 +1,53 @@
-# Changes — First Fix Pass
+# Changes Log
+
+## Pass 2 — Shift Board feature
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Added a dedicated **Shift Board** page so open shifts and swap requests no longer clutter the team chat. Took the opportunity to introduce per-shift sub-role gating: instructors can only claim or take shifts that match their teaching level (Elementary / Highschool / Online).
+
+### What's new
+
+**`src/pages/ShiftBoard.jsx`** (new). Two stacked sections — Open Shifts (admin-posted) and Swap Requests (instructor-posted). Each card shows date, time, role, and a colored sub-role pill. Eligible cards have a green Claim/Take button; ineligible ones show a disabled "Requires Highschool" pill so people understand the system. Toggle in the top right ("Hide ones I can't take") filters the view, saved to `localStorage` so the choice sticks across reloads. Empty states for both sections. Past-dated shifts are auto-hidden.
+
+**Sidebar item with badge.** New "Shift Board" entry in the left nav between Scheduling and Chat. The badge shows the count of items *eligible for this user* — so Ainsley (Elementary only) sees a `2` even if there are five total shifts on the board because three are Highschool. Badge updates in real time via Firestore listeners.
+
+**Sub-role on every shift.** All three admin modals (Add Shift, Edit Shift, Add Open Shift) now have a required Teaching Level dropdown defaulting to Elementary. Auto-scheduler tags generated shifts based on each instructor's primary capability — Online-only → Online, has Highschool → Highschool, otherwise Elementary. `seedFixedShiftsForDates` defaults fixed staff to Elementary. The owner can change any shift's sub-role at any time via the edit modal.
+
+**Sub-role flows through swap and claim.** When an instructor posts a swap, the shift's sub-role is copied onto the chat doc so the board can show the right pill and gate the take button. When someone claims an open shift, the new shifts doc inherits the open shift's sub-role.
+
+**Eligibility rule:**
+- Users with **zero sub-roles** are locked out of all shifts on the board (admin needs to assign at least one before they can participate).
+- For shifts with a `subRole`, user must have that sub-role in their profile.
+- For legacy shifts without a `subRole` (anything created before this update), users with at least one sub-role can take them. This avoids breaking existing data the moment the feature ships.
+- Defense-in-depth: the eligibility check is repeated *inside* the Firestore transaction so a malicious client can't bypass the UI gate.
+
+**Chat is cleaner.** Messages with `type === 'shift_swap'` and `type === 'open_shift_alert'` are now filtered out of the rendered chat. The data still exists in Firestore (so the Shift Board can read swap docs and old data isn't lost) — they're just not visible in chat. Confirmation messages ("Sarah took Dev's shift on Tuesday") and "Schedule posted" announcements are still shown — useful chronological context.
+
+**Race-safe transactions** are reused in the new ShiftBoard claim and take flows — same pattern as the audit fixes — so simultaneous clicks can't double-book.
+
+### Files touched
+
+```
+new:   src/pages/ShiftBoard.jsx
+mod:   src/App.jsx                      (route + import)
+mod:   src/components/Layout.jsx        (sidebar item, badge counter, listeners)
+mod:   src/pages/Admin.jsx              (subRole in 3 modals + handlers + seed)
+mod:   src/pages/Schedule.jsx           (subRole in handlePostSwap, handleClaimOpenShift)
+mod:   src/pages/Chat.jsx               (filter shift_swap and open_shift_alert)
+mod:   src/lib/scheduler.js             (shiftSubRoleFor + subRoles map per day)
+```
+
+### Migration notes
+
+- **No backfill needed.** Legacy shifts without a `subRole` keep working; users with sub-roles can claim/take them as before.
+- **Onboarding requirement added.** When you approve a new instructor, you should set their teaching sub-roles in the admin panel before they'll see anything actionable on the Shift Board. The board shows them an amber banner explaining this.
+- **Old chat clutter:** existing `shift_swap` and `open_shift_alert` posts from before this deploy are now hidden in chat (per your request). They still exist in Firestore but the chat feed will look cleaner.
+
+---
+
+## Pass 1 — Audit fixes
 
 Date: May 7, 2026
 Lint status: ✅ 0 errors, 0 warnings

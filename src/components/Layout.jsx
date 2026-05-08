@@ -1,27 +1,90 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Logo from './Logo';
-import { House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell } from 'lucide-react';
+import {
+  House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
+  Briefcase,
+} from 'lucide-react';
 
-const navItems = [
-  { to: '/', label: 'Home', icon: House },
-  { to: '/announcements', label: 'Announcements', icon: Megaphone },
-  { to: '/schedule', label: 'Scheduling', icon: CalendarDays },
-  { to: '/chat', label: 'Chat', icon: MessageSquare },
-];
+// Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
+// stays in sync without a circular import. Users with zero sub-roles cannot
+// take anything; legacy shifts (no subRole) are takeable by anyone *with* a
+// sub-role; otherwise the user must have the matching sub-role.
+function canTake(shiftSubRole, userSubRoles) {
+  const subs = userSubRoles || [];
+  if (subs.length === 0) return false;
+  if (!shiftSubRole) return true;
+  return subs.includes(shiftSubRole);
+}
 
-const adminItems = [
-  { to: '/admin', label: 'Admin Panel', icon: Settings },
-];
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
 export default function Layout({ children }) {
   const { profile, logout } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
+  const [openShifts, setOpenShifts] = useState([]);
+  const [chatDocs, setChatDocs] = useState([]);
+
+  // Subscribe to data needed for the Shift Board badge counter.
+  // Both queries are also used by the ShiftBoard page itself —
+  // Firebase deduplicates identical subscriptions, so this is cheap.
+  useEffect(() => onSnapshot(
+    query(collection(db, 'openShifts'), orderBy('date', 'asc')),
+    snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), []);
+
+  useEffect(() => onSnapshot(
+    query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
+    snap => setChatDocs(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), []);
 
   const isOwner = profile?.role === 'owner';
-  const filteredNav = isOwner ? navItems.filter(i => i.to !== '/schedule') : navItems;
+
+  // Eligible-for-this-user count for the sidebar badge.
+  // - Open shifts: future-dated, status === 'open', user can take
+  // - Swaps: future-dated, status === 'open', not posted by this user, user can take
+  const boardCount = useMemo(() => {
+    const today = todayStr();
+    const subs = profile?.subRoles || [];
+
+    const openCount = openShifts.filter(s =>
+      s.status === 'open' &&
+      s.date >= today &&
+      canTake(s.subRole, subs)
+    ).length;
+
+    const swapCount = chatDocs.filter(m =>
+      m.type === 'shift_swap' &&
+      m.swapStatus === 'open' &&
+      (!m.shiftDate || m.shiftDate >= today) &&
+      m.userId !== profile?.uid &&
+      canTake(m.shiftSubRole, subs)
+    ).length;
+
+    return openCount + swapCount;
+  }, [openShifts, chatDocs, profile]);
+
+  // Build nav items. Owner doesn't get the instructor-facing Schedule
+  // (consistent with previous behavior), but everyone sees the Shift Board.
+  const baseItems = [
+    { to: '/',              label: 'Home',          icon: House },
+    { to: '/announcements', label: 'Announcements', icon: Megaphone },
+    { to: '/schedule',      label: 'Scheduling',    icon: CalendarDays },
+    { to: '/shift-board',   label: 'Shift Board',   icon: Briefcase, badge: boardCount },
+    { to: '/chat',          label: 'Chat',          icon: MessageSquare },
+  ];
+  const filteredNav = isOwner ? baseItems.filter(i => i.to !== '/schedule') : baseItems;
+  const adminItems = [{ to: '/admin', label: 'Admin Panel', icon: Settings }];
   const items = isOwner ? [...filteredNav, ...adminItems] : filteredNav;
 
   return (
@@ -42,16 +105,28 @@ export default function Layout({ children }) {
           {items.map(item => {
             const active = location.pathname === item.to;
             return (
-              <Link key={item.to} to={item.to} onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}>
+              <Link
+                key={item.to}
+                to={item.to}
+                onClick={() => setOpen(false)}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+              >
                 <item.icon size={18} />
-                {item.label}
+                <span className="flex-1">{item.label}</span>
+                {item.badge > 0 && (
+                  <span className={`min-w-[20px] text-center rounded-full px-1.5 py-0.5 text-xs font-bold ${active ? 'bg-white text-red-600' : 'bg-orange-500 text-white'}`}>
+                    {item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}
           {/* Notification Preferences link */}
-          <Link to="/notifications" onClick={() => setOpen(false)}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${location.pathname === '/notifications' ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}>
+          <Link
+            to="/notifications"
+            onClick={() => setOpen(false)}
+            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${location.pathname === '/notifications' ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+          >
             <Bell size={18} />
             Notifications
           </Link>

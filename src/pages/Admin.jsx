@@ -125,9 +125,25 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const [endTime, setEndTime] = useState('20:00');
   const [role, setRole] = useState(user?.instructorType || '');
   const [shiftType, setShiftType] = useState('In-Centre');
+  // Default sub-role guesses from the instructor's primary capability
+  const guessSubRole = (u) => {
+    const subs = u?.subRoles || [];
+    if (subs.length === 1 && subs[0] === 'Online') return 'Online';
+    if (subs.includes('Highschool')) return 'Highschool';
+    return 'Elementary';
+  };
+  const [subRole, setSubRole] = useState(guessSubRole(user));
 
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
+
+  // When the instructor selection changes, re-guess the sub-role default
+  const handleSelectUser = (uid) => {
+    setSelectedUser(uid);
+    const next = users.find(u => u.uid === uid);
+    setSubRole(guessSubRole(next));
+  };
+
   const handleSubmit = async () => {
     if (!selectedUser || !date) return;
     const profile = users.find(u => u.uid === selectedUser);
@@ -139,6 +155,7 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
       endTime,
       role,
       shiftType,
+      subRole,
       status: 'live',
     });
     onClose();
@@ -156,7 +173,7 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
             <label className="block text-xs text-gray-500 mb-1">Instructor</label>
             <select
               value={selectedUser}
-              onChange={e => setSelectedUser(e.target.value)}
+              onChange={e => handleSelectUser(e.target.value)}
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
             >
               <option value="">Select instructor...</option>
@@ -237,6 +254,22 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
           </div>
         </div>
 
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Teaching Level <span className="text-red-500">*</span>
+          </label>
+          <select
+            value={subRole}
+            onChange={e => setSubRole(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+          >
+            {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">
+            Required for shift swaps — only instructors with this sub-role can take it.
+          </p>
+        </div>
+
         <button
           onClick={handleSubmit}
           disabled={!selectedUser}
@@ -255,6 +288,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
   const [endTime, setEndTime] = useState(shift.endTime || '20:00');
   const [role, setRole] = useState(shift.role || '');
   const [shiftType, setShiftType] = useState(shift.shiftType || 'In-Centre');
+  const [subRole, setSubRole] = useState(shift.subRole || 'Elementary');
 
   return (
     <Modal
@@ -296,8 +330,20 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
             </select>
           </div>
         </div>
+        <div>
+          <label className="block text-xs text-gray-500 mb-1">
+            Teaching Level <span className="text-red-500">*</span>
+          </label>
+          <select value={subRole} onChange={e => setSubRole(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+            {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-gray-400">
+            Required for shift swaps — only instructors with this sub-role can take it.
+          </p>
+        </div>
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -316,9 +362,10 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
   const [role, setRole] = useState('');
+  const [subRole, setSubRole] = useState('Elementary');
 
   const handleSubmit = async () => {
-    await onSave({ date, startTime, endTime, role });
+    await onSave({ date, startTime, endTime, role, subRole });
     onClose();
   };
 
@@ -328,7 +375,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
       onClose={onClose}
     >
       <div className="space-y-3">
-        <p className="text-xs text-gray-500">An open shift can be claimed by any available instructor.</p>
+        <p className="text-xs text-gray-500">An open shift can be claimed by any instructor whose sub-role matches.</p>
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-gray-500 mb-1">Start Time</label>
@@ -341,13 +388,24 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
           </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Role / Tag (optional)</label>
-          <select value={role} onChange={e => setRole(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
-            <option value="">Any role</option>
-            {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-          </select>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Role / Tag (optional)</label>
+            <select value={role} onChange={e => setRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+              <option value="">Any role</option>
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Teaching Level <span className="text-red-500">*</span>
+            </label>
+            <select value={subRole} onChange={e => setSubRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+              {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+            </select>
+          </div>
         </div>
         <button onClick={handleSubmit}
           className="w-full rounded-lg bg-orange-500 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 transition-colors mt-1">
@@ -439,8 +497,8 @@ export default function Admin() {
     await addDoc(collection(db, 'shifts'), shiftData);
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType }) => {
-    await updateDoc(doc(db, 'shifts', editShiftModal.id), { startTime, endTime, role, shiftType });
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole }) => {
+    await updateDoc(doc(db, 'shifts', editShiftModal.id), { startTime, endTime, role, shiftType, subRole });
     setEditShiftModal(null);
   };
 
@@ -450,9 +508,10 @@ export default function Admin() {
   };
 
   // Open Shifts
-  const handleAddOpenShift = async ({ date, startTime, endTime, role }) => {
+  const handleAddOpenShift = async ({ date, startTime, endTime, role, subRole }) => {
     await addDoc(collection(db, 'openShifts'), {
       date, startTime, endTime, role,
+      subRole: subRole || 'Elementary',
       status: 'open', claimedBy: null, claimedByName: null,
       postedAt: new Date().toISOString(),
     });
@@ -536,7 +595,9 @@ export default function Admin() {
       dayNumber: editingDay.dayNumber,
       assignedEmployees: editingDay.assignedEmployees,
       availableEmployees: editingDay.availableEmployees,
-      shiftTimes: editingDay.shiftTimes, roles: editingDay.roles,
+      shiftTimes: editingDay.shiftTimes,
+      roles: editingDay.roles,
+      subRoles: editingDay.subRoles,
       countingStaffCount: editingDay.assignedEmployees.filter(
         n => ['Instructor','Lead'].includes(editingDay.roles?.[n] || 'Instructor')
       ).length,
@@ -549,7 +610,18 @@ export default function Admin() {
     setEditingDay(p => ({ ...p, assignedEmployees: p.assignedEmployees.filter(n => n !== name) }));
   const handleAddToDay = name => {
     if (editingDay.assignedEmployees.includes(name)) return;
-    setEditingDay(p => ({ ...p, assignedEmployees: [...p.assignedEmployees, name] }));
+    // Look up the user's primary sub-role so the new shift gets tagged
+    const u = approvedUsers.find(usr => usr.displayName === name);
+    const subs = u?.subRoles || [];
+    let pickedSubRole;
+    if (subs.length === 1 && subs[0] === 'Online') pickedSubRole = 'Online';
+    else if (subs.includes('Highschool')) pickedSubRole = 'Highschool';
+    else pickedSubRole = 'Elementary';
+    setEditingDay(p => ({
+      ...p,
+      assignedEmployees: [...p.assignedEmployees, name],
+      subRoles: { ...(p.subRoles || {}), [name]: pickedSubRole },
+    }));
   };
 
   // Convert "11:00 AM" → "11:00", "2:00 PM" → "14:00" for Firestore storage
@@ -606,6 +678,7 @@ export default function Admin() {
           startTime: toHHMM(parts[0]),
           endTime: toHHMM(parts[1]),
           role: sched.role,
+          subRole: 'Elementary',
           status: 'live',
           autoScheduled: true,
           fixedStaff: true,
@@ -671,7 +744,9 @@ export default function Admin() {
           batch.set(ref, {
             userId: user?.uid || name, userName: name,
             date: day.date, startTime, endTime,
-            role: day.roles?.[name] || 'Instructor', status: 'live', autoScheduled: true,
+            role: day.roles?.[name] || 'Instructor',
+            subRole: day.subRoles?.[name] || 'Elementary',
+            status: 'live', autoScheduled: true,
           });
         }
       }

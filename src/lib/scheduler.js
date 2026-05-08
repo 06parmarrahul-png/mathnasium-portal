@@ -219,6 +219,21 @@ function isOnlineOnly(instructor) {
   return subs.includes('Online') && !subs.includes('Highschool') && !subs.includes('Elementary');
 }
 
+/**
+ * Pick the sub-role to tag an auto-scheduled shift with, based on the
+ * instructor's primary teaching capability:
+ *   - Online-only instructors → 'Online'
+ *   - Highschool-capable      → 'Highschool' (the higher-skill bucket)
+ *   - everyone else           → 'Elementary'
+ * Falls back to Elementary if no sub-roles are set on the user.
+ */
+function shiftSubRoleFor(instructor) {
+  const subs = instructor.subRoles || [];
+  if (isOnlineOnly(instructor)) return 'Online';
+  if (subs.includes('Highschool')) return 'Highschool';
+  return 'Elementary';
+}
+
 function isGuaranteed(instructor) {
   const firstName = (instructor.displayName || '').split(' ')[0];
   return GUARANTEED_NAMES.has(firstName);
@@ -283,12 +298,16 @@ export function generateSchedule({
     const assignedNames = [];
     const shiftTimes = {};
     const roles = {};
+    const subRoles = {}; // displayName -> 'Elementary' | 'Highschool' | 'Online'
 
     let fixedRatioCount = 0;
     for (const f of fixedToday) {
       assignedNames.push(f.name);
       shiftTimes[f.name] = f.shift;
       roles[f.name] = f.role;
+      // Fixed staff don't run lessons in the same way, but tag a sub-role so
+      // their shift docs match the rest of the schema. Default to Elementary.
+      subRoles[f.name] = 'Elementary';
       if (f.countsTowardRatio) fixedRatioCount++;
     }
 
@@ -360,6 +379,7 @@ export function generateSchedule({
 
       assignedNames.push(candidate.inst.displayName);
       roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
+      subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
       if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
       totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
@@ -379,6 +399,7 @@ export function generateSchedule({
 
         assignedNames.push(candidate.inst.displayName);
         roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
+        subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
         if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
         totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
@@ -404,6 +425,7 @@ export function generateSchedule({
 
       assignedNames.push(candidate.inst.displayName);
       roles[candidate.inst.displayName] = 'Online Instructor';
+      subRoles[candidate.inst.displayName] = 'Online';
       if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
       totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
@@ -436,6 +458,7 @@ export function generateSchedule({
       availableEmployees: availableInstructors.map(a => a.inst.displayName),
       shiftTimes,
       roles,
+      subRoles,
       countingStaffCount: inCentreTotal,
       openSlotsNeeded: Math.max(0, minPerDay - inCentreTotal),
     });
