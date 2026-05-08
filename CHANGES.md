@@ -1,5 +1,50 @@
 # Changes Log
 
+## Pass 8 — Per-day Coverage Grid (half-hour staffing density)
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Each day in the auto-scheduler draft now has a "Show coverage" button that expands into a half-hour-resolution staffing grid — so you can see exactly how many instructors you have at each time slot before posting, and decide student capacity accordingly.
+
+### What's new
+
+**`src/components/CoverageGrid.jsx`** — a new reusable component that renders a Gantt-style table for a single day:
+
+- **Rows**: every assigned person on that day, sorted by role (Instructors → Hosts → Online).
+- **Columns**: half-hour slots from open to close, sized to the day-of-week (Mon–Thu 10 AM – 8 PM, Fri 10 AM – 7 PM, Sat 9 AM – 3 PM).
+- **Cells**: filled with a sub-role-colored bar (lime/teal/indigo) when that person's shift covers that slot, hover to see the person's name and shift time.
+- **Sticky left column** for names — scroll horizontally on small screens without losing context.
+- **Hour-mark column dividers** are darker; half-hour ones are subtle. Hour labels show; half-hour cells stay blank.
+
+**Two summary rows at the bottom:**
+
+- **"Instructors"** (bold, blue) — count of *teaching* staff per slot. Only Instructor / Lead / promoted-Host roles count. This is the number that matters for student-capacity decisions.
+- **"All staff"** (smaller, gray) — total bodies in the centre per slot, including non-teaching Hosts and Online instructors.
+
+A summary line at the top shows peak instructor count and what time it hits ("Peak instructors: 3 @ 4p"). Footer note clarifies what counts as a teaching role and what doesn't.
+
+**Per-day expand toggle** in the Admin draft schedule. Each day card now ends with a "Show coverage" button that toggles the grid. There's also an "Expand all" / "Collapse all" pair in the schedule header for surveying the whole month at once.
+
+**Live updates in edit mode.** When you click Edit on a day and the coverage grid is expanded, the bars and totals update *as you tweak times* — drag a shift earlier and you'll see the slot count change immediately. Lets you fine-tune coverage in real time.
+
+### Why this is useful
+
+When you're staring at a draft thinking "do I have enough people on Thursday?", you can now answer it concretely: open the coverage grid, eye the "Instructors" total at 5 PM, and know if you can fit another student. Previously this required either mental math or actually posting the schedule and counting on the weekly spreadsheet.
+
+It also makes obvious things you couldn't see before — like "everyone leaves at 7 PM but I have a 6:30 student cancellation, am I stranded after?" Now there's a row for each person and you can see who's bridging the late slot.
+
+### Files touched
+
+```
+new:   src/components/CoverageGrid.jsx   (Gantt table + summary)
+mod:   src/pages/Admin.jsx               (expandedDays state, expand-all/collapse-all,
+                                           per-day "Show coverage" toggle, conditional
+                                           render of CoverageGrid)
+```
+
+---
+
 ## Pass 7 — Editable shift times in the auto-scheduler draft
 
 Lint status: ✅ 0 errors, 0 warnings

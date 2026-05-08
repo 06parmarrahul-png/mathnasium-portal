@@ -7,15 +7,16 @@ import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
-  ChevronLeft, ChevronRight, Table, Wand2, CheckCircle, Check,
+  ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
-  DollarSign, Download, CalendarRange,
+  DollarSign, Download, CalendarRange, BarChart3,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import CoverageGrid from '../components/CoverageGrid';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -440,6 +441,24 @@ export default function Admin() {
   });
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
+  // Set of day-indexes that have their CoverageGrid expanded.
+  const [expandedDays, setExpandedDays] = useState(new Set());
+
+  const toggleDayExpanded = (i) => {
+    setExpandedDays(prev => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  const expandAllDays = () => {
+    if (!draftSchedule) return;
+    setExpandedDays(new Set(draftSchedule.days.map((_, i) => i)));
+  };
+
+  const collapseAllDays = () => setExpandedDays(new Set());
 
   // Payroll state
   const today = new Date();
@@ -1640,10 +1659,24 @@ export default function Admin() {
               )}
 
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-                <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3">
+                <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
                   <div>
                     <h4 className="font-semibold text-gray-900">Day-by-Day Schedule</h4>
-                    <p className="text-xs text-gray-500">Hover over a day to edit the roster — changes save to the draft, not posted yet.</p>
+                    <p className="text-xs text-gray-500">Edit any day's roster, times, or sub-roles — changes save to the draft, not posted yet.</p>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={expandAllDays}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+                    >
+                      Expand all
+                    </button>
+                    <button
+                      onClick={collapseAllDays}
+                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors"
+                    >
+                      Collapse all
+                    </button>
                   </div>
                 </div>
                 <div className="divide-y divide-gray-100">
@@ -1854,6 +1887,32 @@ export default function Admin() {
                               </div>
                             )}
                           </>
+                        )}
+
+                        {/* Coverage toggle + grid — works in both view and edit modes.
+                            Lets the admin see staffing density per half-hour slot
+                            so they can decide student capacity. */}
+                        {day.assignedEmployees.length > 0 && (
+                          <div className="mt-3 pt-3 border-t border-gray-100">
+                            <button
+                              onClick={() => toggleDayExpanded(i)}
+                              className="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+                            >
+                              {expandedDays.has(i)
+                                ? <ChevronDown size={14} />
+                                : <ChevronRight size={14} />}
+                              <BarChart3 size={12} />
+                              {expandedDays.has(i) ? 'Hide coverage' : 'Show coverage'}
+                              <span className="ml-1 text-gray-400 font-normal">— half-hour density</span>
+                            </button>
+                            {expandedDays.has(i) && (
+                              <div className="mt-3">
+                                {/* In edit mode, render against editingDay so the
+                                    admin sees coverage update live as they tweak times. */}
+                                <CoverageGrid day={isEditing ? editingDay : day} />
+                              </div>
+                            )}
+                          </div>
                         )}
                       </div>
                     );
