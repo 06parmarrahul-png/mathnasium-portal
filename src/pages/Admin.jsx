@@ -8,7 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, Table, Wand2, CheckCircle, Check,
-  AlertTriangle, Send, RotateCcw, User, Edit3, ArrowRightLeft, Plus, X,
+  AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange,
 } from 'lucide-react';
 import {
@@ -1580,66 +1580,175 @@ export default function Admin() {
               )}
 
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-                <div className="border-b bg-gray-50 px-5 py-3">
-                  <h4 className="font-semibold text-gray-900">Day-by-Day Schedule</h4>
-                  <p className="text-xs text-gray-500">Click Edit on any day to adjust the roster</p>
+                <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3">
+                  <div>
+                    <h4 className="font-semibold text-gray-900">Day-by-Day Schedule</h4>
+                    <p className="text-xs text-gray-500">Hover over a day to edit the roster — changes save to the draft, not posted yet.</p>
+                  </div>
                 </div>
-                <div className="divide-y">
+                <div className="divide-y divide-gray-100">
                   {draftSchedule.days.map((day, i) => {
                     const isLow = day.countingStaffCount < schedConfig.minPerDay;
                     const isEditing = editingDay?.index === i;
+
+                    // Sort assigned names by role priority: Instructor/Lead first,
+                    // then Host, then Online, then everything else.
+                    const rolePriority = (r) => {
+                      if (r === 'Instructor' || r === 'Lead') return 0;
+                      if (r === 'Host')                       return 1;
+                      if (r === 'Online Instructor')          return 2;
+                      return 3;
+                    };
+                    const sortedNames = [...day.assignedEmployees].sort((a, b) => {
+                      const ra = day.roles?.[a] || 'Instructor';
+                      const rb = day.roles?.[b] || 'Instructor';
+                      const dp = rolePriority(ra) - rolePriority(rb);
+                      if (dp !== 0) return dp;
+                      return a.localeCompare(b);
+                    });
+
                     return (
-                      <div key={day.date} className={`p-4 ${isLow ? 'bg-red-50' : ''}`}>
-                        <div className="flex items-start justify-between mb-2">
-                          <div>
-                            <span className={`text-sm font-bold ${isLow ? 'text-red-700' : 'text-gray-900'}`}>
+                      <div
+                        key={day.date}
+                        className={`group relative px-5 py-4 transition-colors ${isLow ? 'bg-red-50/50' : 'hover:bg-gray-50/40'}`}
+                      >
+                        {/* Left edge accent for low-staff days */}
+                        {isLow && <span className="absolute left-0 top-0 bottom-0 w-1 bg-red-500" />}
+
+                        {/* Day header */}
+                        <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className={`text-sm font-bold ${isLow ? 'text-red-800' : 'text-gray-900'}`}>
                               {day.dayOfWeek}, {draftSchedule.month} {day.dayNumber}
                             </span>
-                            {isLow && <span className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700">LOW STAFF</span>}
-                            <span className="ml-2 text-xs text-gray-500">{day.countingStaffCount} instructors / {day.assignedEmployees.length} total</span>
+                            {isLow ? (
+                              <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
+                                <AlertTriangle size={11} />
+                                Low staff — need {schedConfig.minPerDay - day.countingStaffCount} more
+                              </span>
+                            ) : (
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                                Staffed
+                              </span>
+                            )}
+                            <span className="text-xs text-gray-500">
+                              {day.countingStaffCount} instructor{day.countingStaffCount === 1 ? '' : 's'} · {day.assignedEmployees.length} total
+                            </span>
                           </div>
                           {!isEditing && (
                             <button onClick={() => handleEditDay(i)}
-                              className="flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-500 hover:bg-gray-100 hover:text-gray-800">
+                              className="flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900 hover:bg-gray-50 transition-colors">
                               <Edit3 size={12} /> Edit
                             </button>
                           )}
                         </div>
+
                         {isEditing ? (
-                          <div className="mt-2 rounded-lg border bg-white p-3">
-                            <p className="mb-2 text-xs font-semibold text-gray-700 uppercase tracking-wide">Editing roster</p>
-                            <div className="flex flex-wrap gap-2 mb-3">
-                              {editingDay.assignedEmployees.map(name => (
-                                <span key={name} className="flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-xs text-blue-800">
-                                  {name}
-                                  <button onClick={() => handleRemoveFromDay(name)} className="text-blue-500 hover:text-red-500 ml-1">×</button>
-                                </span>
-                              ))}
+                          <div className="rounded-xl border-2 border-blue-200 bg-blue-50/40 p-4">
+                            <p className="mb-2 text-xs font-bold text-blue-700 uppercase tracking-widest">Editing roster</p>
+                            <div className="flex flex-wrap gap-2 mb-4">
+                              {editingDay.assignedEmployees.map(name => {
+                                const sub = subRoleStyleFor(editingDay.subRoles?.[name]);
+                                return (
+                                  <span key={name} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${sub ? `${sub.pillBg} ${sub.pillText} ${sub.pillBorder}` : 'bg-blue-100 text-blue-800 border-blue-200'}`}>
+                                    {sub && <span className={`w-1.5 h-1.5 rounded-full ${sub.dot}`} />}
+                                    {name}
+                                    <button
+                                      onClick={() => handleRemoveFromDay(name)}
+                                      className="ml-1 rounded-full hover:bg-black/10 w-4 h-4 flex items-center justify-center transition-colors"
+                                      aria-label={`Remove ${name}`}
+                                    >
+                                      ×
+                                    </button>
+                                  </span>
+                                );
+                              })}
+                              {editingDay.assignedEmployees.length === 0 && (
+                                <span className="text-sm text-gray-400 italic">No one assigned — add from below</span>
+                              )}
                             </div>
-                            <p className="mb-1 text-xs text-gray-500">Add from available:</p>
-                            <div className="flex flex-wrap gap-1 mb-3">
-                              {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => (
-                                <button key={u.uid} onClick={() => handleAddToDay(u.displayName)}
-                                  className="rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-xs text-gray-600 hover:border-blue-400 hover:text-blue-700">
-                                  + {u.displayName}
-                                </button>
-                              ))}
+                            <p className="mb-2 text-xs font-semibold text-gray-600">Add from approved staff:</p>
+                            <div className="flex flex-wrap gap-1.5 mb-4">
+                              {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => {
+                                const subs = u.subRoles || [];
+                                const primarySub = subs.includes('Online') && !subs.includes('Highschool') && !subs.includes('Elementary')
+                                  ? 'Online'
+                                  : subs.includes('Highschool') ? 'Highschool' : subs.length > 0 ? 'Elementary' : null;
+                                const sub = subRoleStyleFor(primarySub);
+                                return (
+                                  <button key={u.uid} onClick={() => handleAddToDay(u.displayName)}
+                                    className="flex items-center gap-1.5 rounded-full border border-dashed border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-600 hover:border-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+                                  >
+                                    <span className={`w-1.5 h-1.5 rounded-full ${sub ? sub.dot : 'bg-gray-300'}`} />
+                                    + {u.displayName}
+                                  </button>
+                                );
+                              })}
                             </div>
                             <div className="flex gap-2">
-                              <button onClick={handleSaveEditDay} className="rounded bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700">Save</button>
-                              <button onClick={() => setEditingDay(null)} className="rounded border px-3 py-1 text-xs text-gray-500 hover:bg-gray-50">Cancel</button>
+                              <button onClick={handleSaveEditDay} className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors">
+                                <Check size={12} /> Save
+                              </button>
+                              <button onClick={() => setEditingDay(null)} className="rounded-lg border border-gray-200 px-4 py-1.5 text-xs font-medium text-gray-600 hover:bg-white transition-colors">
+                                Cancel
+                              </button>
                             </div>
                           </div>
                         ) : (
-                          <div className="flex flex-wrap gap-1.5">
-                            {day.assignedEmployees.map(name => (
-                              <span key={name} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${['Instructor','Lead'].includes(day.roles?.[name] || 'Instructor') ? 'bg-blue-100 text-blue-800' : 'bg-gray-100 text-gray-700'}`}>
-                                <User size={10} /> {name}
-                                {day.shiftTimes?.[name] && <span className="text-gray-500 ml-0.5">· {day.shiftTimes[name]}</span>}
-                              </span>
-                            ))}
-                            {day.assignedEmployees.length === 0 && <span className="text-sm text-gray-400 italic">No staff assigned</span>}
-                          </div>
+                          <>
+                            {day.assignedEmployees.length === 0 ? (
+                              <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
+                                <p className="text-sm text-gray-400 italic">No staff assigned for this day</p>
+                              </div>
+                            ) : (
+                              <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                                {sortedNames.map(name => {
+                                  const role = day.roles?.[name] || 'Instructor';
+                                  const subRole = day.subRoles?.[name];
+                                  const time = day.shiftTimes?.[name];
+                                  const sub = subRoleStyleFor(subRole);
+                                  const initials = (name || '').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+                                  const isHostRow   = role === 'Host';
+                                  const isOnlineRow = role === 'Online Instructor';
+                                  return (
+                                    <div
+                                      key={name}
+                                      className="flex items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 hover:border-gray-300 hover:shadow-sm transition-all"
+                                    >
+                                      <div
+                                        className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${sub ? sub.blockBg : 'bg-gray-400'}`}
+                                        title={subRole || 'No sub-role'}
+                                      >
+                                        {initials || '?'}
+                                      </div>
+                                      <div className="min-w-0 flex-1">
+                                        <p className="text-xs font-semibold text-gray-900 truncate">{name}</p>
+                                        <p className="text-xs text-gray-500 truncate">
+                                          {time || '—'}
+                                        </p>
+                                      </div>
+                                      <div className="shrink-0 flex flex-col items-end gap-0.5">
+                                        {isHostRow && (
+                                          <span className="rounded-full bg-amber-100 text-amber-800 px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide">Host</span>
+                                        )}
+                                        {isOnlineRow && (
+                                          <span className="rounded-full bg-indigo-100 text-indigo-800 px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide">Online</span>
+                                        )}
+                                        {!isHostRow && !isOnlineRow && role !== 'Instructor' && (
+                                          <span className="rounded-full bg-gray-100 text-gray-700 px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide">{role}</span>
+                                        )}
+                                        {sub && (
+                                          <span className={`rounded-full px-1.5 py-0 text-[10px] font-bold uppercase tracking-wide ${sub.pillBg} ${sub.pillText}`} title={sub.label}>
+                                            {sub.label[0]}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );

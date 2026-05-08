@@ -22,6 +22,46 @@
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
+/**
+ * Hours during which instructors actually teach lessons.
+ * Used by the auto-scheduler to clamp shift times — when an instructor
+ * submits "full day" availability (e.g. 10 AM – 8 PM), they should only
+ * be SCHEDULED for the teaching window. Admin work outside that window
+ * isn't a scheduled shift.
+ *
+ * Hosts (covering admin time) and Online instructors keep their full
+ * submitted availability — clamping is applied only when assigning
+ * Instructor/Lead/promoted-Host roles.
+ *
+ * Edit these if real teaching hours change.
+ */
+const INSTRUCTIONAL_HOURS = {
+  Monday:    { start: '15:00', end: '19:00' }, // 3:00 PM – 7:00 PM
+  Tuesday:   { start: '15:00', end: '19:00' },
+  Wednesday: { start: '15:00', end: '19:00' },
+  Thursday:  { start: '15:00', end: '19:00' },
+  Friday:    { start: '15:00', end: '18:00' }, // 3:00 PM – 6:00 PM
+  Saturday:  { start: '10:00', end: '14:00' }, // 10:00 AM – 2:00 PM
+};
+
+/**
+ * Intersect a user's availability window with the day's instructional
+ * window. Returns { start, end } in HH:MM, or null if there is no overlap.
+ *
+ * Examples (Monday — instructional 15:00–19:00):
+ *   user 10:00–20:00 → 15:00–19:00
+ *   user 16:00–18:30 → 16:00–18:30
+ *   user 13:00–14:30 → null (no overlap)
+ */
+function clampToInstructionalHours(startTime, endTime, dayName) {
+  const w = INSTRUCTIONAL_HOURS[dayName];
+  if (!w || !startTime || !endTime) return null;
+  const s = startTime > w.start ? startTime : w.start;
+  const e = endTime   < w.end   ? endTime   : w.end;
+  if (s >= e) return null;
+  return { start: s, end: e };
+}
+
 const MONTH_NAME_TO_NUMBER = {
   january: 1, february: 2, march: 3, april: 4,
   may: 5, june: 6, july: 7, august: 8,
@@ -394,7 +434,11 @@ export function generateSchedule({
       assignedNames.push(candidate.inst.displayName);
       roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
       subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
-      if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+      // Instructors get clamped to instructional hours so a "Full Day"
+      // availability doesn't accidentally schedule them 10am–8pm.
+      const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+      if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
+      else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
       totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
       if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
@@ -414,7 +458,9 @@ export function generateSchedule({
         assignedNames.push(candidate.inst.displayName);
         roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
         subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
-        if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+        const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+        if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
+        else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
         totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
         if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
@@ -453,19 +499,25 @@ export function generateSchedule({
 
         assignedNames.push(candidate.inst.displayName);
         if (promote) {
-          // Tag this shift as Instructor for the day so it counts toward staffing
+          // Tag this shift as Instructor for the day so it counts toward staffing,
+          // and CLAMP the time to instructional hours — they're teaching, not
+          // covering admin time on this day.
           roles[candidate.inst.displayName] = 'Instructor';
           subRoles[candidate.inst.displayName] = 'Elementary';
           promotedFromHost++;
+          const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+          if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
+          else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
           warnings.push(
             `ℹ ${dayName} ${month} ${dayNumber}: ${candidate.inst.displayName} (Host) promoted to Instructor to cover staffing shortfall.`
           );
         } else {
-          // Regular Host shift — doesn't count toward instructor min/max
+          // Regular Host shift — admin/operational coverage for the full
+          // submitted availability (this is the point of the Host role).
           roles[candidate.inst.displayName] = 'Host';
           subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
+          if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
         }
-        if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
         totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
         if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};

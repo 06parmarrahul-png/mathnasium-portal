@@ -1,5 +1,72 @@
 # Changes Log
 
+## Pass 6 — Auto-scheduler clamps to instructional hours + cleaner draft UI
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Two issues fixed: (1) instructors with "Full Day" availability were getting scheduled for the entire 10-hour window instead of just teaching hours, and (2) the auto-scheduler's draft preview was visually noisy and hard to scan.
+
+### Issue 1 — Shifts now clamp to instructional hours
+
+The auto-scheduler used to take an instructor's submitted availability and use that *as* the scheduled shift. Someone who said "I'm free 10 AM – 8 PM" would be put on the schedule for 10 hours. That's wrong — availability is "I'm here for any kind of work"; the *scheduled shift* should only be the teaching window.
+
+A new `INSTRUCTIONAL_HOURS` map at the top of `lib/scheduler.js` defines the per-day teaching window:
+
+| Day        | Teaching window     |
+|------------|---------------------|
+| Mon–Thu    | 3:00 PM – 7:00 PM   |
+| Friday     | 3:00 PM – 6:00 PM   |
+| Saturday   | 10:00 AM – 2:00 PM  |
+
+A new `clampToInstructionalHours()` helper intersects the user's availability with this window. So 10 AM – 8 PM on a Monday becomes a 3 PM – 7 PM shift; 4 PM – 9 PM becomes a 4 PM – 7 PM shift.
+
+**Who gets clamped:**
+- ✅ **Instructor** roles — clamped (they're teaching, not doing admin time)
+- ✅ **Lead** roles — clamped (same reason)
+- ✅ **Host (auto-promoted to Instructor)** — clamped (they're teaching that day)
+- ❌ **Host (regular)** — NOT clamped (admin work happens outside teaching hours, that's the point)
+- ❌ **Online Instructor** — NOT clamped (online sessions are flex hours)
+
+If real teaching hours change, edit the `INSTRUCTIONAL_HOURS` map and everyone's shifts adjust automatically. (Two separate maps now: `Schedule.jsx`'s `FULL_DAY_BY_DOW` is the *availability* full-day range; `scheduler.js`'s `INSTRUCTIONAL_HOURS` is the *scheduled shift* teaching window.)
+
+### Issue 2 — Cleaner draft schedule UI
+
+The day-by-day list of pills got cramped fast — at 10+ instructors per day, names ran into each other and shift times were hard to spot. New layout:
+
+**Each day is a card.** Headers got an upgrade:
+- Day name in bold
+- Status pill: green "Staffed" when good, red "Low staff — need 2 more" when short (replaces the old red `LOW STAFF` chip — gives the actual number that's missing)
+- Compact instructor / total counts
+- Edit button is always visible on hover, not floating
+
+**Roster is a 2/3-column responsive grid of mini-cards.** Each card shows:
+- Avatar circle, colored by sub-role (lime / teal / indigo) — instant scan for who's covering what
+- Name in bold
+- Shift time below (now correctly clamped to instructional hours)
+- Right-side mini-badges: amber "HOST" / indigo "ONLINE" / sub-role single-letter pill (E/H/O)
+
+**Sorted by role.** Instructor/Lead first, then Host, then Online — so the per-day card naturally reads like a roster (frontline staff at the top).
+
+**Edit mode** got the same upgrade: removable chips inherit their sub-role color, and the "Add from approved staff" buttons each show a colored dot for that user's primary sub-role so admin can preview who they're adding.
+
+**Low-staff days** now have a subtle red left-edge accent bar and a soft red background tint, instead of a heavy red wash that fights with the rest of the UI.
+
+### Files touched
+
+```
+mod:   src/lib/scheduler.js   (INSTRUCTIONAL_HOURS map, clampToInstructionalHours
+                                helper, applied at all four assignment sites:
+                                inCentre first pass, inCentre second pass,
+                                Host promoted, plus Host regular kept
+                                unclamped)
+mod:   src/pages/Admin.jsx     (Day-by-Day Schedule UI redesign — mini-card
+                                grid, sub-role colored avatars, role-sorted,
+                                cleaner edit mode, low-staff treatment)
+```
+
+---
+
 ## Pass 5 — Host scheduling (Rahul) + per-user "Guaranteed shift" toggle
 
 Lint status: ✅ 0 errors, 0 warnings
