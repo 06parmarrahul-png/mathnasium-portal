@@ -1,5 +1,51 @@
 # Changes Log
 
+## Pass 7 — Editable shift times in the auto-scheduler draft
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Previously you could only add/remove people from a day in the draft schedule — actual shift times were locked in by the scheduler. Now you can fine-tune everything before posting.
+
+### What's new
+
+**Edit mode in the draft Day-by-Day Schedule** is now a real editor instead of just an add/remove panel. Each assigned person becomes a row with:
+
+- Sub-role-colored avatar with initials (lime / teal / indigo)
+- Name + remove button
+- **Start time input** (HH:MM picker)
+- **End time input** (HH:MM picker)
+- **Sub-role dropdown** (Elementary / Highschool / Online)
+
+Edit anything you want, click "Save day", and your changes are kept in the draft until you click "Post Schedule" — at which point they get written to Firestore exactly as edited.
+
+**Adding someone to a day from the editor** now also seeds a sensible default shift:
+- **Instructor / Lead / etc.** — defaults to that day's instructional window (Mon–Thu 3–7 PM, Fri 3–6 PM, Sat 10 AM – 2 PM)
+- **Hosts** — defaults to the day's full-day window (Mon–Thu 10 AM – 8 PM, Fri 10 AM – 7 PM, Sat 9 AM – 3 PM)
+
+So you can drop a Lead into Wednesday and it pre-fills 3–7 PM, no manual typing required.
+
+**Empty-state hint.** If everyone is already on the roster for that day, the "Add from approved staff" section shows "All approved staff are already assigned." instead of an empty row.
+
+### Implementation details
+
+- Three new handlers added to `Admin.jsx`:
+  - `handleUpdateDayShiftTime(name, field, value)` — patches one half (start or end) of someone's shift string in the draft
+  - `handleUpdateDaySubRole(name, value)` — changes someone's sub-role in the draft
+  - `parseShiftTimeStr(str)` — parses both `HH:MM` and `H:MM AM/PM` formats back to `[start, end]` so the time inputs can show the right values
+- `handleAddToDay` now also seeds the new entry's `shiftTimes` and chooses the default based on the user's `instructorType`
+- `handlePostSchedule` already reads `day.shiftTimes` when writing to Firestore, so no change needed there — your edits flow straight through
+
+### Files touched
+
+```
+mod:   src/pages/Admin.jsx   (three new handlers, parseShiftTimeStr,
+                              DRAFT_DEFAULT_HOURS map, redesigned edit-mode
+                              UI with editable rows)
+```
+
+---
+
 ## Pass 6 — Auto-scheduler clamps to instructional hours + cleaner draft UI
 
 Lint status: ✅ 0 errors, 0 warnings

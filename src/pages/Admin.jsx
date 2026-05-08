@@ -603,6 +603,18 @@ export default function Admin() {
 
   const handleRemoveFromDay = name =>
     setEditingDay(p => ({ ...p, assignedEmployees: p.assignedEmployees.filter(n => n !== name) }));
+  // Default instructional / full-day hours per day-of-week, used when an
+  // admin adds someone to a day in the draft editor (and we have no
+  // submitted availability to read from).
+  const DRAFT_DEFAULT_HOURS = {
+    Monday:    { instr: ['15:00', '19:00'], host: ['10:00', '20:00'] },
+    Tuesday:   { instr: ['15:00', '19:00'], host: ['10:00', '20:00'] },
+    Wednesday: { instr: ['15:00', '19:00'], host: ['10:00', '20:00'] },
+    Thursday:  { instr: ['15:00', '19:00'], host: ['10:00', '20:00'] },
+    Friday:    { instr: ['15:00', '18:00'], host: ['10:00', '19:00'] },
+    Saturday:  { instr: ['10:00', '14:00'], host: ['09:00', '15:00'] },
+  };
+
   const handleAddToDay = name => {
     if (editingDay.assignedEmployees.includes(name)) return;
     // Look up the user's primary sub-role so the new shift gets tagged
@@ -612,10 +624,58 @@ export default function Admin() {
     if (subs.length === 1 && subs[0] === 'Online') pickedSubRole = 'Online';
     else if (subs.includes('Highschool')) pickedSubRole = 'Highschool';
     else pickedSubRole = 'Elementary';
+    // Default shift time: Hosts get full-day, everyone else gets instructional hours
+    const defaults = DRAFT_DEFAULT_HOURS[editingDay.dayOfWeek] || DRAFT_DEFAULT_HOURS.Monday;
+    const isHost = u?.instructorType === 'Host';
+    const [defStart, defEnd] = isHost ? defaults.host : defaults.instr;
     setEditingDay(p => ({
       ...p,
       assignedEmployees: [...p.assignedEmployees, name],
-      subRoles: { ...(p.subRoles || {}), [name]: pickedSubRole },
+      subRoles:   { ...(p.subRoles   || {}), [name]: pickedSubRole },
+      shiftTimes: { ...(p.shiftTimes || {}), [name]: `${defStart} - ${defEnd}` },
+    }));
+  };
+
+  // Parse a shift-time string ("15:00 - 19:00" or "11:00 AM - 7:00 PM")
+  // back into [startHHMM, endHHMM]. Used by the draft time editor below.
+  const parseShiftTimeStr = (str) => {
+    if (!str) return ['15:00', '19:00'];
+    const parts = String(str).split(' - ');
+    if (parts.length !== 2) return ['15:00', '19:00'];
+    const norm = (p) => {
+      const t = p.trim();
+      if (/^\d{1,2}:\d{2}$/.test(t)) return t.padStart(5, '0');
+      const m = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (m) {
+        let h = parseInt(m[1], 10);
+        const min = m[2];
+        const ampm = m[3].toUpperCase();
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        return `${String(h).padStart(2,'0')}:${min}`;
+      }
+      return '15:00';
+    };
+    return [norm(parts[0]), norm(parts[1])];
+  };
+
+  const handleUpdateDayShiftTime = (name, field, value) => {
+    setEditingDay(p => {
+      const current = p.shiftTimes?.[name] || '';
+      const [s, e] = parseShiftTimeStr(current);
+      const ns = field === 'start' ? value : s;
+      const ne = field === 'end'   ? value : e;
+      return {
+        ...p,
+        shiftTimes: { ...(p.shiftTimes || {}), [name]: `${ns} - ${ne}` },
+      };
+    });
+  };
+
+  const handleUpdateDaySubRole = (name, value) => {
+    setEditingDay(p => ({
+      ...p,
+      subRoles: { ...(p.subRoles || {}), [name]: value },
     }));
   };
 
@@ -1645,28 +1705,69 @@ export default function Admin() {
 
                         {isEditing ? (
                           <div className="rounded-xl border-2 border-blue-200 bg-blue-50/40 p-4">
-                            <p className="mb-2 text-xs font-bold text-blue-700 uppercase tracking-widest">Editing roster</p>
-                            <div className="flex flex-wrap gap-2 mb-4">
+                            <div className="flex items-center justify-between mb-3">
+                              <p className="text-xs font-bold text-blue-700 uppercase tracking-widest">Editing roster</p>
+                              <p className="text-xs text-gray-500 italic">Tweak times and sub-roles below — saves to draft only.</p>
+                            </div>
+
+                            {/* Editable rows: avatar + name + start/end + sub-role */}
+                            <div className="grid gap-2 mb-4 lg:grid-cols-2">
                               {editingDay.assignedEmployees.map(name => {
                                 const sub = subRoleStyleFor(editingDay.subRoles?.[name]);
+                                const [startTime, endTime] = parseShiftTimeStr(editingDay.shiftTimes?.[name]);
+                                const initials = (name || '').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
                                 return (
-                                  <span key={name} className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold border ${sub ? `${sub.pillBg} ${sub.pillText} ${sub.pillBorder}` : 'bg-blue-100 text-blue-800 border-blue-200'}`}>
-                                    {sub && <span className={`w-1.5 h-1.5 rounded-full ${sub.dot}`} />}
-                                    {name}
-                                    <button
-                                      onClick={() => handleRemoveFromDay(name)}
-                                      className="ml-1 rounded-full hover:bg-black/10 w-4 h-4 flex items-center justify-center transition-colors"
-                                      aria-label={`Remove ${name}`}
-                                    >
-                                      ×
-                                    </button>
-                                  </span>
+                                  <div key={name} className="flex items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 shadow-sm">
+                                    <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${sub?.blockBg || 'bg-gray-400'}`}>
+                                      {initials || '?'}
+                                    </div>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between mb-1.5">
+                                        <p className="text-xs font-semibold text-gray-900 truncate pr-1">{name}</p>
+                                        <button
+                                          onClick={() => handleRemoveFromDay(name)}
+                                          className="shrink-0 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 w-5 h-5 flex items-center justify-center transition-colors"
+                                          title={`Remove ${name}`}
+                                        >
+                                          <X size={12} />
+                                        </button>
+                                      </div>
+                                      <div className="flex items-center gap-1">
+                                        <input
+                                          type="time"
+                                          value={startTime}
+                                          onChange={e => handleUpdateDayShiftTime(name, 'start', e.target.value)}
+                                          className="w-[88px] rounded border border-gray-200 px-1.5 py-0.5 text-xs focus:border-blue-400 focus:outline-none"
+                                        />
+                                        <span className="text-gray-400 text-xs">–</span>
+                                        <input
+                                          type="time"
+                                          value={endTime}
+                                          onChange={e => handleUpdateDayShiftTime(name, 'end', e.target.value)}
+                                          className="w-[88px] rounded border border-gray-200 px-1.5 py-0.5 text-xs focus:border-blue-400 focus:outline-none"
+                                        />
+                                        <select
+                                          value={editingDay.subRoles?.[name] || 'Elementary'}
+                                          onChange={e => handleUpdateDaySubRole(name, e.target.value)}
+                                          className="ml-auto rounded border border-gray-200 bg-white px-1.5 py-0.5 text-xs font-medium focus:border-blue-400 focus:outline-none"
+                                          title="Teaching level"
+                                        >
+                                          {SUB_ROLES.map(sr => (
+                                            <option key={sr} value={sr}>{sr}</option>
+                                          ))}
+                                        </select>
+                                      </div>
+                                    </div>
+                                  </div>
                                 );
                               })}
                               {editingDay.assignedEmployees.length === 0 && (
-                                <span className="text-sm text-gray-400 italic">No one assigned — add from below</span>
+                                <p className="col-span-full text-sm text-gray-400 italic px-1">
+                                  No one assigned — add from below
+                                </p>
                               )}
                             </div>
+
                             <p className="mb-2 text-xs font-semibold text-gray-600">Add from approved staff:</p>
                             <div className="flex flex-wrap gap-1.5 mb-4">
                               {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => {
@@ -1684,10 +1785,14 @@ export default function Admin() {
                                   </button>
                                 );
                               })}
+                              {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).length === 0 && (
+                                <span className="text-xs text-gray-400 italic">All approved staff are already assigned.</span>
+                              )}
                             </div>
+
                             <div className="flex gap-2">
                               <button onClick={handleSaveEditDay} className="flex items-center gap-1.5 rounded-lg bg-green-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors">
-                                <Check size={12} /> Save
+                                <Check size={12} /> Save day
                               </button>
                               <button onClick={() => setEditingDay(null)} className="rounded-lg border border-gray-200 px-4 py-1.5 text-xs font-medium text-gray-600 hover:bg-white transition-colors">
                                 Cancel
