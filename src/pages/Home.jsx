@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, orderBy, limit, where } from 'firebase/f
 import { format } from 'date-fns';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import {
   CalendarDays, MessageSquare, Users, Clock,
   ChevronRight, Megaphone, Pin, ArrowRight,
@@ -149,7 +150,7 @@ export default function Home() {
                   {fmtShiftDate(upcomingShift.date)}
                 </p>
 
-                <div className="mt-2 flex items-center gap-2">
+                <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <Clock size={14} className="text-red-200" />
                   <p className="text-base font-medium text-red-100">
                     {fmtTime(upcomingShift.startTime)} – {fmtTime(upcomingShift.endTime)}
@@ -160,6 +161,17 @@ export default function Home() {
                       <span className="text-sm text-red-200">{upcomingShift.role}</span>
                     </>
                   )}
+                  {(() => {
+                    const s = subRoleStyleFor(upcomingShift.subRole);
+                    if (!s) return null;
+                    // White-on-color pill so it pops against the red gradient
+                    return (
+                      <span className="ml-auto flex items-center gap-1 rounded-full bg-white/20 backdrop-blur-sm px-2.5 py-0.5 text-xs font-bold text-white">
+                        <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                        {s.label}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-red-200 group-hover:text-white transition-colors">

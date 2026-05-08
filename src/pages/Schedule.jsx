@@ -5,6 +5,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
@@ -147,11 +148,16 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
                   <p className="text-base font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
                   <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                     {myShift.role && <p className="text-xs text-blue-500 font-medium">{myShift.role}</p>}
-                    {myShift.subRoleLabel && myShift.subRoleLabel !== 'Instructor' && (
-                      <span className="rounded-full bg-blue-200 px-2 py-0.5 text-xs font-bold text-blue-800">
-                        {myShift.subRoleLabel}
-                      </span>
-                    )}
+                    {(() => {
+                      const s = subRoleStyleFor(myShift.subRole);
+                      if (!s) return null;
+                      return (
+                        <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${s.pillBg} ${s.pillText}`}>
+                          <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />
+                          {s.label}
+                        </span>
+                      );
+                    })()}
                   </div>
                   <button
                     onClick={() => onPostSwap(myShift)}
@@ -1083,13 +1089,15 @@ export default function Schedule() {
         </div>
 
         {/* Legend */}
-        <div className="flex flex-wrap items-center gap-4 px-5 py-2.5 border-b border-gray-100 bg-gray-50/50">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-5 py-2.5 border-b border-gray-100 bg-gray-50/50">
           {[
-            { color: 'bg-blue-500', label: 'Assigned Shift' },
+            { color: 'bg-lime-500',    label: 'Elementary Shift' },
+            { color: 'bg-teal-500',    label: 'Highschool Shift' },
+            { color: 'bg-indigo-700',  label: 'Online Shift' },
             { color: 'bg-emerald-500', label: 'Available' },
-            { color: 'bg-orange-400', label: 'Open Shift' },
-            { color: 'bg-yellow-400', label: 'Time Off (Pending)' },
-            { color: 'bg-green-500', label: 'Time Off (Approved)' },
+            { color: 'bg-orange-400',  label: 'Open Shift' },
+            { color: 'bg-yellow-400',  label: 'Time Off (Pending)' },
+            { color: 'bg-green-500',   label: 'Time Off (Approved)' },
           ].map(item => (
             <span key={item.label} className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
               <span className={`w-2.5 h-2.5 rounded-sm inline-block ${item.color}`} />
@@ -1127,18 +1135,27 @@ export default function Schedule() {
             let clickable = !isPast;
 
             if (state.type === 'shift') {
-              cellBg = 'bg-blue-50/60 hover:bg-blue-50 cursor-pointer';
+              // Color the shift block by sub-role so an instructor can scan
+              // their calendar and see at a glance whether each day is
+              // Elementary / Highschool / Online. Falls back to the original
+              // blue if a legacy shift has no sub-role tag.
+              const sStyle = subRoleStyleFor(state.shift.subRole);
+              const blockBg     = sStyle ? sStyle.blockBg     : 'bg-blue-500';
+              const blockText   = sStyle ? sStyle.blockText   : 'text-white';
+              const blockSubText= sStyle ? sStyle.blockSubText: 'text-blue-100';
+              const blockMuted  = sStyle ? sStyle.blockSubText: 'text-blue-200';
+              cellBg = 'bg-gray-50/60 hover:bg-gray-50 cursor-pointer';
               content = (
-                <div className="mt-1 rounded-lg bg-blue-500 px-1.5 py-1 shadow-sm">
-                  <p className="text-white text-xs font-bold leading-tight">
+                <div className={`mt-1 rounded-lg px-1.5 py-1 shadow-sm ${blockBg}`}>
+                  <p className={`text-xs font-bold leading-tight ${blockText}`}>
                     {fmtTime(state.shift.startTime)}
                   </p>
-                  <p className="text-blue-100 text-xs leading-tight">
+                  <p className={`text-xs leading-tight ${blockSubText}`}>
                     {fmtTime(state.shift.endTime)}
                   </p>
-                  {state.shift.subRoleLabel && state.shift.subRoleLabel !== 'Instructor' && (
-                    <p className="text-blue-200 text-xs font-bold uppercase tracking-wide leading-tight mt-0.5" style={{ fontSize: '10px' }}>
-                      {state.shift.subRoleLabel}
+                  {sStyle && (
+                    <p className={`text-xs font-bold uppercase tracking-wide leading-tight mt-0.5 ${blockMuted}`} style={{ fontSize: '10px' }}>
+                      {sStyle.label}
                     </p>
                   )}
                 </div>

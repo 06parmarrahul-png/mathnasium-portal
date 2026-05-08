@@ -1,5 +1,48 @@
 # Changes Log
 
+## Pass 4 — Sub-role colors visible on every shift
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Sub-roles (Elementary / Highschool / Online) were already being saved on every shift but they weren't showing up anywhere except on the Shift Board cards. Now an instructor can open their schedule and immediately see what kind of shift each day is.
+
+### Color scheme
+
+| Sub-role     | Color                | Tailwind  |
+|--------------|----------------------|-----------|
+| Elementary   | Lime / yellow-green  | `lime-500` |
+| Highschool   | Teal                 | `teal-500` |
+| Online       | Dark indigo blue     | `indigo-700` |
+
+These colors live in **one file** — `src/lib/subRoles.js`. Every page in the app imports from there, so the next time you want to tweak Elementary's exact shade or swap Online to a different blue, it's a one-line change instead of hunting through five components.
+
+### What's new
+
+**Schedule calendar (instructor view)** — the colored time-block on each shift day is now tinted by sub-role. Lime block = Elementary day, teal block = Highschool day, dark indigo block = Online day. The sub-role label is also stamped in the corner. Replaces the old uniform blue. Calendar legend updated to match.
+
+**Day modal "Your Shift"** — the existing pill that showed `subRoleLabel` (an old field that no shift actually had) now shows the new sub-role with a colored dot + matching pill style. So clicking a future shift gives you the full breakdown including the sub-role.
+
+**Admin weekly spreadsheet** — each shift cell keeps its existing role-color background (Instructor green, Lead orange, Host blue, etc. — useful for staffing decisions) but gets a new colored stripe along the left edge indicating its sub-role. The cell label also picks up an `· E` / `· H` / `· O` suffix so even at small sizes the sub-role is readable. Legend updated with a "Stripe:" section.
+
+**Home page upcoming shift card** — the big red gradient card now ends with a frosted-glass-style sub-role pill at the right edge, so the very first thing an instructor sees when they log in tells them what kind of day they're about to have.
+
+**Admin "Manage Users" sub-role chips** — the toggleable Elementary/Highschool/Online chips on each instructor card now use the new lime/teal/indigo colors instead of the old blue/purple/teal mapping, so onboarding visually matches what the instructor will see on their schedule.
+
+**ShiftBoard pills** — also pull from the shared module now, so the same chips on the Shift Board match.
+
+### Files touched
+
+```
+new:   src/lib/subRoles.js              (single source of truth for colors)
+mod:   src/pages/Schedule.jsx           (calendar block coloring + day modal pill + legend)
+mod:   src/pages/Admin.jsx              (left-stripe indicator + legend + Manage Users chips)
+mod:   src/pages/Home.jsx               (upcoming shift card pill)
+mod:   src/pages/ShiftBoard.jsx         (migrate pill component to shared module)
+```
+
+---
+
 ## Pass 3 — "Full Day" availability shortcut
 
 Lint status: ✅ 0 errors, 0 warnings

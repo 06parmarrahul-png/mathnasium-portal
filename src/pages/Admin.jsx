@@ -15,6 +15,7 @@ import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
+import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -26,14 +27,8 @@ const ROLE_OPTIONS = [
   'Manager', 'Center Director', 'Dir. of Education',
 ];
 
-// Sub-roles (teaching specializations) — stackable like Discord roles
-const SUB_ROLES = ['Elementary', 'Highschool', 'Online'];
-
-const SUB_ROLE_STYLES = {
-  Elementary: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
-  Highschool: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
-  Online:     { bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'   },
-};
+// Sub-roles (teaching specializations) and their colors live in
+// src/lib/subRoles.js so every page in the app stays in sync.
 
 const ROLE_COLORS = {
   'Instructor':        { bg: '#16a34a', text: '#fff' },  // green
@@ -1036,7 +1031,8 @@ export default function Admin() {
       {tab === 'spreadsheet' && (
         <div className="space-y-2">
           {/* Legend + tips */}
-          <div className="flex flex-wrap items-center gap-4 px-1 mb-2 text-xs text-gray-500">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 mb-2 text-xs text-gray-500">
+            <span className="font-semibold text-gray-600 mr-1">Role:</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full bg-orange-500" /> Open Shift</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#16a34a'}} /> Instructor</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#ea580c'}} /> Lead</span>
@@ -1045,6 +1041,16 @@ export default function Admin() {
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#ca8a04'}} /> Manager</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#db2777'}} /> Dir. of Ed.</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#92400e'}} /> Center Director</span>
+            <span className="text-gray-300 mx-1">|</span>
+            <span className="font-semibold text-gray-600 mr-1">Stripe:</span>
+            {SUB_ROLES.map(sr => {
+              const s = SUB_ROLE_STYLES[sr];
+              return (
+                <span key={sr} className="flex items-center gap-1.5">
+                  <span className={`inline-block w-1 h-3 rounded-sm ${s.stripe}`} /> {s.label}
+                </span>
+              );
+            })}
             <span className="ml-auto flex items-center gap-1 text-gray-400 italic">
               Click any cell to add a shift · Click <Plus size={10} className="inline" /> to add open shift
             </span>
@@ -1206,13 +1212,23 @@ export default function Admin() {
                                 const { bg, text } = roleColor(s.role);
                                 const hrs = shiftHours(s);
                                 const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
+                                const sub = subRoleStyleFor(s.subRole);
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
-                                    className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity"
+                                    className="relative rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
                                     style={{ backgroundColor: bg, color: text }}>
-                                    <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
-                                    {s.role && <div className="uppercase tracking-wide opacity-90" style={{fontSize:'10px'}}>{s.role}{s.shiftType && s.shiftType !== 'In-Centre' ? ` · ${s.shiftType}` : ''}</div>}
+                                    {/* Sub-role colored stripe along the left edge */}
+                                    {sub && (
+                                      <span
+                                        className={`absolute left-0 top-0 bottom-0 w-1 ${sub.stripe}`}
+                                        title={`${sub.label} shift`}
+                                      />
+                                    )}
+                                    <div className={sub ? 'pl-1.5' : ''}>
+                                      <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
+                                      {s.role && <div className="uppercase tracking-wide opacity-90" style={{fontSize:'10px'}}>{s.role}{s.shiftType && s.shiftType !== 'In-Centre' ? ` · ${s.shiftType}` : ''}{sub ? ` · ${sub.label[0]}` : ''}</div>}
+                                    </div>
                                   </div>
                                 );
                               })}
@@ -1397,7 +1413,7 @@ export default function Admin() {
                               }}
                               className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
                                 active
-                                  ? `${style.bg} ${style.text} border-transparent`
+                                  ? `${style.pillBg} ${style.pillText} border-transparent`
                                   : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
                               }`}
                             >

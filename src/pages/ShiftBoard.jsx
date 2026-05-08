@@ -6,18 +6,13 @@ import {
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import {
-  Briefcase, ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
-  CalendarDays,
+  ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
+  CalendarDays, Briefcase,
 } from 'lucide-react';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-
-const SUB_ROLE_STYLES = {
-  Elementary: { bg: 'bg-blue-100',   text: 'text-blue-700',   dot: 'bg-blue-500'   },
-  Highschool: { bg: 'bg-purple-100', text: 'text-purple-700', dot: 'bg-purple-500' },
-  Online:     { bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'   },
-};
 
 const HIDE_INELIGIBLE_KEY = 'shiftBoard.hideIneligible';
 
@@ -58,18 +53,18 @@ function canTake(shiftSubRole, userSubRoles) {
 // ─── Card components ──────────────────────────────────────────────────────────
 
 function SubRolePill({ subRole }) {
-  if (!subRole) {
+  const style = subRoleStyleFor(subRole);
+  if (!style) {
     return (
       <span className="rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-500">
         Untagged
       </span>
     );
   }
-  const style = SUB_ROLE_STYLES[subRole] || SUB_ROLE_STYLES.Elementary;
   return (
-    <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${style.bg} ${style.text}`}>
+    <span className={`flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold ${style.pillBg} ${style.pillText}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`} />
-      {subRole}
+      {style.label}
     </span>
   );
 }
