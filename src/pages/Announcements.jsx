@@ -12,7 +12,7 @@ const CATEGORIES = {
 };
 
 export default function Announcements() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [posts, setPosts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
@@ -34,6 +34,7 @@ export default function Announcements() {
       text: text.trim(),
       author: profile?.displayName || 'Unknown',
       authorId: profile?.uid || null,
+      centerId: activeCenterId,
       // 'date' kept as ISO string for backwards-compatible orderBy.
       // 'createdAt' uses the Firebase server clock — preferred for sorting.
       date: new Date().toISOString(),

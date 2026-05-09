@@ -792,7 +792,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Schedule() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
@@ -863,6 +863,7 @@ export default function Schedule() {
     await setDoc(doc(db, 'availability', id), {
       userId: profile.uid,
       userName: profile.displayName,
+      centerId: activeCenterId,
       date: dateStr,
       startTime,
       endTime,
@@ -890,6 +891,7 @@ export default function Schedule() {
         batch.set(doc(db, 'availability', id), {
           userId: profile.uid,
           userName: profile.displayName,
+          centerId: activeCenterId,
           date: item.date,
           startTime: item.startTime,
           endTime: item.endTime,
@@ -915,6 +917,7 @@ export default function Schedule() {
       userId: profile.uid,
       userName: profile.displayName,
       userRole: profile.role,
+      centerId: activeCenterId,
       createdAt: serverTimestamp(),
       type: 'shift_swap',
       shiftId: shift.id,
@@ -960,6 +963,7 @@ export default function Schedule() {
         tx.set(newShiftRef, {
           userId: profile.uid,
           userName: profile.displayName,
+          centerId: openShift.centerId || activeCenterId,
           date: openShift.date,
           startTime: openShift.startTime,
           endTime: openShift.endTime,
@@ -979,6 +983,7 @@ export default function Schedule() {
         userId: 'system',
         userName: 'Mathnasium Langley',
         userRole: 'system',
+        centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),
         type: 'shift_confirmation',
       });
@@ -993,6 +998,7 @@ export default function Schedule() {
     await addDoc(collection(db, 'timeOffRequests'), {
       userId: profile.uid,
       userName: profile.displayName,
+      centerId: activeCenterId,
       startDate,
       endDate,
       reason,

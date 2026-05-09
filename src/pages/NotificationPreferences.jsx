@@ -14,7 +14,7 @@ const REMINDER_OPTIONS = [
 ];
 
 export default function NotificationPreferences() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [prefs, setPrefs] = useState({
     emailEnabled: true,
     smsEnabled: false,
@@ -50,6 +50,7 @@ export default function NotificationPreferences() {
         ...prefs,
         userId: profile.uid,
         userName: profile.displayName,
+        centerId: activeCenterId,
         updatedAt: new Date().toISOString(),
       });
       setSaved(true);

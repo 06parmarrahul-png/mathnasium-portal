@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle } from 'lucide-react';
 
 export default function Chat() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [messages, setMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -41,6 +41,7 @@ export default function Chat() {
         userId: profile.uid,
         userName: profile.displayName,
         userRole: profile.role,
+        centerId: activeCenterId,
         createdAt: serverTimestamp(),
         type: 'message',
       });
@@ -95,6 +96,7 @@ export default function Chat() {
         userId: 'system',
         userName: 'System',
         userRole: 'system',
+        centerId: msg.centerId || activeCenterId,
         createdAt: serverTimestamp(),
         type: 'shift_confirmation',
       });

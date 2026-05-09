@@ -1,5 +1,78 @@
 # Changes Log
 
+## Pass 10 — Multi-center groundwork (Phase 1 of 8)
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+This is the first phase of turning the portal into a multi-tenant platform that can serve every Mathnasium in BC, then Canada, then globally. **The portal still behaves identically for current users** — this pass is purely additive scaffolding for tenant isolation. Phase 2 (filtering reads by `centerId`) and beyond come later.
+
+### What's new
+
+**`src/lib/centers.js`** — single source of truth for "which Mathnasium am I working with right now?"
+- `DEFAULT_CENTER_ID` = `'langley'`
+- `getUserCenters(profile)` — returns the user's centerIds (always at least one entry, fallback `['langley']`)
+- `getActiveCenterId(profile)` — returns the currently-active center for this user, persisted in localStorage so multi-center staff can switch later
+- `setActiveCenterId(id)` — write the active choice to localStorage
+- `canSwitchCenters(profile)` — true for users with >1 center or super-admins (used later for the sidebar dropdown)
+
+**AuthContext now exposes `activeCenterId`.** Every component that does a Firestore write can pull it via `useAuth()`. Until a user's profile says otherwise, this is `'langley'`.
+
+**Multi-center fields on user profiles.** New signups now get:
+- `centerId: 'langley'` — primary center (the one shown by default)
+- `centerIds: ['langley']` — array, supports staff who work at multiple centers
+
+For multi-center staff, the array gets longer (`['langley', 'burnaby']`); the primary `centerId` is the default to show. The owner can edit these in Manage Users (UI for that lands in a later phase).
+
+**Every Firestore write now stamps `centerId`.** Going forward, every shift, availability slot, open shift, time-off request, chat message, announcement, and notification preference doc gets a `centerId` written to it. If the doc already had one (e.g. derived from the open shift it was claimed from), that wins; otherwise it falls back to the user's `activeCenterId`.
+
+**One-time migration button in Admin → Manage Users.** A new "Multi-Center Setup" section with a button labelled **"Run multi-center migration"**. It:
+1. Creates `centers/langley` if it doesn't exist (with name, city, province, country, timezone)
+2. Walks every collection (`users`, `shifts`, `availability`, `openShifts`, `timeOffRequests`, `chat`, `announcements`, `notificationPreferences`)
+3. Stamps `centerId: 'langley'` on every doc that doesn't already have one
+4. Adds `centerIds: ['langley']` to user docs that don't have an array yet
+5. Reports per-collection counts ("users: 12, shifts: 487, …") so you can see what got touched
+6. Idempotent — safe to run twice; already-migrated docs are skipped
+
+Designed to be the **only** time this runs. After that, all new writes already include `centerId` so the database stays consistent.
+
+### What's NOT in this pass
+
+- **Reads still don't filter by `centerId`.** Everyone still sees all data. That changes in Phase 2, where every `onSnapshot` / `getDocs` query gets a `where('centerId', '==', activeCenterId)` filter.
+- **No center-picker dropdown at signup yet.** New users default to Langley. The dropdown lands once a 2nd center exists in `centers/`.
+- **No Firestore security rules tightening.** Rules that enforce centerId isolation come in Phase 4 — they're security-critical and need careful review.
+- **No center-switcher in the sidebar yet.** That's Phase 7 (for multi-center staff and super-admins).
+- **Scheduler config is still hardcoded.** Fixed staff names, instructional hours, full-day ranges — all still live in code constants. Phase 3 moves them into per-center config docs in Firestore so each Mathnasium can have different hours, fixed staff, etc.
+
+### How to roll this out
+
+1. Deploy this pass.
+2. In production, log in as owner.
+3. Go to **Admin → Manage Users**, scroll to the **Multi-Center Setup** section.
+4. Click **"Run multi-center migration"**, confirm the prompt.
+5. Wait a few seconds, see the per-collection counts.
+6. Verify the portal still works exactly as before (it should — no read paths changed).
+7. Done. The database is now multi-center-shaped.
+
+### Files touched
+
+```
+new:   src/lib/centers.js                      (single source of truth)
+mod:   src/contexts/AuthContext.jsx            (signup writes centerId/centerIds; expose activeCenterId)
+mod:   src/pages/Admin.jsx                     (handleAddShift, handleAddOpenShift,
+                                                 seedFixedShiftsForDates, handlePostSchedule
+                                                 chat write — all stamp centerId.
+                                                 New "Multi-Center Setup" section + migration handler.)
+mod:   src/pages/Schedule.jsx                   (handleSaveAvail, handleSaveBulk, handlePostSwap,
+                                                 handleClaimOpenShift, handleRequestTimeOff)
+mod:   src/pages/Chat.jsx                       (handleSend, accept-shift confirmation)
+mod:   src/pages/ShiftBoard.jsx                 (handleClaim shift + chat, handleTakeSwap chat)
+mod:   src/pages/Announcements.jsx              (handlePost)
+mod:   src/pages/NotificationPreferences.jsx    (handleSave)
+```
+
+---
+
 ## Pass 9 — Today's Snapshot on the owner's home page
 
 Lint status: ✅ 0 errors, 0 warnings

@@ -185,7 +185,7 @@ function SwapCard({ swap, profile, onTake }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
   const [hideIneligible, setHideIneligible] = useState(() => {
@@ -276,6 +276,7 @@ export default function ShiftBoard() {
         tx.set(newShiftRef, {
           userId: profile.uid,
           userName: profile.displayName,
+          centerId: openShift.centerId || activeCenterId,
           date: openShift.date,
           startTime: openShift.startTime,
           endTime: openShift.endTime,
@@ -293,6 +294,7 @@ export default function ShiftBoard() {
         userId: 'system',
         userName: 'Mathnasium Langley',
         userRole: 'system',
+        centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),
         type: 'shift_confirmation',
       });
@@ -343,6 +345,7 @@ export default function ShiftBoard() {
         userId: 'system',
         userName: 'System',
         userRole: 'system',
+        centerId: swap.centerId || activeCenterId,
         createdAt: serverTimestamp(),
         type: 'shift_confirmation',
       });

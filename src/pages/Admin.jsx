@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc,
-  addDoc, query, orderBy, writeBatch,
+  addDoc, query, orderBy, writeBatch, getDoc, getDocs, setDoc,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -16,6 +16,7 @@ import {
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { DEFAULT_CENTER_ID } from '../lib/centers';
 import CoverageGrid from '../components/CoverageGrid';
 
 const MONTHS = [
@@ -414,7 +415,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -508,7 +509,7 @@ export default function Admin() {
 
   // Shift CRUD
   const handleAddShift = async (shiftData) => {
-    await addDoc(collection(db, 'shifts'), shiftData);
+    await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
   };
 
   const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole }) => {
@@ -526,6 +527,7 @@ export default function Admin() {
     await addDoc(collection(db, 'openShifts'), {
       date, startTime, endTime, role,
       subRole: subRole || 'Elementary',
+      centerId: activeCenterId,
       status: 'open', claimedBy: null, claimedByName: null,
       postedAt: new Date().toISOString(),
     });
@@ -748,6 +750,7 @@ export default function Admin() {
         insertBatch.set(ref, {
           userId: user?.uid || name,
           userName: name,
+          centerId: activeCenterId,
           date: dateStr,
           startTime: toHHMM(parts[0]),
           endTime: toHHMM(parts[1]),
@@ -800,6 +803,72 @@ export default function Admin() {
     alert(`✅ All ${shifts.length} shifts deleted. Fresh start!`);
   };
 
+  // ── Multi-center migration (Phase 1 groundwork) ──────────────────────────
+  // One-time backfill: creates the centers/langley doc and stamps centerId
+  // onto every existing doc that doesn't already have one. Safe to run
+  // multiple times — it skips docs that already have centerId.
+  const [migrationRunning, setMigrationRunning] = useState(false);
+  const [migrationResult, setMigrationResult] = useState(null);
+  const handleRunCenterMigration = async () => {
+    if (!confirm(
+      'Multi-center migration:\n\n' +
+      `• Creates a "${DEFAULT_CENTER_ID}" center doc if one doesn't exist\n` +
+      '• Stamps centerId="' + DEFAULT_CENTER_ID + '" onto every existing user, shift, availability, openShift, time-off request, chat, announcement, and notificationPreferences doc\n' +
+      '• Skips any doc that already has a centerId (safe to run multiple times)\n\n' +
+      'Continue?'
+    )) return;
+    setMigrationRunning(true);
+    setMigrationResult(null);
+    try {
+      const stats = { center: 0, users: 0, shifts: 0, availability: 0, openShifts: 0, timeOffRequests: 0, chat: 0, announcements: 0, notificationPreferences: 0 };
+
+      // 1. Ensure centers/{DEFAULT_CENTER_ID} exists
+      const centerRef = doc(db, 'centers', DEFAULT_CENTER_ID);
+      const centerSnap = await getDoc(centerRef);
+      if (!centerSnap.exists()) {
+        await setDoc(centerRef, {
+          id: DEFAULT_CENTER_ID,
+          name: 'Mathnasium Langley',
+          city: 'Langley',
+          province: 'BC',
+          country: 'Canada',
+          timezone: 'America/Vancouver',
+          createdAt: serverTimestamp(),
+        });
+        stats.center = 1;
+      }
+
+      // 2. Backfill every other collection
+      const collectionsToMigrate = [
+        'users', 'shifts', 'availability', 'openShifts',
+        'timeOffRequests', 'chat', 'announcements', 'notificationPreferences',
+      ];
+      for (const colName of collectionsToMigrate) {
+        const snap = await getDocs(collection(db, colName));
+        const toUpdate = snap.docs.filter(d => !d.data().centerId);
+        const CHUNK = 450;
+        for (let i = 0; i < toUpdate.length; i += CHUNK) {
+          const b = writeBatch(db);
+          for (const d of toUpdate.slice(i, i + CHUNK)) {
+            const updates = { centerId: DEFAULT_CENTER_ID };
+            // Users get a centerIds array too (multi-center support).
+            if (colName === 'users' && !Array.isArray(d.data().centerIds)) {
+              updates.centerIds = [DEFAULT_CENTER_ID];
+            }
+            b.update(d.ref, updates);
+          }
+          await b.commit();
+        }
+        stats[colName] = toUpdate.length;
+      }
+      setMigrationResult({ ok: true, stats });
+    } catch (err) {
+      setMigrationResult({ ok: false, error: err?.message || String(err) });
+    } finally {
+      setMigrationRunning(false);
+    }
+  };
+
   const handlePostSchedule = async () => {
     if (!draftSchedule) return;
     setPosting(true);
@@ -817,6 +886,7 @@ export default function Admin() {
           const ref = doc(collection(db, 'shifts'));
           batch.set(ref, {
             userId: user?.uid || name, userName: name,
+            centerId: activeCenterId,
             date: day.date, startTime, endTime,
             role: day.roles?.[name] || 'Instructor',
             subRole: day.subRoles?.[name] || 'Elementary',
@@ -834,6 +904,7 @@ export default function Admin() {
       await addDoc(collection(db, 'chat'), {
         text: `📅 The ${draftSchedule.month} ${draftSchedule.year} schedule has been posted!\n\n${totalShifts} shifts across ${draftSchedule.days.length} working days. Check your schedule on the Schedule page.`,
         userId: 'system', userName: 'Mathnasium Langley', userRole: 'system',
+        centerId: activeCenterId,
         createdAt: serverTimestamp(), type: 'schedule_posted',
       });
 
@@ -1531,6 +1602,51 @@ export default function Admin() {
                 ))}
               </div>
             )}
+          </div>
+
+          {/* ── Multi-Center Setup (Phase 1 groundwork) ─────────────────────── */}
+          <div className="rounded-xl border bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <Settings size={18} className="text-purple-600" />
+              <h3 className="font-semibold text-gray-900">Multi-Center Setup</h3>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              Adds a <code className="px-1 rounded bg-gray-100 text-gray-700">centerId</code> field to every existing user, shift, availability, time-off, chat, announcement, and notification doc — so the portal can later support multiple Mathnasium locations. <span className="font-semibold">Run this once after deploying the multi-center groundwork.</span> Safe to run multiple times.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={handleRunCenterMigration}
+                disabled={migrationRunning}
+                className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50 transition-colors"
+              >
+                {migrationRunning ? (
+                  <>
+                    <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                    Running…
+                  </>
+                ) : 'Run multi-center migration'}
+              </button>
+              {migrationResult?.ok && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 font-semibold text-emerald-700">
+                    ✓ Migration complete
+                  </span>
+                  {Object.entries(migrationResult.stats).map(([k, v]) => (
+                    <span key={k} className="rounded-full bg-gray-100 px-2 py-0.5 text-gray-600">
+                      {k}: <strong>{v}</strong>
+                    </span>
+                  ))}
+                </div>
+              )}
+              {migrationResult?.ok === false && (
+                <span className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+                  Migration failed: {migrationResult.error}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-400 mt-3 italic">
+              The numbers show how many docs were updated per collection. Already-migrated docs are skipped.
+            </p>
           </div>
         </div>
       )}

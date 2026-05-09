@@ -8,6 +8,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
+import { DEFAULT_CENTER_ID, getActiveCenterId } from '../lib/centers';
 
 const AuthContext = createContext(null);
 
@@ -55,6 +56,12 @@ export function AuthProvider({ children }) {
     // Always default new accounts to plain "Instructor". The owner promotes
     // people to Lead/Admin/Manager etc. from the admin panel after approval.
     // Don't trust any role value passed in from the signup form.
+    //
+    // Center assignment: until the signup form has a center-picker dropdown
+    // (Phase 5), every new user lands in the default center. The owner can
+    // move them to another center by editing centerIds in Manage Users
+    // (or, for multi-center staff, add a second center to the array).
+    const centerId = extras.centerId || DEFAULT_CENTER_ID;
     const profileData = {
       uid: cred.user.uid,
       email: cleanEmail,
@@ -66,6 +73,9 @@ export function AuthProvider({ children }) {
       priority: 2,           // Admin sets this (1=high, 2=medium, 3=low)
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',
+      // Multi-center fields — primary + array (for staff who work at multiple)
+      centerId,
+      centerIds: [centerId],
       createdAt: new Date().toISOString(),
     };
     await setDoc(doc(db, 'users', cred.user.uid), profileData);
@@ -78,7 +88,19 @@ export function AuthProvider({ children }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, login, signup, logout, resetPassword }}>
+    <AuthContext.Provider value={{
+      user,
+      profile,
+      loading,
+      login,
+      signup,
+      logout,
+      resetPassword,
+      // Currently-active center for this user. Reads from profile.centerIds[]
+      // (or profile.centerId, or DEFAULT_CENTER_ID as fallback). Multi-center
+      // staff will be able to switch via a sidebar dropdown in a later phase.
+      activeCenterId: getActiveCenterId(profile),
+    }}>
       {children}
     </AuthContext.Provider>
   );
