@@ -1,5 +1,97 @@
 # Changes Log
 
+## Pass 11 — Multi-center Phase 3: scheduler config moves to Firestore + Center Settings UI
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+Scheduler tunables (instructional hours, fixed staff, guaranteed names, salary list, operating hours) used to be **hardcoded constants** in `lib/scheduler.js`, `Schedule.jsx`, and `Admin.jsx`. That meant every Mathnasium center inherited Langley's specifics — Saturday 9 AM – 3 PM, Jasper Wu as Center Director, Luke as guaranteed, etc. Useless if Burnaby has different hours or different fixed staff.
+
+Now those values live **per-center** in Firestore, with a real **Center Settings** UI in the admin panel to edit them.
+
+### What's new
+
+**`src/lib/centerConfig.js`** — single module that defines every center-tunable:
+- `name`, `city`, `province`, `country`, `timezone`
+- `instructionalHours` (per day) — teaching window
+- `operatingHours` (per day) — open-to-close including admin time
+- `defaultMinPerDay`, `defaultMaxPerDay`, `defaultMaxDaysPerWeek`
+- `guaranteedNames` (array of first names)
+- `salaryStaff` (array of full names — excluded from hourly payroll)
+- `fixedStaff` (map keyed by display name; per-day shift strings)
+
+`DEFAULT_CENTER_CONFIG` has safe defaults; `LANGLEY_DEFAULT_CONFIG` has the exact current values used by Langley today, used by the migration to seed Firestore.
+
+`mergeCenterConfig(serverData)` merges any partial server config with the defaults so every consumer can rely on the full shape.
+
+**AuthContext now subscribes to `centers/{activeCenterId}/config/main`** in real time. Edits in the Center Settings UI flow back out to every page automatically. `useAuth()` exposes a new `centerConfig` field.
+
+**Scheduler engine reads from config.** `generateSchedule({ ..., centerConfig })` now accepts the per-center tunables and uses them for instructional-hour clamping, fixed-staff seeding, and guaranteed-name matching. Falls back to legacy hardcoded values when no config is provided (pre-migration safety).
+
+**Schedule.jsx full-day picker reads from config.** Both the single-day calendar modal and the weekly bulk modal now use `centerConfig.operatingHours` to compute the "Full Day" range per day-of-week, passed down via a `fullDayByDow` prop.
+
+**Admin payroll exclusions read from config.** The `salaryStaff` set comes from the active center's config (regression fix — it was lost in an earlier merge conflict and is now back).
+
+**Admin's `seedFixedShiftsForDates` reads fixed-staff map from config.** Same fallback to legacy `FIXED_SCHEDULES` when no config is loaded.
+
+**Migration also seeds the config doc.** When you run "Run multi-center migration" in Manage Users, it now also creates `centers/langley/config/main` with `LANGLEY_DEFAULT_CONFIG` (which captures everything currently hardcoded in Langley). After migration, Firestore is the source of truth.
+
+**`src/components/CenterSettingsTab.jsx`** — new admin tab with a clean form-based editor for everything:
+
+- **Identity card** — center name, city, province, country, timezone
+- **Instructional Hours table** — per-day start/end pickers
+- **Operating Hours table** — per-day start/end pickers
+- **Guaranteed Shift list** — add/remove first names with chip UI
+- **Salaried Staff list** — add/remove full names with chip UI
+- **Fixed Staff display** (read-only this pass) — shows current entries; full editor is its own future pass
+
+Sticky save bar at the bottom shows "Unsaved changes" / "Saved" status, plus a Discard button. Saves via `setDoc` with `merge: true` so partial updates don't wipe untouched fields.
+
+### What's NOT in this pass
+
+- **Fixed-staff editor** is read-only. Adding/editing fixed staff still requires direct Firestore writes (or running the migration to re-seed). Doing this safely needs more thought — those entries have per-day shift strings ("11:00 AM - 7:00 PM"), Saturday-week filters, etc. Coming later.
+- **Scheduler still uses STAFFING_COUNT_ROLES, ROLE_DISPLAY_ORDER, SUB_ROLES** as global constants. Those describe Mathnasium's role taxonomy (Instructor, Lead, Host, Elementary, Highschool, Online) which is the same across centers — left global on purpose.
+
+### Roadmap from here
+
+- ✅ Phase 1 — multi-center groundwork (centerId + migration)
+- ✅ Phase 3 — scheduler config to Firestore + Center Settings UI (this pass)
+- Phase 2 — filter every read by activeCenterId
+- Phase 4 — Firestore security rules to enforce isolation
+- Phase 5 — center-picker dropdown at signup
+- Phase 6 — end-to-end test with a 2nd center
+- Phase 7 — sidebar center-switcher (multi-center staff + super-admins)
+- Phase 8 — center-management UI (super-admin adds new centers)
+
+### Files touched
+
+```
+new:   src/lib/centerConfig.js                  (DEFAULT + LANGLEY_DEFAULT + merge helper)
+new:   src/components/CenterSettingsTab.jsx     (admin editor UI)
+mod:   src/contexts/AuthContext.jsx              (subscribe + expose centerConfig)
+mod:   src/lib/scheduler.js                       (clampToInstructionalHours, getFixedStaffForDay,
+                                                    isGuaranteed all accept config; generateSchedule
+                                                    threads it through)
+mod:   src/pages/Admin.jsx                        (passes centerConfig to scheduler;
+                                                    salaryStaff/fixedStaff read from config;
+                                                    new "Center Settings" tab + import; migration
+                                                    seeds config doc)
+mod:   src/pages/Schedule.jsx                     (buildFullDayByDow from config; pass via prop
+                                                    to DayModal + WeeklyAvailabilityModal)
+```
+
+### How to test
+
+1. Deploy + run the multi-center migration (if you haven't already from Pass 10).
+2. Go to **Admin → Center Settings**.
+3. Try changing a value — say, set Tuesday instructional hours to 4–7 PM instead of 3–7 PM. Hit Save.
+4. Generate a draft schedule for next month. Confirm Tuesday shifts get clamped to 4–7 PM (was 3–7 PM before).
+5. Add a name to "Guaranteed Shift" list, hit Save. Confirm that person now gets prioritized in the auto-scheduler.
+6. Set Saturday operating hours to 8 AM – 4 PM. Open Schedule, click a future Saturday, hit "Set Availability" → top "Full Day" preset should now read "Full Day · 8:00 AM – 4:00 PM".
+7. Verify nothing else broke (existing shifts/availability still display correctly).
+
+---
+
 ## Pass 10 — Multi-center groundwork (Phase 1 of 8)
 
 Lint status: ✅ 0 errors, 0 warnings

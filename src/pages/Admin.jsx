@@ -17,7 +17,9 @@ import {
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
+import { LANGLEY_DEFAULT_CONFIG } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
+import CenterSettingsTab from '../components/CenterSettingsTab';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -415,7 +417,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, centerConfig } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -593,6 +595,7 @@ export default function Admin() {
         month: schedMonth,
         year: schedYear,
         config: schedConfig,
+        centerConfig,   // per-center hours, fixed staff, guaranteed names
       });
       setDraftSchedule(result);
     } catch (err) {
@@ -712,10 +715,16 @@ export default function Admin() {
     return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;
   };
 
-  // Write fixed staff shifts for a set of date strings to Firestore
+  // Write fixed staff shifts for a set of date strings to Firestore.
+  // Reads from the active center's fixedStaff config when available,
+  // falling back to legacy FIXED_SCHEDULES so behavior is preserved
+  // pre-migration.
   const seedFixedShiftsForDates = async (dates) => {
     const DAY_NAMES = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-    const fixedNames = Object.keys(FIXED_SCHEDULES).map(n => n.toLowerCase());
+    const fixedStaffMap = (centerConfig?.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
+      ? centerConfig.fixedStaff
+      : FIXED_SCHEDULES;
+    const fixedNames = Object.keys(fixedStaffMap).map(n => n.toLowerCase());
 
     // Step 1: Delete ALL existing fixed staff shifts for these dates (prevents duplicates)
     const deleteBatch = writeBatch(db);
@@ -737,7 +746,7 @@ export default function Admin() {
       const dayName = DAY_NAMES[pythonWeekday];
       if (!dayName) continue;
       const weekOfMonth = Math.floor((d.getDate() - 1) / 7) + 1;
-      for (const [name, sched] of Object.entries(FIXED_SCHEDULES)) {
+      for (const [name, sched] of Object.entries(fixedStaffMap)) {
         const shiftStr = sched[dayName];
         if (!shiftStr || shiftStr.toLowerCase() === 'off') continue;
         if (dayName === 'Saturday' && sched.saturday_weeks) {
@@ -820,7 +829,7 @@ export default function Admin() {
     setMigrationRunning(true);
     setMigrationResult(null);
     try {
-      const stats = { center: 0, users: 0, shifts: 0, availability: 0, openShifts: 0, timeOffRequests: 0, chat: 0, announcements: 0, notificationPreferences: 0 };
+      const stats = { center: 0, config: 0, users: 0, shifts: 0, availability: 0, openShifts: 0, timeOffRequests: 0, chat: 0, announcements: 0, notificationPreferences: 0 };
 
       // 1. Ensure centers/{DEFAULT_CENTER_ID} exists
       const centerRef = doc(db, 'centers', DEFAULT_CENTER_ID);
@@ -836,6 +845,20 @@ export default function Admin() {
           createdAt: serverTimestamp(),
         });
         stats.center = 1;
+      }
+
+      // 1b. Ensure centers/{DEFAULT_CENTER_ID}/config/main exists.
+      // Seeds with Langley's current values (instructional hours, fixed staff,
+      // guaranteed names, salary list) so the data-driven config doesn't
+      // accidentally come up empty and break the scheduler.
+      const configRef = doc(db, 'centers', DEFAULT_CENTER_ID, 'config', 'main');
+      const configSnap = await getDoc(configRef);
+      if (!configSnap.exists()) {
+        await setDoc(configRef, {
+          ...LANGLEY_DEFAULT_CONFIG,
+          createdAt: serverTimestamp(),
+        });
+        stats.config = 1;
       }
 
       // 2. Backfill every other collection
@@ -922,11 +945,20 @@ export default function Admin() {
     }
   };
 
+  // Salaried staff are excluded from hourly payroll (read from this center's
+  // config so each location can have its own list).
+  const salaryStaff = useMemo(() => (
+    new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [])
+  ), [centerConfig]);
+
   // Payroll summary — all shifts in the selected pay period grouped by person
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
     const periodShifts = shifts.filter(s =>
-      s.date >= payStart && s.date <= payEnd && s.status !== 'draft'
+      s.date >= payStart &&
+      s.date <= payEnd &&
+      s.status !== 'draft' &&
+      !salaryStaff.has(s.userName)
     );
 
     // Also include fixed staff from FIXED_SCHEDULES who may not have Firestore shifts yet
@@ -967,7 +999,7 @@ export default function Admin() {
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, users, payStart, payEnd]);
+  }, [shifts, users, payStart, payEnd, salaryStaff]);
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd
@@ -1144,6 +1176,7 @@ export default function Admin() {
     { key: 'scheduler',    label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
     { key: 'payroll',      label: 'Payroll',        icon: DollarSign },
     { key: 'requests',     label: 'Requests',       icon: CalendarRange },
+    { key: 'settings',     label: 'Center Settings', icon: Settings },
   ];
 
   return (
@@ -2437,6 +2470,11 @@ export default function Admin() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── CENTER SETTINGS ────────────────────────────────────────────────── */}
+      {tab === 'settings' && (
+        <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
       )}
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}

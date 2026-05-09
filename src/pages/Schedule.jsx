@@ -31,23 +31,37 @@ function fmtTime(t) {
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-// Widest range an instructor could possibly be available on a given day —
-// covers admin prep before opening (binders, inventory, event setup) plus
-// cleanup after closing, not just teaching hours. Used by the "Full Day"
-// presets in both the single-day and weekly modals. Closed Sundays.
-// Edit this map if real-world hours change.
-const FULL_DAY_BY_DOW = {
-  1: { start: '10:00', end: '20:00' }, // Mon  10 AM – 8 PM
+// Default operating-hours map (JS getDay() 1=Mon..6=Sat). Used as fallback
+// when no per-center config is loaded. The actual values flow in from the
+// active center's `centerConfig.operatingHours` (passed via props) so each
+// Mathnasium location can have its own hours.
+const DEFAULT_FULL_DAY_BY_DOW = {
+  1: { start: '10:00', end: '20:00' }, // Mon
   2: { start: '10:00', end: '20:00' }, // Tue
   3: { start: '10:00', end: '20:00' }, // Wed
   4: { start: '10:00', end: '20:00' }, // Thu
-  5: { start: '10:00', end: '19:00' }, // Fri  10 AM – 7 PM
-  6: { start: '09:00', end: '15:00' }, // Sat   9 AM – 3 PM
+  5: { start: '10:00', end: '19:00' }, // Fri
+  6: { start: '09:00', end: '15:00' }, // Sat
 };
+
+// Convert the center config's day-name-keyed operatingHours into the
+// JS-getDay()-keyed shape used by the modals.
+function buildFullDayByDow(centerConfig) {
+  const op = centerConfig?.operatingHours;
+  if (!op) return DEFAULT_FULL_DAY_BY_DOW;
+  return {
+    1: op.Monday    || DEFAULT_FULL_DAY_BY_DOW[1],
+    2: op.Tuesday   || DEFAULT_FULL_DAY_BY_DOW[2],
+    3: op.Wednesday || DEFAULT_FULL_DAY_BY_DOW[3],
+    4: op.Thursday  || DEFAULT_FULL_DAY_BY_DOW[4],
+    5: op.Friday    || DEFAULT_FULL_DAY_BY_DOW[5],
+    6: op.Saturday  || DEFAULT_FULL_DAY_BY_DOW[6],
+  };
+}
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
   const [mode, setMode] = useState('main');
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
@@ -256,10 +270,10 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, onClo
 
             // First entry is the marquee "Full Day" option (covers admin prep
             // and cleanup, not just teaching hours), rendered with a distinct
-            // style below so it's the obvious one-tap choice. Label is built
-            // from FULL_DAY_BY_DOW so editing that constant updates both
-            // modals automatically.
-            const fullDay = FULL_DAY_BY_DOW[dow];
+            // style below so it's the obvious one-tap choice. Range comes from
+            // the active center's operatingHours via the fullDayByDow prop —
+            // each Mathnasium can have its own hours.
+            const fullDay = fullDayByDow[dow] || DEFAULT_FULL_DAY_BY_DOW[dow];
             const fullDayLabel = `Full Day (${fmtTime(fullDay.start)} – ${fmtTime(fullDay.end)})`;
             const PRESETS = isSun ? [] : isSat ? [
               { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
@@ -502,7 +516,7 @@ function weekMatchesRecurrence(date, recurrence) {
   return false;
 }
 
-function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose, onSaveBulk }) {
+function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayByDow, onClose, onSaveBulk }) {
   const [selectedDays, setSelectedDays] = useState([]);
   const [recurrence, setRecurrence] = useState('every');
   const [startTime, setStartTime] = useState('15:00');
@@ -540,7 +554,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
         if (ds < todayStr) continue;
 
         if (useFullDay) {
-          const r = FULL_DAY_BY_DOW[dow];
+          const r = fullDayByDow[dow];
           if (!r) continue; // Sundays etc. — skip
           items.push({ date: ds, startTime: r.start, endTime: r.end, dow });
         } else {
@@ -549,7 +563,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
       }
     }
     return items;
-  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime]);
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow]);
 
   const toggleDay = (dow) => {
     setSelectedDays(prev =>
@@ -656,9 +670,9 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
                   Available the entire day (includes admin prep & cleanup, not just teaching):
                 </p>
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-emerald-700">
-                  <span>Mon–Thu · {fmtTime(FULL_DAY_BY_DOW[1].start)} – {fmtTime(FULL_DAY_BY_DOW[1].end)}</span>
-                  <span>Fri · {fmtTime(FULL_DAY_BY_DOW[5].start)} – {fmtTime(FULL_DAY_BY_DOW[5].end)}</span>
-                  <span>Sat · {fmtTime(FULL_DAY_BY_DOW[6].start)} – {fmtTime(FULL_DAY_BY_DOW[6].end)}</span>
+                  <span>Mon–Thu · {fmtTime(fullDayByDow[1].start)} – {fmtTime(fullDayByDow[1].end)}</span>
+                  <span>Fri · {fmtTime(fullDayByDow[5].start)} – {fmtTime(fullDayByDow[5].end)}</span>
+                  <span>Sat · {fmtTime(fullDayByDow[6].start)} – {fmtTime(fullDayByDow[6].end)}</span>
                 </div>
               </div>
             ) : (
@@ -792,7 +806,8 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, onClose,
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Schedule() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, centerConfig } = useAuth();
+  const fullDayByDow = useMemo(() => buildFullDayByDow(centerConfig), [centerConfig]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
@@ -1291,6 +1306,7 @@ export default function Schedule() {
           currentMonth={currentMonth}
           availability={availability}
           profile={profile}
+          fullDayByDow={fullDayByDow}
           onClose={() => setShowWeeklyModal(false)}
           onSaveBulk={handleSaveBulk}
         />
@@ -1304,6 +1320,7 @@ export default function Schedule() {
           myShift={myShifts.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))}
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
+          fullDayByDow={fullDayByDow}
           onClose={() => setSelectedDate(null)}
           onSaveAvail={handleSaveAvail}
           onDeleteAvail={handleDeleteAvail}

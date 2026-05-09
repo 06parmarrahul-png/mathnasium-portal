@@ -22,46 +22,6 @@
 
 const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-/**
- * Hours during which instructors actually teach lessons.
- * Used by the auto-scheduler to clamp shift times — when an instructor
- * submits "full day" availability (e.g. 10 AM – 8 PM), they should only
- * be SCHEDULED for the teaching window. Admin work outside that window
- * isn't a scheduled shift.
- *
- * Hosts (covering admin time) and Online instructors keep their full
- * submitted availability — clamping is applied only when assigning
- * Instructor/Lead/promoted-Host roles.
- *
- * Edit these if real teaching hours change.
- */
-const INSTRUCTIONAL_HOURS = {
-  Monday:    { start: '15:00', end: '19:00' }, // 3:00 PM – 7:00 PM
-  Tuesday:   { start: '15:00', end: '19:00' },
-  Wednesday: { start: '15:00', end: '19:00' },
-  Thursday:  { start: '15:00', end: '19:00' },
-  Friday:    { start: '15:00', end: '18:00' }, // 3:00 PM – 6:00 PM
-  Saturday:  { start: '10:00', end: '14:00' }, // 10:00 AM – 2:00 PM
-};
-
-/**
- * Intersect a user's availability window with the day's instructional
- * window. Returns { start, end } in HH:MM, or null if there is no overlap.
- *
- * Examples (Monday — instructional 15:00–19:00):
- *   user 10:00–20:00 → 15:00–19:00
- *   user 16:00–18:30 → 16:00–18:30
- *   user 13:00–14:30 → null (no overlap)
- */
-function clampToInstructionalHours(startTime, endTime, dayName) {
-  const w = INSTRUCTIONAL_HOURS[dayName];
-  if (!w || !startTime || !endTime) return null;
-  const s = startTime > w.start ? startTime : w.start;
-  const e = endTime   < w.end   ? endTime   : w.end;
-  if (s >= e) return null;
-  return { start: s, end: e };
-}
-
 const MONTH_NAME_TO_NUMBER = {
   january: 1, february: 2, march: 3, april: 4,
   may: 5, june: 6, july: 7, august: 8,
@@ -73,10 +33,16 @@ export const ROLE_DISPLAY_ORDER = {
   'Lead': 3, 'Host': 4, 'Admin': 5, 'Instructor': 6,
 };
 
-// Instructors who are guaranteed a shift if they submit availability
-const GUARANTEED_NAMES = new Set(['Luke', 'Ainsley', 'Kaitlyn']);
+export const ROLE_ASSIGNMENTS = {};
+export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
 
-// Fixed staff — not scheduled by engine, seeded separately
+// LEGACY default hours / fixed staff — kept for back-compat with code that
+// imports `FIXED_SCHEDULES` directly (Admin.jsx still references it for the
+// "Sync Fixed Staff This Week" / "Fix Duplicates" buttons). New code should
+// pull these from the per-center config instead.
+//
+// When a center config doc exists, the scheduler uses that. When it doesn't
+// (pre-migration), it falls back to these.
 export const FIXED_SCHEDULES = {
   'Jasper Wu': {
     role: 'Center Director',
@@ -96,12 +62,6 @@ export const FIXED_SCHEDULES = {
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
   },
-  // Vinod Bandla removed from fixed schedule — his hours vary week to week.
-  // Add his shifts manually in the weekly spreadsheet.
-  // Rahul Parmar (Host) is now scheduled via the regular availability
-  // workflow with a `guaranteed` flag and special host-handling in
-  // generateSchedule(). He used to live here as an all-"Off" entry, which
-  // had the side effect of excluding him from the scheduler entirely.
   'Rachel Rozelle': {
     role: 'Admin',
     countsTowardRatio: false,
@@ -110,8 +70,34 @@ export const FIXED_SCHEDULES = {
   },
 };
 
-export const ROLE_ASSIGNMENTS = {};
-export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
+const DEFAULT_INSTRUCTIONAL_HOURS = {
+  Monday:    { start: '15:00', end: '19:00' },
+  Tuesday:   { start: '15:00', end: '19:00' },
+  Wednesday: { start: '15:00', end: '19:00' },
+  Thursday:  { start: '15:00', end: '19:00' },
+  Friday:    { start: '15:00', end: '18:00' },
+  Saturday:  { start: '10:00', end: '14:00' },
+};
+
+const DEFAULT_GUARANTEED_NAMES = ['Luke', 'Ainsley', 'Kaitlyn'];
+
+/**
+ * Intersect a user's availability window with the day's instructional
+ * window. Returns { start, end } in HH:MM, or null if there is no overlap.
+ *
+ * The instructional-hours map is now per-center (passed in from the
+ * caller via centerConfig); we accept it as a param so this helper stays
+ * pure.
+ */
+function clampToInstructionalHours(startTime, endTime, dayName, instructionalHours) {
+  const map = instructionalHours || DEFAULT_INSTRUCTIONAL_HOURS;
+  const w = map[dayName];
+  if (!w || !startTime || !endTime) return null;
+  const s = startTime > w.start ? startTime : w.start;
+  const e = endTime   < w.end   ? endTime   : w.end;
+  if (s >= e) return null;
+  return { start: s, end: e };
+}
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
@@ -210,9 +196,17 @@ function parseAMPMtoHHMM(timeStr) {
   return `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`;
 }
 
-function getFixedStaffForDay(dayName, weekOfMonth) {
+/**
+ * Build the per-day fixed staff roster from the center's fixedStaff map.
+ * Falls back to the legacy FIXED_SCHEDULES export when no map is provided
+ * (lets older callers keep working).
+ */
+function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
+  const map = fixedStaffMap && Object.keys(fixedStaffMap).length > 0
+    ? fixedStaffMap
+    : FIXED_SCHEDULES;
   const result = [];
-  for (const [name, sched] of Object.entries(FIXED_SCHEDULES)) {
+  for (const [name, sched] of Object.entries(map)) {
     const shift = sched[dayName];
     if (!shift || shift.toLowerCase() === 'off') continue;
     if (dayName === 'Saturday' && sched.saturday_weeks) {
@@ -272,11 +266,15 @@ function shiftSubRoleFor(instructor) {
   return 'Elementary';
 }
 
-function isGuaranteed(instructor) {
+function isGuaranteed(instructor, guaranteedNames) {
   // Per-user override (set via Admin → Manage Users → "Guaranteed shift" toggle)
   if (instructor.guaranteed === true) return true;
+  const list = (Array.isArray(guaranteedNames) && guaranteedNames.length > 0)
+    ? guaranteedNames
+    : DEFAULT_GUARANTEED_NAMES;
+  const set = list instanceof Set ? list : new Set(list);
   const firstName = (instructor.displayName || '').split(' ')[0];
-  return GUARANTEED_NAMES.has(firstName);
+  return set.has(firstName);
 }
 
 /**
@@ -302,6 +300,9 @@ function isHostRole(instructor) {
  * @param {string} params.month                - e.g. 'May'
  * @param {number} params.year                 - e.g. 2026
  * @param {Object} params.config               - { minPerDay, maxPerDay, maxDaysPerWeek }
+ * @param {Object} params.centerConfig         - per-center settings (instructionalHours, fixedStaff,
+ *                                                guaranteedNames). Falls back to legacy hardcoded values
+ *                                                when missing or empty.
  */
 export function generateSchedule({
   instructors,
@@ -310,6 +311,7 @@ export function generateSchedule({
   month,
   year,
   config = {},
+  centerConfig = {},
 }) {
   const {
     minPerDay = 8,
@@ -317,11 +319,20 @@ export function generateSchedule({
     maxDaysPerWeek = 5,
   } = config;
 
+  // Center-specific tunables (with defaults that match legacy Langley behavior)
+  const instructionalHours = centerConfig.instructionalHours || DEFAULT_INSTRUCTIONAL_HOURS;
+  const fixedStaffMap      = (centerConfig.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
+                                ? centerConfig.fixedStaff
+                                : FIXED_SCHEDULES;
+  const guaranteedNames    = (Array.isArray(centerConfig.guaranteedNames) && centerConfig.guaranteedNames.length > 0)
+                                ? centerConfig.guaranteedNames
+                                : DEFAULT_GUARANTEED_NAMES;
+
   const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
   if (!monthNumber) throw new Error(`Invalid month: ${month}`);
 
   const workingDays = getDaysInMonth(year, monthNumber);
-  const fixedStaffNames = new Set(Object.keys(FIXED_SCHEDULES));
+  const fixedStaffNames = new Set(Object.keys(fixedStaffMap));
 
   // Eligible form instructors: approved, not owner, not fixed staff
   const formInstructors = instructors.filter(
@@ -345,7 +356,7 @@ export function generateSchedule({
     const { dateStr, dayName, dayNumber, weekOfMonth, weekKey } = day;
 
     // ── 1. Fixed staff for this day ──────────────────────────────────────────
-    const fixedToday = getFixedStaffForDay(dayName, weekOfMonth);
+    const fixedToday = getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap);
     const assignedNames = [];
     const shiftTimes = {};
     const roles = {};
@@ -392,8 +403,8 @@ export function generateSchedule({
     // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
     inCentre.sort((a, b) => {
       // Guaranteed instructors always first
-      const ga = isGuaranteed(a.inst) ? 0 : 1;
-      const gb = isGuaranteed(b.inst) ? 0 : 1;
+      const ga = isGuaranteed(a.inst, guaranteedNames) ? 0 : 1;
+      const gb = isGuaranteed(b.inst, guaranteedNames) ? 0 : 1;
       if (ga !== gb) return ga - gb;
 
       // Then by priority
@@ -427,7 +438,7 @@ export function generateSchedule({
 
       // Soft balance: don't let elementary outnumber highschool by more than 2
       // unless we have no choice (guaranteed instructors bypass this)
-      if (isEL && !isGuaranteed(candidate.inst)) {
+      if (isEL && !isGuaranteed(candidate.inst, guaranteedNames)) {
         if (elCount - hsCount >= 2) continue; // Skip for now, may add later
       }
 
@@ -436,7 +447,7 @@ export function generateSchedule({
       subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
       // Instructors get clamped to instructional hours so a "Full Day"
       // availability doesn't accidentally schedule them 10am–8pm.
-      const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+      const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
       if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
       else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
@@ -458,7 +469,7 @@ export function generateSchedule({
         assignedNames.push(candidate.inst.displayName);
         roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
         subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
-        const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+        const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
         if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
         else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
@@ -505,7 +516,7 @@ export function generateSchedule({
           roles[candidate.inst.displayName] = 'Instructor';
           subRoles[candidate.inst.displayName] = 'Elementary';
           promotedFromHost++;
-          const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName);
+          const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
           if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
           else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
           warnings.push(

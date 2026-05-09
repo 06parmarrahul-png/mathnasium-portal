@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
@@ -6,9 +6,10 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId } from '../lib/centers';
+import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 
 const AuthContext = createContext(null);
 
@@ -23,6 +24,7 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [centerConfig, setCenterConfig] = useState(DEFAULT_CENTER_CONFIG);
 
   useEffect(() => onAuthStateChanged(auth, async (u) => {
     setUser(u);
@@ -34,6 +36,26 @@ export function AuthProvider({ children }) {
     }
     setLoading(false);
   }), []);
+
+  // Active center derived from the profile (and optionally localStorage for
+  // multi-center staff who picked a non-primary one). Memoized so the
+  // subscription effect below only re-fires when the active center changes.
+  const activeCenterId = useMemo(() => getActiveCenterId(profile), [profile]);
+
+  // Subscribe to the active center's config doc. Falls back to defaults if
+  // the doc doesn't exist (pre-migration state). Re-runs the subscription
+  // when the active center changes. activeCenterId is guaranteed truthy by
+  // getActiveCenterId() — it always returns at least DEFAULT_CENTER_ID — so
+  // we can subscribe unconditionally.
+  useEffect(() => (
+    onSnapshot(
+      doc(db, 'centers', activeCenterId, 'config', 'main'),
+      (snap) => {
+        setCenterConfig(mergeCenterConfig(snap.exists() ? snap.data() : null));
+      },
+      () => setCenterConfig(DEFAULT_CENTER_CONFIG),
+    )
+  ), [activeCenterId]);
 
   const login = async (email, password) => {
     await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -99,7 +121,10 @@ export function AuthProvider({ children }) {
       // Currently-active center for this user. Reads from profile.centerIds[]
       // (or profile.centerId, or DEFAULT_CENTER_ID as fallback). Multi-center
       // staff will be able to switch via a sidebar dropdown in a later phase.
-      activeCenterId: getActiveCenterId(profile),
+      activeCenterId,
+      // Center settings (instructional hours, fixed staff, salary list, etc.)
+      // — falls back to defaults if no Firestore doc exists yet.
+      centerConfig,
     }}>
       {children}
     </AuthContext.Provider>
