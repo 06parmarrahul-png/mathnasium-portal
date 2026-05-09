@@ -5,6 +5,7 @@ import { format } from 'date-fns';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
+import TodaysSnapshot from '../components/TodaysSnapshot';
 import {
   CalendarDays, MessageSquare, Users, Clock,
   ChevronRight, Megaphone, Pin, ArrowRight,
@@ -97,8 +98,12 @@ export default function Home() {
 
   const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
+  const isOwner = profile?.role === 'owner';
+
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    // Owners see a wider container because Today's Snapshot includes the
+    // coverage grid which benefits from extra room. Instructors stay narrow.
+    <div className={`mx-auto space-y-6 ${isOwner ? 'max-w-5xl' : 'max-w-3xl'}`}>
 
       {/* Greeting */}
       <div>
@@ -109,6 +114,9 @@ export default function Home() {
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
       </div>
+
+      {/* ── Today's Snapshot (owners only) ── */}
+      {isOwner && <TodaysSnapshot />}
 
       {/* ── Upcoming Shift Card ── */}
       {profile?.role !== 'owner' && (

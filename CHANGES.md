@@ -1,5 +1,51 @@
 # Changes Log
 
+## Pass 9 — Today's Snapshot on the owner's home page
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+When the owner logs in, the home page now starts with a **Today's Snapshot** dashboard showing exactly what's happening today.
+
+### What's new
+
+**`src/components/TodaysSnapshot.jsx`** — new component that subscribes to today's shifts (`where date == todayStr`) and renders:
+
+- **Date header** (e.g. "Friday, May 8, 2026")
+- **Stat tiles** (4 of them):
+  - Instructors (teaching count — Instructor / Lead / promoted Host)
+  - Hosts (regular non-promoted)
+  - Online (online instructors)
+  - Total scheduled hours across the day
+- **The same CoverageGrid used in the auto-scheduler** — half-hour density with per-person rows, sub-role colored bars, peak-instructor summary
+
+**Auto-refreshes at midnight.** The component captures `now` on mount and re-checks every 60 seconds. If the date rolls over while the tab is open, the queries and labels update without a manual refresh.
+
+**Empty state.** If no shifts are posted for today, shows a clean "No staff scheduled today" message with a hint pointing to the Admin Panel — instead of just rendering an empty grid.
+
+**Loading state.** Brief spinner while the first Firestore snapshot arrives, then the data renders. Avoids the awkward "empty state flash" that would otherwise appear.
+
+### Home page treatment for owners
+
+Home (`/`) now branches by role:
+
+| Role        | What they see                                                             |
+|-------------|----------------------------------------------------------------------------|
+| Owner       | Today's Snapshot → Latest announcement → Quick actions (incl. Admin link) |
+| Instructor  | Upcoming shift card → Latest announcement → Quick actions                 |
+
+The owner's container also widens (`max-w-5xl` vs `max-w-3xl`) so the coverage grid has room to breathe without horizontal scrolling on most laptops.
+
+### Files touched
+
+```
+new:   src/components/TodaysSnapshot.jsx   (date-aware, auto-refreshes, reuses CoverageGrid)
+mod:   src/pages/Home.jsx                   (renders TodaysSnapshot for owners,
+                                              wider container for owner view)
+```
+
+---
+
 ## Pass 8 — Per-day Coverage Grid (half-hour staffing density)
 
 Lint status: ✅ 0 errors, 0 warnings
