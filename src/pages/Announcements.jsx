@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Megaphone, Plus, Trash2, Pin } from 'lucide-react';
@@ -20,11 +20,18 @@ export default function Announcements() {
   const [category, setCategory] = useState('general');
   const [pinned, setPinned] = useState(false);
 
-  useEffect(() => onSnapshot(query(collection(db, 'announcements'), orderBy('date', 'desc')), snap => {
-    const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    data.sort((a, b) => a.pinned && !b.pinned ? -1 : !a.pinned && b.pinned ? 1 : 0);
-    setPosts(data);
-  }), []);
+  useEffect(() => onSnapshot(
+    query(
+      collection(db, 'announcements'),
+      where('centerId', '==', activeCenterId),
+      orderBy('date', 'desc'),
+    ),
+    snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      data.sort((a, b) => a.pinned && !b.pinned ? -1 : !a.pinned && b.pinned ? 1 : 0);
+      setPosts(data);
+    }
+  ), [activeCenterId]);
 
   const handlePost = async (e) => {
     e.preventDefault();

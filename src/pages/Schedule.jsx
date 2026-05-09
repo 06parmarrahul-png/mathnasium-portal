@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
-  query, orderBy, runTransaction, setDoc, writeBatch,
+  query, where, orderBy, runTransaction, setDoc, writeBatch,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -816,22 +816,26 @@ export default function Schedule() {
   const [openShifts, setOpenShifts] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
 
-  // ── Firestore listeners ──
-  useEffect(() => onSnapshot(query(collection(db, 'availability'), orderBy('date')), snap =>
-    setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  // ── Firestore listeners — all scoped to the active center ──
+  useEffect(() => onSnapshot(
+    query(collection(db, 'availability'), where('centerId', '==', activeCenterId), orderBy('date')),
+    snap => setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), [activeCenterId]);
 
-  useEffect(() => onSnapshot(query(collection(db, 'shifts'), orderBy('date')), snap =>
-    setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  useEffect(() => onSnapshot(
+    query(collection(db, 'shifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+    snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), [activeCenterId]);
 
-  useEffect(() => onSnapshot(query(collection(db, 'openShifts')), snap =>
-    setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  useEffect(() => onSnapshot(
+    query(collection(db, 'openShifts'), where('centerId', '==', activeCenterId)),
+    snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), [activeCenterId]);
 
-  useEffect(() => onSnapshot(collection(db, 'timeOffRequests'), snap =>
-    setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  useEffect(() => onSnapshot(
+    query(collection(db, 'timeOffRequests'), where('centerId', '==', activeCenterId)),
+    snap => setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+  ), [activeCenterId]);
 
   // ── Calendar grid ──
   const monthStart = startOfMonth(currentMonth);

@@ -58,35 +58,41 @@ const quickLinks = [
 ];
 
 export default function Home() {
-  const { profile } = useAuth();
+  const { profile, activeCenterId } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
 
   // Local-time today (avoids UTC edge cases for Pacific time)
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 
-  // Only subscribe to this user's shifts — much smaller payload than the whole collection.
-  // (Equality-only filter avoids needing a composite Firestore index.)
+  // Only subscribe to this user's shifts at the active center — much smaller
+  // payload than the whole collection.
   useEffect(() => {
     if (!profile?.uid) return;
     return onSnapshot(
       query(
         collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
         where('userId', '==', profile.uid),
       ),
       snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
-  }, [profile?.uid]);
+  }, [profile?.uid, activeCenterId]);
 
   useEffect(() => onSnapshot(
-    query(collection(db, 'announcements'), orderBy('date', 'desc'), limit(10)),
+    query(
+      collection(db, 'announcements'),
+      where('centerId', '==', activeCenterId),
+      orderBy('date', 'desc'),
+      limit(10),
+    ),
     snap => {
       const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       // Pinned first, then by date
       data.sort((a, b) => (a.pinned && !b.pinned ? -1 : !a.pinned && b.pinned ? 1 : 0));
       setAnnouncements(data);
     }
-  ), []);
+  ), [activeCenterId]);
 
   const upcomingShift = useMemo(() => {
     return shifts

@@ -1,5 +1,93 @@
 # Changes Log
 
+## Pass 12 — Multi-center Phase 2: queries scoped to active center + migration gate
+
+Lint status: ✅ 0 errors, 0 warnings
+Parse status: ✅ all source files parse clean
+
+**This is the pass that makes multi-center isolation real.** Until now, every Firestore read returned data from every center because no query filtered by `centerId`. After this pass, every read is scoped — Langley users only see Langley's shifts, availability, chat, announcements, time-off requests, and so on. Add a Burnaby center later and Burnaby data is invisible to Langley.
+
+### What's new
+
+**`firestore.indexes.json`** at the project root — defines every composite index Firestore needs for the new center-scoped queries (centerId + date, centerId + createdAt, centerId + userId, etc.). Saves you from clicking "create index" links in the Firebase Console one by one.
+
+**Every collection-listing query is now centerId-filtered.** Specifically:
+
+| File                              | Collection                                     | New filter                                            |
+|-----------------------------------|------------------------------------------------|-------------------------------------------------------|
+| `Schedule.jsx`                    | availability, shifts, openShifts, timeOffRequests | `where('centerId', '==', activeCenterId)`           |
+| `Admin.jsx`                       | users                                          | `where('centerIds', 'array-contains', activeCenterId)` |
+| `Admin.jsx`                       | availability, shifts, openShifts, timeOffRequests | `where('centerId', '==', activeCenterId)`           |
+| `Chat.jsx`                        | chat                                           | `where('centerId', '==', activeCenterId)`             |
+| `Layout.jsx`                      | openShifts, chat (badge data)                  | `where('centerId', '==', activeCenterId)`             |
+| `Announcements.jsx`               | announcements                                  | `where('centerId', '==', activeCenterId)`             |
+| `ShiftBoard.jsx`                  | openShifts, chat                               | `where('centerId', '==', activeCenterId)`             |
+| `TodaysSnapshot.jsx`              | shifts (today)                                 | `where('centerId', '==', activeCenterId)`             |
+| `Home.jsx`                        | shifts (mine), announcements                   | `where('centerId', '==', activeCenterId)`             |
+
+Single-doc reads (`getDoc(doc(db, 'users', uid))`, etc.) don't need filtering — they target a specific document by ID.
+
+**Users collection uses `array-contains` on `centerIds`.** Since the data model supports staff working at multiple Mathnasium locations, a user belongs to centers via an array, not a single field. The query asks "give me users whose centerIds array includes the active center."
+
+**`src/components/MigrationBanner.jsx`** — a full-screen modal gate that detects whether the multi-center migration has been run and forces it to be run before the app is usable. Shows up if `centers/{activeCenterId}` doesn't exist. **Without this banner, Phase 2's filtered queries would silently return nothing for un-migrated installs and the portal would look completely empty.** Now the banner says "Multi-Center Setup Required" with a one-click migration button.
+
+- **Owners** see the migration button directly. Click → migration runs → banner disappears → portal works.
+- **Instructors** see a friendlier "Tell your owner" message. They wait for the owner to run it.
+- **The migration logic is the same as before** (creates `centers/langley`, seeds `centers/langley/config/main`, stamps `centerId` on every existing doc). Just surfaced more aggressively.
+
+### Why this all has to ship together
+
+1. If we **filter queries** without **running the migration**, every read returns nothing → empty app → user thinks something broke.
+2. If we **run the migration** without **filtering queries**, queries still return everything across all centers (no isolation) → defeats the purpose.
+3. If we **deploy code** without **deploying indexes**, the first query of each new shape errors with "missing index" → Firebase shows a URL, but it's friction.
+
+The migration banner solves (1). The `firestore.indexes.json` file solves (3). Both together solve everything.
+
+### Safe-deploy steps (do in this order)
+
+1. **Push the code.**
+   ```bash
+   git add -A
+   git commit -m "Phase 2: scope every Firestore read to the active center; add migration gate"
+   git push
+   ```
+   Wait for Vercel to deploy and go green.
+
+2. **Deploy the Firestore indexes** (do this BEFORE you reload the live site, otherwise queries will fail with "missing index" errors until you click each URL).
+
+   If you have Firebase CLI installed (`npm install -g firebase-tools`, then `firebase login` once):
+   ```bash
+   firebase deploy --only firestore:indexes
+   ```
+   If you don't have Firebase CLI: open Firebase Console → Firestore → Indexes tab → click "Create Index" and copy each entry from `firestore.indexes.json`. Or just reload the live site, watch the console for "missing index" errors, click the URL each error gives you (Firebase auto-fills the form). Either way works; CLI is faster.
+
+3. **Reload the live site as the owner.** A modal will appear immediately: **"Multi-Center Setup Required"**.
+
+4. **Click "Run multi-center migration"**. It takes a few seconds. The modal disappears when done.
+
+5. **Verify everything works.** Click around — Schedule, Admin, Chat, Today's Snapshot, Shift Board. All should display data exactly as before. (Behind the scenes, every query now has a `where('centerId', '==', 'langley')` clause, but since every doc is now tagged, results are identical.)
+
+### What this unlocks
+
+You're now ready for Phase 4 (Firestore security rules). Phase 4 will add server-side enforcement: even if a malicious client crafts a request for another center's data, Firestore itself will reject it. Defense in depth.
+
+### Files touched
+
+```
+new:   firestore.indexes.json                  (composite indexes for multi-center queries)
+new:   src/components/MigrationBanner.jsx      (full-screen migration gate)
+mod:   src/components/Layout.jsx                (renders MigrationBanner; queries filter by centerId)
+mod:   src/components/TodaysSnapshot.jsx        (filter by centerId)
+mod:   src/pages/Schedule.jsx                   (filter all 4 listeners by centerId)
+mod:   src/pages/Admin.jsx                      (filter all 5 listeners by centerId; users by array-contains)
+mod:   src/pages/Chat.jsx                       (filter chat by centerId)
+mod:   src/pages/Home.jsx                       (filter shifts + announcements by centerId)
+mod:   src/pages/Announcements.jsx              (filter by centerId)
+mod:   src/pages/ShiftBoard.jsx                 (filter openShifts + chat by centerId)
+```
+
+---
+
 ## Pass 11 — Multi-center Phase 3: scheduler config moves to Firestore + Center Settings UI
 
 Lint status: ✅ 0 errors, 0 warnings

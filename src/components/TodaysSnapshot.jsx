@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { Calendar } from 'lucide-react';
 import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
 import CoverageGrid from './CoverageGrid';
 
 /**
@@ -24,6 +25,7 @@ const DAY_NAMES = [
 ];
 
 export default function TodaysSnapshot() {
+  const { activeCenterId } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -46,14 +48,18 @@ export default function TodaysSnapshot() {
 
   useEffect(() => (
     onSnapshot(
-      query(collection(db, 'shifts'), where('date', '==', todayStr)),
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '==', todayStr),
+      ),
       snap => {
         setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
         setLoading(false);
       },
       () => setLoading(false),
     )
-  ), [todayStr]);
+  ), [todayStr, activeCenterId]);
 
   // Build the day-shaped object that CoverageGrid expects.
   const dayData = useMemo(() => {

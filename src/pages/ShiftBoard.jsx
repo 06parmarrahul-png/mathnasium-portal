@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
-  collection, addDoc, doc, onSnapshot, query, orderBy, limit,
+  collection, addDoc, doc, onSnapshot, query, where, orderBy, limit,
   runTransaction,
 } from 'firebase/firestore';
 import { format } from 'date-fns';
@@ -198,17 +198,27 @@ export default function ShiftBoard() {
     catch { /* ignore */ }
   }, [hideIneligible]);
 
-  // Subscribe: open shifts (admin-posted)
+  // Subscribe: open shifts at the active center (admin-posted)
   useEffect(() => onSnapshot(
-    query(collection(db, 'openShifts'), orderBy('date', 'asc')),
+    query(
+      collection(db, 'openShifts'),
+      where('centerId', '==', activeCenterId),
+      orderBy('date', 'asc'),
+    ),
     snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  ), [activeCenterId]);
 
-  // Subscribe: most recent chat docs (we'll filter to shift_swap status === 'open' below)
+  // Subscribe: most recent chat docs at the active center (we'll filter to
+  // shift_swap status === 'open' below)
   useEffect(() => onSnapshot(
-    query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
+    query(
+      collection(db, 'chat'),
+      where('centerId', '==', activeCenterId),
+      orderBy('createdAt', 'desc'),
+      limit(200),
+    ),
     snap => setChatDocs(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  ), [activeCenterId]);
 
   const todayStr = format(new Date(), 'yyyy-MM-dd');
 

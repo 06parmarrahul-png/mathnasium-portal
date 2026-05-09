@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Logo from './Logo';
+import MigrationBanner from './MigrationBanner';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase,
@@ -29,24 +30,33 @@ function todayStr() {
 }
 
 export default function Layout({ children }) {
-  const { profile, logout } = useAuth();
+  const { profile, logout, activeCenterId } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
 
-  // Subscribe to data needed for the Shift Board badge counter.
-  // Both queries are also used by the ShiftBoard page itself —
-  // Firebase deduplicates identical subscriptions, so this is cheap.
+  // Subscribe to data needed for the Shift Board badge counter — scoped to
+  // the active center. Both queries are also used by the ShiftBoard page
+  // itself; Firebase dedupes identical subscriptions.
   useEffect(() => onSnapshot(
-    query(collection(db, 'openShifts'), orderBy('date', 'asc')),
+    query(
+      collection(db, 'openShifts'),
+      where('centerId', '==', activeCenterId),
+      orderBy('date', 'asc'),
+    ),
     snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  ), [activeCenterId]);
 
   useEffect(() => onSnapshot(
-    query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
+    query(
+      collection(db, 'chat'),
+      where('centerId', '==', activeCenterId),
+      orderBy('createdAt', 'desc'),
+      limit(200),
+    ),
     snap => setChatDocs(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), []);
+  ), [activeCenterId]);
 
   const isOwner = profile?.role === 'owner';
 
@@ -89,6 +99,9 @@ export default function Layout({ children }) {
 
   return (
     <div className="flex h-screen bg-gray-50">
+      {/* Multi-center migration gate — covers the whole UI until the one-time
+          migration has been run. After that, this renders nothing. */}
+      <MigrationBanner />
       {open && <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-30 w-64 transform bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="flex items-center gap-3 border-b border-gray-700 px-5 py-5">

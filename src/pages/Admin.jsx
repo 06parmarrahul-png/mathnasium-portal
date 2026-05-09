@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc,
-  addDoc, query, orderBy, writeBatch, getDoc, getDocs, setDoc,
+  addDoc, query, where, orderBy, writeBatch, getDoc, getDocs, setDoc,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -476,24 +476,36 @@ export default function Admin() {
   const [radiusFileName, setRadiusFileName] = useState('');
   const [radiusError, setRadiusError] = useState('');
 
-  // Firestore subscriptions
+  // Firestore subscriptions — all scoped to the active center.
+  // Users use array-contains on centerIds (since some staff work at multiple
+  // centers); everything else filters on the single centerId field.
   useEffect(() => {
-    const u1 = onSnapshot(collection(db, 'users'), snap =>
-      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const u2 = onSnapshot(query(collection(db, 'availability'), orderBy('date')), snap =>
-      setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const u3 = onSnapshot(query(collection(db, 'shifts'), orderBy('date')), snap =>
-      setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const u4 = onSnapshot(query(collection(db, 'openShifts'), orderBy('date')), snap =>
-      setOpenShiftsList(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    const u5 = onSnapshot(collection(db, 'timeOffRequests'), snap =>
-      setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => {
+    const u1 = onSnapshot(
+      query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
+      snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    const u2 = onSnapshot(
+      query(collection(db, 'availability'), where('centerId', '==', activeCenterId), orderBy('date')),
+      snap => setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    const u3 = onSnapshot(
+      query(collection(db, 'shifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+      snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    const u4 = onSnapshot(
+      query(collection(db, 'openShifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+      snap => setOpenShiftsList(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+    const u5 = onSnapshot(
+      query(collection(db, 'timeOffRequests'), where('centerId', '==', activeCenterId)),
+      snap => setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => {
         const ta = a.createdAt?.seconds ?? 0;
         const tb = b.createdAt?.seconds ?? 0;
         return tb - ta;
-      })));
+      }))
+    );
     return () => { u1(); u2(); u3(); u4(); u5(); };
-  }, []);
+  }, [activeCenterId]);
 
   const approvedUsers = users
     .filter(u => u.approved && u.role !== 'owner')

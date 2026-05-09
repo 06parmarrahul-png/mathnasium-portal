@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { collection, addDoc, onSnapshot, query, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, query, where, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle } from 'lucide-react';
@@ -11,13 +11,16 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
 
-  // Load the latest 200 messages (newest first), then reverse to display chronologically.
-  // The previous code did orderBy asc + limit 200, which would have stopped showing
-  // new messages once chat passed 200 total (it returned the oldest 200 forever).
-  // Shift-swap requests and open-shift alerts are filtered out — those live on the
-  // Shift Board page now and would just be noise here.
+  // Load the latest 200 messages for the active center (newest first), then
+  // reverse to display chronologically. Shift-swap and open-shift-alert
+  // messages are filtered out of chat — they live on the Shift Board now.
   useEffect(() => onSnapshot(
-    query(collection(db, 'chat'), orderBy('createdAt', 'desc'), limit(200)),
+    query(
+      collection(db, 'chat'),
+      where('centerId', '==', activeCenterId),
+      orderBy('createdAt', 'desc'),
+      limit(200),
+    ),
     snap => {
       const docs = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
@@ -25,7 +28,7 @@ export default function Chat() {
       docs.reverse(); // newest at the bottom
       setMessages(docs);
     }
-  ), []);
+  ), [activeCenterId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
