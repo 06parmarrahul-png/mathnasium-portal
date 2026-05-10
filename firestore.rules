@@ -1,0 +1,240 @@
+rules_version = '2';
+
+// Mathnasium Portal — Firestore Security Rules (multi-tenant)
+//
+// Threat model: prevent any authenticated user from reading or writing
+// data belonging to a center they don't have access to. Multi-center
+// staff (centerIds[] with multiple entries) can access each of their
+// centers; owners can manage their center; super-admins (future) can
+// touch any center.
+//
+// Single-doc reads (e.g. /users/{me}) bypass center filtering — they
+// target a specific document by id and authenticate by ownership.
+//
+// IMPORTANT: every doc in shifts/availability/openShifts/timeOffRequests/
+// chat/announcements/notificationPreferences MUST have a `centerId`
+// field. The Phase 1 migration backfilled this. New writes from the
+// app always set it. Without it, these rules deny access.
+//
+// To roll back: replace this file with the rules currently in your
+// Firebase Console (or a permissive default) and redeploy.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helpers ────────────────────────────────────────────────────────
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Read the currently-signed-in user's profile.
+    // Wrapped in a function so we can call it cheaply (Firestore caches
+    // these get()s within a single request).
+    function profile() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function profileExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isApproved() {
+      return profileExists() && profile().approved == true;
+    }
+
+    // Returns the list of center IDs the signed-in user belongs to.
+    // Tolerant of legacy profiles that have only `centerId` (a single
+    // string) and no `centerIds` array — falls back to a one-element list.
+    function userCenters() {
+      let p = profile();
+      return p.centerIds is list
+        ? p.centerIds
+        : (p.centerId != null ? [p.centerId] : []);
+    }
+
+    function hasCenterAccess(centerId) {
+      return isApproved() && centerId in userCenters();
+    }
+
+    function isOwnerAtCenter(centerId) {
+      return isApproved()
+          && profile().role == 'owner'
+          && centerId in userCenters();
+    }
+
+    function isSuperAdmin() {
+      return profileExists() && profile().role == 'super_admin';
+    }
+
+    // Used by per-collection rules: the "incoming" doc on writes uses
+    // request.resource; the existing doc on reads/updates uses resource.
+    function incomingCenter() {
+      return request.resource.data.centerId;
+    }
+    function existingCenter() {
+      return resource.data.centerId;
+    }
+
+    // ─── Centers (top-level identity docs) ─────────────────────────────
+    // Public read: needed for the (future) signup center-picker so an
+    // unauthenticated user can see the list of Mathnasium locations.
+    // Identity here is just name/city/province — not sensitive.
+    //
+    // Writes: only the owner of THAT center, or a super-admin, can edit.
+    // Creating a brand-new center requires super-admin (no chicken-and-
+    // egg path for owners since the new center isn't in their centerIds
+    // yet).
+    match /centers/{centerId} {
+      allow read: if true;
+      allow create: if isSuperAdmin();
+      allow update, delete: if isOwnerAtCenter(centerId) || isSuperAdmin();
+
+      // Per-center config (instructional hours, fixed staff, etc.)
+      match /config/{configDoc} {
+        allow read:  if hasCenterAccess(centerId) || isSuperAdmin();
+        allow write: if isOwnerAtCenter(centerId) || isSuperAdmin();
+      }
+
+      // Future-proof: any other sub-collection under a center is
+      // restricted the same way.
+      match /{document=**} {
+        allow read:  if hasCenterAccess(centerId) || isSuperAdmin();
+        allow write: if isOwnerAtCenter(centerId) || isSuperAdmin();
+      }
+    }
+
+    // ─── Users ─────────────────────────────────────────────────────────
+    // - Signed-in user can read their OWN profile (needed for
+    //   AuthContext bootstrap before we know what center they're at).
+    // - Owner can read users at their center (for Manage Users).
+    // - Super-admin can read any user.
+    // - Anyone signed-in can CREATE their own profile (signup writes
+    //   /users/{uid} with their auth.uid).
+    // - User can UPDATE their own profile but cannot escalate
+    //   privileges (role, approved, centerId, centerIds, guaranteed are
+    //   owner-only fields).
+    // - Owner can update any user at their center.
+    // - Deletion: owner only (rejecting a pending user); no self-delete.
+    match /users/{userId} {
+      // Tolerant of legacy user docs that have `centerId` (string) but not
+      // yet `centerIds` (array) — the resource matches if EITHER shape says
+      // it's at one of the requester's centers.
+      function resourceAtMyCenter() {
+        return (resource.data.centerIds is list && userCenters().hasAny(resource.data.centerIds))
+            || (resource.data.centerId != null && resource.data.centerId in userCenters());
+      }
+
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId ||
+        isSuperAdmin() ||
+        (profile().role == 'owner' && resourceAtMyCenter())
+      );
+
+      allow create: if isSignedIn() && request.auth.uid == userId;
+
+      allow update: if isSignedIn() && (
+        // Owner / super-admin can update anyone in scope.
+        isSuperAdmin() ||
+        (profile().role == 'owner' && resourceAtMyCenter()) ||
+        // OR the user can edit their own profile EXCEPT privilege fields.
+        (request.auth.uid == userId
+         && request.resource.data.role         == resource.data.role
+         && request.resource.data.approved     == resource.data.approved
+         && request.resource.data.centerId     == resource.data.centerId
+         && request.resource.data.centerIds    == resource.data.centerIds
+         && (!('guaranteed' in request.resource.data) ||
+              request.resource.data.guaranteed  == resource.data.guaranteed))
+      );
+
+      allow delete: if isSuperAdmin() || (
+        isApproved() && profile().role == 'owner' && resourceAtMyCenter()
+      );
+    }
+
+    // ─── Shifts ────────────────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Create: any approved user at that center (admin scheduler, claim, swap)
+    // Update: any approved user at that center (swap acceptance, edit)
+    // Delete: owner-of-center only
+    match /shifts/{shiftId} {
+      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if hasCenterAccess(incomingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+    }
+
+    // ─── Availability ──────────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Write: only the user themselves, or owner-of-center
+    match /availability/{availId} {
+      allow read: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && hasCenterAccess(incomingCenter());
+      allow update, delete: if isSignedIn() && (
+        resource.data.userId == request.auth.uid
+        || isOwnerAtCenter(existingCenter())
+        || isSuperAdmin()
+      );
+    }
+
+    // ─── Open Shifts ───────────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Create / Delete: owner-of-center only
+    // Update: any approved user (claim flow flips status to 'claimed')
+    match /openShifts/{openShiftId} {
+      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if isOwnerAtCenter(incomingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+    }
+
+    // ─── Time-Off Requests ─────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Create: the user themselves submitting their own request
+    // Update / Delete: the user themselves OR owner (approve/deny)
+    match /timeOffRequests/{reqId} {
+      allow read: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if isSignedIn()
+        && request.resource.data.userId == request.auth.uid
+        && hasCenterAccess(incomingCenter());
+      allow update, delete: if isSignedIn() && (
+        resource.data.userId == request.auth.uid
+        || isOwnerAtCenter(existingCenter())
+        || isSuperAdmin()
+      );
+    }
+
+    // ─── Chat ──────────────────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Create / Update: any approved user at that center (swap acceptance flips fields)
+    // Delete: owner-of-center only
+    match /chat/{msgId} {
+      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if hasCenterAccess(incomingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+    }
+
+    // ─── Announcements ─────────────────────────────────────────────────
+    // Read: any approved user at the doc's center
+    // Write: owner-of-center only (instructors don't post announcements)
+    match /announcements/{annId} {
+      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow create: if isOwnerAtCenter(incomingCenter()) || isSuperAdmin();
+      allow update, delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+    }
+
+    // ─── Notification Preferences ──────────────────────────────────────
+    // Per-user doc keyed by uid. Only the user themselves can read/write.
+    match /notificationPreferences/{userId} {
+      allow read, write: if isSignedIn() && request.auth.uid == userId;
+    }
+
+    // ─── Default deny ──────────────────────────────────────────────────
+    // Anything not matched above is denied. Required for Firestore — by
+    // default rules deny all, so this is implicit, but called out here
+    // for clarity.
+  }
+}

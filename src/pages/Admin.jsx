@@ -873,24 +873,36 @@ export default function Admin() {
         stats.config = 1;
       }
 
-      // 2. Backfill every other collection
+      // 2. Backfill every other collection. Users get extra love: if they
+      // already have centerId (from a previous partial migration) but not the
+      // centerIds[] array, we add it — otherwise the new array-contains query
+      // and rules can't find them.
       const collectionsToMigrate = [
         'users', 'shifts', 'availability', 'openShifts',
         'timeOffRequests', 'chat', 'announcements', 'notificationPreferences',
       ];
       for (const colName of collectionsToMigrate) {
         const snap = await getDocs(collection(db, colName));
-        const toUpdate = snap.docs.filter(d => !d.data().centerId);
+        const toUpdate = snap.docs.filter(d => {
+          const data = d.data();
+          if (colName === 'users') {
+            return !data.centerId || !Array.isArray(data.centerIds);
+          }
+          return !data.centerId;
+        });
         const CHUNK = 450;
         for (let i = 0; i < toUpdate.length; i += CHUNK) {
           const b = writeBatch(db);
           for (const d of toUpdate.slice(i, i + CHUNK)) {
-            const updates = { centerId: DEFAULT_CENTER_ID };
-            // Users get a centerIds array too (multi-center support).
-            if (colName === 'users' && !Array.isArray(d.data().centerIds)) {
-              updates.centerIds = [DEFAULT_CENTER_ID];
+            const data = d.data();
+            const updates = {};
+            if (!data.centerId) updates.centerId = DEFAULT_CENTER_ID;
+            if (colName === 'users' && !Array.isArray(data.centerIds)) {
+              updates.centerIds = [data.centerId || DEFAULT_CENTER_ID];
             }
-            b.update(d.ref, updates);
+            if (Object.keys(updates).length > 0) {
+              b.update(d.ref, updates);
+            }
           }
           await b.commit();
         }

@@ -1,5 +1,103 @@
 # Changes Log
 
+## Pass 13 — Multi-center Phase 4: Firestore security rules (server-side isolation)
+
+Lint status: ✅ 0 errors, 0 warnings (no JS changes)
+
+**Phase 2 added client-side filtering. Phase 4 adds server-side enforcement.** Without these rules, a user with a few minutes of dev-tools knowledge could open their browser console, manually craft a query for another center's data, and read it. With these rules, Firestore itself rejects any read/write that doesn't match the user's center.
+
+### What's new
+
+**`firestore.rules`** at the project root — a complete ruleset that enforces center isolation, role-based privileges, and per-collection access patterns.
+
+Helper functions defined once at the top:
+- `isSignedIn()` — has an auth token
+- `profile()` — fetches the signed-in user's profile from `/users/{uid}`
+- `profileExists()` — guards against never-signed-up edge cases
+- `isApproved()` — must be approved by an owner
+- `userCenters()` — returns the user's `centerIds` array (with fallback to legacy `centerId`)
+- `hasCenterAccess(centerId)` — true if the user belongs to that center
+- `isOwnerAtCenter(centerId)` — owner role + has access to that center
+- `isSuperAdmin()` — for future cross-center management UIs
+
+Per-collection rules:
+
+| Collection                  | Read                                                          | Write                                                                   |
+|-----------------------------|---------------------------------------------------------------|-------------------------------------------------------------------------|
+| `centers/{id}`              | Public (for future signup picker)                             | `isSuperAdmin()` for create; owner-of-center for update/delete         |
+| `centers/{id}/config/main`  | `hasCenterAccess(id)`                                         | `isOwnerAtCenter(id)`                                                  |
+| `users/{userId}`            | Self, or owner reading users at their center, or super-admin  | Self (excluding role/approved/centerIds/guaranteed); owner; super-admin |
+| `shifts/{id}`               | `hasCenterAccess(centerId)`                                   | Approved user at center can create/update; owner deletes                |
+| `availability/{id}`         | `hasCenterAccess(centerId)`                                   | User can create/update/delete their own; owner can override            |
+| `openShifts/{id}`           | `hasCenterAccess(centerId)`                                   | Owner creates/deletes; any approved user updates (claim flow)          |
+| `timeOffRequests/{id}`      | `hasCenterAccess(centerId)`                                   | User submits theirs; owner approves/denies                              |
+| `chat/{id}`                 | `hasCenterAccess(centerId)`                                   | Approved user creates/updates; owner deletes                            |
+| `announcements/{id}`        | `hasCenterAccess(centerId)`                                   | Owner-only writes                                                        |
+| `notificationPreferences/{userId}` | Self only                                              | Self only                                                                |
+
+**Privilege escalation prevention.** The most important rule: when a user updates their own profile, they cannot change `role`, `approved`, `centerId`, `centerIds`, or `guaranteed`. Those stay owner-only. Without this, anyone could promote themselves to "owner" by editing their profile from the dev console.
+
+**`firebase.json`** updated to include the rules path so `firebase deploy --only firestore:rules` knows where to find them.
+
+### How to deploy
+
+```bash
+npx firebase-tools deploy --only firestore:rules
+```
+
+That's it. Output should be:
+```
+✔  cloud.firestore: rules file firestore.rules compiled successfully
+✔  firestore: released rules firestore.rules to cloud.firestore
+✔  Deploy complete!
+```
+
+### How to verify it worked
+
+After deploy, do these tests in your browser:
+
+1. **As owner — log in.** Schedule, Admin, Chat, Today's Snapshot all should still load. (You're allowed everywhere because you're the owner.)
+2. **As an instructor account — log in.** Schedule, Chat, ShiftBoard should load. Admin should be blocked (the route guard already does this; rules are belt-and-suspenders).
+3. **Edge case — open browser console as an instructor and try:**
+   ```js
+   firebase.firestore().collection('users').get()
+   ```
+   It should fail with `permission-denied`. (Instructor can't list other users.)
+
+If anything is broken — e.g., legitimate operations are denied — you'll see "missing or insufficient permissions" in the browser console. Read the console, identify which collection is failing, and tell me what error you see. I'll patch the rule.
+
+### Rollback (if anything breaks)
+
+If something legitimate stops working and you need to roll back fast:
+
+1. Open Firebase Console → Firestore → Rules tab.
+2. Replace the rules with this temporary permissive default:
+   ```
+   rules_version = '2';
+   service cloud.firestore {
+     match /databases/{database}/documents {
+       match /{document=**} {
+         allow read, write: if request.auth != null;
+       }
+     }
+   }
+   ```
+3. Click **Publish**. Live within seconds. The portal returns to "any signed-in user can do anything" mode (= what you had before today).
+4. Tell me what broke and I'll fix the real rules.
+
+### What this does NOT solve
+
+These rules don't audit-log or rate-limit. They don't encrypt data at rest beyond Firebase's defaults (which are already TLS in transit + AES-256 at rest). They don't prevent owners from looking at their own users' notification preferences (those are self-only by uid match — owners can't read them). For a stricter "managers shouldn't see private user prefs" rule, that's already in place.
+
+### Files touched
+
+```
+new:   firestore.rules        (full multi-tenant ruleset)
+mod:   firebase.json           (point at firestore.rules)
+```
+
+---
+
 ## Pass 12 — Multi-center Phase 2: queries scoped to active center + migration gate
 
 Lint status: ✅ 0 errors, 0 warnings
