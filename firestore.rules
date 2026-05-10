@@ -76,6 +76,13 @@ service cloud.firestore {
       return resource.data.centerId;
     }
 
+    // Allows owners to read/write docs that haven't been tagged with a
+    // centerId yet (un-migrated). After the migration finishes, no docs
+    // match this and the strict per-center rules apply normally.
+    function ownerCanTouchUnmigrated() {
+      return isApproved() && profile().role == 'owner' && resource.data.centerId == null;
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read: needed for the (future) signup center-picker so an
     // unauthenticated user can see the list of Mathnasium locations.
@@ -125,18 +132,27 @@ service cloud.firestore {
             || (resource.data.centerId != null && resource.data.centerId in userCenters());
       }
 
+      // True if this user doc has no center info AT ALL (un-migrated).
+      // Owners get permission to read/write these so the multi-center
+      // migration can finish patching them. Once a doc has been migrated,
+      // it stops matching this and falls back to the strict rules above.
+      function isUnmigrated() {
+        return resource.data.centerIds == null && resource.data.centerId == null;
+      }
+
       allow read: if isSignedIn() && (
         request.auth.uid == userId ||
         isSuperAdmin() ||
-        (profile().role == 'owner' && resourceAtMyCenter())
+        (profile().role == 'owner' && (resourceAtMyCenter() || isUnmigrated()))
       );
 
       allow create: if isSignedIn() && request.auth.uid == userId;
 
       allow update: if isSignedIn() && (
-        // Owner / super-admin can update anyone in scope.
+        // Owner / super-admin can update anyone in scope, including
+        // un-migrated docs (so the migration can patch them).
         isSuperAdmin() ||
-        (profile().role == 'owner' && resourceAtMyCenter()) ||
+        (profile().role == 'owner' && (resourceAtMyCenter() || isUnmigrated())) ||
         // OR the user can edit their own profile EXCEPT privilege fields.
         (request.auth.uid == userId
          && request.resource.data.role         == resource.data.role
@@ -148,7 +164,7 @@ service cloud.firestore {
       );
 
       allow delete: if isSuperAdmin() || (
-        isApproved() && profile().role == 'owner' && resourceAtMyCenter()
+        isApproved() && profile().role == 'owner' && (resourceAtMyCenter() || isUnmigrated())
       );
     }
 
@@ -158,23 +174,24 @@ service cloud.firestore {
     // Update: any approved user at that center (swap acceptance, edit)
     // Delete: owner-of-center only
     match /shifts/{shiftId} {
-      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read:   if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if hasCenterAccess(incomingCenter()) || isSuperAdmin();
-      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
-      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
     }
 
     // ─── Availability ──────────────────────────────────────────────────
     // Read: any approved user at the doc's center
     // Write: only the user themselves, or owner-of-center
     match /availability/{availId} {
-      allow read: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read: if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && hasCenterAccess(incomingCenter());
       allow update, delete: if isSignedIn() && (
         resource.data.userId == request.auth.uid
         || isOwnerAtCenter(existingCenter())
+        || ownerCanTouchUnmigrated()
         || isSuperAdmin()
       );
     }
@@ -184,10 +201,10 @@ service cloud.firestore {
     // Create / Delete: owner-of-center only
     // Update: any approved user (claim flow flips status to 'claimed')
     match /openShifts/{openShiftId} {
-      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read:   if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if isOwnerAtCenter(incomingCenter()) || isSuperAdmin();
-      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
-      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
     }
 
     // ─── Time-Off Requests ─────────────────────────────────────────────
@@ -195,13 +212,14 @@ service cloud.firestore {
     // Create: the user themselves submitting their own request
     // Update / Delete: the user themselves OR owner (approve/deny)
     match /timeOffRequests/{reqId} {
-      allow read: if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read: if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if isSignedIn()
         && request.resource.data.userId == request.auth.uid
         && hasCenterAccess(incomingCenter());
       allow update, delete: if isSignedIn() && (
         resource.data.userId == request.auth.uid
         || isOwnerAtCenter(existingCenter())
+        || ownerCanTouchUnmigrated()
         || isSuperAdmin()
       );
     }
@@ -211,25 +229,31 @@ service cloud.firestore {
     // Create / Update: any approved user at that center (swap acceptance flips fields)
     // Delete: owner-of-center only
     match /chat/{msgId} {
-      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read:   if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if hasCenterAccess(incomingCenter()) || isSuperAdmin();
-      allow update: if hasCenterAccess(existingCenter()) || isSuperAdmin();
-      allow delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+      allow update: if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
+      allow delete: if isOwnerAtCenter(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
     }
 
     // ─── Announcements ─────────────────────────────────────────────────
     // Read: any approved user at the doc's center
     // Write: owner-of-center only (instructors don't post announcements)
     match /announcements/{annId} {
-      allow read:   if hasCenterAccess(existingCenter()) || isSuperAdmin();
+      allow read:   if hasCenterAccess(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
       allow create: if isOwnerAtCenter(incomingCenter()) || isSuperAdmin();
-      allow update, delete: if isOwnerAtCenter(existingCenter()) || isSuperAdmin();
+      allow update, delete: if isOwnerAtCenter(existingCenter()) || ownerCanTouchUnmigrated() || isSuperAdmin();
     }
 
     // ─── Notification Preferences ──────────────────────────────────────
     // Per-user doc keyed by uid. Only the user themselves can read/write.
     match /notificationPreferences/{userId} {
-      allow read, write: if isSignedIn() && request.auth.uid == userId;
+      // Strict: only the user themselves can read or write their prefs.
+      // Plus a one-time migration window: owner can read/write a doc that
+      // doesn't have centerId yet, so the migration script can patch it.
+      allow read, write: if isSignedIn() && (
+        request.auth.uid == userId ||
+        ownerCanTouchUnmigrated()
+      );
     }
 
     // ─── Default deny ──────────────────────────────────────────────────
