@@ -9,7 +9,7 @@ import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
-  Clock, Loader2, Repeat, Trash2,
+  Clock, Loader2, Repeat, Trash2, Building2, Laptop, Wifi,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
@@ -30,6 +30,40 @@ function fmtTime(t) {
 }
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+// ─── Shift-type (location) helpers ─────────────────────────────────────
+// shiftType describes WHERE the instructor is working that shift — distinct
+// from subRole which describes WHAT they're teaching.
+const SHIFT_TYPE_STYLES = {
+  'In-Centre': {
+    label: 'In-Centre',
+    icon: Building2,
+    pillBg: 'bg-blue-100',
+    pillText: 'text-blue-800',
+    pillBorder: 'border-blue-200',
+    dot: 'bg-blue-500',
+  },
+  'Online': {
+    label: 'Online',
+    icon: Laptop,
+    pillBg: 'bg-indigo-100',
+    pillText: 'text-indigo-800',
+    pillBorder: 'border-indigo-200',
+    dot: 'bg-indigo-500',
+  },
+  'Both': {
+    label: 'In-Centre + Online',
+    icon: Wifi,
+    pillBg: 'bg-purple-100',
+    pillText: 'text-purple-800',
+    pillBorder: 'border-purple-200',
+    dot: 'bg-purple-500',
+  },
+};
+// Treat missing shiftType as 'In-Centre' (legacy data + the default for new shifts).
+function shiftTypeStyle(shiftType) {
+  return SHIFT_TYPE_STYLES[shiftType] || SHIFT_TYPE_STYLES['In-Centre'];
+}
 
 // Default operating-hours map (JS getDay() 1=Mon..6=Sat). Used as fallback
 // when no per-center config is loaded. The actual values flow in from the
@@ -160,7 +194,18 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
                     <span className="text-xs font-bold text-blue-700 uppercase tracking-widest">Your Shift</span>
                   </div>
                   <p className="text-base font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    {/* Where: in-centre vs online — most important info for the instructor */}
+                    {(() => {
+                      const st = shiftTypeStyle(myShift.shiftType);
+                      const StIcon = st.icon;
+                      return (
+                        <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold ${st.pillBg} ${st.pillText} border ${st.pillBorder}`}>
+                          <StIcon size={11} />
+                          {st.label}
+                        </span>
+                      );
+                    })()}
                     {myShift.role && <p className="text-xs text-blue-500 font-medium">{myShift.role}</p>}
                     {(() => {
                       const s = subRoleStyleFor(myShift.subRole);
@@ -1116,9 +1161,9 @@ export default function Schedule() {
         {/* Legend */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-5 py-2.5 border-b border-gray-100 bg-gray-50/50">
           {[
-            { color: 'bg-lime-500',    label: 'Elementary Shift' },
-            { color: 'bg-teal-500',    label: 'Highschool Shift' },
-            { color: 'bg-indigo-700',  label: 'Online Shift' },
+            { color: 'bg-lime-500',    label: 'Elementary' },
+            { color: 'bg-teal-500',    label: 'Highschool' },
+            { color: 'bg-indigo-700',  label: 'Online Subject' },
             { color: 'bg-emerald-500', label: 'Available' },
             { color: 'bg-orange-400',  label: 'Open Shift' },
             { color: 'bg-yellow-400',  label: 'Time Off (Pending)' },
@@ -1129,6 +1174,16 @@ export default function Schedule() {
               {item.label}
             </span>
           ))}
+          <span className="text-gray-300 mx-1">|</span>
+          <span className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+            <Building2 size={12} /> In-Centre
+          </span>
+          <span className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+            <Laptop size={12} /> Online
+          </span>
+          <span className="flex items-center gap-1 text-xs text-gray-500 font-medium">
+            <Wifi size={12} /> Both
+          </span>
         </div>
 
         {/* Day headers */}
@@ -1169,12 +1224,19 @@ export default function Schedule() {
               const blockText   = sStyle ? sStyle.blockText   : 'text-white';
               const blockSubText= sStyle ? sStyle.blockSubText: 'text-blue-100';
               const blockMuted  = sStyle ? sStyle.blockSubText: 'text-blue-200';
+              // shiftType icon — tells the instructor WHERE they're working.
+              const stStyle = shiftTypeStyle(state.shift.shiftType);
+              const StIcon  = stStyle.icon;
               cellBg = 'bg-gray-50/60 hover:bg-gray-50 cursor-pointer';
               content = (
                 <div className={`mt-1 rounded-lg px-1.5 py-1 shadow-sm ${blockBg}`}>
-                  <p className={`text-xs font-bold leading-tight ${blockText}`}>
-                    {fmtTime(state.shift.startTime)}
-                  </p>
+                  <div className="flex items-center gap-1">
+                    <p className={`text-xs font-bold leading-tight ${blockText} flex-1`}>
+                      {fmtTime(state.shift.startTime)}
+                    </p>
+                    {/* Tiny shiftType icon in the top-right of the block. */}
+                    <StIcon size={10} className={blockText} aria-label={stStyle.label} />
+                  </div>
                   <p className={`text-xs leading-tight ${blockSubText}`}>
                     {fmtTime(state.shift.endTime)}
                   </p>

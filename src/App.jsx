@@ -11,6 +11,7 @@ import Schedule from './pages/Schedule';
 import ShiftBoard from './pages/ShiftBoard';
 import Chat from './pages/Chat';
 import Admin from './pages/Admin';
+import SuperAdmin from './pages/SuperAdmin';
 import NotificationPreferences from './pages/NotificationPreferences';
 
 function NotFound() {
@@ -39,6 +40,7 @@ function AppRoutes() {
       <Route path="/shift-board" element={<ProtectedRoute><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
+      <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>

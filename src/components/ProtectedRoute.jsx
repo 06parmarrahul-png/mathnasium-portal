@@ -34,7 +34,28 @@ function LoadingScreen() {
   );
 }
 
-export default function ProtectedRoute({ children, requireOwner = false }) {
+function NotAuthorized() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="mx-4 max-w-md rounded-xl bg-white p-8 shadow-lg text-center">
+        <h2 className="mb-2 text-xl font-bold text-gray-900">Not authorized</h2>
+        <p className="text-sm text-gray-500">You don't have access to this page.</p>
+        <a href="/" className="mt-4 inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Back to Home</a>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Route guard.
+ *
+ * Props:
+ *   requireOwner — page is for the Admin Panel. Allowed roles: admin,
+ *                  owner, super_admin. (Name kept for backwards-compat;
+ *                  it really means "requires admin-panel access".)
+ *   requireSuperAdmin — page is super-admin only.
+ */
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false }) {
   const { user, profile, loading, logout } = useAuth();
 
   if (loading) return <LoadingScreen />;
@@ -48,16 +69,15 @@ export default function ProtectedRoute({ children, requireOwner = false }) {
     return <PendingScreen logout={logout} />;
   }
 
-  if (requireOwner && profile.role !== 'owner') {
-    return (
-      <div className="flex h-screen items-center justify-center bg-gray-50">
-        <div className="mx-4 max-w-md rounded-xl bg-white p-8 shadow-lg text-center">
-          <h2 className="mb-2 text-xl font-bold text-gray-900">Not authorized</h2>
-          <p className="text-sm text-gray-500">You don't have access to this page.</p>
-          <a href="/" className="mt-4 inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Back to Home</a>
-        </div>
-      </div>
-    );
+  const role = profile.role;
+  const canSeeAdminPanel = role === 'admin' || role === 'owner' || role === 'super_admin';
+
+  if (requireSuperAdmin && role !== 'super_admin') {
+    return <NotAuthorized />;
+  }
+
+  if (requireOwner && !canSeeAdminPanel) {
+    return <NotAuthorized />;
   }
 
   return children;

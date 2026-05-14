@@ -5,9 +5,10 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Logo from './Logo';
 import MigrationBanner from './MigrationBanner';
+import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
-  Briefcase,
+  Briefcase, Shield,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -29,8 +30,15 @@ function todayStr() {
   return `${y}-${m}-${day}`;
 }
 
+const ROLE_LABEL = {
+  super_admin: 'Super Admin',
+  owner:       'Owner',
+  admin:       'Admin',
+  instructor:  'Instructor',
+};
+
 export default function Layout({ children }) {
-  const { profile, logout, activeCenterId } = useAuth();
+  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdmin, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -58,11 +66,7 @@ export default function Layout({ children }) {
     snap => setChatDocs(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   ), [activeCenterId]);
 
-  const isOwner = profile?.role === 'owner';
-
   // Eligible-for-this-user count for the sidebar badge.
-  // - Open shifts: future-dated, status === 'open', user can take
-  // - Swaps: future-dated, status === 'open', not posted by this user, user can take
   const boardCount = useMemo(() => {
     const today = todayStr();
     const subs = profile?.subRoles || [];
@@ -84,8 +88,11 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
-  // Build nav items. Owner doesn't get the instructor-facing Schedule
-  // (consistent with previous behavior), but everyone sees the Shift Board.
+  // Build nav based on role.
+  // - Owners run the business and don't typically take individual shifts;
+  //   they skip the personal Scheduling page (consistent with prior behavior).
+  // - Admins (operations) DO see personal scheduling.
+  // - Instructors see personal scheduling.
   const baseItems = [
     { to: '/',              label: 'Home',          icon: House },
     { to: '/announcements', label: 'Announcements', icon: Megaphone },
@@ -94,8 +101,12 @@ export default function Layout({ children }) {
     { to: '/chat',          label: 'Chat',          icon: MessageSquare },
   ];
   const filteredNav = isOwner ? baseItems.filter(i => i.to !== '/schedule') : baseItems;
-  const adminItems = [{ to: '/admin', label: 'Admin Panel', icon: Settings }];
-  const items = isOwner ? [...filteredNav, ...adminItems] : filteredNav;
+  const adminItems = canSeeAdminPanel ? [{ to: '/admin', label: 'Admin Panel', icon: Settings }] : [];
+  const superAdminItems = isSuperAdmin ? [{ to: '/super-admin', label: 'Super Admin', icon: Shield }] : [];
+  const items = [...filteredNav, ...adminItems, ...superAdminItems];
+
+  // Role badge for the bottom user card
+  const roleLabel = ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor');
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -108,13 +119,19 @@ export default function Layout({ children }) {
           <Logo size={40} />
           <div>
             <h1 className="text-lg font-bold leading-tight text-white">Mathnasium</h1>
-            <p className="text-xs text-gray-400">Langley Instructor Portal</p>
+            <p className="text-xs text-gray-400">Instructor Portal</p>
           </div>
           <button className="ml-auto lg:hidden" onClick={() => setOpen(false)}>
             <X size={20} />
           </button>
         </div>
-        <nav className="mt-4 flex flex-col gap-1 px-3">
+
+        {/* Center switcher (shown if user has multiple centers or is super-admin) */}
+        <div className="px-3 pt-3">
+          <CenterSwitcher />
+        </div>
+
+        <nav className="mt-3 flex flex-col gap-1 px-3">
           {items.map(item => {
             const active = location.pathname === item.to;
             return (
@@ -146,12 +163,12 @@ export default function Layout({ children }) {
         </nav>
         <div className="absolute bottom-0 left-0 right-0 border-t border-gray-700 p-4">
           <div className="mb-3 flex items-center gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-red-600 text-sm font-bold">
+            <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${isSuperAdmin ? 'bg-purple-600' : 'bg-red-600'}`}>
               {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{profile?.displayName || 'User'}</p>
-              <p className="truncate text-xs text-gray-400">{profile?.role === 'owner' ? 'Owner' : 'Instructor'}</p>
+              <p className="truncate text-xs text-gray-400">{roleLabel}</p>
             </div>
           </div>
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
@@ -166,7 +183,7 @@ export default function Layout({ children }) {
           </button>
           <div className="flex items-center gap-2">
             <Logo size={28} />
-            <span className="font-bold text-gray-900">Mathnasium Langley</span>
+            <span className="font-bold text-gray-900">Mathnasium Portal</span>
           </div>
         </header>
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">

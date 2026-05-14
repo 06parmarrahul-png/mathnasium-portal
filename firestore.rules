@@ -50,7 +50,10 @@ service cloud.firestore {
     }
 
     // ─── Centers (top-level identity docs) ─────────────────────────────
-    // Public read. Writes restricted to owner / super-admin.
+    // Public read (needed for signup picker — unauthenticated).
+    // Create: super_admin only. Owners CANNOT create new centers — only
+    // the platform operator can onboard new locations.
+    // Update / delete: owner of THIS center, or super_admin.
     match /centers/{centerId} {
       allow read: if true;
       allow create: if isSuperAdmin();

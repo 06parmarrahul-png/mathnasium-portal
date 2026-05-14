@@ -1,5 +1,97 @@
 # Changes Log
 
+## Pass 14 — Role hierarchy + Super Admin + center switching + shift-type indicator
+
+Lint status: ✅ 0 errors, 0 warnings
+
+Two things in this pass: (1) the full 4-tier role hierarchy you described — super_admin / owner / admin / instructor — plus the Super Admin dashboard and center-switching, and (2) an instructor-requested feature: showing whether a shift is in-centre or online.
+
+### Role hierarchy
+
+```
+super_admin  →  god mode. Sees every center. Only role that can create centers.
+                Use it as a support account to drop into any center.
+owner        →  full admin panel for their center, INCLUDING Center Settings.
+                (Analytics — money in/out — is a planned addition.)
+admin        →  full admin panel for their center, EXCEPT Center Settings.
+                Day-to-day operations: scheduling, users, payroll, requests.
+instructor   →  personal schedule, availability, shift board, chat.
+```
+
+**`AuthContext` now exposes clean role helpers** — `isSuperAdmin`, `isOwner`, `isAdmin`, `isInstructor`, `canSeeAdminPanel` (admin+owner+super_admin), `canSeeCenterSettings` (owner+super_admin). Components read these instead of comparing `profile.role` strings everywhere.
+
+**`ProtectedRoute`** updated: `requireOwner` now means "requires admin-panel access" (admin/owner/super_admin all pass). New `requireSuperAdmin` prop for the super-admin-only route.
+
+**Admin Panel** — the Center Settings tab only shows for owners + super_admins. Plain admins see Scheduler / Manage Users / Auto-Scheduler / Payroll / Requests but not Settings.
+
+### Super Admin dashboard (`/super-admin`)
+
+New page, super-admin only (with a one-time bootstrap path described below):
+
+- **Lists every center** on the platform with city/province.
+- **Create New Center** form — id slug, name, city, province, country. Creates the `centers/{id}` doc + seeds `centers/{id}/config/main` with sensible defaults. Optionally adds the creator as a member so you can immediately switch into the new center to set it up.
+- **Switch to any center** — one click puts you in "god view" of that center, seeing exactly what their owner sees. This is your support tool.
+- **Bootstrap section** — since you can't easily reach the Firebase Console, this is how the *first* super-admin gets created: if no super-admin exists yet and you're an owner, a "Promote me to Super Admin" button appears. One-time, self-service. Disappears once a super-admin exists.
+
+**Firestore rules**: center creation (`centers/{id}` create) is restricted to `super_admin` only — center owners explicitly **cannot** add new centers. That's the security boundary you asked for.
+
+### Center switching
+
+**`AuthContext.activeCenterId`** is now real React state (was derived), with a `switchCenter(centerId)` function. Switching updates state + localStorage; every Firestore listener in the app re-subscribes because they all depend on `activeCenterId`.
+
+**`CenterSwitcher`** — a dropdown in the sidebar. Shows for super-admins (lists all centers) and multi-center staff (lists their centers). Hidden for single-center users — nothing to switch.
+
+### Shift-type indicator (instructor request)
+
+An instructor asked to be able to tell whether a shift is in-centre or online. The data already existed (`shiftType` field: `In-Centre` / `Online` / `Both`) — it just wasn't shown to instructors. Now it is:
+
+- **Schedule calendar cells** — a tiny icon in the top-right of each shift block: 🏢 building (In-Centre), 💻 laptop (Online), 📶 wifi (Both).
+- **Day modal "Your Shift" card** — a clear labeled pill: "In-Centre" / "Online" / "In-Centre + Online" with matching icon and color.
+- **Home page upcoming-shift card** — a frosted pill with the icon + label, so it's the first thing they see on login.
+- **Calendar legend** — updated with an icon key.
+
+Note this is distinct from the sub-role coloring (lime/teal/indigo) which says *what* they teach. The shift-type icon says *where* they work.
+
+### Files touched
+
+```
+new:   src/pages/SuperAdmin.jsx          (dashboard: list/create/switch centers, bootstrap)
+new:   src/components/CenterSwitcher.jsx (sidebar dropdown)
+mod:   src/contexts/AuthContext.jsx       (activeCenterId as state, switchCenter, role helpers)
+mod:   src/components/ProtectedRoute.jsx  (requireOwner = admin-panel access; requireSuperAdmin)
+mod:   src/components/Layout.jsx          (role-aware nav, Super Admin link, CenterSwitcher)
+mod:   src/pages/Admin.jsx                (canSeeAdminPanel guard, Center Settings owner-only)
+mod:   src/pages/App.jsx → App.jsx        (/super-admin route)
+mod:   src/pages/Schedule.jsx             (shift-type icons in cells + day modal + legend)
+mod:   src/pages/Home.jsx                 (shift-type pill on upcoming shift card)
+mod:   firestore.rules                    (center create = super_admin only)
+```
+
+### Deploy steps
+
+```bash
+npm run build
+npm run lint
+git add -A
+git commit -m "Role hierarchy: super_admin/owner/admin/instructor + Super Admin dashboard + shift-type indicator"
+git push
+npx firebase-tools deploy --only firestore:rules
+```
+
+### After deploy — how to become Super Admin and test multi-center
+
+1. Reload your portal. You're currently `role: 'owner'`.
+2. In the sidebar you won't see "Super Admin" yet — go directly to the URL: `yoursite.com/super-admin`
+3. You'll see a yellow **"No Super Admin Exists Yet"** box. Click **"Promote me to Super Admin"**.
+4. Page reloads. You're now `super_admin`. "Super Admin" appears in the sidebar.
+5. Go to Super Admin → **Create New Center** → make a `burnaby-test` center, check "add me as a member", create.
+6. The sidebar **Center Switcher** now lets you flip between Langley and Burnaby Test.
+7. Switch to Burnaby Test — Schedule / Manage Users / etc. are all empty. **That's the isolation working.**
+8. Add a shift in Burnaby, switch back to Langley — Langley is untouched. ✅
+9. Open Center Settings while in Burnaby — it has its own default config, not Langley's fixed staff.
+
+---
+
 ## Pass 13 — Multi-center Phase 4: Firestore security rules (server-side isolation)
 
 Lint status: ✅ 0 errors, 0 warnings (no JS changes)

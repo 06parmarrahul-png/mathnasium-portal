@@ -8,7 +8,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
-import { DEFAULT_CENTER_ID, getActiveCenterId } from '../lib/centers';
+import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 
 const AuthContext = createContext(null);
@@ -25,22 +25,55 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [centerConfig, setCenterConfig] = useState(DEFAULT_CENTER_CONFIG);
+  // activeCenterId is real state so switchCenter() can reactively re-fetch
+  // every collection. Initialized from profile + localStorage on mount.
+  const [activeCenterId, setActiveCenterIdState] = useState(DEFAULT_CENTER_ID);
 
   useEffect(() => onAuthStateChanged(auth, async (u) => {
     setUser(u);
     if (u) {
       const snap = await getDoc(doc(db, 'users', u.uid));
-      snap.exists() ? setProfile(snap.data()) : setProfile(null);
+      const p = snap.exists() ? snap.data() : null;
+      setProfile(p);
+      setActiveCenterIdState(getActiveCenterId(p));
     } else {
       setProfile(null);
+      setActiveCenterIdState(DEFAULT_CENTER_ID);
     }
     setLoading(false);
   }), []);
 
-  // Active center derived from the profile (and optionally localStorage for
-  // multi-center staff who picked a non-primary one). Memoized so the
-  // subscription effect below only re-fires when the active center changes.
-  const activeCenterId = useMemo(() => getActiveCenterId(profile), [profile]);
+  // Resync active center if profile changes (e.g., signup just wrote it,
+  // or admin updated their centerIds). Synchronizing external state
+  // (profile from Firestore) into local state is the standard reason
+  // to setState inside an effect — eslint's warning here is overly cautious.
+  useEffect(() => {
+    if (!profile) return;
+    const next = getActiveCenterId(profile);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveCenterIdState((cur) => cur === next ? cur : next);
+  }, [profile]);
+
+  /**
+   * Switch which center is active (used by the sidebar center-switcher
+   * for super-admins and multi-center staff). Persists the choice in
+   * localStorage so it survives a page reload.
+   */
+  const switchCenter = (newCenterId) => {
+    if (!newCenterId) return;
+    persistActiveCenterId(newCenterId);
+    setActiveCenterIdState(newCenterId);
+  };
+
+  // Convenience helpers for role checks (read by routes / components).
+  const role = profile?.role || null;
+  const isSuperAdmin = role === 'super_admin';
+  const isOwner      = role === 'owner';
+  const isAdmin      = role === 'admin';   // distinct from owner (no center settings)
+  const isInstructor = role === 'instructor';
+  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdmin;
+  const canSeeCenterSettings = isSuperAdmin || isOwner;
+  const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
   // the doc doesn't exist (pre-migration state). Re-runs the subscription
@@ -118,13 +151,22 @@ export function AuthProvider({ children }) {
       signup,
       logout,
       resetPassword,
-      // Currently-active center for this user. Reads from profile.centerIds[]
-      // (or profile.centerId, or DEFAULT_CENTER_ID as fallback). Multi-center
-      // staff will be able to switch via a sidebar dropdown in a later phase.
+      // Currently-active center for this user. Backed by real state so
+      // switchCenter() reactively re-fetches every page's data.
       activeCenterId,
-      // Center settings (instructional hours, fixed staff, salary list, etc.)
-      // — falls back to defaults if no Firestore doc exists yet.
+      switchCenter,
+      userCenters,
+      // Center settings (instructional hours, fixed staff, etc.)
       centerConfig,
+      // Role helpers — read these in components instead of comparing
+      // profile.role strings everywhere.
+      role,
+      isSuperAdmin,
+      isOwner,
+      isAdmin,
+      isInstructor,
+      canSeeAdminPanel,
+      canSeeCenterSettings,
     }}>
       {children}
     </AuthContext.Provider>

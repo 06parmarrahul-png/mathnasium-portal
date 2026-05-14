@@ -9,6 +9,7 @@ import TodaysSnapshot from '../components/TodaysSnapshot';
 import {
   CalendarDays, MessageSquare, Users, Clock,
   ChevronRight, Megaphone, Pin, ArrowRight,
+  Building2, Laptop, Wifi,
 } from 'lucide-react';
 
 const CATEGORY_STYLES = {
@@ -175,10 +176,20 @@ export default function Home() {
                       <span className="text-sm text-red-200">{upcomingShift.role}</span>
                     </>
                   )}
+                  {/* In-centre vs Online — most important location info for the instructor */}
+                  {(() => {
+                    const st = upcomingShift.shiftType || 'In-Centre';
+                    const Icon = st === 'Online' ? Laptop : st === 'Both' ? Wifi : Building2;
+                    return (
+                      <span className="flex items-center gap-1 rounded-full bg-white/20 backdrop-blur-sm px-2.5 py-0.5 text-xs font-bold text-white">
+                        <Icon size={11} />
+                        {st === 'Both' ? 'In-Centre + Online' : st}
+                      </span>
+                    );
+                  })()}
                   {(() => {
                     const s = subRoleStyleFor(upcomingShift.subRole);
                     if (!s) return null;
-                    // White-on-color pill so it pops against the red gradient
                     return (
                       <span className="ml-auto flex items-center gap-1 rounded-full bg-white/20 backdrop-blur-sm px-2.5 py-0.5 text-xs font-bold text-white">
                         <span className={`w-1.5 h-1.5 rounded-full ${s.dot}`} />

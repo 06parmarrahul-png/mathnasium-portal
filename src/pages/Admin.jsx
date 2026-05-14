@@ -417,7 +417,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { profile, activeCenterId, centerConfig } = useAuth();
+  const { activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -1188,19 +1188,25 @@ export default function Admin() {
     });
   }, [payrollSummary, radiusData]);
 
-  if (profile?.role !== 'owner') {
-    return <div className="text-center text-gray-500 py-16">Access denied. Owner only.</div>;
+  // Admin Panel is open to admins, owners, and super-admins. Plain
+  // instructors get bounced (the route guard also enforces this).
+  if (!canSeeAdminPanel) {
+    return <div className="text-center text-gray-500 py-16">Access denied. Admin / owner only.</div>;
   }
 
   const pendingRequestsCount = timeOffRequests.filter(r => r.status === 'pending').length;
 
+  // Center Settings is owner / super-admin only — plain admins run
+  // day-to-day operations but don't change the center's configuration.
   const tabs = [
     { key: 'spreadsheet',  label: 'Scheduler',      icon: Table },
     { key: 'users',        label: 'Manage Users',   icon: UserCheck },
     { key: 'scheduler',    label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
     { key: 'payroll',      label: 'Payroll',        icon: DollarSign },
     { key: 'requests',     label: 'Requests',       icon: CalendarRange },
-    { key: 'settings',     label: 'Center Settings', icon: Settings },
+    ...(canSeeCenterSettings
+      ? [{ key: 'settings', label: 'Center Settings', icon: Settings }]
+      : []),
   ];
 
   return (
