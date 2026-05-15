@@ -246,22 +246,32 @@ function getSubRoleScore(instructor) {
   return 1; // Default to elementary treatment if no sub-role set
 }
 
+/**
+ * Online is its own platform — it's a separate track from in-centre
+ * teaching. Any instructor tagged 'Online' is an online instructor, full
+ * stop. They are scheduled in their own pass, never compete for in-centre
+ * Elementary/Highschool slots, and don't count toward the in-centre ratio.
+ *
+ * The Manage Users sub-role picker enforces that 'Online' is mutually
+ * exclusive with Elementary/Highschool, so in clean data a user has EITHER
+ * ['Online'] OR some combination of ['Elementary','Highschool']. This
+ * function stays robust even against legacy data that has both — anyone
+ * with 'Online' is treated as online.
+ */
 function isOnlineOnly(instructor) {
-  const subs = instructor.subRoles || [];
-  return subs.includes('Online') && !subs.includes('Highschool') && !subs.includes('Elementary');
+  return (instructor.subRoles || []).includes('Online');
 }
 
 /**
  * Pick the sub-role to tag an auto-scheduled shift with, based on the
- * instructor's primary teaching capability:
- *   - Online-only instructors → 'Online'
- *   - Highschool-capable      → 'Highschool' (the higher-skill bucket)
- *   - everyone else           → 'Elementary'
- * Falls back to Elementary if no sub-roles are set on the user.
+ * instructor's teaching track:
+ *   - Online instructors → 'Online' (separate platform)
+ *   - Highschool-capable → 'Highschool' (the higher-skill in-centre bucket)
+ *   - everyone else      → 'Elementary'
  */
 function shiftSubRoleFor(instructor) {
   const subs = instructor.subRoles || [];
-  if (isOnlineOnly(instructor)) return 'Online';
+  if (subs.includes('Online')) return 'Online';
   if (subs.includes('Highschool')) return 'Highschool';
   return 'Elementary';
 }

@@ -17,7 +17,7 @@ import {
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
-import { LANGLEY_DEFAULT_CONFIG } from '../lib/centerConfig';
+import { LANGLEY_DEFAULT_CONFIG, roleColorHex } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 
@@ -32,22 +32,13 @@ const ROLE_OPTIONS = [
 ];
 
 // Sub-roles (teaching specializations) and their colors live in
-// src/lib/subRoles.js so every page in the app stays in sync.
-
-const ROLE_COLORS = {
-  'Instructor':        { bg: '#16a34a', text: '#fff' },  // green
-  'Lead':              { bg: '#ea580c', text: '#fff' },  // orange
-  'Host':              { bg: '#2563eb', text: '#fff' },  // blue
-  'Admin':             { bg: '#dc2626', text: '#fff' },  // red
-  'Manager':           { bg: '#ca8a04', text: '#fff' },  // yellow
-  'Dir. of Education': { bg: '#db2777', text: '#fff' },  // pink
-  'Center Director':   { bg: '#92400e', text: '#fff' },  // brown
-  'Tutor':             { bg: '#7c3aed', text: '#fff' },  // purple fallback
-  'default':           { bg: '#16a34a', text: '#fff' },
-};
-
-function roleColor(role) {
-  return ROLE_COLORS[role] || ROLE_COLORS['default'];
+// src/lib/subRoles.js. Role colors are per-center — see roleColorHex() in
+// src/lib/centerConfig.js — and editable from Super Admin → Appearance.
+//
+// roleColor(role, centerConfig) returns { bg, text } where bg is the
+// center's custom hex (or the built-in default) and text is always white.
+function roleColor(role, centerConfig) {
+  return { bg: roleColorHex(role, centerConfig), text: '#fff' };
 }
 
 function fmtHHMM(t) {
@@ -124,10 +115,11 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const [endTime, setEndTime] = useState('20:00');
   const [role, setRole] = useState(user?.instructorType || '');
   const [shiftType, setShiftType] = useState('In-Centre');
-  // Default sub-role guesses from the instructor's primary capability
+  // Default sub-role guesses from the instructor's teaching track.
+  // Online is its own platform — anyone tagged Online gets Online shifts.
   const guessSubRole = (u) => {
     const subs = u?.subRoles || [];
-    if (subs.length === 1 && subs[0] === 'Online') return 'Online';
+    if (subs.includes('Online')) return 'Online';
     if (subs.includes('Highschool')) return 'Highschool';
     return 'Elementary';
   };
@@ -653,11 +645,12 @@ export default function Admin() {
 
   const handleAddToDay = name => {
     if (editingDay.assignedEmployees.includes(name)) return;
-    // Look up the user's primary sub-role so the new shift gets tagged
+    // Look up the user's teaching track so the new shift gets tagged.
+    // Online is its own platform — anyone tagged Online gets Online shifts.
     const u = approvedUsers.find(usr => usr.displayName === name);
     const subs = u?.subRoles || [];
     let pickedSubRole;
-    if (subs.length === 1 && subs[0] === 'Online') pickedSubRole = 'Online';
+    if (subs.includes('Online')) pickedSubRole = 'Online';
     else if (subs.includes('Highschool')) pickedSubRole = 'Highschool';
     else pickedSubRole = 'Elementary';
     // Default shift time: Hosts get full-day, everyone else gets instructional hours
@@ -1243,17 +1236,24 @@ export default function Admin() {
       {/* ── SPREADSHEET (Weekly Calendar Grid) ──────────────────────────────── */}
       {tab === 'spreadsheet' && (
         <div className="space-y-2">
-          {/* Legend + tips */}
+          {/* Legend + tips. Role swatches use this center's custom colors. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 mb-2 text-xs text-gray-500">
             <span className="font-semibold text-gray-600 mr-1">Role:</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full bg-orange-500" /> Open Shift</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#16a34a'}} /> Instructor</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#ea580c'}} /> Lead</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#2563eb'}} /> Host</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#dc2626'}} /> Admin</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#ca8a04'}} /> Manager</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#db2777'}} /> Dir. of Ed.</span>
-            <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full" style={{backgroundColor:'#92400e'}} /> Center Director</span>
+            {[
+              ['Instructor', 'Instructor'],
+              ['Lead', 'Lead'],
+              ['Host', 'Host'],
+              ['Admin', 'Admin'],
+              ['Manager', 'Manager'],
+              ['Dir. of Education', 'Dir. of Ed.'],
+              ['Center Director', 'Center Director'],
+            ].map(([roleKey, roleLabel]) => (
+              <span key={roleKey} className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: roleColorHex(roleKey, centerConfig) }} />
+                {roleLabel}
+              </span>
+            ))}
             <span className="text-gray-300 mx-1">|</span>
             <span className="font-semibold text-gray-600 mr-1">Stripe:</span>
             {SUB_ROLES.map(sr => {
@@ -1422,7 +1422,7 @@ export default function Admin() {
                               )}
                               {/* Existing shifts */}
                               {dayShifts.map(s => {
-                                const { bg, text } = roleColor(s.role);
+                                const { bg, text } = roleColor(s.role, centerConfig);
                                 const hrs = shiftHours(s);
                                 const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
                                 const sub = subRoleStyleFor(s.subRole);
@@ -1607,27 +1607,54 @@ export default function Admin() {
                       </div>
                     </div>
 
-                    {/* Sub-roles / Teaching specializations */}
+                    {/* Sub-roles / Teaching specializations.
+                        Online is its own platform — it's mutually exclusive
+                        with Elementary/Highschool. Selecting Online clears
+                        the in-centre sub-roles and vice versa. */}
                     <div>
                       <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
                       <div className="flex flex-wrap gap-2">
                         {SUB_ROLES.map(sr => {
-                          const active = (u.subRoles || []).includes(sr);
+                          const current = u.subRoles || [];
+                          const active = current.includes(sr);
                           const style = SUB_ROLE_STYLES[sr];
+                          const isOnline = sr === 'Online';
+                          // Online is locked out while an in-centre sub-role is set;
+                          // in-centre sub-roles are locked out while Online is set.
+                          const onlineActive   = current.includes('Online');
+                          const inCentreActive = current.includes('Elementary') || current.includes('Highschool');
+                          const disabled = !active && (
+                            (isOnline && inCentreActive) ||
+                            (!isOnline && onlineActive)
+                          );
                           return (
                             <button
                               key={sr}
+                              disabled={disabled}
+                              title={disabled
+                                ? (isOnline
+                                    ? 'Online is a separate platform — remove Elementary/Highschool first'
+                                    : 'This instructor is Online-only — remove Online first')
+                                : ''}
                               onClick={() => {
-                                const current = u.subRoles || [];
-                                const updated = active
-                                  ? current.filter(r => r !== sr)
-                                  : [...current, sr];
+                                let updated;
+                                if (active) {
+                                  updated = current.filter(r => r !== sr);
+                                } else if (isOnline) {
+                                  // Picking Online wipes the in-centre sub-roles.
+                                  updated = ['Online'];
+                                } else {
+                                  // Picking an in-centre sub-role wipes Online.
+                                  updated = [...current.filter(r => r !== 'Online'), sr];
+                                }
                                 handleUpdateUserField(u.uid, 'subRoles', updated);
                               }}
                               className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
                                 active
                                   ? `${style.pillBg} ${style.pillText} border-transparent`
-                                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+                                  : disabled
+                                    ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
+                                    : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
                               }`}
                             >
                               <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
@@ -1639,6 +1666,9 @@ export default function Admin() {
                           <span className="text-xs text-gray-400 italic">No sub-roles assigned</span>
                         )}
                       </div>
+                      <p className="mt-1.5 text-xs text-gray-400">
+                        Online is a separate platform — can't be combined with Elementary or Highschool.
+                      </p>
                     </div>
 
                     {/* Guaranteed shift toggle — for Hosts and key staff who
@@ -1984,7 +2014,8 @@ export default function Admin() {
                             <div className="flex flex-wrap gap-1.5 mb-4">
                               {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => {
                                 const subs = u.subRoles || [];
-                                const primarySub = subs.includes('Online') && !subs.includes('Highschool') && !subs.includes('Elementary')
+                                // Online is its own platform — check it first.
+                                const primarySub = subs.includes('Online')
                                   ? 'Online'
                                   : subs.includes('Highschool') ? 'Highschool' : subs.length > 0 ? 'Elementary' : null;
                                 const sub = subRoleStyleFor(primarySub);
@@ -2237,7 +2268,7 @@ export default function Admin() {
           ) : (
             <div className="space-y-4">
               {(comparisonSummary || payrollSummary).map(person => {
-                const { bg } = roleColor(person.role);
+                const { bg } = roleColor(person.role, centerConfig);
                 const hasRadius = !!comparisonSummary;
                 const isDiscrepant = hasRadius && person.hasDiscrepancy;
                 const shiftRows = hasRadius ? person.shiftComparisons : person.shifts;

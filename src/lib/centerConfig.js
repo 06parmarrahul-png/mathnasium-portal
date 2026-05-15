@@ -60,7 +60,38 @@ export const DEFAULT_CENTER_CONFIG = {
   //   }
   // }
   fixedStaff: {},
+
+  // ─── Appearance ────────────────────────────────────────────────────────
+  // Per-center role colors (hex), shown on the admin weekly spreadsheet.
+  // Editable from Super Admin → Appearance. Any role not listed falls back
+  // to the built-in DEFAULT_ROLE_COLORS.
+  roleColors: {},
 };
+
+// Built-in role colors — used as the fallback when a center hasn't
+// customized them. Hex values; text is always white on these.
+export const DEFAULT_ROLE_COLORS = {
+  'Instructor':        '#16a34a', // green
+  'Lead':              '#ea580c', // orange
+  'Host':              '#2563eb', // blue
+  'Admin':             '#dc2626', // red
+  'Manager':           '#ca8a04', // yellow
+  'Dir. of Education': '#db2777', // pink
+  'Center Director':   '#92400e', // brown
+};
+
+// All editable role names (the keys shown in the Super Admin color editor).
+export const ROLE_COLOR_KEYS = Object.keys(DEFAULT_ROLE_COLORS);
+
+/**
+ * Resolve a role's color: center override first, then the built-in default,
+ * then a neutral green fallback for unknown roles.
+ */
+export function roleColorHex(role, centerConfig) {
+  const custom = centerConfig?.roleColors?.[role];
+  if (custom) return custom;
+  return DEFAULT_ROLE_COLORS[role] || '#16a34a';
+}
 
 /**
  * Langley's existing values, used to seed the centers/langley/config/main
