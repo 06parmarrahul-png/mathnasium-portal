@@ -6,6 +6,7 @@ import {
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { isOperatingDay } from '../lib/centerConfig';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
@@ -95,7 +96,7 @@ function buildFullDayByDow(centerConfig) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
   const [mode, setMode] = useState('main');
   const [startTime, setStartTime] = useState('15:00');
   const [endTime, setEndTime] = useState('20:00');
@@ -311,7 +312,6 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
             const dow = date.getDay();
             const isFri = dow === 5;
             const isSat = dow === 6;
-            const isSun = dow === 0;
 
             // First entry is the marquee "Full Day" option (covers admin prep
             // and cleanup, not just teaching hours), rendered with a distinct
@@ -320,7 +320,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
             // each Mathnasium can have its own hours.
             const fullDay = fullDayByDow[dow] || DEFAULT_FULL_DAY_BY_DOW[dow];
             const fullDayLabel = `Full Day (${fmtTime(fullDay.start)} – ${fmtTime(fullDay.end)})`;
-            const PRESETS = isSun ? [] : isSat ? [
+            const PRESETS = isClosedDay ? [] : isSat ? [
               { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
               { label: '10:00 AM – 2:00 PM', start: '10:00', end: '14:00' },
               { label: '10:30 AM – 2:00 PM', start: '10:30', end: '14:00' },
@@ -350,8 +350,8 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
                   <p className="text-sm font-semibold text-gray-800">Set your availability</p>
                 </div>
 
-                {isSun ? (
-                  <p className="text-sm text-gray-400 text-center py-4">Mathnasium is closed on Sundays.</p>
+                {isClosedDay ? (
+                  <p className="text-sm text-gray-400 text-center py-4">This center is closed on this day.</p>
                 ) : !useCustom ? (
                   <>
                     <div className="space-y-2 mb-3">
@@ -561,7 +561,7 @@ function weekMatchesRecurrence(date, recurrence) {
   return false;
 }
 
-function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayByDow, onClose, onSaveBulk }) {
+function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayByDow, centerConfig, onClose, onSaveBulk }) {
   const [selectedDays, setSelectedDays] = useState([]);
   const [recurrence, setRecurrence] = useState('every');
   const [startTime, setStartTime] = useState('15:00');
@@ -675,7 +675,7 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Days of the Week</label>
             <div className="flex gap-2 flex-wrap">
-              {WEEK_DAYS.map(({ label, value }) => {
+              {WEEK_DAYS.filter(({ value }) => isOperatingDay(value, centerConfig)).map(({ label, value }) => {
                 const active = selectedDays.includes(value);
                 return (
                   <button
@@ -1209,6 +1209,7 @@ export default function Schedule() {
             const inMonth = isSameMonth(day, currentMonth);
             const state = getCellState(dateStr);
             const isPast = dateStr < todayStr;
+            const isClosed = !isOperatingDay(day, centerConfig);
 
             let cellBg = 'bg-white hover:bg-gray-50/80';
             let content = null;
@@ -1282,6 +1283,18 @@ export default function Schedule() {
               cellBg = 'bg-white hover:bg-gray-50 cursor-pointer';
             } else {
               clickable = false;
+            }
+
+            // Closed days (center isn't open this weekday) — greyed and
+            // locked so nobody can add availability or shifts on them.
+            if (isClosed) {
+              clickable = false;
+              cellBg = 'bg-gray-100/70';
+              if (!content) content = (
+                <p className="mt-2 text-center text-[10px] font-medium uppercase tracking-wide text-gray-300">
+                  Closed
+                </p>
+              );
             }
 
             return (
@@ -1373,6 +1386,7 @@ export default function Schedule() {
           availability={availability}
           profile={profile}
           fullDayByDow={fullDayByDow}
+          centerConfig={centerConfig}
           onClose={() => setShowWeeklyModal(false)}
           onSaveBulk={handleSaveBulk}
         />
@@ -1387,6 +1401,7 @@ export default function Schedule() {
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
           fullDayByDow={fullDayByDow}
+          isClosedDay={!isOperatingDay(selectedDate, centerConfig)}
           onClose={() => setSelectedDate(null)}
           onSaveAvail={handleSaveAvail}
           onDeleteAvail={handleDeleteAvail}

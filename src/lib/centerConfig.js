@@ -39,6 +39,13 @@ export const DEFAULT_CENTER_CONFIG = {
     Saturday:  { start: '09:00', end: '15:00' },
   },
 
+  // ─── Operating days ────────────────────────────────────────────────────
+  // The weekdays this center is actually open. Drives which columns show on
+  // the admin weekly grid, which days are clickable on the Schedule
+  // calendar, and which days the auto-scheduler fills. Editable from
+  // Super Admin → Operating Days. Every center is closed at least one day.
+  operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+
   // ─── Auto-scheduler defaults ───────────────────────────────────────────
   defaultMinPerDay: 8,
   defaultMaxPerDay: 11,
@@ -260,7 +267,35 @@ export function mergeCenterConfig(serverConfig) {
     salaryStaff: Array.isArray(serverConfig.salaryStaff)
       ? serverConfig.salaryStaff
       : DEFAULT_CENTER_CONFIG.salaryStaff,
+    // Keep operatingDays only if it's a non-empty array; otherwise fall back
+    // to the default so a center can never end up "open zero days".
+    operatingDays: (Array.isArray(serverConfig.operatingDays) && serverConfig.operatingDays.length > 0)
+      ? serverConfig.operatingDays
+      : DEFAULT_CENTER_CONFIG.operatingDays,
   };
 }
 
 export const DAY_NAMES = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Full week in JS getDay() order (index 0 = Sunday … 6 = Saturday). Used by
+// the Super Admin Operating Days editor and the day-of-week helpers below.
+export const ALL_WEEKDAYS = [
+  'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
+];
+
+/**
+ * Is the given day one this center operates on?
+ * `day` may be a JS Date, a getDay() number (0=Sun…6=Sat), or a day-name
+ * string ('Monday'). Falls back to the default Mon–Sat week when a center
+ * has no operatingDays configured.
+ */
+export function isOperatingDay(day, centerConfig) {
+  const list = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0)
+    ? centerConfig.operatingDays
+    : DEFAULT_CENTER_CONFIG.operatingDays;
+  let name;
+  if (day instanceof Date)            name = ALL_WEEKDAYS[day.getDay()];
+  else if (typeof day === 'number')   name = ALL_WEEKDAYS[day];
+  else                                name = day;
+  return list.includes(name);
+}

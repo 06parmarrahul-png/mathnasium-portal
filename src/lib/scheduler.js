@@ -337,6 +337,11 @@ export function generateSchedule({
   const guaranteedNames    = (Array.isArray(centerConfig.guaranteedNames) && centerConfig.guaranteedNames.length > 0)
                                 ? centerConfig.guaranteedNames
                                 : DEFAULT_GUARANTEED_NAMES;
+  // Days this center is open. Defaults to the full Mon–Sat week so any
+  // caller that doesn't pass a centerConfig keeps its old behavior.
+  const operatingDays      = (Array.isArray(centerConfig.operatingDays) && centerConfig.operatingDays.length > 0)
+                                ? centerConfig.operatingDays
+                                : DAY_NAMES;
 
   const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
   if (!monthNumber) throw new Error(`Invalid month: ${month}`);
@@ -364,6 +369,11 @@ export function generateSchedule({
 
   for (const day of workingDays) {
     const { dateStr, dayName, dayNumber, weekOfMonth, weekKey } = day;
+
+    // Skip days this center is closed (configured in Super Admin → Operating
+    // Days). getDaysInMonth already drops Sundays; this also drops any other
+    // weekday a center doesn't operate on.
+    if (!operatingDays.includes(dayName)) continue;
 
     // ── 1. Fixed staff for this day ──────────────────────────────────────────
     const fixedToday = getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap);

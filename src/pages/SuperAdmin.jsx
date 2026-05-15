@@ -7,11 +7,12 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   DEFAULT_CENTER_CONFIG, DEFAULT_ASSIGNMENT_COLORS,
-  ASSIGNMENT_COLOR_KEYS, assignmentColorHex, contrastText,
+  ASSIGNMENT_COLOR_KEYS, assignmentColorHex, contrastText, ALL_WEEKDAYS,
 } from '../lib/centerConfig';
 import {
   Shield, ShieldAlert, Globe, Plus, Building2, Users,
   ArrowRight, CheckCircle2, AlertTriangle, Palette, Save, RotateCcw,
+  CalendarDays,
 } from 'lucide-react';
 
 /**
@@ -157,6 +158,12 @@ export default function SuperAdmin() {
           <CreateCenterForm existing={centers.map(c => c.id)} />
 
           <AppearanceEditor
+            activeCenterId={activeCenterId}
+            centerConfig={centerConfig}
+            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
+          />
+
+          <OperatingDaysEditor
             activeCenterId={activeCenterId}
             centerConfig={centerConfig}
             activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
@@ -354,6 +361,120 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
         >
           <RotateCcw size={13} />
           Reset to defaults
+        </button>
+        {dirty && !savedAt && (
+          <span className="flex items-center gap-1 text-xs text-amber-700">
+            <AlertTriangle size={13} /> Unsaved changes
+          </span>
+        )}
+        {savedAt && !dirty && (
+          <span className="flex items-center gap-1 text-xs text-emerald-700">
+            <CheckCircle2 size={13} /> Saved
+          </span>
+        )}
+        {error && <span className="text-xs text-red-600">{error}</span>}
+      </div>
+    </div>
+  );
+}
+
+// ─── Sub-component: Operating Days editor ────────────────────────────────
+
+function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
+  // Working copy of the operating-days list, seeded from the active center's
+  // config (or the Mon–Sat default if it has none yet).
+  const seed = () => {
+    const cfg = Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
+      ? centerConfig.operatingDays
+      : DEFAULT_CENTER_CONFIG.operatingDays;
+    return ALL_WEEKDAYS.filter(d => cfg.includes(d));
+  };
+  const [days, setDays] = useState(seed);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState('');
+
+  // Re-seed when the active center changes or its config updates.
+  useEffect(() => {
+    const cfg = Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
+      ? centerConfig.operatingDays
+      : DEFAULT_CENTER_CONFIG.operatingDays;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDays(ALL_WEEKDAYS.filter(d => cfg.includes(d)));
+  }, [centerConfig, activeCenterId]);
+
+  const savedDays = Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
+    ? ALL_WEEKDAYS.filter(d => centerConfig.operatingDays.includes(d))
+    : DEFAULT_CENTER_CONFIG.operatingDays;
+  const dirty = JSON.stringify(days) !== JSON.stringify(savedDays);
+
+  const toggle = (day) => setDays(cur =>
+    cur.includes(day)
+      ? cur.filter(d => d !== day)            // turn the day off
+      : ALL_WEEKDAYS.filter(d => cur.includes(d) || d === day) // on, keep week order
+  );
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError('');
+    try {
+      await setDoc(
+        doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { operatingDays: days, updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+      setSavedAt(Date.now());
+      setTimeout(() => setSavedAt(null), 3000);
+    } catch (err) {
+      setError(err?.message || 'Failed to save operating days.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="flex items-center gap-2 mb-1">
+        <CalendarDays size={18} className="text-purple-600" />
+        <h3 className="font-semibold text-gray-900">Operating Days</h3>
+      </div>
+      <p className="text-sm text-gray-500 mb-4">
+        The days <strong>{activeCenterName}</strong> is open. Closed days are
+        dropped from the admin weekly grid, greyed out on the Schedule
+        calendar, and skipped by the auto-scheduler. Every center must keep at
+        least one day open.
+      </p>
+
+      <div className="flex flex-wrap gap-2">
+        {ALL_WEEKDAYS.map(day => {
+          const on = days.includes(day);
+          const isLastOn = on && days.length === 1;
+          return (
+            <button
+              key={day}
+              onClick={() => !isLastOn && toggle(day)}
+              disabled={isLastOn}
+              title={isLastOn ? 'A center must be open at least one day' : ''}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold border-2 transition-all ${
+                on
+                  ? 'bg-purple-600 text-white border-purple-600'
+                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+              } ${isLastOn ? 'cursor-not-allowed opacity-90' : ''}`}
+            >
+              {day}
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 flex items-center gap-2 flex-wrap">
+        <button
+          onClick={handleSave}
+          disabled={!dirty || saving}
+          className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition-colors"
+        >
+          <Save size={14} />
+          {saving ? 'Saving…' : 'Save Days'}
         </button>
         {dirty && !savedAt && (
           <span className="flex items-center gap-1 text-xs text-amber-700">

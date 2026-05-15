@@ -19,7 +19,7 @@ import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS,
-  assignmentFor, assignmentColorHex, contrastText,
+  assignmentFor, assignmentColorHex, contrastText, isOperatingDay,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -540,10 +540,13 @@ export default function Admin() {
 
   const handleDeleteOpenShift = id => deleteDoc(doc(db, 'openShifts', id));
 
-  // Calendar grid
+  // Calendar grid — only the days this center actually operates on
+  // (configured in Super Admin → Operating Days). Sunday is dropped for
+  // centers like Langley that are closed then.
   const weekDays = useMemo(() =>
-    Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
-  [weekStart]);
+    Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
+      .filter(d => isOperatingDay(d, centerConfig)),
+  [weekStart, centerConfig]);
 
   const totalAssignedHours = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
