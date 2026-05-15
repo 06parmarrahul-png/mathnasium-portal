@@ -19,7 +19,7 @@ import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS,
-  assignmentFor, assignmentColorHex, contrastText, isOperatingDay,
+  assignmentFor, assignmentColorHex, assignmentShort, contrastText, isOperatingDay,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -1286,12 +1286,13 @@ export default function Admin() {
               </button>
             </div>
 
-            {/* Grid */}
+            {/* Grid — table-fixed so columns share the width evenly and long
+                shift labels can't stretch the table sideways. */}
             <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse min-w-[900px]">
+              <table className="w-full text-xs border-collapse table-fixed min-w-[680px]">
                 <thead>
                   <tr className="bg-gray-50 border-b">
-                    <th className="text-left px-4 py-2 font-semibold text-gray-600 w-36 border-r">INSTRUCTOR</th>
+                    <th className="text-left px-4 py-2 font-semibold text-gray-600 w-32 border-r">INSTRUCTOR</th>
                     {weekDays.map(d => {
                       const isToday = isSameDay(d, new Date());
                       const ds = format(d, 'yyyy-MM-dd');
@@ -1301,7 +1302,7 @@ export default function Admin() {
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       return (
-                        <th key={d.toISOString()} className={`text-center py-2 px-1 font-medium w-[13%] ${isToday ? 'bg-red-50 text-red-700' : 'text-gray-600'}`}>
+                        <th key={d.toISOString()} className={`text-center py-2 px-1 font-medium ${isToday ? 'bg-red-50 text-red-700' : 'text-gray-600'}`}>
                           <div className="text-xs uppercase tracking-wide">{format(d, 'EEE')}</div>
                           <div className={`text-base font-bold ${isToday ? 'text-red-600' : 'text-gray-800'}`}>{format(d, 'd')}</div>
                           {dayHrsDisplay > 0 && (
@@ -1416,13 +1417,20 @@ export default function Admin() {
                                 const where = s.shiftType === 'Online' ? 'Online'
                                   : s.shiftType === 'Both' ? 'In-Centre + Online'
                                   : 'In-Centre';
+                                // Compact label: short assignment name, plus a
+                                // location flag only when it's not the usual
+                                // in-centre (and not an online instructor, for
+                                // whom "online" is already implied). Full text
+                                // lives in the hover tooltip.
+                                const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
+                                    title={`${assignment} · ${where}`}
                                     className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
                                     style={{ backgroundColor: bg, color: text }}>
-                                    <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
-                                    <div className="uppercase tracking-wide opacity-90 whitespace-nowrap" style={{fontSize:'10px'}}>{assignment} · {where}</div>
+                                    <div className="font-semibold leading-tight" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
+                                    <div className="uppercase tracking-wide opacity-90 leading-tight" style={{fontSize:'10px'}}>{assignmentShort(assignment)}{showWhere ? ` · ${where}` : ''}</div>
                                   </div>
                                 );
                               })}

@@ -137,6 +137,25 @@ export const DEFAULT_ASSIGNMENT_COLORS = {
 // Keys shown in the Super Admin color editor (same order as the list).
 export const ASSIGNMENT_COLOR_KEYS = SHIFT_ASSIGNMENTS;
 
+// Compact labels for the admin weekly grid, where column space is tight.
+// The full assignment name still shows on hover.
+export const ASSIGNMENT_SHORT = {
+  'Elementary Instructor': 'Elem',
+  'Highschool Instructor': 'HS',
+  'Online Instructor':     'Online',
+  'Lead Instructor':       'Lead',
+  'Host':                  'Host',
+  'Admin':                 'Admin',
+  'Manager':               'Mgr',
+  'Centre Director':       'Ctr Dir',
+  'Director of Education': 'Dir. of Ed',
+};
+
+/** Short label for an assignment; falls back to the full name if unknown. */
+export function assignmentShort(assignment) {
+  return ASSIGNMENT_SHORT[assignment] || assignment;
+}
+
 /**
  * Resolve an assignment's color: center override first, then the built-in
  * default, then a neutral slate for anything unrecognized.
