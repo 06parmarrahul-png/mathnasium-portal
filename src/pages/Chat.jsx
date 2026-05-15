@@ -1,15 +1,27 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, addDoc, onSnapshot, query, where, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { MessageSquare, Send, ArrowRightLeft, CheckCircle } from 'lucide-react';
+import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 
 export default function Chat() {
   const { profile, activeCenterId } = useAuth();
-  const [messages, setMessages] = useState([]);
+  const [allMessages, setAllMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
+
+  // Chat channels. 'all' is the default team-wide chat that everyone sees.
+  // 'online' is a side channel only the Online team uses, so they can
+  // coordinate without disrupting the main feed. Messages carry a `channel`
+  // field; legacy messages without one fall back to 'all'.
+  const [channel, setChannel] = useState('all');
+  const isOnlineMember = (profile?.subRoles || []).includes('Online') || profile?.role === 'super_admin';
+  // If somebody loses Online access while looking at the Online tab, bounce
+  // them back to All so they don't get stuck on an empty/hidden channel.
+  useEffect(() => {
+    if (channel === 'online' && !isOnlineMember) setChannel('all');
+  }, [channel, isOnlineMember]);
 
   // Load the latest 200 messages for the active center (newest first), then
   // reverse to display chronologically. Shift-swap and open-shift-alert
@@ -26,9 +38,16 @@ export default function Chat() {
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(m => m.type !== 'shift_swap' && m.type !== 'open_shift_alert');
       docs.reverse(); // newest at the bottom
-      setMessages(docs);
+      setAllMessages(docs);
     }
   ), [activeCenterId]);
+
+  // Narrow to the active channel. Messages without a `channel` field are
+  // legacy team-wide ones and stay in the 'all' tab.
+  const messages = useMemo(
+    () => allMessages.filter(m => (m.channel || 'all') === channel),
+    [allMessages, channel],
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -37,6 +56,9 @@ export default function Chat() {
   const handleSend = async (e) => {
     e.preventDefault();
     if (!text.trim() || !profile || sending) return;
+    // Safety net: don't let a non-Online-team user post to the Online
+    // channel even if they somehow ended up on the tab.
+    if (channel === 'online' && !isOnlineMember) return;
     setSending(true);
     try {
       await addDoc(collection(db, 'chat'), {
@@ -45,6 +67,7 @@ export default function Chat() {
         userName: profile.displayName,
         userRole: profile.role,
         centerId: activeCenterId,
+        channel,                 // 'all' or 'online'
         createdAt: serverTimestamp(),
         type: 'message',
       });
@@ -121,12 +144,46 @@ export default function Chat() {
         </div>
       </div>
 
+      {/* Channel tabs. The Online tab is only visible to users with the
+          Online sub-role (and super-admins) so the online team can coordinate
+          without disrupting the main chat. */}
+      <div className="mb-3 flex items-center gap-1 rounded-xl border bg-gray-50 p-1">
+        <button
+          type="button"
+          onClick={() => setChannel('all')}
+          className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+            channel === 'all'
+              ? 'bg-white text-gray-900 shadow-sm'
+              : 'text-gray-500 hover:text-gray-800'
+          }`}
+        >
+          <Users size={14} /> All Team
+        </button>
+        {isOnlineMember && (
+          <button
+            type="button"
+            onClick={() => setChannel('online')}
+            className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-semibold transition-colors ${
+              channel === 'online'
+                ? 'bg-indigo-700 text-white shadow-sm'
+                : 'text-indigo-700 hover:bg-white'
+            }`}
+          >
+            <Laptop size={14} /> Online Team
+          </button>
+        )}
+      </div>
+
       <div className="flex-1 overflow-y-auto rounded-xl border bg-white shadow-sm">
         <div className="p-4 space-y-4">
           {messages.length === 0 ? (
             <div className="py-16 text-center">
               <MessageSquare size={40} className="mx-auto mb-3 text-gray-300" />
-              <p className="text-gray-500">No messages yet. Start the conversation!</p>
+              <p className="text-gray-500">
+                {channel === 'online'
+                  ? 'No messages in the Online Team channel yet. Start the conversation!'
+                  : 'No messages yet. Start the conversation!'}
+              </p>
             </div>
           ) : messages.map(msg => {
             const isMe = msg.userId === profile?.uid;
@@ -237,10 +294,14 @@ export default function Chat() {
       </div>
 
       <form onSubmit={handleSend} className="mt-3 flex items-center gap-2">
-        <input className="flex-1 rounded-xl border bg-white px-4 py-3 text-sm shadow-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
-          placeholder="Type a message..." value={text} onChange={e => setText(e.target.value)} />
+        <input
+          className="flex-1 rounded-xl border bg-white px-4 py-3 text-sm shadow-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
+          placeholder={channel === 'online' ? 'Message the Online Team…' : 'Message the team…'}
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
         <button type="submit" disabled={!text.trim() || sending}
-          className="rounded-xl bg-red-600 p-3 text-white shadow-sm transition-colors hover:bg-red-700 disabled:opacity-50">
+          className={`rounded-xl p-3 text-white shadow-sm transition-colors disabled:opacity-50 ${channel === 'online' ? 'bg-indigo-700 hover:bg-indigo-800' : 'bg-red-600 hover:bg-red-700'}`}>
           <Send size={18} />
         </button>
       </form>
