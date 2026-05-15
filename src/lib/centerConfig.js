@@ -39,6 +39,13 @@ export const DEFAULT_CENTER_CONFIG = {
     Saturday:  { start: '09:00', end: '15:00' },
   },
 
+  // ─── Analytics ─────────────────────────────────────────────────────────
+  // Manually-entered active student count for the Analytics dashboard.
+  // Owners update this from Admin → Analytics. A future phase can replace
+  // the manual value with an automated Radius enrollment import.
+  activeStudentCount: 0,
+  studentCountUpdatedAt: null,
+
   // ─── Operating days ────────────────────────────────────────────────────
   // The weekdays this center is actually open. Drives which columns show on
   // the admin weekly grid, which days are clickable on the Schedule

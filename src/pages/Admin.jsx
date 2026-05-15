@@ -10,9 +10,11 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3,
+  Users, TrendingUp, Activity,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
+  startOfMonth, endOfMonth,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
@@ -1199,6 +1201,10 @@ export default function Admin() {
     { key: 'scheduler',    label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
     { key: 'payroll',      label: 'Payroll',        icon: DollarSign },
     { key: 'requests',     label: 'Requests',       icon: CalendarRange },
+    // Analytics is owner / super-admin only — strategic view, not daily ops.
+    ...(canSeeCenterSettings
+      ? [{ key: 'analytics', label: 'Analytics', icon: BarChart3 }]
+      : []),
     ...(canSeeCenterSettings
       ? [{ key: 'settings', label: 'Center Settings', icon: Settings }]
       : []),
@@ -2524,6 +2530,16 @@ export default function Admin() {
         </div>
       )}
 
+      {/* ── ANALYTICS ──────────────────────────────────────────────────────── */}
+      {tab === 'analytics' && canSeeCenterSettings && (
+        <AnalyticsTab
+          shifts={shifts}
+          users={users}
+          centerConfig={centerConfig}
+          activeCenterId={activeCenterId}
+        />
+      )}
+
       {/* ── CENTER SETTINGS ────────────────────────────────────────────────── */}
       {tab === 'settings' && (
         <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
@@ -2557,6 +2573,334 @@ export default function Admin() {
           onSave={handleAddOpenShift}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Sub-component: Analytics tab ────────────────────────────────────────
+// Owner-only dashboard. Pulls from the existing shifts + users + center
+// config — no new data plumbing for Phase 1. Active student count is a
+// manual entry on this page (Phase 2 will add automated enrollment import).
+
+function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
+  const now = new Date();
+  const todayStr      = format(now, 'yyyy-MM-dd');
+  const weekStartStr  = format(startOfWeek(now), 'yyyy-MM-dd');
+  const weekEndStr    = format(addDays(startOfWeek(now), 6), 'yyyy-MM-dd');
+  const monthStartStr = format(startOfMonth(now), 'yyyy-MM-dd');
+  const monthEndStr   = format(endOfMonth(now), 'yyyy-MM-dd');
+  const yearStartStr  = `${now.getFullYear()}-01-01`;
+  const yearEndStr    = `${now.getFullYear()}-12-31`;
+
+  // Only posted (non-draft) shifts count toward analytics.
+  const posted = shifts.filter(s => s.status !== 'draft');
+  const sumHrs = (rows) => rows.reduce((sum, s) => sum + shiftHours(s), 0);
+  const round1 = (h) => Math.round((isNaN(h) ? 0 : h) * 10) / 10;
+
+  const hoursToday  = sumHrs(posted.filter(s => s.date === todayStr));
+  const hoursWeek   = sumHrs(posted.filter(s => s.date >= weekStartStr && s.date <= weekEndStr));
+  const monthShifts = posted.filter(s => s.date >= monthStartStr && s.date <= monthEndStr);
+  const hoursMonth  = sumHrs(monthShifts);
+  const hoursYear   = sumHrs(posted.filter(s => s.date >= yearStartStr && s.date <= yearEndStr));
+
+  // Active employees: approved staff at this centre, excluding super-admins.
+  const activeEmployees = users.filter(u => u.approved && u.role !== 'super_admin').length;
+
+  // Avg hours per instructor working this month.
+  const monthInstructors = new Set(monthShifts.map(s => s.userName).filter(Boolean));
+  const avgPerInstructor = monthInstructors.size > 0 ? hoursMonth / monthInstructors.size : 0;
+
+  // Hours by assignment (this month) — drives the horizontal-bar breakdown.
+  const byAssignment = {};
+  for (const s of monthShifts) {
+    const a = assignmentFor(s);
+    byAssignment[a] = (byAssignment[a] || 0) + shiftHours(s);
+  }
+  const assignmentRows = SHIFT_ASSIGNMENTS
+    .map(a => ({ name: a, hours: byAssignment[a] || 0 }))
+    .filter(r => r.hours > 0)
+    .sort((a, b) => b.hours - a.hours);
+  const maxAssign = Math.max(1, ...assignmentRows.map(r => r.hours));
+
+  // Last 30 days trend.
+  const last30 = [];
+  for (let i = 29; i >= 0; i--) {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    const ds = format(d, 'yyyy-MM-dd');
+    last30.push({ date: ds, hours: sumHrs(posted.filter(s => s.date === ds)) });
+  }
+  const max30 = Math.max(1, ...last30.map(d => d.hours));
+
+  // Top instructors leaderboard (this month).
+  const byInstructor = {};
+  for (const s of monthShifts) {
+    const key = s.userName || s.userId || '—';
+    if (!byInstructor[key]) byInstructor[key] = { name: key, hours: 0, shifts: 0 };
+    byInstructor[key].hours  += shiftHours(s);
+    byInstructor[key].shifts += 1;
+  }
+  const leaderboard = Object.values(byInstructor)
+    .sort((a, b) => b.hours - a.hours)
+    .slice(0, 12);
+  const maxLeaderHrs = Math.max(1, ...leaderboard.map(p => p.hours));
+
+  // Manual student count + edit modal.
+  const studentCount     = Number(centerConfig?.activeStudentCount ?? 0) || 0;
+  const studentUpdatedAt = centerConfig?.studentCountUpdatedAt;
+  const [editingStudents, setEditingStudents] = useState(false);
+  const [studentInput,    setStudentInput]    = useState(studentCount);
+  const [savingStudents,  setSavingStudents]  = useState(false);
+  const [studentSaveError,setStudentSaveError]= useState('');
+
+  // Re-sync input when the saved value changes (e.g. someone else updated it).
+  useEffect(() => {
+    if (!editingStudents) setStudentInput(studentCount);
+  }, [studentCount, editingStudents]);
+
+  const saveStudentCount = async () => {
+    const n = Math.max(0, parseInt(studentInput, 10) || 0);
+    setSavingStudents(true);
+    setStudentSaveError('');
+    try {
+      await setDoc(
+        doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { activeStudentCount: n, studentCountUpdatedAt: serverTimestamp() },
+        { merge: true },
+      );
+      setEditingStudents(false);
+    } catch (err) {
+      setStudentSaveError(err?.message || 'Failed to save.');
+    } finally {
+      setSavingStudents(false);
+    }
+  };
+
+  const studentsPerEmployee = activeEmployees > 0
+    ? Math.round((studentCount / activeEmployees) * 10) / 10
+    : 0;
+  const updatedAtLabel = studentUpdatedAt?.seconds
+    ? format(new Date(studentUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
+    : null;
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-lg font-bold text-gray-900">Centre Analytics</h2>
+        <p className="text-sm text-gray-500">Headcount, hours, and what your team's been working on at a glance.</p>
+      </div>
+
+      {/* Metric cards — eight tiles in a 1/2/4-column grid. */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><Users size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Employees</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{activeEmployees}</p>
+          <p className="mt-1 text-xs text-gray-400">approved staff at this centre</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div className="w-fit rounded-lg p-1.5 bg-emerald-100 text-emerald-700"><Activity size={16}/></div>
+            <button
+              type="button"
+              onClick={() => { setStudentInput(studentCount); setEditingStudents(true); }}
+              className="flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline"
+            >
+              <Edit3 size={11}/> Edit
+            </button>
+          </div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Students</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{studentCount}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {updatedAtLabel ? `Updated ${updatedAtLabel}` : 'Click Edit to set a starting value'}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-blue-100 text-blue-700"><Clock size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours Today</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursToday)}h</p>
+          <p className="mt-1 text-xs text-gray-400">{format(now, 'EEE MMM d')}</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-indigo-100 text-indigo-700"><CalendarRange size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Week</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursWeek)}h</p>
+          <p className="mt-1 text-xs text-gray-400">Sun–Sat scheduled</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-amber-100 text-amber-700"><CalendarRange size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Month</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursMonth)}h</p>
+          <p className="mt-1 text-xs text-gray-400">{format(now, 'MMMM yyyy')}</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-rose-100 text-rose-700"><BarChart3 size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Year</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursYear)}h</p>
+          <p className="mt-1 text-xs text-gray-400">{now.getFullYear()} so far</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-teal-100 text-teal-700"><TrendingUp size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Avg / Instructor</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(avgPerInstructor)}h</p>
+          <p className="mt-1 text-xs text-gray-400">{monthInstructors.size} working this month</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-lime-100 text-lime-700"><UserCheck size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Students / Employee</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{studentsPerEmployee || '–'}</p>
+          <p className="mt-1 text-xs text-gray-400">workload ratio</p>
+        </div>
+      </div>
+
+      {/* Student count edit modal */}
+      {editingStudents && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !savingStudents && setEditingStudents(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">Active Student Count</h3>
+            <p className="text-xs text-gray-500 mb-3">Manually update the current enrollment for this centre.</p>
+            <input
+              type="number"
+              min={0}
+              value={studentInput}
+              onChange={e => setStudentInput(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none mb-3"
+              autoFocus
+            />
+            {studentSaveError && <p className="text-xs text-red-600 mb-2">{studentSaveError}</p>}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingStudents(false)}
+                disabled={savingStudents}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveStudentCount}
+                disabled={savingStudents}
+                className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {savingStudents ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Charts row */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Hours by assignment */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-gray-900 mb-1">Hours by Assignment</h3>
+          <p className="text-xs text-gray-500 mb-4">{format(now, 'MMMM yyyy')} · {round1(hoursMonth)}h scheduled</p>
+          {assignmentRows.length === 0 ? (
+            <p className="py-8 text-center text-sm text-gray-400">No shifts scheduled this month yet.</p>
+          ) : (
+            <div className="space-y-2.5">
+              {assignmentRows.map(row => (
+                <div key={row.name}>
+                  <div className="flex items-baseline justify-between text-xs mb-0.5">
+                    <span className="font-medium text-gray-700">{row.name}</span>
+                    <span className="text-gray-500">
+                      {round1(row.hours)}h · {hoursMonth > 0 ? Math.round((row.hours / hoursMonth) * 100) : 0}%
+                    </span>
+                  </div>
+                  <div className="h-2 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${(row.hours / maxAssign) * 100}%`,
+                        backgroundColor: assignmentColorHex(row.name, centerConfig),
+                      }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Last-30-day trend */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <h3 className="text-sm font-semibold text-gray-900 mb-1">Hours per Day</h3>
+          <p className="text-xs text-gray-500 mb-4">Last 30 days · peak {round1(max30)}h</p>
+          <div className="flex items-end gap-px h-32">
+            {last30.map(d => {
+              const isToday = d.date === todayStr;
+              const h = d.hours > 0 ? Math.max(2, (d.hours / max30) * 100) : 2;
+              const dateLabel = format(new Date(d.date + 'T12:00:00'), 'EEE MMM d');
+              return (
+                <div
+                  key={d.date}
+                  title={`${dateLabel}: ${round1(d.hours)}h`}
+                  className={`flex-1 rounded-sm transition-colors ${
+                    d.hours === 0
+                      ? 'bg-gray-100'
+                      : isToday
+                        ? 'bg-red-500 hover:bg-red-600'
+                        : 'bg-purple-500 hover:bg-purple-600'
+                  }`}
+                  style={{ height: `${h}%` }}
+                />
+              );
+            })}
+          </div>
+          <div className="flex justify-between text-xs text-gray-400 mt-1.5">
+            <span>{format(new Date(last30[0].date + 'T12:00:00'), 'MMM d')}</span>
+            <span>{format(now, 'MMM d')}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Leaderboard */}
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <h3 className="text-sm font-semibold text-gray-900 mb-1">Top Instructors</h3>
+        <p className="text-xs text-gray-500 mb-4">By hours scheduled · {format(now, 'MMMM yyyy')}</p>
+        {leaderboard.length === 0 ? (
+          <p className="py-6 text-center text-sm text-gray-400">No instructors have hours scheduled this month.</p>
+        ) : (
+          <div className="space-y-2">
+            {leaderboard.map((p, i) => (
+              <div key={p.name} className="flex items-center gap-3">
+                <div className="w-5 text-right text-xs font-bold text-gray-400">{i + 1}</div>
+                <div className="w-28 truncate text-sm font-medium text-gray-800 sm:w-40">{p.name}</div>
+                <div className="h-2 flex-1 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-purple-500"
+                    style={{ width: `${(p.hours / maxLeaderHrs) * 100}%` }}
+                  />
+                </div>
+                <div className="w-20 text-right text-xs text-gray-500">
+                  <span className="font-semibold text-gray-800">{round1(p.hours)}h</span>
+                  <span className="ml-1.5 text-gray-400">· {p.shifts}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Coming-next teaser for Phase 2 */}
+      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
+        <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+          <TrendingUp size={13} className="text-purple-500" /> Coming next — Hiring forecast
+        </p>
+        <p className="text-xs text-gray-500">
+          Phase 2 will collect each staff member's 4-month plan (staying, considering leaving, aspirations) and flag months where you're projected to be short instructors so you can post a listing in time.
+        </p>
+      </div>
     </div>
   );
 }
