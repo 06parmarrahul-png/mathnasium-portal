@@ -1287,12 +1287,14 @@ export default function Admin() {
             </div>
 
             {/* Grid — table-fixed so columns share the width evenly and long
-                shift labels can't stretch the table sideways. */}
-            <div className="overflow-x-auto">
+                shift labels can't stretch the table sideways. The wrapper is a
+                scroll pane (max-height) so the day-header row can stay pinned
+                via position:sticky while you scroll through instructors. */}
+            <div className="overflow-auto max-h-[70vh]">
               <table className="w-full text-xs border-collapse table-fixed min-w-[680px]">
                 <thead>
-                  <tr className="bg-gray-50 border-b">
-                    <th className="text-left px-4 py-2 font-semibold text-gray-600 w-32 border-r">INSTRUCTOR</th>
+                  <tr className="bg-gray-50">
+                    <th className="sticky top-0 z-30 bg-gray-50 text-left px-4 py-2 font-semibold text-gray-600 w-32 border-r shadow-[inset_0_-1px_0_#e5e7eb]">INSTRUCTOR</th>
                     {weekDays.map(d => {
                       const isToday = isSameDay(d, new Date());
                       const ds = format(d, 'yyyy-MM-dd');
@@ -1302,7 +1304,7 @@ export default function Admin() {
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       return (
-                        <th key={d.toISOString()} className={`text-center py-2 px-1 font-medium ${isToday ? 'bg-red-50 text-red-700' : 'text-gray-600'}`}>
+                        <th key={d.toISOString()} className={`sticky top-0 z-30 text-center py-2 px-1 font-medium shadow-[inset_0_-1px_0_#e5e7eb] ${isToday ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}`}>
                           <div className="text-xs uppercase tracking-wide">{format(d, 'EEE')}</div>
                           <div className={`text-base font-bold ${isToday ? 'text-red-600' : 'text-gray-800'}`}>{format(d, 'd')}</div>
                           {dayHrsDisplay > 0 && (
