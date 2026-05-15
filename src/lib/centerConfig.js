@@ -62,10 +62,13 @@ export const DEFAULT_CENTER_CONFIG = {
   fixedStaff: {},
 
   // ─── Appearance ────────────────────────────────────────────────────────
-  // Per-center role colors (hex), shown on the admin weekly spreadsheet.
-  // Editable from Super Admin → Appearance. Any role not listed falls back
-  // to the built-in DEFAULT_ROLE_COLORS.
+  // Per-center role colors (hex). Legacy — kept so older configs still
+  // merge cleanly. Superseded by `assignmentColors` below.
   roleColors: {},
+  // Per-center shift-assignment colors (hex), shown on the admin weekly
+  // grid. Editable from Super Admin → Appearance. Any assignment not listed
+  // falls back to the built-in DEFAULT_ASSIGNMENT_COLORS.
+  assignmentColors: {},
 };
 
 // Built-in role colors — used as the fallback when a center hasn't
@@ -91,6 +94,96 @@ export function roleColorHex(role, centerConfig) {
   const custom = centerConfig?.roleColors?.[role];
   if (custom) return custom;
   return DEFAULT_ROLE_COLORS[role] || '#16a34a';
+}
+
+// ─── Shift assignments ───────────────────────────────────────────────────
+// The single "what is this person doing on this shift" label shown on the
+// admin weekly grid. Derived from a shift's role + teaching level via
+// assignmentFor(), so the scheduler's internal role/subRole model never has
+// to change. These nine are exactly the colors edited from Super Admin →
+// Appearance, and every shift block is filled fully with its color.
+export const SHIFT_ASSIGNMENTS = [
+  'Elementary Instructor',
+  'Highschool Instructor',
+  'Online Instructor',
+  'Lead Instructor',
+  'Host',
+  'Admin',
+  'Manager',
+  'Centre Director',
+  'Director of Education',
+];
+
+// Built-in assignment colors — the fallback when a center hasn't customized.
+export const DEFAULT_ASSIGNMENT_COLORS = {
+  'Elementary Instructor': '#84cc16', // lime
+  'Highschool Instructor': '#14b8a6', // teal
+  'Online Instructor':     '#4338ca', // indigo
+  'Lead Instructor':       '#9333ea', // purple
+  'Host':                  '#2563eb', // blue
+  'Admin':                 '#dc2626', // red
+  'Manager':               '#ca8a04', // amber
+  'Centre Director':       '#92400e', // brown
+  'Director of Education': '#db2777', // pink
+};
+
+// Keys shown in the Super Admin color editor (same order as the list).
+export const ASSIGNMENT_COLOR_KEYS = SHIFT_ASSIGNMENTS;
+
+/**
+ * Resolve an assignment's color: center override first, then the built-in
+ * default, then a neutral slate for anything unrecognized.
+ */
+export function assignmentColorHex(assignment, centerConfig) {
+  const custom = centerConfig?.assignmentColors?.[assignment];
+  if (custom) return custom;
+  return DEFAULT_ASSIGNMENT_COLORS[assignment] || '#64748b';
+}
+
+/**
+ * Derive the single display "assignment" for a shift (or a person) from its
+ * role + teaching level. Robust against messy legacy role strings like
+ * 'High School', 'Elementary Instructor', 'Online Instructor', etc.
+ *
+ * Accepts either a shift  ({ role, subRole })
+ *            or a person ({ role | instructorType, subRoles: [] }).
+ */
+export function assignmentFor(src) {
+  if (!src) return 'Elementary Instructor';
+  const role = String(src.role || src.instructorType || '').toLowerCase();
+  // Teaching level — from a shift's subRole, or a person's subRoles[].
+  let sub = String(src.subRole || '').toLowerCase();
+  if (!sub && Array.isArray(src.subRoles)) {
+    if (src.subRoles.includes('Online'))          sub = 'online';
+    else if (src.subRoles.includes('Highschool')) sub = 'highschool';
+    else if (src.subRoles.includes('Elementary')) sub = 'elementary';
+  }
+
+  if (role.includes('online') || sub === 'online')   return 'Online Instructor';
+  if (role.includes('lead'))                         return 'Lead Instructor';
+  if (role.includes('host'))                         return 'Host';
+  if (role.includes('education'))                    return 'Director of Education';
+  if (role.includes('director'))                     return 'Centre Director';
+  if (role.includes('manager'))                      return 'Manager';
+  if (role.includes('admin'))                        return 'Admin';
+  if (sub === 'highschool' || role.includes('high')) return 'Highschool Instructor';
+  return 'Elementary Instructor';
+}
+
+/**
+ * Pick a readable text color (near-black or white) for a given hex
+ * background, using perceived (WCAG) luminance. Keeps light assignment
+ * colors like lime and amber legible instead of washed-out white text.
+ */
+export function contrastText(hex) {
+  const h = String(hex || '').replace('#', '');
+  if (h.length !== 6) return '#ffffff';
+  const chan = (i) => {
+    const c = parseInt(h.slice(i, i + 2), 16) / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const L = 0.2126 * chan(0) + 0.7152 * chan(2) + 0.0722 * chan(4);
+  return L > 0.45 ? '#1f2937' : '#ffffff';
 }
 
 /**

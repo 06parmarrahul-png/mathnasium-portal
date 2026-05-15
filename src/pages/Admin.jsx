@@ -17,7 +17,10 @@ import {
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
-import { LANGLEY_DEFAULT_CONFIG, roleColorHex } from '../lib/centerConfig';
+import {
+  LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS,
+  assignmentFor, assignmentColorHex, contrastText,
+} from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 
@@ -31,15 +34,11 @@ const ROLE_OPTIONS = [
   'Manager', 'Center Director', 'Dir. of Education',
 ];
 
-// Sub-roles (teaching specializations) and their colors live in
-// src/lib/subRoles.js. Role colors are per-center — see roleColorHex() in
-// src/lib/centerConfig.js — and editable from Super Admin → Appearance.
-//
-// roleColor(role, centerConfig) returns { bg, text } where bg is the
-// center's custom hex (or the built-in default) and text is always white.
-function roleColor(role, centerConfig) {
-  return { bg: roleColorHex(role, centerConfig), text: '#fff' };
-}
+// Sub-roles (teaching specializations) live in src/lib/subRoles.js.
+// Each shift is shown on the admin grid with a single "assignment" color
+// (Elementary Instructor, Highschool Instructor, …) — see assignmentFor()
+// and assignmentColorHex() in src/lib/centerConfig.js. Those nine colors
+// are per-center and editable from Super Admin → Appearance.
 
 function fmtHHMM(t) {
   if (!t) return '';
@@ -1236,34 +1235,16 @@ export default function Admin() {
       {/* ── SPREADSHEET (Weekly Calendar Grid) ──────────────────────────────── */}
       {tab === 'spreadsheet' && (
         <div className="space-y-2">
-          {/* Legend + tips. Role swatches use this center's custom colors. */}
+          {/* Legend + tips. Swatches use this center's custom shift colors. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 mb-2 text-xs text-gray-500">
-            <span className="font-semibold text-gray-600 mr-1">Role:</span>
+            <span className="font-semibold text-gray-600 mr-1">Shift:</span>
             <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded-full bg-orange-500" /> Open Shift</span>
-            {[
-              ['Instructor', 'Instructor'],
-              ['Lead', 'Lead'],
-              ['Host', 'Host'],
-              ['Admin', 'Admin'],
-              ['Manager', 'Manager'],
-              ['Dir. of Education', 'Dir. of Ed.'],
-              ['Center Director', 'Center Director'],
-            ].map(([roleKey, roleLabel]) => (
-              <span key={roleKey} className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: roleColorHex(roleKey, centerConfig) }} />
-                {roleLabel}
+            {SHIFT_ASSIGNMENTS.map(a => (
+              <span key={a} className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-3 rounded-full" style={{ backgroundColor: assignmentColorHex(a, centerConfig) }} />
+                {a}
               </span>
             ))}
-            <span className="text-gray-300 mx-1">|</span>
-            <span className="font-semibold text-gray-600 mr-1">Stripe:</span>
-            {SUB_ROLES.map(sr => {
-              const s = SUB_ROLE_STYLES[sr];
-              return (
-                <span key={sr} className="flex items-center gap-1.5">
-                  <span className={`inline-block w-1 h-3 rounded-sm ${s.stripe}`} /> {s.label}
-                </span>
-              );
-            })}
             <span className="ml-auto flex items-center gap-1 text-gray-400 italic">
               Click any cell to add a shift · Click <Plus size={10} className="inline" /> to add open shift
             </span>
@@ -1420,28 +1401,25 @@ export default function Admin() {
                                   </div>
                                 </div>
                               )}
-                              {/* Existing shifts */}
+                              {/* Existing shifts — the whole block is filled
+                                  with the shift's assignment color (editable
+                                  in Super Admin → Appearance). */}
                               {dayShifts.map(s => {
-                                const { bg, text } = roleColor(s.role, centerConfig);
+                                const assignment = assignmentFor(s);
+                                const bg   = assignmentColorHex(assignment, centerConfig);
+                                const text = contrastText(bg);
                                 const hrs = shiftHours(s);
                                 const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
-                                const sub = subRoleStyleFor(s.subRole);
+                                const where = s.shiftType === 'Online' ? 'Online'
+                                  : s.shiftType === 'Both' ? 'In-Centre + Online'
+                                  : 'In-Centre';
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
-                                    className="relative rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
+                                    className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
                                     style={{ backgroundColor: bg, color: text }}>
-                                    {/* Sub-role colored stripe along the left edge */}
-                                    {sub && (
-                                      <span
-                                        className={`absolute left-0 top-0 bottom-0 w-1 ${sub.stripe}`}
-                                        title={`${sub.label} shift`}
-                                      />
-                                    )}
-                                    <div className={sub ? 'pl-1.5' : ''}>
-                                      <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
-                                      {s.role && <div className="uppercase tracking-wide opacity-90" style={{fontSize:'10px'}}>{s.role}{s.shiftType && s.shiftType !== 'In-Centre' ? ` · ${s.shiftType}` : ''}{sub ? ` · ${sub.label[0]}` : ''}</div>}
-                                    </div>
+                                    <div className="font-semibold" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
+                                    <div className="uppercase tracking-wide opacity-90 whitespace-nowrap" style={{fontSize:'10px'}}>{assignment} · {where}</div>
                                   </div>
                                 );
                               })}
@@ -2268,7 +2246,7 @@ export default function Admin() {
           ) : (
             <div className="space-y-4">
               {(comparisonSummary || payrollSummary).map(person => {
-                const { bg } = roleColor(person.role, centerConfig);
+                const bg = assignmentColorHex(assignmentFor(person), centerConfig);
                 const hasRadius = !!comparisonSummary;
                 const isDiscrepant = hasRadius && person.hasDiscrepancy;
                 const shiftRows = hasRadius ? person.shiftComparisons : person.shifts;
@@ -2277,8 +2255,8 @@ export default function Admin() {
                     {/* Person header */}
                     <div className={`flex items-center justify-between px-5 py-3 border-b ${isDiscrepant ? 'bg-red-50' : 'bg-gray-50'}`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                          style={{ backgroundColor: bg }}>
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
+                          style={{ backgroundColor: bg, color: contrastText(bg) }}>
                           {person.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
                         </div>
                         <div>

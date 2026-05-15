@@ -5,7 +5,10 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { DEFAULT_CENTER_CONFIG, DEFAULT_ROLE_COLORS, ROLE_COLOR_KEYS, roleColorHex } from '../lib/centerConfig';
+import {
+  DEFAULT_CENTER_CONFIG, DEFAULT_ASSIGNMENT_COLORS,
+  ASSIGNMENT_COLOR_KEYS, assignmentColorHex, contrastText,
+} from '../lib/centerConfig';
 import {
   Shield, ShieldAlert, Globe, Plus, Building2, Users,
   ArrowRight, CheckCircle2, AlertTriangle, Palette, Save, RotateCcw,
@@ -238,16 +241,16 @@ export default function SuperAdmin() {
   );
 }
 
-// ─── Sub-component: Appearance (role colors) editor ──────────────────────
+// ─── Sub-component: Appearance (shift colors) editor ─────────────────────
 
 function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
-  // Local working copy of the role color map. Seeded from the active
-  // center's config (merged with the built-in defaults so every role has
-  // a value to start from).
+  // Local working copy of the shift-assignment color map. Seeded from the
+  // active center's config (merged with the built-in defaults so every
+  // assignment has a value to start from).
   const initial = () => {
     const out = {};
-    for (const role of ROLE_COLOR_KEYS) {
-      out[role] = roleColorHex(role, centerConfig);
+    for (const role of ASSIGNMENT_COLOR_KEYS) {
+      out[role] = assignmentColorHex(role, centerConfig);
     }
     return out;
   };
@@ -259,15 +262,15 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
   // Re-seed if the active center changes (switchCenter) or config updates.
   useEffect(() => {
     const out = {};
-    for (const role of ROLE_COLOR_KEYS) {
-      out[role] = roleColorHex(role, centerConfig);
+    for (const role of ASSIGNMENT_COLOR_KEYS) {
+      out[role] = assignmentColorHex(role, centerConfig);
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setColors(out);
   }, [centerConfig, activeCenterId]);
 
-  const dirty = ROLE_COLOR_KEYS.some(
-    r => colors[r] !== roleColorHex(r, centerConfig)
+  const dirty = ASSIGNMENT_COLOR_KEYS.some(
+    r => colors[r] !== assignmentColorHex(r, centerConfig)
   );
 
   const setOne = (role, hex) => setColors(c => ({ ...c, [role]: hex }));
@@ -278,7 +281,7 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
     try {
       await setDoc(
         doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { roleColors: colors, updatedAt: serverTimestamp() },
+        { assignmentColors: colors, updatedAt: serverTimestamp() },
         { merge: true },
       );
       setSavedAt(Date.now());
@@ -293,7 +296,7 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
   const handleReset = () => {
     // Reset to the built-in defaults (visually) — not saved until "Save".
     const out = {};
-    for (const role of ROLE_COLOR_KEYS) out[role] = DEFAULT_ROLE_COLORS[role];
+    for (const role of ASSIGNMENT_COLOR_KEYS) out[role] = DEFAULT_ASSIGNMENT_COLORS[role];
     setColors(out);
   };
 
@@ -301,21 +304,22 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2 mb-1">
         <Palette size={18} className="text-purple-600" />
-        <h3 className="font-semibold text-gray-900">Appearance — Role Colors</h3>
+        <h3 className="font-semibold text-gray-900">Appearance — Shift Colors</h3>
       </div>
       <p className="text-sm text-gray-500 mb-4">
-        These colors are used on the weekly Scheduler grid and payroll cards.
-        Changes apply to <strong>{activeCenterName}</strong> only (the center
-        you're currently viewing — use the sidebar switcher to change centers).
+        Each shift on the admin weekly grid is filled with its assignment's
+        color (these also tint the payroll cards). Changes apply to{' '}
+        <strong>{activeCenterName}</strong> only — the center you're currently
+        viewing. Use the sidebar switcher to edit a different center.
       </p>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        {ROLE_COLOR_KEYS.map(role => (
+        {ASSIGNMENT_COLOR_KEYS.map(role => (
           <div key={role} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
             {/* Live swatch preview */}
             <span
-              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold text-white"
-              style={{ backgroundColor: colors[role] }}
+              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold"
+              style={{ backgroundColor: colors[role], color: contrastText(colors[role]) }}
             >
               {role.split(' ').map(w => w[0]).join('').slice(0, 2)}
             </span>
