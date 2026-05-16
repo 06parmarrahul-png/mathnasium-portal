@@ -272,7 +272,6 @@ function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
     for (const role of ASSIGNMENT_COLOR_KEYS) {
       out[role] = assignmentColorHex(role, centerConfig);
     }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setColors(out);
   }, [centerConfig, activeCenterId]);
 
@@ -399,7 +398,6 @@ function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName })
     const cfg = Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
       ? centerConfig.operatingDays
       : DEFAULT_CENTER_CONFIG.operatingDays;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setDays(ALL_WEEKDAYS.filter(d => cfg.includes(d)));
   }, [centerConfig, activeCenterId]);
 

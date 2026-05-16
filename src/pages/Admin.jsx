@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3,
-  Users, TrendingUp, Activity,
+  Users, TrendingUp, Activity, Briefcase, Copy,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -2683,6 +2683,86 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
     ? format(new Date(studentUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
     : null;
 
+  // ─── Hiring forecast (Phase 2) ─────────────────────────────────────────
+  // Roll up staff `careerPlan` fields into a projected headcount for each of
+  // the next 4 months. "No" is treated as a definite departure on/by the
+  // expected last month; "Unsure" is surfaced separately so the owner can
+  // check in, but isn't deducted from the projection.
+  const REASON_LABELS = {
+    graduating: 'Graduating',
+    moving:     'Moving away',
+    career:     'Career change',
+    school:     'School / workload',
+    other:      'Other',
+  };
+  const formatPlanMonthLabel = (key) => {
+    if (!key) return 'soon';
+    const [y, m] = key.split('-');
+    const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
+  const activeStaff = users.filter(u => u.approved && u.role !== 'super_admin');
+  const currentHeadcount = activeStaff.length;
+
+  // Build next 4 months as { key:'YYYY-MM', label:'Aug 2026' }.
+  const nextMonths = [];
+  for (let i = 1; i <= 4; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    nextMonths.push({
+      key:   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      label: d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+    });
+  }
+
+  const leavers = activeStaff
+    .filter(u => u.careerPlan?.stayingIn4Months === 'no' && u.careerPlan?.expectedDepartureMonth)
+    .map(u => ({
+      name:          u.displayName || '(no name)',
+      role:          u.instructorType || 'Instructor',
+      monthKey:      u.careerPlan.expectedDepartureMonth,
+      reason:        u.careerPlan.reason,
+      reasonNotes:   u.careerPlan.reasonNotes,
+      aspirations:   u.careerPlan.aspirations,
+    }))
+    .sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+
+  const unsureStaff = activeStaff
+    .filter(u => u.careerPlan?.stayingIn4Months === 'unsure')
+    .map(u => ({
+      name:        u.displayName || '(no name)',
+      role:        u.instructorType || 'Instructor',
+      aspirations: u.careerPlan?.aspirations,
+    }));
+
+  // Staff who shared aspirations regardless of staying status — useful
+  // signal for mentoring + retention conversations.
+  const aspirationsList = activeStaff
+    .filter(u => (u.careerPlan?.aspirations || '').trim().length > 0)
+    .map(u => ({
+      name:        u.displayName || '(no name)',
+      aspirations: u.careerPlan.aspirations,
+      staying:     u.careerPlan?.stayingIn4Months,
+    }));
+
+  const projection = nextMonths.map(m => {
+    const cumDepart = leavers.filter(l => l.monthKey <= m.key).length;
+    return { ...m, departures: cumDepart, projected: Math.max(0, currentHeadcount - cumDepart) };
+  });
+  const totalDepart   = leavers.filter(l => l.monthKey <= nextMonths[3].key).length;
+  const projectedEnd  = Math.max(0, currentHeadcount - totalDepart);
+  const showRiskBanner = totalDepart > 0;
+
+  // Informational floor — roughly "you need this many staff total to fill a
+  // typical week given your per-day minimum". Helps spot dangerous drops.
+  const minStaffFloor = Math.max(4, (centerConfig?.defaultMinPerDay || 8) * 2);
+
+  // Coverage of next 4 months — how many staff haven't filled out a plan.
+  const noPlanCount = activeStaff.filter(u => !u.careerPlan || !u.careerPlan.updatedAt).length;
+
+  // Job posting modal state.
+  const [jobModalOpen, setJobModalOpen] = useState(false);
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -2892,14 +2972,334 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         )}
       </div>
 
-      {/* Coming-next teaser for Phase 2 */}
-      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
-        <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
-          <TrendingUp size={13} className="text-purple-500" /> Coming next — Hiring forecast
-        </p>
-        <p className="text-xs text-gray-500">
-          Phase 2 will collect each staff member's 4-month plan (staying, considering leaving, aspirations) and flag months where you're projected to be short instructors so you can post a listing in time.
-        </p>
+      {/* ── Hiring Forecast ─────────────────────────────────────────────── */}
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-base font-bold text-gray-900">Hiring Forecast</h3>
+          <p className="text-xs text-gray-500">
+            Projected headcount over the next 4 months, based on each staff
+            member's plan. {noPlanCount > 0 && (
+              <span className="text-amber-700">
+                {noPlanCount} {noPlanCount === 1 ? 'person hasn\'t' : 'people haven\'t'} filled in their plan yet.
+              </span>
+            )}
+          </p>
+        </div>
+
+        {/* Risk banner */}
+        {showRiskBanner && (
+          <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-4">
+            <div className="flex items-start gap-3">
+              <AlertTriangle size={20} className="mt-0.5 shrink-0 text-amber-600" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-amber-900">
+                  {totalDepart} {totalDepart === 1 ? 'departure' : 'departures'} expected in the next 4 months — projected headcount {projectedEnd}
+                </p>
+                <p className="mt-0.5 text-xs text-amber-800">
+                  Tutoring hires typically take 4–6 weeks from listing to onboarded. Posting now gives you runway and avoids burning out the staff who stay.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setJobModalOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-700 transition-colors"
+                >
+                  <Briefcase size={14} /> Draft a job posting
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Projection bars */}
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="mb-4 flex items-baseline justify-between">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Projected headcount</p>
+            <p className="text-xs text-gray-400">Starting from {currentHeadcount} today</p>
+          </div>
+          <div className="grid grid-cols-4 gap-3">
+            {projection.map(m => {
+              const isBelowFloor = m.projected < minStaffFloor;
+              const heightPct = currentHeadcount > 0
+                ? Math.max(8, (m.projected / currentHeadcount) * 100)
+                : 8;
+              const barColor = isBelowFloor
+                ? 'bg-rose-500'
+                : m.departures > 0
+                  ? 'bg-amber-500'
+                  : 'bg-emerald-500';
+              return (
+                <div key={m.key} className="flex flex-col items-center">
+                  <p className="mb-1 text-xs font-medium text-gray-500">{m.label}</p>
+                  <div className="flex h-24 w-full items-end overflow-hidden rounded-lg bg-gray-100">
+                    <div className={`w-full rounded-lg transition-all ${barColor}`} style={{ height: `${heightPct}%` }} />
+                  </div>
+                  <p className="mt-1 text-lg font-bold text-gray-900">{m.projected}</p>
+                  <p className="text-xs text-gray-500">
+                    {m.departures > 0 ? <span className="text-rose-600 font-semibold">−{m.departures}</span> : '—'}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-4 text-xs text-gray-400">
+            Floor of ~{minStaffFloor} staff (your auto-scheduler's min/day × 2). Red months are below the floor.
+            {unsureStaff.length > 0 && ` ${unsureStaff.length} staff marked "unsure" — not deducted, but worth a check-in.`}
+          </p>
+        </div>
+
+        {/* Staff to plan for */}
+        {(leavers.length > 0 || unsureStaff.length > 0) && (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-wide text-gray-500">Staff to plan for</p>
+            <div className="space-y-2.5">
+              {leavers.map(l => (
+                <div key={`l-${l.name}`} className="flex items-start gap-3 rounded-lg border border-rose-100 bg-rose-50/40 p-3">
+                  <span className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">Leaving</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-900">{l.name}</p>
+                    <p className="text-xs text-gray-600">
+                      {l.role} · expected last month <strong>{formatPlanMonthLabel(l.monthKey)}</strong>
+                      {l.reason && ` · ${REASON_LABELS[l.reason] || l.reason}`}
+                    </p>
+                    {l.reasonNotes && <p className="mt-1 text-xs italic text-gray-500">"{l.reasonNotes}"</p>}
+                    {l.aspirations && (
+                      <p className="mt-1 text-xs text-purple-700">
+                        <span className="font-semibold">Goals:</span> {l.aspirations}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+              {unsureStaff.map(u => (
+                <div key={`u-${u.name}`} className="flex items-start gap-3 rounded-lg border border-amber-100 bg-amber-50/40 p-3">
+                  <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">Unsure</span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-gray-900">{u.name}</p>
+                    <p className="text-xs text-gray-600">{u.role}</p>
+                    {u.aspirations && (
+                      <p className="mt-1 text-xs text-purple-700">
+                        <span className="font-semibold">Goals:</span> {u.aspirations}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {leavers.length === 0 && (
+              <button
+                type="button"
+                onClick={() => setJobModalOpen(true)}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                <Briefcase size={13} /> Draft a job posting anyway
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* No-risk state: still let owners draft a posting on demand */}
+        {leavers.length === 0 && unsureStaff.length === 0 && (
+          <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
+            <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
+              <CheckCircle size={13} className="text-emerald-500" /> No planned departures right now
+            </p>
+            <p className="text-xs text-gray-500">
+              {noPlanCount > 0
+                ? `${noPlanCount} ${noPlanCount === 1 ? 'person hasn\'t' : 'people haven\'t'} filled in their 4-month plan yet — projection assumes they're staying.`
+                : 'Every active staff member has confirmed they\'re staying. Still want to grow? Draft a listing below.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => setJobModalOpen(true)}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Briefcase size={13} /> Draft a job posting
+            </button>
+          </div>
+        )}
+
+        {/* Aspirations roundup (only shown if someone shared) */}
+        {aspirationsList.length > 0 && (
+          <div className="rounded-2xl border bg-white p-5 shadow-sm">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">Team aspirations</p>
+            <p className="mb-3 text-xs text-gray-400">School, programs, dream jobs — useful for mentoring and timing transitions.</p>
+            <div className="space-y-2">
+              {aspirationsList.map(a => (
+                <div key={a.name} className="rounded-lg bg-gray-50 px-3 py-2">
+                  <p className="text-xs font-semibold text-gray-800">
+                    {a.name}
+                    {a.staying === 'no' && <span className="ml-2 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold text-rose-700">Leaving</span>}
+                    {a.staying === 'unsure' && <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Unsure</span>}
+                  </p>
+                  <p className="mt-0.5 text-xs text-gray-600">{a.aspirations}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Job posting template modal */}
+      {jobModalOpen && (
+        <JobPostingModal
+          centerConfig={centerConfig}
+          defaultRole={leavers[0]?.role}
+          defaultStartMonth={leavers[0]?.monthKey || nextMonths[0]?.key}
+          onClose={() => setJobModalOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─── Sub-component: Job-posting template modal ───────────────────────────
+
+function JobPostingModal({ centerConfig, defaultRole, defaultStartMonth, onClose }) {
+  const [role, setRole]     = useState(SHIFT_ASSIGNMENTS.includes(defaultRole) ? defaultRole : 'Elementary Instructor');
+  const [startMonth, setStartMonth] = useState(defaultStartMonth || '');
+  const [hoursRange, setHoursRange] = useState('10–15');
+  const [contactEmail, setContactEmail] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const monthOptions = [];
+  const dd = new Date(); dd.setDate(1);
+  for (let i = 0; i < 9; i++) {
+    const key = `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, '0')}`;
+    monthOptions.push({ key, label: dd.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) });
+    dd.setMonth(dd.getMonth() + 1);
+  }
+  const startLabel = (() => {
+    if (!startMonth) return 'soon';
+    const [y, m] = startMonth.split('-');
+    return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  })();
+
+  const centerName = centerConfig?.name || 'Mathnasium';
+  const locationLine = [centerConfig?.city, centerConfig?.province].filter(Boolean).join(', ');
+
+  const template = `${centerName} is hiring a ${role}!
+
+About us
+${centerName}${locationLine ? ` (${locationLine})` : ''} helps K–12 students build math confidence and skill. We're a small, close-knit team that plans staffing 4 months ahead so nobody gets overworked.
+
+The role
+• Position: ${role}
+• Start: ${startLabel}
+• Hours: ~${hoursRange} hours/week
+• Location: In-centre${role === 'Online Instructor' ? '' : ' (online sessions also available)'}
+
+What we're looking for
+• Strong math skills — comfortable up through Algebra II${role.includes('Highschool') ? ' / Pre-Calc' : ''}
+• Patience and clarity with students of all ages
+• Reliable, on-time, takes ownership
+• Bonus: previous tutoring or coaching experience
+
+What you'll get
+• Flexible schedule built around your school/work commitments
+• Real mentorship and career coaching — we want you to grow
+• A team that has your back
+
+How to apply
+Send a resume and a short note about why this role suits you to ${contactEmail || '[your email]'}.
+
+#hiring #tutoring #mathjobs`;
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(template);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: do nothing; user can select+copy manually.
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="flex w-full max-w-2xl max-h-[90vh] flex-col overflow-hidden rounded-2xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-amber-50 to-white px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-amber-100 p-2 text-amber-600"><Briefcase size={18} /></div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Draft a job posting</h3>
+              <p className="mt-0.5 text-xs text-gray-500">Fill in the role and dates — we'll generate a posting you can drop straight into Indeed, Handshake, or social.</p>
+            </div>
+          </div>
+          <button type="button" onClick={onClose} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Form */}
+        <div className="overflow-y-auto px-5 py-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Role</label>
+              <select value={role} onChange={(e) => setRole(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none">
+                {SHIFT_ASSIGNMENTS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Start month</label>
+              <select value={startMonth} onChange={(e) => setStartMonth(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:outline-none">
+                <option value="">— Pick a month —</option>
+                {monthOptions.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Hours / week</label>
+              <input value={hoursRange} onChange={(e) => setHoursRange(e.target.value)}
+                placeholder="10–15"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none" />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-bold uppercase tracking-wide text-gray-500">Contact email</label>
+              <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:outline-none" />
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div>
+            <div className="mb-1 flex items-center justify-between">
+              <label className="text-xs font-bold uppercase tracking-wide text-gray-500">Posting preview</label>
+              <button type="button" onClick={handleCopy}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50">
+                {copied ? <><CheckCircle size={12} className="text-emerald-600" /> Copied</> : <><Copy size={12} /> Copy</>}
+              </button>
+            </div>
+            <textarea
+              readOnly
+              value={template}
+              rows={14}
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs font-mono text-gray-800 focus:outline-none"
+              onFocus={(e) => e.target.select()}
+            />
+            <p className="mt-1 text-xs text-gray-400">Edit the fields above and the preview regenerates.</p>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3">
+          <button type="button" onClick={onClose}
+            className="rounded-lg px-4 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100">Close</button>
+          <button type="button" onClick={handleCopy}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-amber-700">
+            {copied ? <><CheckCircle size={14} /> Copied!</> : <><Copy size={14} /> Copy posting</>}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -142,6 +142,19 @@ export function AuthProvider({ children }) {
     setProfile(null);
   };
 
+  /**
+   * Re-fetch the current user's profile from Firestore. Call this after
+   * writing a field on /users/{uid} from another component so the rest of
+   * the app sees the change without requiring a page reload. AuthContext
+   * loads the profile once at sign-in, so without this it would stay stale
+   * until the next sign-in.
+   */
+  const refreshProfile = async () => {
+    if (!user?.uid) return;
+    const snap = await getDoc(doc(db, 'users', user.uid));
+    setProfile(snap.exists() ? snap.data() : null);
+  };
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -151,6 +164,7 @@ export function AuthProvider({ children }) {
       signup,
       logout,
       resetPassword,
+      refreshProfile,
       // Currently-active center for this user. Backed by real state so
       // switchCenter() reactively re-fetches every page's data.
       activeCenterId,

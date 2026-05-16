@@ -6,11 +6,21 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import TodaysSnapshot from '../components/TodaysSnapshot';
+import CareerPlanModal from '../components/CareerPlanModal';
 import {
   CalendarDays, MessageSquare, Users, Clock,
   ChevronRight, Megaphone, Pin, ArrowRight,
   Building2, Laptop, Wifi,
+  TrendingUp, CheckCircle2,
 } from 'lucide-react';
+
+// Friendly 'YYYY-MM' → 'August 2026' for the 4-month plan status line.
+function formatPlanMonth(key) {
+  if (!key) return 'soon';
+  const [y, m] = key.split('-');
+  const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1);
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
 
 const CATEGORY_STYLES = {
   general:  { bg: 'bg-gray-100',   text: 'text-gray-700',   label: 'General' },
@@ -62,6 +72,7 @@ export default function Home() {
   const { profile, activeCenterId } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [careerPlanOpen, setCareerPlanOpen] = useState(false);
 
   // Local-time today (avoids UTC edge cases for Pacific time)
   const todayStr = format(new Date(), 'yyyy-MM-dd');
@@ -106,6 +117,24 @@ export default function Home() {
   const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
   const isOwner = profile?.role === 'owner';
+  const isStaff = profile?.uid && profile?.role !== 'owner' && profile?.role !== 'super_admin';
+
+  // 4-month plan staleness. Asking once a quarter (90 days) is the cadence
+  // that catches life changes without nagging. Captured at mount via lazy
+  // state init so the React purity rule doesn't flag Date.now() in render
+  // — staying open across midnight won't roll the day, but a reload will.
+  const [nowMs] = useState(() => Date.now());
+  const plan = profile?.careerPlan;
+  const planUpdatedMs = plan?.updatedAt?.seconds ? plan.updatedAt.seconds * 1000 : 0;
+  const planAgeDays = planUpdatedMs ? Math.floor((nowMs - planUpdatedMs) / 86_400_000) : null;
+  const planStale = !plan || !plan.updatedAt || planAgeDays > 90;
+  const planStatus = plan?.stayingIn4Months === 'yes'
+    ? 'Staying for the next 4 months'
+    : plan?.stayingIn4Months === 'unsure'
+      ? 'Unsure about the next 4 months'
+      : plan?.stayingIn4Months === 'no'
+        ? `Planning to leave by ${formatPlanMonth(plan.expectedDepartureMonth)}`
+        : null;
 
   return (
     // Owners see a wider container because Today's Snapshot includes the
@@ -121,6 +150,56 @@ export default function Home() {
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
         </p>
       </div>
+
+      {/* ── 4-month plan banner (staff only) ── */}
+      {isStaff && (
+        planStale ? (
+          <div className="rounded-2xl border-2 border-purple-200 bg-gradient-to-r from-purple-50 to-white p-5 shadow-sm">
+            <div className="flex items-start gap-3">
+              <div className="shrink-0 rounded-lg bg-purple-100 p-2 text-purple-600">
+                <TrendingUp size={18} />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-sm font-bold text-gray-900">
+                  {plan ? 'Your 4-month plan is out of date' : 'Help us plan 4 months ahead'}
+                </h3>
+                <p className="mt-0.5 text-xs text-gray-600">
+                  Let us know if you're planning to stay, considering leaving, or unsure
+                  {' — '}plus any career goals we can support. Takes about a minute and helps us hire ahead so you're never overworked.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setCareerPlanOpen(true)}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-purple-700 transition-colors"
+                >
+                  <TrendingUp size={14} /> {plan ? 'Update my plan' : 'Set my plan'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center gap-3 rounded-xl border bg-white px-4 py-3 shadow-sm">
+            <div className="shrink-0 rounded-lg bg-emerald-100 p-1.5 text-emerald-600">
+              <CheckCircle2 size={14} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-gray-800">
+                4-month plan: {planStatus || 'Submitted'}
+              </p>
+              <p className="text-xs text-gray-400">
+                Updated {planAgeDays === 0 ? 'today' : planAgeDays === 1 ? 'yesterday' : `${planAgeDays} days ago`}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setCareerPlanOpen(true)}
+              className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              Update
+            </button>
+          </div>
+        )
+      )}
 
       {/* ── Today's Snapshot (owners only) ── */}
       {isOwner && <TodaysSnapshot />}
@@ -323,6 +402,11 @@ export default function Home() {
         </div>
       </div>
 
+      {/* 4-month plan modal — opened from the banner above. */}
+      <CareerPlanModal
+        open={careerPlanOpen}
+        onClose={() => setCareerPlanOpen(false)}
+      />
     </div>
   );
 }
