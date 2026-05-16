@@ -6,7 +6,7 @@ import {
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
-import { isOperatingDay } from '../lib/centerConfig';
+import { isOperatingDay, isCenterClosedOn, closureReason } from '../lib/centerConfig';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
@@ -1209,7 +1209,8 @@ export default function Schedule() {
             const inMonth = isSameMonth(day, currentMonth);
             const state = getCellState(dateStr);
             const isPast = dateStr < todayStr;
-            const isClosed = !isOperatingDay(day, centerConfig);
+            const isClosed = isCenterClosedOn(day, centerConfig);
+            const closedLabel = isClosed ? closureReason(day, centerConfig) : null;
 
             let cellBg = 'bg-white hover:bg-gray-50/80';
             let content = null;
@@ -1285,14 +1286,16 @@ export default function Schedule() {
               clickable = false;
             }
 
-            // Closed days (center isn't open this weekday) — greyed and
-            // locked so nobody can add availability or shifts on them.
+            // Closed days (non-operating weekday OR a configured holiday)
+            // — greyed and locked so nobody can add availability or shifts.
+            // We show the closure reason when there's one (e.g. the holiday
+            // name) so staff understand why the day is unavailable.
             if (isClosed) {
               clickable = false;
               cellBg = 'bg-gray-100/70';
               if (!content) content = (
-                <p className="mt-2 text-center text-[10px] font-medium uppercase tracking-wide text-gray-300">
-                  Closed
+                <p className="mt-2 text-center text-[10px] font-medium uppercase tracking-wide text-gray-400">
+                  {closedLabel || 'Closed'}
                 </p>
               );
             }
@@ -1401,7 +1404,7 @@ export default function Schedule() {
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
           fullDayByDow={fullDayByDow}
-          isClosedDay={!isOperatingDay(selectedDate, centerConfig)}
+          isClosedDay={isCenterClosedOn(selectedDate, centerConfig)}
           onClose={() => setSelectedDate(null)}
           onSaveAvail={handleSaveAvail}
           onDeleteAvail={handleDeleteAvail}

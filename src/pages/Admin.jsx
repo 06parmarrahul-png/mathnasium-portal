@@ -21,7 +21,8 @@ import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS,
-  assignmentFor, assignmentColorHex, assignmentShort, contrastText, isOperatingDay,
+  assignmentFor, assignmentColorHex, assignmentShort, contrastText,
+  isOperatingDay, holidayFor,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -542,12 +543,13 @@ export default function Admin() {
 
   const handleDeleteOpenShift = id => deleteDoc(doc(db, 'openShifts', id));
 
-  // Calendar grid — only the days this center actually operates on
-  // (configured in Super Admin → Operating Days). Sunday is dropped for
-  // centers like Langley that are closed then.
+  // Calendar grid — only days this centre actually operates on (Super Admin
+  // → Operating Days) and is not closed for a holiday (Super Admin →
+  // Holidays). Closed dates fall out of the grid entirely; the holiday list
+  // surfaces on the Schedule calendar where staff see them.
   const weekDays = useMemo(() =>
     Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-      .filter(d => isOperatingDay(d, centerConfig)),
+      .filter(d => isOperatingDay(d, centerConfig) && !holidayFor(d, centerConfig)),
   [weekStart, centerConfig]);
 
   const totalAssignedHours = useMemo(() => {
@@ -1028,6 +1030,30 @@ export default function Admin() {
     : '';
 
   const totalPayrollHours = payrollSummary.reduce((s, p) => s + p.totalHours, 0);
+
+  // Add / remove a staff member from the salaryStaff list (which the payroll
+  // filter uses to keep salaried people off the hourly sheet). Writes are
+  // merged so the rest of the centre config is untouched.
+  const handleExcludeFromPayroll = async (name) => {
+    if (!activeCenterId || !name) return;
+    const current = Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [];
+    if (current.includes(name)) return;
+    await setDoc(
+      doc(db, 'centers', activeCenterId, 'config', 'main'),
+      { salaryStaff: [...current, name], updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  };
+  const handleIncludeInPayroll = async (name) => {
+    if (!activeCenterId || !name) return;
+    const current = Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [];
+    if (!current.includes(name)) return;
+    await setDoc(
+      doc(db, 'centers', activeCenterId, 'config', 'main'),
+      { salaryStaff: current.filter(n => n !== name), updatedAt: serverTimestamp() },
+      { merge: true },
+    );
+  };
 
   // Export to CSV
   const handleExportPayroll = () => {
@@ -2255,6 +2281,31 @@ export default function Admin() {
             </div>
           )}
 
+          {/* Currently-excluded salary staff. Click × on any chip to add them
+              back to payroll for this period. */}
+          {Array.isArray(centerConfig?.salaryStaff) && centerConfig.salaryStaff.length > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
+              <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+                <UserX size={13} /> Excluded from hourly payroll
+                <span className="text-[10px] font-normal text-amber-700">(salaried — paid outside this sheet)</span>
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {centerConfig.salaryStaff.map(n => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => handleIncludeInPayroll(n)}
+                    title={`Include ${n} on payroll again`}
+                    className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-white px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                  >
+                    {n}
+                    <X size={11} className="text-amber-500" />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Per-person breakdown — with Radius comparison if loaded */}
           {payrollSummary.length === 0 ? (
             <div className="rounded-xl border bg-white p-10 text-center shadow-sm">
@@ -2284,6 +2335,16 @@ export default function Admin() {
                           {isDiscrepant && (
                             <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">⚠ Discrepancy</span>
                           )}
+                          {/* Quick toggle: mark this person as salaried so they
+                              drop off the hourly payroll on the next render. */}
+                          <button
+                            type="button"
+                            onClick={() => handleExcludeFromPayroll(person.name)}
+                            title="Mark as salary staff and exclude from this payroll"
+                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
+                          >
+                            <UserX size={10} /> Exclude
+                          </button>
                         </div>
                       </div>
                       <div className="text-right">

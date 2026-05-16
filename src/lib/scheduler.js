@@ -342,6 +342,13 @@ export function generateSchedule({
   const operatingDays      = (Array.isArray(centerConfig.operatingDays) && centerConfig.operatingDays.length > 0)
                                 ? centerConfig.operatingDays
                                 : DAY_NAMES;
+  // Holiday dates ('YYYY-MM-DD') the centre is closed for — skipped entirely
+  // by the auto-scheduler so nobody gets booked on Christmas / a stat day.
+  const holidayDates = new Set(
+    (Array.isArray(centerConfig.holidays) ? centerConfig.holidays : [])
+      .map(h => h?.date)
+      .filter(Boolean),
+  );
 
   const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
   if (!monthNumber) throw new Error(`Invalid month: ${month}`);
@@ -371,9 +378,11 @@ export function generateSchedule({
     const { dateStr, dayName, dayNumber, weekOfMonth, weekKey } = day;
 
     // Skip days this center is closed (configured in Super Admin → Operating
-    // Days). getDaysInMonth already drops Sundays; this also drops any other
-    // weekday a center doesn't operate on.
+    // Days or → Holidays). getDaysInMonth already drops Sundays; this also
+    // drops any other weekday the centre doesn't operate on, plus any
+    // specific holiday date.
     if (!operatingDays.includes(dayName)) continue;
+    if (holidayDates.has(dateStr)) continue;
 
     // ── 1. Fixed staff for this day ──────────────────────────────────────────
     const fixedToday = getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap);

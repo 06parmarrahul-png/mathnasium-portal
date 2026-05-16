@@ -53,6 +53,14 @@ export const DEFAULT_CENTER_CONFIG = {
   // Super Admin → Operating Days. Every center is closed at least one day.
   operatingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
 
+  // ─── Holidays ──────────────────────────────────────────────────────────
+  // One-off closures (statutory holidays, centre-specific closures, etc.).
+  // Each entry is { date: 'YYYY-MM-DD', name: 'Christmas Day' }. Editable
+  // from Super Admin → Holidays. Holiday dates are dropped from the admin
+  // weekly grid, greyed out on the Schedule calendar, and skipped by the
+  // auto-scheduler — same treatment as a closed weekday.
+  holidays: [],
+
   // ─── Auto-scheduler defaults ───────────────────────────────────────────
   defaultMinPerDay: 8,
   defaultMaxPerDay: 11,
@@ -298,6 +306,10 @@ export function mergeCenterConfig(serverConfig) {
     operatingDays: (Array.isArray(serverConfig.operatingDays) && serverConfig.operatingDays.length > 0)
       ? serverConfig.operatingDays
       : DEFAULT_CENTER_CONFIG.operatingDays,
+    // Holidays default to an empty list — anyone can leave the field unset.
+    holidays: Array.isArray(serverConfig.holidays)
+      ? serverConfig.holidays
+      : DEFAULT_CENTER_CONFIG.holidays,
   };
 }
 
@@ -324,4 +336,55 @@ export function isOperatingDay(day, centerConfig) {
   else if (typeof day === 'number')   name = ALL_WEEKDAYS[day];
   else                                name = day;
   return list.includes(name);
+}
+
+/**
+ * Convert a Date or 'YYYY-MM-DD' string to the canonical date-string key
+ * used for holiday matching. Returns '' for unknowns.
+ */
+function dateKey(date) {
+  if (!date) return '';
+  if (date instanceof Date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(date);
+}
+
+/**
+ * If `date` is one of the center's configured holidays, returns the
+ * matching entry ({ date, name }); otherwise null. `date` may be a Date
+ * or a 'YYYY-MM-DD' string.
+ */
+export function holidayFor(date, centerConfig) {
+  const list = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+  if (list.length === 0) return null;
+  const ds = dateKey(date);
+  if (!ds) return null;
+  return list.find(h => h?.date === ds) || null;
+}
+
+/**
+ * Single check: is the center closed on this date (either a non-operating
+ * weekday or a configured holiday)? Returns true when closed.
+ */
+export function isCenterClosedOn(date, centerConfig) {
+  if (!isOperatingDay(date, centerConfig)) return true;
+  return !!holidayFor(date, centerConfig);
+}
+
+/**
+ * Human-readable closure reason for a date (e.g. "Sunday", "Christmas Day"),
+ * or null when the center is open. Useful for grey-out labels.
+ */
+export function closureReason(date, centerConfig) {
+  if (!isOperatingDay(date, centerConfig)) {
+    if (date instanceof Date)         return ALL_WEEKDAYS[date.getDay()];
+    if (typeof date === 'number')     return ALL_WEEKDAYS[date];
+    return 'Closed';
+  }
+  const h = holidayFor(date, centerConfig);
+  return h ? (h.name || 'Holiday') : null;
 }

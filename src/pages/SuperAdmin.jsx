@@ -12,7 +12,7 @@ import {
 import {
   Shield, ShieldAlert, Globe, Plus, Building2, Users,
   ArrowRight, CheckCircle2, AlertTriangle, Palette, Save, RotateCcw,
-  CalendarDays,
+  CalendarDays, CalendarX, Trash2,
 } from 'lucide-react';
 
 /**
@@ -164,6 +164,12 @@ export default function SuperAdmin() {
           />
 
           <OperatingDaysEditor
+            activeCenterId={activeCenterId}
+            centerConfig={centerConfig}
+            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
+          />
+
+          <HolidaysEditor
             activeCenterId={activeCenterId}
             centerConfig={centerConfig}
             activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
@@ -486,6 +492,180 @@ function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName })
         )}
         {error && <span className="text-xs text-red-600">{error}</span>}
       </div>
+    </div>
+  );
+}
+
+// ─── Sub-component: Holidays editor ──────────────────────────────────────
+
+function HolidaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
+  const [date, setDate] = useState('');
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const holidays = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  const sorted = [...holidays].sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
+  const upcoming = sorted.filter(h => (h?.date || '') >= todayStr);
+  const past     = sorted.filter(h => (h?.date || '') <  todayStr);
+
+  const saveList = async (next) => {
+    setSaving(true);
+    setError('');
+    try {
+      await setDoc(
+        doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { holidays: next, updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    } catch (err) {
+      setError(err?.message || 'Failed to save holidays.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAdd = async () => {
+    setError('');
+    if (!date) { setError('Pick a date.'); return; }
+    if (holidays.some(h => h.date === date)) {
+      setError('That date is already on the list.');
+      return;
+    }
+    const next = [...holidays, { date, name: name.trim() || 'Closed' }];
+    await saveList(next);
+    setDate('');
+    setName('');
+  };
+
+  const handleDelete = async (d) => {
+    const next = holidays.filter(h => h.date !== d);
+    await saveList(next);
+  };
+
+  const fmt = (ds) => {
+    if (!ds) return '';
+    const [y, m, day] = ds.split('-');
+    const d = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(day, 10));
+    return d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const [showPast, setShowPast] = useState(false);
+
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-1 flex items-center gap-2">
+        <CalendarX size={18} className="text-purple-600" />
+        <h3 className="font-semibold text-gray-900">Holidays</h3>
+      </div>
+      <p className="mb-4 text-sm text-gray-500">
+        One-off days <strong>{activeCenterName}</strong> is closed (stat holidays,
+        renovations, etc.). Holiday dates are dropped from the admin grid, greyed
+        out on the Schedule calendar, and skipped by the auto-scheduler.
+      </p>
+
+      {/* Add form */}
+      <div className="mb-4 grid gap-2 sm:grid-cols-[auto_1fr_auto] sm:items-end">
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Name (optional)</label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Christmas Day"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={handleAdd}
+          disabled={saving || !date}
+          className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+        >
+          <Plus size={14} /> Add
+        </button>
+      </div>
+      {error && (
+        <p className="mb-3 flex items-center gap-1 text-xs text-red-600">
+          <AlertTriangle size={12} /> {error}
+        </p>
+      )}
+
+      {/* Upcoming list */}
+      {upcoming.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">
+          No upcoming holidays.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {upcoming.map(h => (
+            <div key={h.date} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+              <CalendarX size={14} className="shrink-0 text-purple-500" />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-gray-800">{h.name || 'Closed'}</p>
+                <p className="text-xs text-gray-500">{fmt(h.date)}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleDelete(h.date)}
+                disabled={saving}
+                className="rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-500"
+                title="Remove"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Past collapsible */}
+      {past.length > 0 && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setShowPast(s => !s)}
+            className="text-xs font-semibold text-gray-500 hover:text-gray-800"
+          >
+            {showPast ? '− Hide' : '+ Show'} past holidays ({past.length})
+          </button>
+          {showPast && (
+            <div className="mt-2 space-y-1.5">
+              {past.slice().reverse().map(h => (
+                <div key={h.date} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-white px-3 py-2 opacity-70">
+                  <CalendarX size={14} className="shrink-0 text-gray-400" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm text-gray-700">{h.name || 'Closed'}</p>
+                    <p className="text-xs text-gray-400">{fmt(h.date)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(h.date)}
+                    disabled={saving}
+                    className="rounded p-1 text-gray-300 hover:bg-red-50 hover:text-red-500"
+                    title="Remove"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
