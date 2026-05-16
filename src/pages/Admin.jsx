@@ -20,9 +20,9 @@ import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
-  LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS,
+  LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
-  isOperatingDay, holidayFor,
+  isOperatingDay, holidayFor, ALL_WEEKDAYS,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -2777,6 +2777,54 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
     .slice(0, 12);
   const maxLeaderHrs = Math.max(1, ...leaderboard.map(p => p.hours));
 
+  // ─── Coverage by day of week (rolling 8-week look-back) ────────────────
+  // For each operating day, count distinct instructors scheduled that date,
+  // then average across the days observed. Compares to defaultMinPerDay so
+  // owners can see at a glance which weekdays are routinely under-staffed.
+  const COVERAGE_WEEKS = 8;
+  const coverageLookbackStart = (() => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - COVERAGE_WEEKS * 7);
+    return format(d, 'yyyy-MM-dd');
+  })();
+  // Distinct instructor count per date in the look-back window.
+  const dateInstructors = {};
+  for (const s of posted) {
+    if (s.date < coverageLookbackStart || s.date > todayStr) continue;
+    if (!dateInstructors[s.date]) dateInstructors[s.date] = new Set();
+    if (s.userName) dateInstructors[s.date].add(s.userName);
+  }
+  // Bucket those counts by weekday name, skipping closed days & holidays.
+  const byDow = {}; // 'Monday' -> [4, 5, 3, ...]
+  for (const [date, names] of Object.entries(dateInstructors)) {
+    const d = new Date(date + 'T12:00:00');
+    if (!isOperatingDay(d, centerConfig)) continue;
+    if (holidayFor(d, centerConfig)) continue;
+    const dayName = ALL_WEEKDAYS[d.getDay()];
+    if (!byDow[dayName]) byDow[dayName] = [];
+    byDow[dayName].push(names.size);
+  }
+  const coverageTarget = Number(centerConfig?.defaultMinPerDay) || 8;
+  const operatingDaysList = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0)
+    ? centerConfig.operatingDays
+    : DEFAULT_CENTER_CONFIG.operatingDays;
+  const coverageRows = operatingDaysList.map(day => {
+    const counts = byDow[day] || [];
+    const samples = counts.length;
+    const avg = samples > 0 ? counts.reduce((a, b) => a + b, 0) / samples : 0;
+    const worst = samples > 0 ? Math.min(...counts) : 0;
+    const best  = samples > 0 ? Math.max(...counts) : 0;
+    const shortDays = counts.filter(c => c < coverageTarget).length;
+    return {
+      day, avg, worst, best, samples, shortDays,
+      pct: samples > 0 ? avg / coverageTarget : 0,
+    };
+  });
+  const coverageHasData = coverageRows.some(r => r.samples > 0);
+  // Normalise bar widths against whichever is bigger — the target line or
+  // the best-observed-day — so the threshold marker always stays in view.
+  const coverageScale = Math.max(coverageTarget, ...coverageRows.map(r => r.best || 0));
+
   // Manual student count + edit modal.
   const studentCount     = Number(centerConfig?.activeStudentCount ?? 0) || 0;
   const studentUpdatedAt = centerConfig?.studentCountUpdatedAt;
@@ -3101,6 +3149,93 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* ── Coverage by Day of Week ─────────────────────────────────────── */}
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="mb-4 flex items-baseline justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Average Coverage by Day</h3>
+            <p className="mt-0.5 text-xs text-gray-500">
+              Last {COVERAGE_WEEKS} weeks · target of {coverageTarget} instructors per day
+              {' '}(set in Center Settings).
+            </p>
+          </div>
+        </div>
+
+        {!coverageHasData ? (
+          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
+            No posted schedules in the last {COVERAGE_WEEKS} weeks yet — once you start posting, this fills in.
+          </p>
+        ) : (
+          <div className="space-y-2.5">
+            {coverageRows.map(r => {
+              const filledPct = coverageScale > 0 ? Math.min(100, (r.avg / coverageScale) * 100) : 0;
+              const targetPct = coverageScale > 0 ? (coverageTarget / coverageScale) * 100 : 0;
+              const status = r.samples === 0
+                ? 'none'
+                : r.avg < coverageTarget * 0.85
+                  ? 'short'
+                  : r.avg < coverageTarget
+                    ? 'tight'
+                    : 'ok';
+              const barColor = status === 'short'
+                ? 'bg-rose-500'
+                : status === 'tight'
+                  ? 'bg-amber-500'
+                  : status === 'ok'
+                    ? 'bg-emerald-500'
+                    : 'bg-gray-300';
+              const statusLabel = r.samples === 0
+                ? 'No data'
+                : r.shortDays > 0
+                  ? `Short on ${r.shortDays} of ${r.samples} ${r.samples === 1 ? 'day' : 'days'}`
+                  : `Hit target on all ${r.samples} ${r.samples === 1 ? 'day' : 'days'}`;
+              return (
+                <div key={r.day}>
+                  <div className="mb-0.5 flex items-baseline justify-between text-xs">
+                    <span className="font-semibold text-gray-700">{r.day}</span>
+                    <span className="text-gray-500">
+                      <span className={`font-semibold ${status === 'short' ? 'text-rose-600' : status === 'tight' ? 'text-amber-700' : status === 'ok' ? 'text-emerald-700' : 'text-gray-500'}`}>
+                        {r.samples > 0 ? r.avg.toFixed(1) : '—'}
+                      </span>
+                      <span className="text-gray-400"> avg · {statusLabel}</span>
+                    </span>
+                  </div>
+                  <div className="relative h-3 rounded-full bg-gray-100 overflow-hidden">
+                    <div
+                      className={`h-full rounded-full transition-all ${barColor}`}
+                      style={{ width: `${filledPct}%` }}
+                    />
+                    {/* Dashed target threshold */}
+                    <div
+                      className="absolute top-0 bottom-0 border-l-2 border-dashed border-gray-500/60"
+                      style={{ left: `${targetPct}%` }}
+                      title={`Target: ${coverageTarget}`}
+                    />
+                  </div>
+                  {r.samples > 0 && (
+                    <p className="mt-1 text-[10px] text-gray-400">
+                      Range {r.worst}–{r.best} over {r.samples} observed {r.samples === 1 ? 'day' : 'days'}
+                    </p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {coverageHasData && (
+          <p className="mt-4 flex items-center gap-1.5 text-xs text-gray-500">
+            <span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> below target
+            <span className="mx-1">·</span>
+            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> tight
+            <span className="mx-1">·</span>
+            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> meeting target
+            <span className="mx-2 text-gray-300">|</span>
+            <span className="text-gray-400">dashed line = target ({coverageTarget})</span>
+          </p>
         )}
       </div>
 
