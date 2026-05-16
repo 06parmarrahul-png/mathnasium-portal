@@ -544,12 +544,12 @@ export default function Admin() {
   const handleDeleteOpenShift = id => deleteDoc(doc(db, 'openShifts', id));
 
   // Calendar grid — only days this centre actually operates on (Super Admin
-  // → Operating Days) and is not closed for a holiday (Super Admin →
-  // Holidays). Closed dates fall out of the grid entirely; the holiday list
-  // surfaces on the Schedule calendar where staff see them.
+  // → Operating Days). Holidays stay in the grid so it's obvious at a glance
+  // when a day is a stat closure vs a regular off-day; each holiday column
+  // renders as "Closed" with the holiday name below.
   const weekDays = useMemo(() =>
     Array.from({ length: 7 }, (_, i) => addDays(weekStart, i))
-      .filter(d => isOperatingDay(d, centerConfig) && !holidayFor(d, centerConfig)),
+      .filter(d => isOperatingDay(d, centerConfig)),
   [weekStart, centerConfig]);
 
   const totalAssignedHours = useMemo(() => {
@@ -1330,20 +1330,30 @@ export default function Admin() {
                     {weekDays.map(d => {
                       const isToday = isSameDay(d, new Date());
                       const ds = format(d, 'yyyy-MM-dd');
+                      const holiday = holidayFor(d, centerConfig);
                       const portalNames = new Set(users.map(u => u.displayName));
                       const dayTotalHrs = shifts
                         .filter(s => s.date === ds && s.status !== 'draft' && portalNames.has(s.userName))
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
+                      const headerBg = holiday
+                        ? 'bg-amber-50 text-amber-700'
+                        : isToday
+                          ? 'bg-red-50 text-red-700'
+                          : 'bg-gray-50 text-gray-600';
                       return (
-                        <th key={d.toISOString()} className={`sticky top-0 z-30 text-center py-2 px-1 font-medium shadow-[inset_0_-1px_0_#e5e7eb] ${isToday ? 'bg-red-50 text-red-700' : 'bg-gray-50 text-gray-600'}`}>
+                        <th key={d.toISOString()} className={`sticky top-0 z-30 text-center py-2 px-1 font-medium shadow-[inset_0_-1px_0_#e5e7eb] ${headerBg}`}>
                           <div className="text-xs uppercase tracking-wide">{format(d, 'EEE')}</div>
-                          <div className={`text-base font-bold ${isToday ? 'text-red-600' : 'text-gray-800'}`}>{format(d, 'd')}</div>
-                          {dayHrsDisplay > 0 && (
+                          <div className={`text-base font-bold ${holiday ? 'text-amber-700' : isToday ? 'text-red-600' : 'text-gray-800'}`}>{format(d, 'd')}</div>
+                          {holiday ? (
+                            <div className="mx-auto mt-0.5 max-w-full truncate text-[10px] font-semibold uppercase tracking-wide text-amber-700" title={`Closed — ${holiday.name}`}>
+                              {holiday.name || 'Closed'}
+                            </div>
+                          ) : dayHrsDisplay > 0 ? (
                             <div className={`text-xs font-semibold mt-0.5 ${isToday ? 'text-red-500' : 'text-purple-600'}`}>
                               {dayHrsDisplay}h
                             </div>
-                          )}
+                          ) : null}
                         </th>
                       );
                     })}
@@ -1362,6 +1372,16 @@ export default function Admin() {
                     </td>
                     {weekDays.map(d => {
                       const ds = format(d, 'yyyy-MM-dd');
+                      const holiday = holidayFor(d, centerConfig);
+                      // On holidays the centre is closed — no open shifts,
+                      // no add button. Just a calm "Closed" marker.
+                      if (holiday) {
+                        return (
+                          <td key={ds} className="bg-amber-50/40 px-1 py-2 text-center align-middle text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                            Closed
+                          </td>
+                        );
+                      }
                       const dayOpenShifts = openShiftsList.filter(s => s.date === ds);
                       return (
                         <td key={ds} className="px-1 py-1 align-top">
@@ -1415,6 +1435,17 @@ export default function Admin() {
                         </td>
                         {weekDays.map(d => {
                           const ds = format(d, 'yyyy-MM-dd');
+                          const holiday = holidayFor(d, centerConfig);
+                          // Holiday column — empty greyed cell. The header
+                          // already labels it "Closed — [holiday]", so the
+                          // per-instructor cells just stay quiet.
+                          if (holiday) {
+                            return (
+                              <td key={ds} className="bg-amber-50/40 px-1 py-2 text-center align-middle text-[10px] uppercase tracking-wide text-amber-500/70">
+                                —
+                              </td>
+                            );
+                          }
                           const dayShifts = shifts.filter(s => s.userId === u.uid && s.date === ds);
                           const dayAvail = availability.filter(a => a.userId === u.uid && a.date === ds);
                           const hasAvail = dayAvail.length > 0;
@@ -1488,6 +1519,14 @@ export default function Admin() {
                     <td className="px-4 py-2 border-r text-xs font-semibold text-gray-600">Day Totals</td>
                     {weekDays.map(d => {
                       const ds = format(d, 'yyyy-MM-dd');
+                      const holiday = holidayFor(d, centerConfig);
+                      if (holiday) {
+                        return (
+                          <td key={ds} className="bg-amber-50/40 py-2 text-center text-[10px] font-semibold uppercase tracking-wide text-amber-600">
+                            Closed
+                          </td>
+                        );
+                      }
                       const portalNames2 = new Set(users.map(u => u.displayName));
                       const dayShiftsAll = shifts.filter(s => s.date === ds && s.status !== 'draft');
                       const dayShiftsPortal = dayShiftsAll.filter(s => portalNames2.has(s.userName));

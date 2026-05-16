@@ -496,6 +496,76 @@ function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName })
   );
 }
 
+// ─── Canadian holiday calculators (used by the auto-fill button) ─────────
+
+// Anonymous Gregorian (Meeus/Jones/Butcher) Easter algorithm — returns the
+// Date of Western Easter Sunday for the given year. Good Friday is 2 days
+// before; everything else we need is a fixed date or an Nth weekday.
+function easterDate(year) {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(year, month - 1, day);
+}
+
+// Nth occurrence of weekday (0=Sun..6=Sat) in monthIdx (0=Jan..11=Dec).
+function nthWeekdayOfMonth(year, monthIdx, weekday, n) {
+  const first = new Date(year, monthIdx, 1);
+  const offset = (weekday - first.getDay() + 7) % 7;
+  return new Date(year, monthIdx, 1 + offset + (n - 1) * 7);
+}
+
+// The Monday falling on or before a given date — Victoria Day's definition.
+function mondayOnOrBefore(year, monthIdx, day) {
+  const d = new Date(year, monthIdx, day);
+  const back = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - back);
+  return d;
+}
+
+function toDateKey(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+}
+
+/**
+ * BC statutory holidays for the given year. Returns an array of
+ * { date: 'YYYY-MM-DD', name } in chronological order.
+ * Covers New Year's, Family Day, Good Friday, Victoria Day, Canada Day,
+ * BC Day, Labour Day, Thanksgiving, Remembrance Day, Christmas, Boxing Day.
+ */
+function canadianStatHolidays(year) {
+  const easter = easterDate(year);
+  const goodFriday = new Date(easter);
+  goodFriday.setDate(easter.getDate() - 2);
+  return [
+    { date: `${year}-01-01`, name: "New Year's Day" },
+    { date: toDateKey(nthWeekdayOfMonth(year, 1, 1, 3)), name: 'Family Day' },
+    { date: toDateKey(goodFriday),                       name: 'Good Friday' },
+    { date: toDateKey(mondayOnOrBefore(year, 4, 24)),    name: 'Victoria Day' },
+    { date: `${year}-07-01`, name: 'Canada Day' },
+    { date: toDateKey(nthWeekdayOfMonth(year, 7, 1, 1)), name: 'BC Day' },
+    { date: toDateKey(nthWeekdayOfMonth(year, 8, 1, 1)), name: 'Labour Day' },
+    { date: toDateKey(nthWeekdayOfMonth(year, 9, 1, 2)), name: 'Thanksgiving' },
+    { date: `${year}-11-11`, name: 'Remembrance Day' },
+    { date: `${year}-12-25`, name: 'Christmas Day' },
+    { date: `${year}-12-26`, name: 'Boxing Day' },
+  ];
+}
+
 // ─── Sub-component: Holidays editor ──────────────────────────────────────
 
 function HolidaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
@@ -545,6 +615,22 @@ function HolidaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
   const handleDelete = async (d) => {
     const next = holidays.filter(h => h.date !== d);
     await saveList(next);
+  };
+
+  // One-click: drop every BC stat holiday for the current and next calendar
+  // year into the list. Dedupes against whatever's already there so
+  // clicking twice is a no-op.
+  const autoFillYears = [new Date().getFullYear(), new Date().getFullYear() + 1];
+  const handleAutoFill = async () => {
+    const all = autoFillYears.flatMap(y => canadianStatHolidays(y));
+    const existing = new Set(holidays.map(h => h?.date));
+    const toAdd = all.filter(h => !existing.has(h.date));
+    if (toAdd.length === 0) {
+      setError('All Canadian holidays for these years are already on the list.');
+      setTimeout(() => setError(''), 3000);
+      return;
+    }
+    await saveList([...holidays, ...toAdd]);
   };
 
   const fmt = (ds) => {
@@ -603,6 +689,22 @@ function HolidaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
           <AlertTriangle size={12} /> {error}
         </p>
       )}
+
+      {/* One-click BC stat holiday auto-fill (current year + next year) */}
+      <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-purple-100 bg-purple-50/60 px-3 py-2">
+        <p className="min-w-0 text-xs text-purple-900">
+          Don't want to type them all in? Auto-fill BC statutory holidays for{' '}
+          <strong>{autoFillYears[0]}</strong> and <strong>{autoFillYears[1]}</strong>.
+        </p>
+        <button
+          type="button"
+          onClick={handleAutoFill}
+          disabled={saving}
+          className="shrink-0 inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+        >
+          <CalendarDays size={13} /> Auto-fill
+        </button>
+      </div>
 
       {/* Upcoming list */}
       {upcoming.length === 0 ? (
