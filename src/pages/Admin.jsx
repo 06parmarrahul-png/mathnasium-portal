@@ -10,7 +10,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3,
-  Users, TrendingUp, Activity, Briefcase, Copy,
+  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -26,6 +26,7 @@ import {
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
+import HolidaysEditor from '../components/HolidaysEditor';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -501,13 +502,19 @@ export default function Admin() {
     return () => { u1(); u2(); u3(); u4(); u5(); };
   }, [activeCenterId]);
 
+  // Owners, super-admins, and the shared "Admin Team" account are internal —
+  // they shouldn't show up on the weekly grid, the Manage Users list, or
+  // any other "actual working staff" surface.
+  const isVisibleStaff = (u) =>
+    u && u.role !== 'owner' && u.role !== 'super_admin' && u.displayName !== 'Admin Team';
+
   const approvedUsers = users
-    .filter(u => u.approved && u.role !== 'owner')
+    .filter(u => u.approved && isVisibleStaff(u))
     .sort((a, b) => {
       const firstName = name => (name || '').split(' ')[0].toLowerCase();
       return firstName(a.displayName).localeCompare(firstName(b.displayName));
     });
-  const pendingUsers  = users.filter(u => !u.approved);
+  const pendingUsers  = users.filter(u => !u.approved && isVisibleStaff(u));
 
   // User management
   const handleApprove = uid => updateDoc(doc(db, 'users', uid), { approved: true });
@@ -974,6 +981,18 @@ export default function Admin() {
     new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [])
   ), [centerConfig]);
 
+  // Owners, super-admins, and the shared "Admin Team" account never belong
+  // on payroll either — keep their names out by display name (which is what
+  // shifts reference).
+  const hiddenFromOps = useMemo(() => {
+    const set = new Set();
+    for (const u of users) {
+      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.displayName === 'Admin Team';
+      if (hidden && u.displayName) set.add(u.displayName);
+    }
+    return set;
+  }, [users]);
+
   // Payroll summary — all shifts in the selected pay period grouped by person
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
@@ -981,7 +1000,8 @@ export default function Admin() {
       s.date >= payStart &&
       s.date <= payEnd &&
       s.status !== 'draft' &&
-      !salaryStaff.has(s.userName)
+      !salaryStaff.has(s.userName) &&
+      !hiddenFromOps.has(s.userName)
     );
 
     // Also include fixed staff from FIXED_SCHEDULES who may not have Firestore shifts yet
@@ -1022,7 +1042,7 @@ export default function Admin() {
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, users, payStart, payEnd, salaryStaff]);
+  }, [shifts, users, payStart, payEnd, salaryStaff, hiddenFromOps]);
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd
@@ -1227,6 +1247,9 @@ export default function Admin() {
     { key: 'scheduler',    label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
     { key: 'payroll',      label: 'Payroll',        icon: DollarSign },
     { key: 'requests',     label: 'Requests',       icon: CalendarRange },
+    // Holidays is visible to all admin-panel roles (admin / owner / super-admin)
+    // so anyone who manages day-to-day ops can add a closure.
+    { key: 'holidays',     label: 'Holidays',       icon: CalendarX },
     // Analytics is owner / super-admin only — strategic view, not daily ops.
     ...(canSeeCenterSettings
       ? [{ key: 'analytics', label: 'Analytics', icon: BarChart3 }]
@@ -2628,6 +2651,15 @@ export default function Admin() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── HOLIDAYS ───────────────────────────────────────────────────────── */}
+      {tab === 'holidays' && (
+        <HolidaysEditor
+          activeCenterId={activeCenterId}
+          centerConfig={centerConfig}
+          activeCenterName={centerConfig?.name || activeCenterId}
+        />
       )}
 
       {/* ── ANALYTICS ──────────────────────────────────────────────────────── */}
