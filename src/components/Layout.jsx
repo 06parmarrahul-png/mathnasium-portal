@@ -8,7 +8,7 @@ import MigrationBanner from './MigrationBanner';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
-  Briefcase, Shield,
+  Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -88,22 +88,78 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
+  // Tab query param (used to match active state for Center Analytics /
+  // Center Settings sidebar items that deep-link into the Admin Panel).
+  const tabParam = new URLSearchParams(location.search).get('tab');
+
   // Build nav based on role.
-  // - Owners run the business and don't typically take individual shifts;
-  //   they skip the personal Scheduling page (consistent with prior behavior).
-  // - Admins (operations) DO see personal scheduling.
-  // - Instructors see personal scheduling.
-  const baseItems = [
-    { to: '/',              label: 'Home',          icon: House },
-    { to: '/announcements', label: 'Announcements', icon: Megaphone },
-    { to: '/schedule',      label: 'Scheduling',    icon: CalendarDays },
-    { to: '/shift-board',   label: 'Shift Board',   icon: Briefcase, badge: boardCount },
-    { to: '/chat',          label: 'Chat',          icon: MessageSquare },
-  ];
-  const filteredNav = isOwner ? baseItems.filter(i => i.to !== '/schedule') : baseItems;
-  const adminItems = canSeeAdminPanel ? [{ to: '/admin', label: 'Admin Panel', icon: Settings }] : [];
-  const superAdminItems = isSuperAdmin ? [{ to: '/super-admin', label: 'Super Admin', icon: Shield }] : [];
-  const items = [...filteredNav, ...adminItems, ...superAdminItems];
+  // Super-admins get a categorised view (Owner / Admin) tuned to running
+  // the platform across centres. Everyone else gets the original flat list,
+  // with Platform Chat added for owner / admin so they have a direct line
+  // to the product team without instructors seeing it.
+  let navSections;
+  if (isSuperAdmin) {
+    navSections = [
+      {
+        label: 'Owner',
+        items: [
+          { to: '/',                    label: 'Home',             icon: House },
+          { to: '/announcements',       label: 'Announcements',    icon: Megaphone },
+          { to: '/admin?tab=analytics', label: 'Center Analytics', icon: BarChart3, matchTab: 'analytics' },
+          { to: '/admin?tab=settings',  label: 'Center Settings',  icon: Settings,  matchTab: 'settings' },
+          { to: '/platform-revenue',    label: 'Platform Revenue', icon: DollarSign },
+        ],
+      },
+      {
+        label: 'Admin',
+        items: [
+          { to: '/admin',         label: 'Admin Panel',    icon: Briefcase, matchTab: null, adminBare: true },
+          { to: '/notifications', label: 'Notifications',  icon: Bell },
+          { to: '/platform-chat', label: 'Platform Chat',  icon: Headphones },
+          { to: '/super-admin',   label: 'Manage Centres', icon: Building2 },
+        ],
+      },
+    ];
+  } else {
+    const base = [
+      { to: '/',              label: 'Home',          icon: House },
+      { to: '/announcements', label: 'Announcements', icon: Megaphone },
+      { to: '/schedule',      label: 'Scheduling',    icon: CalendarDays },
+      { to: '/shift-board',   label: 'Shift Board',   icon: Briefcase, badge: boardCount },
+      { to: '/chat',          label: 'Chat',          icon: MessageSquare },
+    ];
+    // Owners run the business and don't typically take individual shifts —
+    // they skip the personal Scheduling page (consistent with prior behavior).
+    const filteredBase = isOwner ? base.filter(i => i.to !== '/schedule') : base;
+    // Owners + admins also get Platform Chat — their channel to support /
+    // feature requests. Instructors don't see this entry.
+    if (isOwner || isAdmin) {
+      filteredBase.push({ to: '/platform-chat', label: 'Platform Chat', icon: Headphones });
+    }
+    const adminItems = canSeeAdminPanel ? [{ to: '/admin', label: 'Admin Panel', icon: Shield }] : [];
+    navSections = [{
+      label: null,
+      items: [
+        ...filteredBase,
+        ...adminItems,
+        { to: '/notifications', label: 'Notifications', icon: Bell },
+      ],
+    }];
+  }
+
+  // Active-state matcher — handles tab deep-links so Center Analytics and
+  // Center Settings highlight (instead of Admin Panel) when their tab is open.
+  const isActive = (item) => {
+    if (item.adminBare) {
+      // "Bare" Admin Panel = on /admin without an analytics/settings tab.
+      return location.pathname === '/admin'
+        && tabParam !== 'analytics' && tabParam !== 'settings';
+    }
+    if (item.matchTab) {
+      return location.pathname === '/admin' && tabParam === item.matchTab;
+    }
+    return location.pathname === item.to;
+  };
 
   // Role badge for the bottom user card
   const roleLabel = ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor');
@@ -131,35 +187,35 @@ export default function Layout({ children }) {
           <CenterSwitcher />
         </div>
 
-        <nav className="mt-3 flex flex-col gap-1 px-3">
-          {items.map(item => {
-            const active = location.pathname === item.to;
-            return (
-              <Link
-                key={item.to}
-                to={item.to}
-                onClick={() => setOpen(false)}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-              >
-                <item.icon size={18} />
-                <span className="flex-1">{item.label}</span>
-                {item.badge > 0 && (
-                  <span className={`min-w-[20px] text-center rounded-full px-1.5 py-0.5 text-xs font-bold ${active ? 'bg-white text-red-600' : 'bg-orange-500 text-white'}`}>
-                    {item.badge}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-          {/* Notification Preferences link */}
-          <Link
-            to="/notifications"
-            onClick={() => setOpen(false)}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${location.pathname === '/notifications' ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-          >
-            <Bell size={18} />
-            Notifications
-          </Link>
+        <nav className="mt-3 flex flex-col gap-1 px-3 pb-32">
+          {navSections.map((section, idx) => (
+            <div key={section.label || `sec-${idx}`} className={idx > 0 ? 'mt-4' : ''}>
+              {section.label && (
+                <p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                  {section.label}
+                </p>
+              )}
+              {section.items.map(item => {
+                const active = isActive(item);
+                return (
+                  <Link
+                    key={item.to + (item.label || '')}
+                    to={item.to}
+                    onClick={() => setOpen(false)}
+                    className={`mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+                  >
+                    <item.icon size={18} />
+                    <span className="flex-1">{item.label}</span>
+                    {item.badge > 0 && (
+                      <span className={`min-w-[20px] text-center rounded-full px-1.5 py-0.5 text-xs font-bold ${active ? 'bg-white text-red-600' : 'bg-orange-500 text-white'}`}>
+                        {item.badge}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
         <div className="absolute bottom-0 left-0 right-0 border-t border-gray-700 p-4">
           <div className="mb-3 flex items-center gap-3">

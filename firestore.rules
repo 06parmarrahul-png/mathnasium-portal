@@ -49,6 +49,10 @@ service cloud.firestore {
       return profileExists() && profile().role == 'super_admin';
     }
 
+    function isAdmin() {
+      return profileExists() && profile().role == 'admin';
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
@@ -75,12 +79,21 @@ service cloud.firestore {
 
       // Update:
       //   - Owner / super-admin can update any user.
-      //   - User can update their own profile EXCEPT privilege fields
-      //     (role, approved, centerId, centerIds, guaranteed must stay
-      //      whatever the existing doc says).
+      //   - Admin can update operational fields (approve, instructorType,
+      //     subRoles, priority, etc.) but cannot change a user's `role`,
+      //     `centerId`, or `centerIds`, and cannot touch an owner /
+      //     super-admin doc at all (no privilege escalation).
+      //   - Each user can update their own profile EXCEPT privilege fields
+      //     (role, approved, centerId, centerIds, guaranteed stay locked).
       allow update: if isSignedIn() && (
         isOwner() ||
         isSuperAdmin() ||
+        (isAdmin()
+         && resource.data.role != 'owner'
+         && resource.data.role != 'super_admin'
+         && request.resource.data.role      == resource.data.role
+         && request.resource.data.centerId  == resource.data.centerId
+         && request.resource.data.centerIds == resource.data.centerIds) ||
         (request.auth.uid == userId
          && request.resource.data.role         == resource.data.role
          && request.resource.data.approved     == resource.data.approved
@@ -90,8 +103,13 @@ service cloud.firestore {
               request.resource.data.guaranteed  == resource.data.guaranteed))
       );
 
-      // Delete: owner / super-admin only.
-      allow delete: if isOwner() || isSuperAdmin();
+      // Delete: owner / super-admin freely. Admins can delete non-elevated
+      // users (instructors / hosts / other admins), never owners or
+      // super-admins.
+      allow delete: if isOwner() || isSuperAdmin() ||
+        (isAdmin()
+         && resource.data.role != 'owner'
+         && resource.data.role != 'super_admin');
     }
 
     // ─── Per-tenant collections ────────────────────────────────────────
@@ -141,6 +159,16 @@ service cloud.firestore {
       // Create / update: any signed-in user (chat + swap acceptance).
       allow create, update: if isSignedIn();
       // Delete: owner only (rare).
+      allow delete: if isOwner() || isSuperAdmin();
+    }
+
+    // Cross-centre support / feature-request chat. Owner / admin / super-admin
+    // only — instructors and hosts do not see this collection at all.
+    match /platformChat/{msgId} {
+      allow read:   if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin());
+      allow create: if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin())
+                    && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin());
       allow delete: if isOwner() || isSuperAdmin();
     }
 

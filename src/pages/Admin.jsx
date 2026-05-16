@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc,
   addDoc, query, where, orderBy, writeBatch, getDoc, getDocs, setDoc,
@@ -428,7 +429,25 @@ export default function Admin() {
   const [shifts, setShifts]             = useState([]);
   const [openShiftsList, setOpenShiftsList] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
-  const [tab, setTab]                   = useState('spreadsheet');
+  // Active tab. Sidebar deep-links (?tab=analytics, ?tab=settings) seed the
+  // initial state and re-sync if the URL changes — so clicking "Center
+  // Analytics" in the super-admin sidebar opens the right tab.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(searchParams.get('tab') || 'spreadsheet');
+  useEffect(() => {
+    const t = searchParams.get('tab');
+    if (t && t !== tab) setTab(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+  // Keep the URL in sync when the user clicks a tab so refreshing or sharing
+  // the URL lands you back where you were.
+  const selectTab = (key) => {
+    setTab(key);
+    const next = new URLSearchParams(searchParams);
+    if (key === 'spreadsheet') next.delete('tab');
+    else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
 
   // Spreadsheet state
   const [weekStart, setWeekStart]       = useState(startOfWeek(new Date()));
@@ -1283,7 +1302,7 @@ export default function Admin() {
       {/* Tabs */}
       <div className="mb-6 flex gap-1 border-b overflow-x-auto">
         {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)}
+          <button key={t.key} onClick={() => selectTab(t.key)}
             className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${tab === t.key ? 'border-red-600 text-red-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
             <t.icon size={16} /> {t.label}
             {t.badge && (
@@ -1627,11 +1646,11 @@ export default function Admin() {
       {/* ── MANAGE USERS ────────────────────────────────────────────────────── */}
       {tab === 'users' && (
         <div className="space-y-6">
-          {/* Approving / rejecting new sign-ups is an owner-level decision —
-              the Firestore rule for elevating `approved` to true requires
-              owner or super_admin, so plain admins would just see a section
-              they can't act on. Hide it from them entirely. */}
-          {pendingUsers.length > 0 && canSeeCenterSettings && (
+          {/* Admins, owners, and super-admins can all approve new sign-ups —
+              Firestore rules let admins flip `approved` on non-elevated
+              users. (Owners and super-admin docs are protected from admin
+              edits at the rule level.) */}
+          {pendingUsers.length > 0 && canSeeAdminPanel && (
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <h3 className="mb-4 font-semibold text-yellow-700">⏳ Pending Approval ({pendingUsers.length})</h3>
               <div className="space-y-3">
@@ -1675,10 +1694,10 @@ export default function Admin() {
                           <p className="text-xs text-gray-500">{u.email}</p>
                         </div>
                       </div>
-                      {/* Deleting a user is owner-only on the Firestore side;
-                          hide the button from plain admins so they don't see
-                          a control that errors out for them. */}
-                      {canSeeCenterSettings && (
+                      {/* Admins, owners, and super-admins can delete staff
+                          — Firestore rules block deleting owner / super_admin
+                          docs, so admins clicking on those would just bounce. */}
+                      {canSeeAdminPanel && (
                         <button onClick={() => handleReject(u.id)} className="rounded p-1 text-gray-400 hover:text-red-500">
                           <Trash2 size={15} />
                         </button>
