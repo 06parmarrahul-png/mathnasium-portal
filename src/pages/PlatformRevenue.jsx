@@ -4,21 +4,31 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
   Briefcase, Building2, DollarSign, TrendingUp, ShieldAlert, Edit3,
-  CheckCircle2, AlertTriangle, Save, X,
+  CheckCircle2, AlertTriangle, Save, X, AlertOctagon, Clock, PauseCircle,
+  Mail,
 } from 'lucide-react';
 
 /**
  * Platform Revenue — what *we* charge each centre for using the product.
  *
- * Super-admin only. Lists every centre on the platform with an editable
- * subscription tier + monthly amount, plus a summary of platform MRR / ARR.
+ * Super-admin only. Tracks each centre's subscription tier, monthly amount,
+ * and lifecycle state (active / trial / past_due / cancelled), plus the
+ * dates that matter for invoicing (next bill, last paid). Phase 2.1 will
+ * wire this up to Stripe so the same fields update automatically from
+ * webhook events; for now everything is manual and the data model is the
+ * same so no migration's needed once Stripe is live.
  *
  * Billing data is stored on `centers/{centerId}.billing`:
- *   { tier: 'free' | 'starter' | 'pro' | 'enterprise',
- *     monthlyAmount: number,
- *     currency: 'CAD',
- *     notes: string,
- *     updatedAt: serverTimestamp }
+ *   { tier:             'free' | 'starter' | 'pro' | 'enterprise',
+ *     monthlyAmount:    number,
+ *     currency:         'CAD',
+ *     notes:            string,
+ *     status:           'active' | 'trial' | 'past_due' | 'cancelled',
+ *     currentPeriodEnd: 'YYYY-MM-DD' | null,   // when the next bill is due
+ *     lastPaidAt:       'YYYY-MM-DD' | null,
+ *     lastPaidAmount:   number | null,
+ *     customerEmail:    string,                // for invoicing
+ *     updatedAt:        serverTimestamp }
  */
 
 const TIERS = [
@@ -28,13 +38,48 @@ const TIERS = [
   { key: 'enterprise', label: 'Enterprise', suggestedAmount: 399,  color: 'bg-purple-100 text-purple-800' },
 ];
 
+const STATUSES = [
+  { key: 'active',    label: 'Active',    color: 'bg-emerald-100 text-emerald-800',  badge: 'bg-emerald-500', icon: CheckCircle2 },
+  { key: 'trial',     label: 'Trial',     color: 'bg-amber-100 text-amber-800',      badge: 'bg-amber-500',   icon: Clock },
+  { key: 'past_due',  label: 'Past Due',  color: 'bg-rose-100 text-rose-800',        badge: 'bg-rose-500',    icon: AlertOctagon },
+  { key: 'cancelled', label: 'Cancelled', color: 'bg-gray-100 text-gray-600',        badge: 'bg-gray-400',    icon: PauseCircle },
+];
+
 function tierStyle(key) {
   return TIERS.find(t => t.key === key) || TIERS[0];
+}
+function statusStyle(key) {
+  return STATUSES.find(s => s.key === key) || STATUSES[0];
 }
 
 function fmtMoney(n) {
   const v = Number(n) || 0;
   return v.toLocaleString('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 });
+}
+
+// 'YYYY-MM-DD' → 'Jan 5, 2026'. Null-safe.
+function fmtDate(ds) {
+  if (!ds) return '';
+  const [y, m, d] = ds.split('-').map(Number);
+  if (!y || !m || !d) return '';
+  return new Date(y, m - 1, d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+// Today in YYYY-MM-DD (local). Pure helper so we can test without freezing time.
+function todayStr() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Days between two YYYY-MM-DD dates. Positive = b is after a.
+function daysBetween(a, b) {
+  if (!a || !b) return 0;
+  const da = new Date(a + 'T00:00:00');
+  const dbb = new Date(b + 'T00:00:00');
+  return Math.round((dbb - da) / 86400000);
 }
 
 export default function PlatformRevenue() {
@@ -64,10 +109,29 @@ export default function PlatformRevenue() {
     );
   }
 
+  // Status defaults: any centre with a positive amount and no explicit status
+  // is treated as 'active'; centres with no plan default to 'free'.
+  const effectiveStatus = (c) => {
+    const b = c?.billing || {};
+    if (b.status) return b.status;
+    return (Number(b.monthlyAmount) || 0) > 0 ? 'active' : 'free';
+  };
+
   const totalMonthly = centers.reduce((sum, c) => sum + (Number(c?.billing?.monthlyAmount) || 0), 0);
   const totalAnnual = totalMonthly * 12;
-  const paying = centers.filter(c => (Number(c?.billing?.monthlyAmount) || 0) > 0).length;
-  const free = centers.length - paying;
+  const today = todayStr();
+
+  const counts = { active: 0, trial: 0, past_due: 0, cancelled: 0, free: 0 };
+  let paidThisMonth = 0;
+  for (const c of centers) {
+    const s = effectiveStatus(c);
+    if (counts[s] != null) counts[s]++;
+    const lastPaid = c?.billing?.lastPaidAt;
+    if (lastPaid && lastPaid >= today.slice(0, 7) + '-01') {
+      paidThisMonth += Number(c.billing.lastPaidAmount) || 0;
+    }
+  }
+  const paying = counts.active + counts.trial + counts.past_due;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -84,12 +148,30 @@ export default function PlatformRevenue() {
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* Summary cards — money on the top row, fleet status on the second. */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryCard icon={<DollarSign size={16} />} color="emerald" label="MRR" value={fmtMoney(totalMonthly)} sub="monthly recurring" />
         <SummaryCard icon={<TrendingUp size={16} />} color="blue"    label="ARR" value={fmtMoney(totalAnnual)} sub="annual run-rate" />
+        <SummaryCard icon={<CheckCircle2 size={16} />} color="emerald" label="Paid this month" value={fmtMoney(paidThisMonth)} sub={`from ${centers.filter(c => (c?.billing?.lastPaidAt || '') >= today.slice(0, 7) + '-01').length} centres`} />
         <SummaryCard icon={<Building2 size={16} />}  color="purple"  label="Paying centres" value={paying} sub={`${centers.length} total`} />
-        <SummaryCard icon={<Building2 size={16} />}  color="gray"    label="Free tier" value={free} sub="non-paying" />
+      </div>
+
+      {/* Fleet status strip — at-a-glance health of the customer base. */}
+      <div className="rounded-2xl border bg-white px-5 py-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-4 text-xs">
+          <FleetChip count={counts.active}    style={statusStyle('active')} />
+          <FleetChip count={counts.trial}     style={statusStyle('trial')} />
+          <FleetChip count={counts.past_due}  style={statusStyle('past_due')} highlight />
+          <FleetChip count={counts.cancelled} style={statusStyle('cancelled')} />
+          <span className="rounded-full bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-600">
+            Free · {counts.free}
+          </span>
+          {counts.past_due > 0 && (
+            <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-rose-700">
+              <AlertOctagon size={13} /> {counts.past_due} {counts.past_due === 1 ? 'centre needs' : 'centres need'} chasing
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Centres list */}
@@ -109,7 +191,16 @@ export default function PlatformRevenue() {
           <div className="space-y-2">
             {centers
               .slice()
-              .sort((a, b) => (Number(b?.billing?.monthlyAmount) || 0) - (Number(a?.billing?.monthlyAmount) || 0))
+              .sort((a, b) => {
+                // Past-due always floats to the top so it's impossible to miss,
+                // then trials (so you can chase conversions), then paid centres
+                // by amount, then free.
+                const STATUS_ORDER = { past_due: 0, trial: 1, active: 2, cancelled: 3, free: 4 };
+                const sa = STATUS_ORDER[effectiveStatus(a)] ?? 5;
+                const sb = STATUS_ORDER[effectiveStatus(b)] ?? 5;
+                if (sa !== sb) return sa - sb;
+                return (Number(b?.billing?.monthlyAmount) || 0) - (Number(a?.billing?.monthlyAmount) || 0);
+              })
               .map(c => (
                 <CentreRow
                   key={c.id}
@@ -124,17 +215,27 @@ export default function PlatformRevenue() {
         )}
       </div>
 
-      {/* Future-pricing teaser */}
+      {/* Coming-next teaser — Stripe automation. */}
       <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
         <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
-          <TrendingUp size={13} className="text-emerald-500" /> Coming next — Billing automation
+          <TrendingUp size={13} className="text-emerald-500" /> Coming next — Stripe automation
         </p>
         <p className="text-xs text-gray-500">
-          Phase 2 will hook this up to Stripe so invoices, dunning, and tier upgrades run automatically.
-          For now this is the source of truth for what we're charging each centre.
+          Phase 2.1 will wire status / next bill / last paid up to Stripe via webhooks so this updates without you touching anything.
+          Until then this is the source of truth — and the fields are already the ones Stripe will write into, so no migration is needed when it goes live.
         </p>
       </div>
     </div>
+  );
+}
+
+// Inline chip showing one fleet-status count.
+function FleetChip({ count, style, highlight }) {
+  const Icon = style.icon;
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold ${style.color} ${highlight ? 'ring-2 ring-rose-300' : ''}`}>
+      <Icon size={12} /> {style.label} · {count}
+    </span>
   );
 }
 
@@ -160,8 +261,14 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
   const [tier, setTier] = useState(billing.tier || 'free');
   const [amount, setAmount] = useState(String(billing.monthlyAmount ?? 0));
   const [notes, setNotes] = useState(billing.notes || '');
+  const [status, setStatus] = useState(billing.status || ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
+  const [periodEnd, setPeriodEnd] = useState(billing.currentPeriodEnd || '');
+  const [lastPaidAt, setLastPaidAt] = useState(billing.lastPaidAt || '');
+  const [lastPaidAmount, setLastPaidAmount] = useState(String(billing.lastPaidAmount ?? ''));
+  const [customerEmail, setCustomerEmail] = useState(billing.customerEmail || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [marking, setMarking] = useState(false);
 
   // Re-sync when entering edit mode or when the row data changes.
   useEffect(() => {
@@ -169,9 +276,19 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
       setTier(billing.tier || 'free');
       setAmount(String(billing.monthlyAmount ?? 0));
       setNotes(billing.notes || '');
+      setStatus(billing.status || ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
+      setPeriodEnd(billing.currentPeriodEnd || '');
+      setLastPaidAt(billing.lastPaidAt || '');
+      setLastPaidAmount(String(billing.lastPaidAmount ?? ''));
+      setCustomerEmail(billing.customerEmail || '');
       setError('');
     }
-  }, [isEditing, billing.tier, billing.monthlyAmount, billing.notes]);
+  }, [
+    isEditing,
+    billing.tier, billing.monthlyAmount, billing.notes,
+    billing.status, billing.currentPeriodEnd, billing.lastPaidAt,
+    billing.lastPaidAmount, billing.customerEmail,
+  ]);
 
   const handleSave = async () => {
     setSaving(true);
@@ -182,6 +299,11 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
         monthlyAmount: Number(amount) || 0,
         currency: 'CAD',
         notes: notes.trim(),
+        status,
+        currentPeriodEnd: periodEnd || null,
+        lastPaidAt: lastPaidAt || null,
+        lastPaidAmount: lastPaidAmount === '' ? null : (Number(lastPaidAmount) || 0),
+        customerEmail: customerEmail.trim(),
         updatedAt: serverTimestamp(),
       };
       await setDoc(
@@ -197,6 +319,41 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
     }
   };
 
+  // One-click "Mark Paid" — bumps lastPaidAt to today, sets lastPaidAmount to
+  // the current monthly amount, and flips status to active. Useful when you
+  // chase a past-due centre and they pay outside of Stripe.
+  const handleMarkPaid = async () => {
+    setMarking(true);
+    setError('');
+    try {
+      // If currentPeriodEnd is set or in the past, bump it forward a month.
+      let nextPeriodEnd = billing.currentPeriodEnd || '';
+      if (nextPeriodEnd) {
+        const [y, m, d] = nextPeriodEnd.split('-').map(Number);
+        const dt = new Date(y, (m - 1) + 1, d);
+        nextPeriodEnd = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+      }
+      await setDoc(
+        doc(db, 'centers', center.id),
+        {
+          billing: {
+            ...billing,
+            status: 'active',
+            lastPaidAt: todayStr(),
+            lastPaidAmount: Number(billing.monthlyAmount) || 0,
+            currentPeriodEnd: nextPeriodEnd || billing.currentPeriodEnd || null,
+            updatedAt: serverTimestamp(),
+          },
+        },
+        { merge: true },
+      );
+    } catch (err) {
+      setError(err?.message || 'Failed to mark paid.');
+    } finally {
+      setMarking(false);
+    }
+  };
+
   const handleTierClick = (t) => {
     setTier(t.key);
     // Auto-fill the suggested amount when the user clicks a preset chip — only
@@ -208,23 +365,64 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
 
   const style = tierStyle(billing.tier);
   const monthly = Number(billing.monthlyAmount) || 0;
+  // Compute the "effective" status the read view shows — falls back to
+  // 'active' or 'free' if the centre has never been edited.
+  const effStatus = billing.status || (monthly > 0 ? 'active' : 'free');
+  const sStyle = effStatus === 'free' ? null : statusStyle(effStatus);
+  const today = todayStr();
+  const overdueDays = (billing.currentPeriodEnd && billing.currentPeriodEnd < today)
+    ? -daysBetween(today, billing.currentPeriodEnd)
+    : 0;
+  const daysUntilBill = (billing.currentPeriodEnd && billing.currentPeriodEnd >= today)
+    ? daysBetween(today, billing.currentPeriodEnd)
+    : 0;
+  const isPastDue = effStatus === 'past_due' || overdueDays > 0;
   const updatedAt = billing.updatedAt?.seconds
     ? new Date(billing.updatedAt.seconds * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
     : null;
 
   return (
-    <div className="rounded-xl border border-gray-200 bg-white">
+    <div className={`rounded-xl border bg-white ${isPastDue ? 'border-rose-300 shadow-[0_0_0_1px_rgba(244,63,94,0.15)]' : 'border-gray-200'}`}>
       {/* Read view */}
       {!isEditing && (
         <div className="flex items-center gap-3 px-4 py-3">
-          <div className="shrink-0 rounded-lg bg-emerald-50 p-1.5 text-emerald-700">
+          <div className={`shrink-0 rounded-lg p-1.5 ${isPastDue ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-700'}`}>
             <Building2 size={16} />
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-gray-900">{center.name || center.id}</p>
-            <p className="text-xs text-gray-500">
+            <div className="flex items-center gap-2">
+              <p className="truncate text-sm font-semibold text-gray-900">{center.name || center.id}</p>
+              {sStyle && (
+                <span className={`shrink-0 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${sStyle.color}`}>
+                  <span className={`inline-block h-1.5 w-1.5 rounded-full ${sStyle.badge}`} />
+                  {sStyle.label}
+                </span>
+              )}
+            </div>
+            <p className="truncate text-xs text-gray-500">
               {[center.city, center.province].filter(Boolean).join(', ') || '—'}
+              {billing.customerEmail && (
+                <span className="ml-2 text-gray-400">· <Mail size={9} className="inline -mt-0.5" /> {billing.customerEmail}</span>
+              )}
               {billing.notes && <span className="ml-2 text-gray-400 italic">· {billing.notes}</span>}
+            </p>
+            <p className="mt-0.5 text-[11px] text-gray-500">
+              {isPastDue ? (
+                <span className="font-semibold text-rose-700">
+                  <AlertOctagon size={11} className="-mt-0.5 inline" />{' '}
+                  {overdueDays > 0 ? `${overdueDays} ${overdueDays === 1 ? 'day' : 'days'} overdue` : 'Past due'}
+                </span>
+              ) : billing.currentPeriodEnd ? (
+                <span>Next bill {fmtDate(billing.currentPeriodEnd)}{daysUntilBill > 0 && ` · in ${daysUntilBill}d`}</span>
+              ) : monthly > 0 ? (
+                <span className="text-gray-400">No next-bill date set</span>
+              ) : null}
+              {billing.lastPaidAt && (
+                <span className="ml-2 text-gray-400">
+                  · Paid {fmtDate(billing.lastPaidAt)}
+                  {billing.lastPaidAmount != null && ` (${fmtMoney(billing.lastPaidAmount)})`}
+                </span>
+              )}
             </p>
           </div>
           <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-bold ${style.color}`}>
@@ -234,13 +432,26 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
             <p className="text-sm font-bold text-gray-900">{fmtMoney(monthly)}</p>
             <p className="text-[10px] text-gray-400">{monthly > 0 ? 'per month' : 'no charge'}</p>
           </div>
-          <button
-            type="button"
-            onClick={onStartEdit}
-            className="shrink-0 rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
-          >
-            <Edit3 size={12} className="-mt-0.5 inline" /> Edit
-          </button>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isPastDue && (
+              <button
+                type="button"
+                onClick={handleMarkPaid}
+                disabled={marking}
+                className="rounded-lg bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                title="Mark this period as paid"
+              >
+                {marking ? '…' : <><CheckCircle2 size={11} className="-mt-0.5 inline" /> Mark Paid</>}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onStartEdit}
+              className="rounded-lg border border-gray-200 px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+            >
+              <Edit3 size={12} className="-mt-0.5 inline" /> Edit
+            </button>
+          </div>
         </div>
       )}
 
@@ -300,15 +511,84 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Notes (optional)</label>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Customer email (for invoices)</label>
               <input
-                type="text"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="e.g. discount, locked-in rate, trial through Aug"
+                type="email"
+                value={customerEmail}
+                onChange={(e) => setCustomerEmail(e.target.value)}
+                placeholder="ops@centre.com"
                 className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
               />
             </div>
+          </div>
+
+          {/* Subscription status chips */}
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Subscription status</label>
+            <div className="flex flex-wrap gap-2">
+              {STATUSES.map(s => {
+                const active = status === s.key;
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setStatus(s.key)}
+                    className={`inline-flex items-center gap-1 rounded-full border-2 px-3 py-1 text-xs font-semibold transition-all ${
+                      active
+                        ? `${s.badge} text-white border-transparent`
+                        : `${s.color} border-transparent hover:opacity-80`
+                    }`}
+                  >
+                    <Icon size={11} /> {s.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Next bill date</label>
+              <input
+                type="date"
+                value={periodEnd}
+                onChange={(e) => setPeriodEnd(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Last paid date</label>
+              <input
+                type="date"
+                value={lastPaidAt}
+                onChange={(e) => setLastPaidAt(e.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Last paid amount</label>
+              <input
+                type="number"
+                min={0}
+                step={1}
+                value={lastPaidAmount}
+                onChange={(e) => setLastPaidAmount(e.target.value)}
+                placeholder="0"
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Notes (optional)</label>
+            <input
+              type="text"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="e.g. discount, locked-in rate, trial through Aug"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+            />
           </div>
 
           {error && (
