@@ -3353,13 +3353,13 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         )}
       </div>
 
-      {/* ── Coverage Heatmap (day × hour) ───────────────────────────────── */}
+      {/* ── Average Hourly Coverage By Day (day × hour heatmap) ─────────── */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-baseline justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900">Coverage Heatmap</h3>
+            <h3 className="text-sm font-semibold text-gray-900">Average Hourly Coverage By Day</h3>
             <p className="mt-0.5 text-xs text-gray-500">
-              Average instructors on the floor at each hour over the last {COVERAGE_WEEKS} weeks. Darker = more coverage.
+              Hour-by-hour coverage over the last {COVERAGE_WEEKS} weeks vs your daily target of {coverageTarget}. Off-peak hours will naturally read red — focus on whether peak slots (3 PM onwards) are amber or green.
             </p>
           </div>
         </div>
@@ -3390,18 +3390,25 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
                     {heatmapHours.map(h => {
                       const cell = heatmapCells[day]?.[h] || { avg: 0, samples: 0 };
                       const isOpen = h >= dayStart && h < dayEnd;
-                      const colorIdx = Math.min(7, Math.floor(cell.avg));
-                      const palette = ['bg-sky-50', 'bg-sky-100', 'bg-sky-200', 'bg-sky-300', 'bg-sky-400', 'bg-sky-500', 'bg-sky-600', 'bg-sky-700'];
-                      const bgClass = !isOpen
-                        ? 'bg-gray-200/60'
-                        : cell.samples === 0
-                          ? 'bg-gray-50'
-                          : palette[colorIdx];
-                      const textClass = !isOpen
-                        ? 'text-gray-400'
-                        : cell.samples === 0
-                          ? 'text-gray-300'
-                          : colorIdx >= 4 ? 'text-white' : 'text-gray-700';
+                      // Match the by-day chart's red / amber / green thresholds
+                      // so both panels speak the same visual language.
+                      let bgClass, textClass;
+                      if (!isOpen) {
+                        bgClass = 'bg-gray-200/60';
+                        textClass = 'text-gray-400';
+                      } else if (cell.samples === 0) {
+                        bgClass = 'bg-gray-50';
+                        textClass = 'text-gray-300';
+                      } else if (cell.avg < coverageTarget * 0.85) {
+                        bgClass = 'bg-rose-500';
+                        textClass = 'text-white';
+                      } else if (cell.avg < coverageTarget) {
+                        bgClass = 'bg-amber-500';
+                        textClass = 'text-white';
+                      } else {
+                        bgClass = 'bg-emerald-500';
+                        textClass = 'text-white';
+                      }
                       const label = !isOpen
                         ? '—'
                         : cell.samples === 0
@@ -3425,14 +3432,18 @@ function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
                   </div>
                 );
               })}
-              {/* Legend */}
-              <div className="mt-3 flex items-center gap-1 pl-24">
-                <span className="mr-1 text-[10px] text-gray-500">low</span>
-                {['bg-sky-50', 'bg-sky-100', 'bg-sky-200', 'bg-sky-300', 'bg-sky-400', 'bg-sky-500', 'bg-sky-600', 'bg-sky-700'].map((c, i) => (
-                  <div key={i} className={`h-3 w-5 rounded-sm ${c}`} />
-                ))}
-                <span className="ml-1 text-[10px] text-gray-500">high</span>
-                <span className="ml-3 text-[10px] text-gray-400">· grey = closed at that hour</span>
+              {/* Legend — same colour grammar as the by-day chart above. */}
+              <div className="mt-3 flex flex-wrap items-center gap-3 pl-24 text-[10px] text-gray-500">
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-rose-500" /> below target
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-amber-500" /> tight
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-3 w-3 rounded-sm bg-emerald-500" /> meeting target
+                </span>
+                <span className="text-gray-400">· grey = closed at that hour</span>
               </div>
             </div>
           </div>
