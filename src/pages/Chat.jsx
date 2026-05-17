@@ -10,6 +10,17 @@ export default function Chat() {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
+  const [centerUsers, setCenterUsers] = useState([]);
+
+  // Roster of everyone at this centre — feeds the members sidebar so users
+  // can see who else has access to whichever channel they're looking at.
+  useEffect(() => {
+    if (!activeCenterId) return;
+    return onSnapshot(
+      query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
+      snap => setCenterUsers(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    );
+  }, [activeCenterId]);
 
   // Chat channels. 'all' is the default team-wide chat that everyone sees.
   // 'online' is a side channel only the Online team uses, so they can
@@ -48,6 +59,24 @@ export default function Chat() {
     () => allMessages.filter(m => (m.channel || 'all') === channel),
     [allMessages, channel],
   );
+
+  // Members visible in the current channel — drives the sidebar roster.
+  // 'all' shows every approved staff member at this centre; 'online' is
+  // narrowed to users with the Online sub-role (plus super-admins who can
+  // see everything for support).
+  const channelMembers = useMemo(() => {
+    const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2, instructor: 3, host: 4 };
+    const base = centerUsers.filter(u => u.approved);
+    const filtered = channel === 'online'
+      ? base.filter(u => (u.subRoles || []).includes('Online') || u.role === 'super_admin')
+      : base;
+    return [...filtered].sort((a, b) => {
+      const ra = ROLE_ORDER[a.role] ?? 9;
+      const rb = ROLE_ORDER[b.role] ?? 9;
+      if (ra !== rb) return ra - rb;
+      return (a.displayName || '').localeCompare(b.displayName || '');
+    });
+  }, [centerUsers, channel]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -135,7 +164,9 @@ export default function Chat() {
   const initials = (name) => name?.split(' ').map(w => w.charAt(0)).join('').toUpperCase().slice(0, 2) || '??';
 
   return (
-    <div className="mx-auto flex h-full max-w-3xl flex-col">
+    <div className="mx-auto flex h-full max-w-6xl gap-4">
+      {/* Main chat column */}
+      <div className="flex h-full min-w-0 flex-1 flex-col">
       <div className="mb-4 flex items-center gap-3">
         <div className="rounded-lg bg-green-100 p-2 text-green-600"><MessageSquare size={22} /></div>
         <div>
@@ -305,6 +336,57 @@ export default function Chat() {
           <Send size={18} />
         </button>
       </form>
+      </div>
+
+      {/* Members sidebar — Discord-style. Hidden on small screens. */}
+      <aside className="hidden lg:flex h-full w-60 shrink-0 flex-col overflow-hidden rounded-xl border bg-white shadow-sm">
+        <div className="border-b border-gray-100 px-4 py-3">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+            {channel === 'online' ? 'Online Team' : 'All Team'} · {channelMembers.length}
+          </p>
+          <p className="mt-0.5 text-xs text-gray-400">
+            {channel === 'online'
+              ? 'Can see messages in this channel.'
+              : 'Everyone at this centre.'}
+          </p>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {channelMembers.length === 0 ? (
+            <p className="px-2 py-4 text-center text-xs text-gray-400">No members yet.</p>
+          ) : channelMembers.map(m => {
+            const isMe = m.uid === profile?.uid;
+            const role = m.role || 'instructor';
+            const avatarBg =
+              role === 'super_admin' ? 'bg-purple-600'
+              : role === 'owner'     ? 'bg-red-600'
+              : role === 'admin'     ? 'bg-emerald-600'
+              : 'bg-gray-500';
+            const roleLabel =
+              role === 'super_admin' ? 'Super Admin'
+              : role === 'owner'     ? 'Owner'
+              : role === 'admin'     ? 'Admin'
+              : (m.instructorType || '');
+            return (
+              <div key={m.id || m.uid}
+                title={m.email || m.displayName}
+                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50 ${isMe ? 'bg-red-50/40' : ''}`}>
+                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${avatarBg}`}>
+                  {(m.displayName || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-gray-800">
+                    {m.displayName || '—'}
+                    {isMe && <span className="ml-1 text-[10px] font-normal text-red-600">(you)</span>}
+                  </p>
+                  {roleLabel && (
+                    <p className="truncate text-[10px] text-gray-400">{roleLabel}</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </aside>
     </div>
   );
 }
