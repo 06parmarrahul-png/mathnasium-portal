@@ -31,11 +31,15 @@ import {
  *     updatedAt:        serverTimestamp }
  */
 
+// Tiers match the public Ratio marketing site exactly so the in-app billing
+// view and the customer-facing pricing page never tell different stories.
+// Suggested amounts are the monthly list price; annual billing is handled
+// at the Stripe Price level (20% off) so we don't need a separate row here.
 const TIERS = [
-  { key: 'free',       label: 'Free',       suggestedAmount: 0,    color: 'bg-gray-100 text-gray-700' },
-  { key: 'starter',    label: 'Starter',    suggestedAmount: 49,   color: 'bg-emerald-100 text-emerald-800' },
-  { key: 'pro',        label: 'Pro',        suggestedAmount: 149,  color: 'bg-blue-100 text-blue-800' },
-  { key: 'enterprise', label: 'Enterprise', suggestedAmount: 399,  color: 'bg-purple-100 text-purple-800' },
+  { key: 'free',    label: 'Free',    suggestedAmount: 0,  color: 'bg-gray-100 text-gray-700' },
+  { key: 'starter', label: 'Starter', suggestedAmount: 29, color: 'bg-emerald-100 text-emerald-800' },
+  { key: 'growth',  label: 'Growth',  suggestedAmount: 49, color: 'bg-blue-100 text-blue-800' },
+  { key: 'pro',     label: 'Pro',     suggestedAmount: 79, color: 'bg-purple-100 text-purple-800' },
 ];
 
 const STATUSES = [
