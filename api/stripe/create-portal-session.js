@@ -16,7 +16,15 @@
 import Stripe from 'stripe';
 import { authenticateRequest, getFirestore } from '../_lib/firebase-admin.js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+// Lazy Stripe init — see note in api/stripe/webhook.js.
+let _stripe = null;
+function stripeClient() {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY env var is not set in Vercel');
+  _stripe = new Stripe(key);
+  return _stripe;
+}
 
 async function readJson(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -68,7 +76,7 @@ export default async function handler(req, res) {
     : `https://${req.headers.host || 'example.com'}/platform-revenue`;
 
   try {
-    const portal = await stripe.billingPortal.sessions.create({
+    const portal = await stripeClient().billingPortal.sessions.create({
       customer: customerId,
       return_url: returnUrl,
     });

@@ -22,7 +22,19 @@ import Stripe from 'stripe';
 import { FieldValue } from 'firebase-admin/firestore';
 import { getFirestore } from '../_lib/firebase-admin.js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+// Lazy Stripe client. Constructing at module load with an empty key throws
+// in newer SDK versions, which kills the whole function before our handler
+// even runs (manifests as a 500 / FUNCTION_INVOCATION_FAILED on Vercel).
+// Init on first use instead so missing env vars surface as a clear 500
+// inside the request, not a cold-start crash.
+let _stripe = null;
+function stripeClient() {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY env var is not set in Vercel');
+  _stripe = new Stripe(key);
+  return _stripe;
+}
 
 // Vercel-style raw-body reader. Stripe signature verification needs the
 // exact bytes Stripe sent, not a JSON-parsed object.
@@ -73,7 +85,7 @@ async function resolveCenterId(obj, db) {
   if (obj?.metadata?.centerId) return obj.metadata.centerId;
   if (obj?.subscription) {
     try {
-      const sub = await stripe.subscriptions.retrieve(obj.subscription);
+      const sub = await stripeClient().subscriptions.retrieve(obj.subscription);
       if (sub.metadata?.centerId) return sub.metadata.centerId;
     } catch { /* ignore */ }
   }
@@ -158,7 +170,7 @@ export default async function handler(req, res) {
   let event;
   try {
     const raw = await getRawBody(req);
-    event = stripe.webhooks.constructEvent(raw, sig, secret);
+    event = stripeClient().webhooks.constructEvent(raw, sig, secret);
   } catch (err) {
     console.error('[stripe webhook] signature verify failed:', err.message);
     return res.status(400).json({ error: `Signature verification failed: ${err.message}` });

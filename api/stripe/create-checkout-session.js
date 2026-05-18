@@ -19,7 +19,15 @@
 import Stripe from 'stripe';
 import { authenticateRequest, getFirestore } from '../_lib/firebase-admin.js';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '');
+// Lazy Stripe init — see note in api/stripe/webhook.js.
+let _stripe = null;
+function stripeClient() {
+  if (_stripe) return _stripe;
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) throw new Error('STRIPE_SECRET_KEY env var is not set in Vercel');
+  _stripe = new Stripe(key);
+  return _stripe;
+}
 
 // Map (tier, billing) → Stripe Price ID env var name. These are set in
 // Vercel after running scripts/setup-stripe-products.js.
@@ -119,7 +127,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const checkout = await stripe.checkout.sessions.create(params);
+    const checkout = await stripeClient().checkout.sessions.create(params);
     return res.status(200).json({ url: checkout.url, sessionId: checkout.id });
   } catch (err) {
     console.error('[create-checkout-session]', err);
