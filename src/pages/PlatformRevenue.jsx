@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   Briefcase, Building2, DollarSign, TrendingUp, ShieldAlert, Edit3,
   CheckCircle2, AlertTriangle, Save, X, AlertOctagon, Clock, PauseCircle,
-  Mail,
+  Mail, Send, ExternalLink, Copy, Loader2, Link2,
 } from 'lucide-react';
 
 /**
@@ -87,10 +87,41 @@ function daysBetween(a, b) {
 }
 
 export default function PlatformRevenue() {
-  const { isSuperAdmin } = useAuth();
+  const { isSuperAdmin, user } = useAuth();
   const [centers, setCenters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(null); // centerId being edited
+  const [stripeModalCenter, setStripeModalCenter] = useState(null);
+  const [portalLoadingFor, setPortalLoadingFor] = useState(null);
+  const [portalError, setPortalError] = useState('');
+
+  // Open the Stripe Customer Portal for a centre that already has a
+  // stripeCustomerId on file. Hits our /api/stripe/create-portal-session
+  // route, then redirects to the hosted portal in a new tab.
+  const openCustomerPortal = async (center) => {
+    setPortalError('');
+    setPortalLoadingFor(center.id);
+    try {
+      const idToken = user ? await user.getIdToken() : null;
+      if (!idToken) throw new Error('Not signed in.');
+      const r = await fetch('/api/stripe/create-portal-session', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({ centerId: center.id }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || `Portal request failed (${r.status}).`);
+      window.open(data.url, '_blank', 'noopener');
+    } catch (err) {
+      setPortalError(`${center.name || center.id}: ${err.message}`);
+      setTimeout(() => setPortalError(''), 5000);
+    } finally {
+      setPortalLoadingFor(null);
+    }
+  };
 
   useEffect(() => (
     onSnapshot(
@@ -213,21 +244,260 @@ export default function PlatformRevenue() {
                   onStartEdit={() => setEditing(c.id)}
                   onCancel={() => setEditing(null)}
                   onSaved={() => setEditing(null)}
+                  onSendCheckoutLink={() => setStripeModalCenter(c)}
+                  onOpenPortal={() => openCustomerPortal(c)}
+                  portalLoading={portalLoadingFor === c.id}
                 />
               ))}
           </div>
         )}
       </div>
 
-      {/* Coming-next teaser — Stripe automation. */}
-      <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
-        <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-gray-700">
-          <TrendingUp size={13} className="text-emerald-500" /> Coming next — Stripe automation
+      {/* Stripe is live — small note about the autopilot. */}
+      <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50/50 p-5">
+        <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
+          <CheckCircle2 size={13} /> Stripe automation is live
         </p>
-        <p className="text-xs text-gray-500">
-          Phase 2.1 will wire status / next bill / last paid up to Stripe via webhooks so this updates without you touching anything.
-          Until then this is the source of truth — and the fields are already the ones Stripe will write into, so no migration is needed when it goes live.
+        <p className="text-xs text-emerald-900/80">
+          Send a Checkout Link to a centre, they pay through Stripe, and the status / next bill / last paid columns update themselves via webhook. Use "Open Portal" for centres that need to change card or cancel.
         </p>
+      </div>
+
+      {portalError && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg">
+          <AlertTriangle size={14} /> {portalError}
+        </div>
+      )}
+
+      {/* Checkout Link generator modal. */}
+      {stripeModalCenter && (
+        <StripeCheckoutModal
+          center={stripeModalCenter}
+          user={user}
+          onClose={() => setStripeModalCenter(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Modal for generating a Stripe Checkout URL. Super-admin picks the tier and
+// billing interval, this hits our /api/stripe/create-checkout-session route,
+// and the resulting hosted Checkout URL is displayed with a one-click Copy
+// button. The super-admin then emails that URL to the centre's owner; once
+// the owner pays, the webhook flips the centre's status to 'active'.
+function StripeCheckoutModal({ center, user, onClose }) {
+  const [tier, setTier] = useState(center?.billing?.tier && center.billing.tier !== 'free' ? center.billing.tier : 'starter');
+  const [billing, setBilling] = useState('monthly');
+  const [loading, setLoading] = useState(false);
+  const [url, setUrl] = useState('');
+  const [error, setError] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const PAID_TIERS = TIERS.filter(t => t.key !== 'free');
+
+  const generate = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const idToken = user ? await user.getIdToken() : null;
+      if (!idToken) throw new Error('Not signed in.');
+      const r = await fetch('/api/stripe/create-checkout-session', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({ centerId: center.id, tier, billing }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data?.error || `Request failed (${r.status}).`);
+      setUrl(data.url);
+    } catch (err) {
+      setError(err.message || 'Failed to generate Checkout link.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copy = async () => {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard rejected — user can copy manually */
+    }
+  };
+
+  const selectedAmount = (() => {
+    const t = TIERS.find(x => x.key === tier);
+    if (!t) return 0;
+    if (billing === 'annual') {
+      // Mirror the setup-stripe-products.js annual amounts (20% off).
+      const annualMap = { starter: 276, growth: 468, pro: 756 };
+      return annualMap[tier] ?? t.suggestedAmount * 12;
+    }
+    return t.suggestedAmount;
+  })();
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={() => !loading && onClose()}
+    >
+      <div
+        className="w-full max-w-lg overflow-hidden rounded-2xl bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-start justify-between gap-3 border-b border-gray-100 bg-gradient-to-r from-purple-50 to-white px-5 py-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-purple-100 p-2 text-purple-700"><Link2 size={18} /></div>
+            <div>
+              <h3 className="text-base font-bold text-gray-900">Send a Checkout link</h3>
+              <p className="mt-0.5 text-xs text-gray-500">
+                Generate a Stripe-hosted Checkout URL for <strong>{center.name || center.id}</strong>. Email it to the owner — when they pay, the status here flips to Active automatically.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={loading}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-gray-400 hover:bg-gray-100 disabled:opacity-50"
+          >
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="space-y-4 px-5 py-5">
+          {!url && (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Tier</label>
+                <div className="flex flex-wrap gap-2">
+                  {PAID_TIERS.map(t => (
+                    <button
+                      key={t.key}
+                      type="button"
+                      onClick={() => setTier(t.key)}
+                      className={`inline-flex items-center gap-1 rounded-full border-2 px-3 py-1.5 text-xs font-semibold transition-all ${
+                        tier === t.key
+                          ? 'bg-purple-600 text-white border-transparent'
+                          : `${t.color} border-transparent hover:opacity-80`
+                      }`}
+                    >
+                      {t.label} <span className="opacity-70">({fmtMoney(t.suggestedAmount)}/mo)</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Billing interval</label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setBilling('monthly')}
+                    className={`flex-1 rounded-lg border-2 px-3 py-2 text-sm font-semibold transition-all ${
+                      billing === 'monthly'
+                        ? 'border-purple-600 bg-purple-600 text-white'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    Monthly
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBilling('annual')}
+                    className={`flex-1 rounded-lg border-2 px-3 py-2 text-sm font-semibold transition-all ${
+                      billing === 'annual'
+                        ? 'border-purple-600 bg-purple-600 text-white'
+                        : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'
+                    }`}
+                  >
+                    Annual <span className={`ml-1 text-[10px] ${billing === 'annual' ? 'text-purple-100' : 'text-emerald-600'}`}>−20%</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-lg bg-gray-50 px-4 py-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600">{TIERS.find(t => t.key === tier)?.label} · {billing === 'annual' ? 'annual' : 'monthly'}</span>
+                  <span className="font-bold text-gray-900">
+                    {fmtMoney(selectedAmount)}
+                    <span className="ml-1 text-xs font-normal text-gray-500">{billing === 'annual' ? '/ year' : '/ month'}</span>
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-gray-500">
+                  14-day free trial · card on file but no charge until day 15 · cancel anytime via Customer Portal
+                </p>
+              </div>
+
+              {error && (
+                <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" /> {error}
+                </div>
+              )}
+            </>
+          )}
+
+          {url && (
+            <>
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                <CheckCircle2 size={14} className="-mt-0.5 mr-1 inline" /> Checkout URL ready. Copy and send it to the centre.
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-gray-500">Checkout URL</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={url}
+                    onFocus={(e) => e.target.select()}
+                    className="flex-1 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-xs font-mono text-gray-800 focus:outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={copy}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-purple-600 px-3 py-2 text-xs font-semibold text-white hover:bg-purple-700"
+                  >
+                    {copied ? <><CheckCircle2 size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                  </button>
+                </div>
+              </div>
+              <p className="text-xs text-gray-500">
+                Tip — email this to <strong>{center.billing?.customerEmail || 'the centre owner'}</strong> with a short note. The URL is single-use, lives for 24 hours, and only works for {center.name || center.id}.
+              </p>
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-3 py-2 text-sm font-medium text-gray-500 hover:bg-gray-100"
+          >
+            {url ? 'Done' : 'Cancel'}
+          </button>
+          {!url && (
+            <button
+              type="button"
+              onClick={generate}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-purple-700 disabled:opacity-50"
+            >
+              {loading
+                ? <><Loader2 size={14} className="animate-spin" /> Generating…</>
+                : <><Send size={14} /> Generate Checkout URL</>}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -260,7 +530,10 @@ function SummaryCard({ icon, color, label, value, sub }) {
   );
 }
 
-function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
+function CentreRow({
+  center, isEditing, onStartEdit, onCancel, onSaved,
+  onSendCheckoutLink, onOpenPortal, portalLoading,
+}) {
   const billing = center.billing || {};
   const [tier, setTier] = useState(billing.tier || 'free');
   const [amount, setAmount] = useState(String(billing.monthlyAmount ?? 0));
@@ -448,6 +721,31 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
                 {marking ? '…' : <><CheckCircle2 size={11} className="-mt-0.5 inline" /> Mark Paid</>}
               </button>
             )}
+            {/* Stripe actions — generate a Checkout link to send to the
+                centre, or open the Customer Portal if they're already on
+                Stripe. The Portal button only appears once we have a
+                stripeCustomerId from the first paid Checkout. */}
+            <button
+              type="button"
+              onClick={onSendCheckoutLink}
+              className="rounded-lg border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-100"
+              title="Generate a Stripe Checkout link to send to this centre"
+            >
+              <Link2 size={11} className="-mt-0.5 inline" /> Checkout Link
+            </button>
+            {billing.stripeCustomerId && (
+              <button
+                type="button"
+                onClick={onOpenPortal}
+                disabled={portalLoading}
+                className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
+                title="Open Stripe Customer Portal in a new tab"
+              >
+                {portalLoading
+                  ? <><Loader2 size={11} className="-mt-0.5 inline animate-spin" /> …</>
+                  : <><ExternalLink size={11} className="-mt-0.5 inline" /> Portal</>}
+              </button>
+            )}
             <button
               type="button"
               onClick={onStartEdit}
@@ -461,7 +759,7 @@ function CentreRow({ center, isEditing, onStartEdit, onCancel, onSaved }) {
 
       {/* Edit view */}
       {isEditing && (
-        <div className="px-4 py-4 space-y-3 bg-emerald-50/40">
+        <div className="space-y-3 bg-emerald-50/40 px-4 py-4">
           <div className="flex items-center gap-2">
             <Building2 size={16} className="text-emerald-700" />
             <p className="text-sm font-semibold text-gray-900">{center.name || center.id}</p>

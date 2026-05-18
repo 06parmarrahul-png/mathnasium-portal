@@ -18,7 +18,7 @@
 //   Growth  — $49 CAD / month  or  $468 CAD / year  ($39/mo equivalent, 20% off)
 //   Pro     — $79 CAD / month  or  $756 CAD / year  ($63/mo equivalent, 20% off)
 
-const Stripe = require('stripe');
+import Stripe from 'stripe';
 
 const SECRET = process.env.STRIPE_SECRET_KEY;
 if (!SECRET) {
