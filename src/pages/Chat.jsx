@@ -66,7 +66,11 @@ export default function Chat() {
   // see everything for support).
   const channelMembers = useMemo(() => {
     const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2, instructor: 3, host: 4 };
-    const base = centerUsers.filter(u => u.approved);
+    // Drop internal / system accounts (Admin Team etc.) from the visible
+    // roster — they have access but aren't real people.
+    const base = centerUsers.filter(u =>
+      u.approved && u.internal !== true && u.displayName !== 'Admin Team',
+    );
     const filtered = channel === 'online'
       ? base.filter(u => (u.subRoles || []).includes('Online') || u.role === 'super_admin')
       : base;

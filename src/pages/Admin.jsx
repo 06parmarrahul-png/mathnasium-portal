@@ -531,11 +531,16 @@ export default function Admin() {
     return () => { u1(); u2(); u3(); u4(); u5(); };
   }, [activeCenterId]);
 
-  // Owners, super-admins, and the shared "Admin Team" account are internal —
-  // they shouldn't show up on the weekly grid, the Manage Users list, or
-  // any other "actual working staff" surface.
+  // Owners, super-admins, and any account flagged `internal: true` are
+  // hidden from "actual working staff" surfaces (weekly grid, Manage Users,
+  // payroll, etc.). The displayName === 'Admin Team' check is a legacy
+  // fallback so the existing internal account stays hidden until someone
+  // sets the flag on its user doc — once the flag is set the name match
+  // becomes irrelevant.
   const isVisibleStaff = (u) =>
-    u && u.role !== 'owner' && u.role !== 'super_admin' && u.displayName !== 'Admin Team';
+    u && u.role !== 'owner' && u.role !== 'super_admin'
+      && u.internal !== true
+      && u.displayName !== 'Admin Team';
 
   const approvedUsers = users
     .filter(u => u.approved && isVisibleStaff(u))
@@ -1016,7 +1021,9 @@ export default function Admin() {
   const hiddenFromOps = useMemo(() => {
     const set = new Set();
     for (const u of users) {
-      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.displayName === 'Admin Team';
+      const hidden = u.role === 'owner' || u.role === 'super_admin'
+        || u.internal === true
+        || u.displayName === 'Admin Team';
       if (hidden && u.displayName) set.add(u.displayName);
     }
     return set;

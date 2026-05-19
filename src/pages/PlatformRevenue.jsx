@@ -597,17 +597,37 @@ function CentreRow({
   };
 
   // One-click "Mark Paid" — bumps lastPaidAt to today, sets lastPaidAmount to
-  // the current monthly amount, and flips status to active. Useful when you
-  // chase a past-due centre and they pay outside of Stripe.
+  // whatever this centre actually pays per period, and flips status to
+  // active. Useful when you chase a past-due centre and they pay outside of
+  // Stripe (wire transfer, e-transfer, etc.).
+  //
+  // Detects monthly vs annual cadence from the current period span so
+  // annual subscribers don't have their next-bill date bumped by one month
+  // when they're really on a yearly cycle.
   const handleMarkPaid = async () => {
     setMarking(true);
     setError('');
     try {
-      // If currentPeriodEnd is set or in the past, bump it forward a month.
+      // Cadence detection: how long does the current period span? If the
+      // gap between lastPaidAt and currentPeriodEnd is > 6 months, this is
+      // an annual subscription — bump 12 months forward; otherwise 1.
+      let monthsToAdvance = 1;
+      if (billing.lastPaidAt && billing.currentPeriodEnd) {
+        const lp = new Date(billing.lastPaidAt + 'T00:00:00');
+        const pe = new Date(billing.currentPeriodEnd + 'T00:00:00');
+        const days = (pe - lp) / 86_400_000;
+        if (days > 180) monthsToAdvance = 12;
+      }
+      const monthly = Number(billing.monthlyAmount) || 0;
+      // Annual price mirrors what scripts/setup-stripe-products.js created
+      // in Stripe (20% off monthly × 12, rounded to whole dollars).
+      const annualPrice = Math.round(monthly * 12 * 0.8);
+      const paidAmount = monthsToAdvance === 12 ? annualPrice : monthly;
+
       let nextPeriodEnd = billing.currentPeriodEnd || '';
       if (nextPeriodEnd) {
         const [y, m, d] = nextPeriodEnd.split('-').map(Number);
-        const dt = new Date(y, (m - 1) + 1, d);
+        const dt = new Date(y, (m - 1) + monthsToAdvance, d);
         nextPeriodEnd = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
       }
       await setDoc(
@@ -617,7 +637,7 @@ function CentreRow({
             ...billing,
             status: 'active',
             lastPaidAt: todayStr(),
-            lastPaidAmount: Number(billing.monthlyAmount) || 0,
+            lastPaidAmount: paidAmount,
             currentPeriodEnd: nextPeriodEnd || billing.currentPeriodEnd || null,
             updatedAt: serverTimestamp(),
           },

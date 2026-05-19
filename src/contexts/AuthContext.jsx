@@ -6,7 +6,7 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
@@ -29,19 +29,41 @@ export function AuthProvider({ children }) {
   // every collection. Initialized from profile + localStorage on mount.
   const [activeCenterId, setActiveCenterIdState] = useState(DEFAULT_CENTER_ID);
 
-  useEffect(() => onAuthStateChanged(auth, async (u) => {
-    setUser(u);
-    if (u) {
-      const snap = await getDoc(doc(db, 'users', u.uid));
-      const p = snap.exists() ? snap.data() : null;
-      setProfile(p);
-      setActiveCenterIdState(getActiveCenterId(p));
-    } else {
-      setProfile(null);
-      setActiveCenterIdState(DEFAULT_CENTER_ID);
-    }
-    setLoading(false);
-  }), []);
+  // Subscribe to the signed-in user's profile via onSnapshot so any update
+  // anywhere (admin approval, super-admin centre swap, self-update from a
+  // different tab, career-plan save) reflects immediately without a sign-out.
+  // The previous one-shot getDoc was a silent-bug factory whenever any
+  // surface mutated the user doc.
+  useEffect(() => {
+    let unsubUser = null;
+    const unsubAuth = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      if (unsubUser) { unsubUser(); unsubUser = null; }
+      if (u) {
+        unsubUser = onSnapshot(
+          doc(db, 'users', u.uid),
+          (snap) => {
+            const p = snap.exists() ? snap.data() : null;
+            setProfile(p);
+            setLoading(false);
+          },
+          () => {
+            // Permission / network errors — leave existing profile in place
+            // and stop the loading spinner so the UI doesn't hang.
+            setLoading(false);
+          },
+        );
+      } else {
+        setProfile(null);
+        setActiveCenterIdState(DEFAULT_CENTER_ID);
+        setLoading(false);
+      }
+    });
+    return () => {
+      unsubAuth();
+      if (unsubUser) unsubUser();
+    };
+  }, []);
 
   // Resync active center if profile changes (e.g., signup just wrote it,
   // or admin updated their centerIds). Synchronizing external state
@@ -143,17 +165,11 @@ export function AuthProvider({ children }) {
   };
 
   /**
-   * Re-fetch the current user's profile from Firestore. Call this after
-   * writing a field on /users/{uid} from another component so the rest of
-   * the app sees the change without requiring a page reload. AuthContext
-   * loads the profile once at sign-in, so without this it would stay stale
-   * until the next sign-in.
+   * Profile is now live via onSnapshot, so callers don't need to manually
+   * re-fetch after writing. Kept as a no-op so existing call sites keep
+   * working without churn.
    */
-  const refreshProfile = async () => {
-    if (!user?.uid) return;
-    const snap = await getDoc(doc(db, 'users', user.uid));
-    setProfile(snap.exists() ? snap.data() : null);
-  };
+  const refreshProfile = async () => {};
 
   return (
     <AuthContext.Provider value={{

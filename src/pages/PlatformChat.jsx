@@ -49,7 +49,11 @@ export default function PlatformChat() {
   const eligibleMembers = useMemo(() => {
     const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2 };
     return allUsers
-      .filter(u => u.approved && (u.role === 'super_admin' || u.role === 'owner' || u.role === 'admin'))
+      .filter(u => u.approved
+        && (u.role === 'super_admin' || u.role === 'owner' || u.role === 'admin')
+        && u.internal !== true
+        && u.displayName !== 'Admin Team',
+      )
       .sort((a, b) => {
         const ra = ROLE_ORDER[a.role] ?? 9;
         const rb = ROLE_ORDER[b.role] ?? 9;
