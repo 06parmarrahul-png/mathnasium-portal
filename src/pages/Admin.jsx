@@ -28,6 +28,9 @@ import {
 import CoverageGrid from '../components/CoverageGrid';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
+import {
+  notifyOpenShift, notifySchedulePosted, notifyTimeOffDecision,
+} from '../lib/emailService';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -573,13 +576,20 @@ export default function Admin() {
 
   // Open Shifts
   const handleAddOpenShift = async ({ date, startTime, endTime, role, subRole }) => {
-    await addDoc(collection(db, 'openShifts'), {
+    const shiftPayload = {
       date, startTime, endTime, role,
       subRole: subRole || 'Elementary',
       centerId: activeCenterId,
       status: 'open', claimedBy: null, claimedByName: null,
       postedAt: new Date().toISOString(),
-    });
+    };
+    await addDoc(collection(db, 'openShifts'), shiftPayload);
+
+    // Email every approved staff member with a real email address.
+    const staffEmails = approvedUsers
+      .filter(u => u.email)
+      .map(u => ({ email: u.email, displayName: u.displayName }));
+    notifyOpenShift(shiftPayload, staffEmails);
   };
 
   const handleDeleteOpenShift = id => deleteDoc(doc(db, 'openShifts', id));
@@ -995,10 +1005,11 @@ export default function Admin() {
         createdAt: serverTimestamp(), type: 'schedule_posted',
       });
 
-      const staffEmails = approvedUsers.filter(u => u.email).map(u => ({ email: u.email, displayName: u.displayName }));
-      // Email notification - uncomment when EmailJS is configured
-      // await notifySchedulePosted(draftSchedule, staffEmails);
-      void staffEmails; // suppress unused warning
+      const staffEmails = approvedUsers
+        .filter(u => u.email)
+        .map(u => ({ email: u.email, displayName: u.displayName }));
+      // Fire-and-forget; failures are logged in emailService.
+      notifySchedulePosted(draftSchedule, staffEmails);
 
       setDraftSchedule(null);
       alert(`✅ Schedule posted! ${totalShifts} instructor shifts + fixed staff created. Staff notified.`);
@@ -2666,6 +2677,10 @@ export default function Admin() {
                           <button
                             onClick={async () => {
                               await updateDoc(doc(db, 'timeOffRequests', req.id), { status: 'approved' });
+                              const recipient = approvedUsers.find(u => u.id === req.userId);
+                              if (recipient?.email) {
+                                notifyTimeOffDecision(req, recipient, 'approved');
+                              }
                             }}
                             className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 transition-colors">
                             <Check size={14} /> Approve
@@ -2673,6 +2688,10 @@ export default function Admin() {
                           <button
                             onClick={async () => {
                               await updateDoc(doc(db, 'timeOffRequests', req.id), { status: 'denied' });
+                              const recipient = approvedUsers.find(u => u.id === req.userId);
+                              if (recipient?.email) {
+                                notifyTimeOffDecision(req, recipient, 'denied');
+                              }
                             }}
                             className="flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors">
                             <X size={14} /> Deny

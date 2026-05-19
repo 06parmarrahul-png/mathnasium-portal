@@ -2,11 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
   query, where, orderBy, runTransaction, setDoc, writeBatch,
+  getDocs,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason } from '../lib/centerConfig';
+import { notifyShiftClaimed } from '../lib/emailService';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
@@ -1053,6 +1055,23 @@ export default function Schedule() {
       });
       setSelectedDate(null);
       alert('Shift claimed! It has been added to your schedule.');
+
+      // Email confirmation to claimer + CC admins/owners. Fire-and-forget.
+      try {
+        const usersSnap = await getDocs(collection(db, 'users'));
+        const adminRecipients = [];
+        usersSnap.forEach(u => {
+          const d = u.data();
+          if (d.email && ['admin', 'owner', 'super_admin'].includes(d.role)) {
+            adminRecipients.push({ email: d.email, displayName: d.displayName });
+          }
+        });
+        notifyShiftClaimed(
+          openShift,
+          { email: profile.email, displayName: profile.displayName },
+          adminRecipients,
+        );
+      } catch { /* email failure shouldn't disrupt UX */ }
     } catch (err) {
       alert(err?.message || 'Failed to claim shift. Please try again.');
     }
