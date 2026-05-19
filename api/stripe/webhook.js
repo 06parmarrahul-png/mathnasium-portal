@@ -161,7 +161,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  // .trim() guards against accidental trailing newlines / spaces when the
+  // secret was pasted into Vercel's env-var UI — a very common gotcha.
+  const secret = (process.env.STRIPE_WEBHOOK_SECRET || '').trim();
   if (!secret) {
     return res.status(500).json({ error: 'STRIPE_WEBHOOK_SECRET not configured' });
   }
