@@ -57,15 +57,19 @@ service cloud.firestore {
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
     // the platform operator can onboard new locations.
-    // Update / delete: owner of THIS center, or super_admin.
+    // Update / delete: owner of THIS center, or super_admin. Admins can't
+    // rename a centre, change its billing tier, etc.
     match /centers/{centerId} {
       allow read: if true;
       allow create: if isSuperAdmin();
       allow update, delete: if isOwner() || isSuperAdmin();
 
+      // Sub-docs (config/main with holidays, salaryStaff, operating days,
+      // fixed staff, etc.) — admins can write these too so they can
+      // manage day-to-day operations from the Admin Panel.
       match /{document=**} {
         allow read:  if isSignedIn();
-        allow write: if isOwner() || isSuperAdmin();
+        allow write: if isOwner() || isSuperAdmin() || isAdmin();
       }
     }
 
@@ -122,7 +126,8 @@ service cloud.firestore {
       allow read:   if isSignedIn();
       allow create: if isSignedIn();
       allow update: if isSignedIn();
-      allow delete: if isOwner() || isSuperAdmin();
+      // Admins can delete shifts too — they manage the schedule day-to-day.
+      allow delete: if isOwner() || isSuperAdmin() || isAdmin();
     }
 
     match /availability/{availId} {
@@ -137,20 +142,23 @@ service cloud.firestore {
 
     match /openShifts/{openShiftId} {
       allow read:   if isSignedIn();
-      allow create: if isOwner() || isSuperAdmin();
+      // Admins create + delete open shifts too — same surface they see in
+      // the Scheduler tab.
+      allow create: if isOwner() || isSuperAdmin() || isAdmin();
       // Update needed for claim flow — any signed-in user can mark
       // an open shift as claimed via transaction.
       allow update: if isSignedIn();
-      allow delete: if isOwner() || isSuperAdmin();
+      allow delete: if isOwner() || isSuperAdmin() || isAdmin();
     }
 
     match /timeOffRequests/{reqId} {
       allow read: if isSignedIn();
       // Create: must be your own.
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      // Update / delete: yours, or owner approves/denies.
+      // Update / delete: yours, or anyone who manages staff (admin / owner / super-admin)
+      // approves or denies the request.
       allow update, delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isOwner() || isSuperAdmin()
+        resource.data.userId == request.auth.uid || isOwner() || isSuperAdmin() || isAdmin()
       );
     }
 
