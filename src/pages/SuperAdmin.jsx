@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   collection, doc, getDoc, getDocs, onSnapshot,
-  setDoc, updateDoc, serverTimestamp, query, orderBy, limit,
+  setDoc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -242,7 +242,8 @@ export default function SuperAdmin() {
             )}
           </div>
 
-          <RecentActivityPanel />
+          {/* Recent Activity moved to its own /audit-logs page so it's
+              easier to share with curious centre owners. */}
 
           <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
             <h4 className="font-semibold text-gray-700 mb-1 flex items-center gap-2"><Users size={14} /> Future</h4>
@@ -260,94 +261,8 @@ export default function SuperAdmin() {
   );
 }
 
-// ─── Sub-component: Recent Activity (audit log viewer) ───────────────────
-
-/**
- * Read-only viewer for the `auditLog` collection. Subscribes to the
- * 50 most recent entries (more than enough for a glance — older entries
- * are retained in Firestore for forensic access). Pretty-prints the
- * action codes into one-line human descriptions.
- *
- * This panel exists so a centre owner asking "what can you do to my
- * data" has something concrete to look at — every sensitive action is
- * timestamped, named, and tied to the actor.
- */
-function RecentActivityPanel() {
-  const [entries, setEntries] = useState([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => (
-    onSnapshot(
-      query(collection(db, 'auditLog'), orderBy('createdAt', 'desc'), limit(50)),
-      (snap) => {
-        setEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      () => setLoading(false),
-    )
-  ), []);
-
-  const describe = (e) => {
-    const c = e.centerId ? ` · ${e.centerId}` : '';
-    switch (e.action) {
-      case 'super_admin.center_switch':
-        return `Switched into centre${c}` + (e.details?.fromCenterId ? ` (from ${e.details.fromCenterId})` : '');
-      case 'super_admin.center_create':
-        return `Created new centre${c}` + (e.details?.name ? ` (${e.details.name})` : '');
-      case 'super_admin.billing_update': {
-        const keys = Object.keys(e.details?.changed || {});
-        return `Updated billing${c}` + (keys.length ? ` — ${keys.join(', ')}` : '');
-      }
-      case 'super_admin.billing_mark_paid':
-        return `Marked paid${c}` + (e.details?.amount ? ` ($${e.details.amount})` : '');
-      default:
-        return e.action + c;
-    }
-  };
-
-  const fmt = (ts) => {
-    if (!ts?.seconds) return '';
-    return new Date(ts.seconds * 1000).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  };
-
-  return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="flex items-center gap-2 mb-1">
-        <Shield size={18} className="text-purple-600" />
-        <h3 className="font-semibold text-gray-900">Recent Activity</h3>
-      </div>
-      <p className="text-sm text-gray-500 mb-4">
-        Tamper-evident log of platform-operator actions — centre switches,
-        new-centre creation, billing edits. Append-only by design. Showing
-        the 50 most recent entries.
-      </p>
-      {loading ? (
-        <div className="flex items-center justify-center py-6">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-purple-600 border-t-transparent" />
-        </div>
-      ) : entries.length === 0 ? (
-        <p className="text-sm text-gray-400 italic">No activity yet — actions will appear here as they happen.</p>
-      ) : (
-        <ul className="divide-y divide-gray-100">
-          {entries.map(e => (
-            <li key={e.id} className="flex items-start justify-between gap-3 py-2.5">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm text-gray-800 leading-snug">{describe(e)}</p>
-                <p className="text-xs text-gray-400 mt-0.5">
-                  <span className="font-medium text-gray-500">{e.actorName || e.actorUid}</span>
-                  {e.actorRole ? ` · ${e.actorRole}` : ''}
-                </p>
-              </div>
-              <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap">{fmt(e.createdAt)}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
+// Recent Activity (audit log viewer) lives on its own page now —
+// see src/pages/AuditLogs.jsx.
 
 // ─── Sub-component: Appearance (shift colors) editor ─────────────────────
 

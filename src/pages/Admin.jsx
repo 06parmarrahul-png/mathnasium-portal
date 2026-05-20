@@ -427,7 +427,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
+  const { user, activeCenterId, centerConfig, canSeeAdminPanel } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -1473,13 +1473,9 @@ export default function Admin() {
     // Holidays is visible to all admin-panel roles (admin / owner / super-admin)
     // so anyone who manages day-to-day ops can add a closure.
     { key: 'holidays',     label: 'Holidays',       icon: CalendarX },
-    // Analytics is owner / super-admin only — strategic view, not daily ops.
-    ...(canSeeCenterSettings
-      ? [{ key: 'analytics', label: 'Analytics', icon: BarChart3 }]
-      : []),
-    ...(canSeeCenterSettings
-      ? [{ key: 'settings', label: 'Center Settings', icon: Settings }]
-      : []),
+    // Analytics + Center Settings used to live here as tabs. They are now
+    // standalone sidebar destinations (/center-analytics, /center-settings)
+    // for owners / super-admins, so they no longer clutter this tab strip.
   ];
 
   return (
@@ -2878,20 +2874,8 @@ export default function Admin() {
         />
       )}
 
-      {/* ── ANALYTICS ──────────────────────────────────────────────────────── */}
-      {tab === 'analytics' && canSeeCenterSettings && (
-        <AnalyticsTab
-          shifts={shifts}
-          users={users}
-          centerConfig={centerConfig}
-          activeCenterId={activeCenterId}
-        />
-      )}
-
-      {/* ── CENTER SETTINGS ────────────────────────────────────────────────── */}
-      {tab === 'settings' && (
-        <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
-      )}
+      {/* Analytics + Center Settings are standalone pages now —
+          /center-analytics and /center-settings respectively. */}
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
       {addShiftModal && (
@@ -2930,7 +2914,7 @@ export default function Admin() {
 // config — no new data plumbing for Phase 1. Active student count is a
 // manual entry on this page (Phase 2 will add automated enrollment import).
 
-function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
+export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const now = new Date();
   const todayStr      = format(now, 'yyyy-MM-dd');
   const weekStartStr  = format(startOfWeek(now), 'yyyy-MM-dd');

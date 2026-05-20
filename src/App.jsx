@@ -16,6 +16,9 @@ import SuperAdmin from './pages/SuperAdmin';
 import NotificationPreferences from './pages/NotificationPreferences';
 import PlatformRevenue from './pages/PlatformRevenue';
 import PlatformChat from './pages/PlatformChat';
+import CenterAnalytics from './pages/CenterAnalytics';
+import CenterSettings from './pages/CenterSettings';
+import AuditLogs from './pages/AuditLogs';
 
 function NotFound() {
   return (
@@ -46,6 +49,9 @@ function AppRoutes() {
       <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
       <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
       <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
+      <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
+      <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
+      <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>

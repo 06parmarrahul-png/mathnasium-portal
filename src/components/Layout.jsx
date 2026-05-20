@@ -8,7 +8,7 @@ import MigrationBanner from './MigrationBanner';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
-  Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2,
+  Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -88,78 +88,78 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
-  // Tab query param (used to match active state for Center Analytics /
-  // Center Settings sidebar items that deep-link into the Admin Panel).
-  const tabParam = new URLSearchParams(location.search).get('tab');
-
-  // Build nav based on role.
-  // Super-admins get a categorised view (Owner / Admin) tuned to running
-  // the platform across centres. Everyone else gets the original flat list,
-  // with Platform Chat added for owner / admin so they have a direct line
-  // to the product team without instructors seeing it.
-  let navSections;
-  if (isSuperAdmin) {
-    navSections = [
-      {
-        label: 'Owner',
-        items: [
-          { to: '/',                    label: 'Home',             icon: House },
-          { to: '/announcements',       label: 'Announcements',    icon: Megaphone },
-          { to: '/admin?tab=analytics', label: 'Center Analytics', icon: BarChart3, matchTab: 'analytics' },
-          { to: '/admin?tab=settings',  label: 'Center Settings',  icon: Settings,  matchTab: 'settings' },
-          { to: '/platform-revenue',    label: 'Platform Revenue', icon: DollarSign },
-        ],
-      },
-      {
-        label: 'Admin',
-        items: [
-          { to: '/admin',         label: 'Admin Panel',    icon: Briefcase, matchTab: null, adminBare: true },
-          { to: '/notifications', label: 'Notifications',  icon: Bell },
-          { to: '/platform-chat', label: 'Platform Chat',  icon: Headphones },
-          { to: '/super-admin',   label: 'Manage Centres', icon: Building2 },
-        ],
-      },
-    ];
-  } else {
-    const base = [
-      { to: '/',              label: 'Home',          icon: House },
-      { to: '/announcements', label: 'Announcements', icon: Megaphone },
-      { to: '/schedule',      label: 'Scheduling',    icon: CalendarDays },
-      { to: '/shift-board',   label: 'Shift Board',   icon: Briefcase, badge: boardCount },
-      { to: '/chat',          label: 'Chat',          icon: MessageSquare },
-    ];
-    // Owners run the business and don't typically take individual shifts —
-    // they skip the personal Scheduling page (consistent with prior behavior).
-    const filteredBase = isOwner ? base.filter(i => i.to !== '/schedule') : base;
-    // Owners + admins also get Platform Chat — their channel to support /
-    // feature requests. Instructors don't see this entry.
-    if (isOwner || isAdmin) {
-      filteredBase.push({ to: '/platform-chat', label: 'Platform Chat', icon: Headphones });
+  // Build nav based on role. Three sections — GENERAL / OWNER / ADMIN —
+  // visible to whoever's signed in. Items are added per-section based on
+  // role rather than building entirely different nav trees per role; that
+  // way the structure stays consistent and only what appears inside each
+  // section varies. Empty sections are dropped before render.
+  //
+  // Role guide:
+  //   instructor → GENERAL only (their personal app: Home, Announcements,
+  //                Schedule, Shift Board, Chat) + Notifications under ADMIN.
+  //   admin      → above + Admin Panel + Platform Chat under ADMIN.
+  //   owner      → above + Centre Analytics + Centre Settings under OWNER.
+  //   super_admin → above + Manage Centres + Platform Revenue + Audit Logs
+  //                  under OWNER. (Owners don't run other centres so the
+  //                  platform-operator items stay super-admin-only.)
+  const general = [
+    { to: '/',              label: 'Home',          icon: House },
+    { to: '/announcements', label: 'Announcements', icon: Megaphone },
+  ];
+  // Personal scheduling surfaces. Super-admins skip these entirely —
+  // they're the platform operator and shouldn't be claiming shifts at
+  // someone else's centre. Owners skip Schedule (the personal-availability
+  // page) since they run the business rather than take individual shifts,
+  // but they keep Shift Board and Chat for awareness / coverage gaps.
+  if (!isSuperAdmin) {
+    if (!isOwner) {
+      general.push({ to: '/schedule', label: 'Scheduling', icon: CalendarDays });
     }
-    const adminItems = canSeeAdminPanel ? [{ to: '/admin', label: 'Admin Panel', icon: Shield }] : [];
-    navSections = [{
-      label: null,
-      items: [
-        ...filteredBase,
-        ...adminItems,
-        { to: '/notifications', label: 'Notifications', icon: Bell },
-      ],
-    }];
+    general.push(
+      { to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount },
+      { to: '/chat',        label: 'Chat',        icon: MessageSquare },
+    );
   }
 
-  // Active-state matcher — handles tab deep-links so Center Analytics and
-  // Center Settings highlight (instead of Admin Panel) when their tab is open.
-  const isActive = (item) => {
-    if (item.adminBare) {
-      // "Bare" Admin Panel = on /admin without an analytics/settings tab.
-      return location.pathname === '/admin'
-        && tabParam !== 'analytics' && tabParam !== 'settings';
-    }
-    if (item.matchTab) {
-      return location.pathname === '/admin' && tabParam === item.matchTab;
-    }
-    return location.pathname === item.to;
-  };
+  const owner = [];
+  if (isSuperAdmin) {
+    owner.push({ to: '/super-admin', label: 'Manage Centres', icon: Building2 });
+  }
+  // Centre Analytics + Centre Settings = canSeeCenterSettings (owner +
+  // super-admin). Plain admins manage day-to-day ops but don't get strategic
+  // metrics or scheduler config.
+  if (isSuperAdmin || isOwner) {
+    owner.push(
+      { to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 },
+      { to: '/center-settings',  label: 'Centre Settings',  icon: Settings },
+    );
+  }
+  if (isSuperAdmin) {
+    owner.push(
+      { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
+      { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
+    );
+  }
+
+  const admin = [];
+  if (canSeeAdminPanel) {
+    admin.push({ to: '/admin', label: 'Admin Panel', icon: Shield });
+  }
+  if (isSuperAdmin || isOwner || isAdmin) {
+    admin.push({ to: '/platform-chat', label: 'Platform Chat', icon: Headphones });
+  }
+  // Notifications is per-user preference — every signed-in user has one.
+  admin.push({ to: '/notifications', label: 'Notifications', icon: Bell });
+
+  const navSections = [
+    { label: 'General', items: general },
+    { label: 'Owner',   items: owner   },
+    { label: 'Admin',   items: admin   },
+  ].filter(s => s.items.length > 0);
+
+  // Simple path equality is enough now that nothing deep-links into
+  // admin?tab= from the sidebar.
+  const isActive = (item) => location.pathname === item.to;
 
   // Role badge for the bottom user card
   const roleLabel = ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor');
