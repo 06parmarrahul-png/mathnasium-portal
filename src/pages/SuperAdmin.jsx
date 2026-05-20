@@ -190,7 +190,13 @@ export default function SuperAdmin() {
               <div className="grid gap-3 sm:grid-cols-2">
                 {centers.map(c => {
                   const isActive = activeCenterId === c.id;
-                  const isMine = userCenters?.includes(c.id);
+                  // Super-admins have access to every centre by virtue of
+                  // their role, so the "Member" badge is just noise on this
+                  // dashboard — and it makes the platform operator look like
+                  // a regular employee of whichever centre they happen to be
+                  // listed under. Show it only to non-super-admin viewers
+                  // (e.g., the bootstrap-eligible owner before promotion).
+                  const isMine = !isSuperAdmin && userCenters?.includes(c.id);
                   return (
                     <div
                       key={c.id}

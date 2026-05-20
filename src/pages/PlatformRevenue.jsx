@@ -5,7 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import {
   Briefcase, Building2, DollarSign, TrendingUp, ShieldAlert, Edit3,
   CheckCircle2, AlertTriangle, Save, X, AlertOctagon, Clock, PauseCircle,
-  Mail, Send, ExternalLink, Copy, Loader2, Link2,
+  Mail, Send, ExternalLink, Copy, Loader2, Link2, MinusCircle,
 } from 'lucide-react';
 
 /**
@@ -538,7 +538,10 @@ function CentreRow({
   const [tier, setTier] = useState(billing.tier || 'free');
   const [amount, setAmount] = useState(String(billing.monthlyAmount ?? 0));
   const [notes, setNotes] = useState(billing.notes || '');
-  const [status, setStatus] = useState(billing.status || ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
+  // Use ?? (not ||) so an explicit empty-string "None" choice survives
+  // a re-open of the editor — otherwise || would treat '' the same as
+  // "never set" and reset the chip to the Active/Free fallback.
+  const [status, setStatus] = useState(billing.status ?? ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
   const [periodEnd, setPeriodEnd] = useState(billing.currentPeriodEnd || '');
   const [lastPaidAt, setLastPaidAt] = useState(billing.lastPaidAt || '');
   const [lastPaidAmount, setLastPaidAmount] = useState(String(billing.lastPaidAmount ?? ''));
@@ -553,7 +556,7 @@ function CentreRow({
       setTier(billing.tier || 'free');
       setAmount(String(billing.monthlyAmount ?? 0));
       setNotes(billing.notes || '');
-      setStatus(billing.status || ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
+      setStatus(billing.status ?? ((Number(billing.monthlyAmount) || 0) > 0 ? 'active' : 'free'));
       setPeriodEnd(billing.currentPeriodEnd || '');
       setLastPaidAt(billing.lastPaidAt || '');
       setLastPaidAmount(String(billing.lastPaidAmount ?? ''));
@@ -844,7 +847,11 @@ function CentreRow({
             </div>
           </div>
 
-          {/* Subscription status chips */}
+          {/* Subscription status chips. The "None" chip clears the explicit
+              status — the row will then auto-display as Active (if there's a
+              monthly amount) or Free (if not) via the effectiveStatus
+              fallback. Useful for your own centre, internal pilots, etc.
+              where no sales-funnel status applies. */}
           <div>
             <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Subscription status</label>
             <div className="flex flex-wrap gap-2">
@@ -866,6 +873,23 @@ function CentreRow({
                   </button>
                 );
               })}
+              {(() => {
+                const active = !status;
+                return (
+                  <button
+                    type="button"
+                    onClick={() => setStatus('')}
+                    title="Clear the explicit status — row will auto-show as Active or Free based on the monthly amount."
+                    className={`inline-flex items-center gap-1 rounded-full border-2 px-3 py-1 text-xs font-semibold transition-all ${
+                      active
+                        ? 'bg-gray-500 text-white border-transparent'
+                        : 'bg-gray-100 text-gray-600 border-transparent hover:opacity-80'
+                    }`}
+                  >
+                    <MinusCircle size={11} /> None
+                  </button>
+                );
+              })()}
             </div>
           </div>
 

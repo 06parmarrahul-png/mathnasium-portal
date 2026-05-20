@@ -556,6 +556,51 @@ export default function Admin() {
   // User management
   const handleApprove = uid => updateDoc(doc(db, 'users', uid), { approved: true });
   const handleReject  = uid => deleteDoc(doc(db, 'users', uid));
+
+  // Approving a time-off request also clears any shifts the user already
+  // had inside that range — otherwise they'd stay on the schedule on a day
+  // they have approved leave. We convert them to open shifts (rather than
+  // delete) so coverage can still be picked up by someone else. All writes
+  // go through a single batch so an interruption leaves a consistent state.
+  // Date fields are 'YYYY-MM-DD' strings, which compare lexically as ISO.
+  const handleApproveTimeOff = async (req) => {
+    await updateDoc(doc(db, 'timeOffRequests', req.id), { status: 'approved' });
+
+    const conflicting = shifts.filter(s =>
+      s.userId === req.userId &&
+      s.date && s.date >= req.startDate && s.date <= req.endDate,
+    );
+    if (conflicting.length > 0) {
+      const batch = writeBatch(db);
+      for (const s of conflicting) {
+        batch.delete(doc(db, 'shifts', s.id));
+        const newRef = doc(collection(db, 'openShifts'));
+        batch.set(newRef, {
+          date:        s.date,
+          startTime:   s.startTime,
+          endTime:     s.endTime,
+          role:        s.role || 'Instructor',
+          subRole:     s.subRole || 'Elementary',
+          shiftType:   s.shiftType || 'In-Centre',
+          centerId:    s.centerId || activeCenterId,
+          status:      'open',
+          claimedBy:   null,
+          claimedByName: null,
+          postedAt:    new Date().toISOString(),
+          // Provenance so admins can tell where this open shift came from.
+          openedFrom:        'time_off_approval',
+          originalUserId:    s.userId || null,
+          originalUserName:  s.userName || req.userName || null,
+        });
+      }
+      await batch.commit();
+    }
+
+    const recipient = approvedUsers.find(u => u.id === req.userId);
+    if (recipient?.email) {
+      notifyTimeOffDecision(req, recipient, 'approved');
+    }
+  };
   const handleUpdateUserField = (uid, field, value) =>
     updateDoc(doc(db, 'users', uid), { [field]: value });
 
@@ -2652,13 +2697,7 @@ export default function Admin() {
                       {req.status === 'pending' && (
                         <div className="flex flex-col gap-2 shrink-0">
                           <button
-                            onClick={async () => {
-                              await updateDoc(doc(db, 'timeOffRequests', req.id), { status: 'approved' });
-                              const recipient = approvedUsers.find(u => u.id === req.userId);
-                              if (recipient?.email) {
-                                notifyTimeOffDecision(req, recipient, 'approved');
-                              }
-                            }}
+                            onClick={() => handleApproveTimeOff(req)}
                             className="flex items-center gap-1.5 rounded-lg bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700 transition-colors">
                             <Check size={14} /> Approve
                           </button>
