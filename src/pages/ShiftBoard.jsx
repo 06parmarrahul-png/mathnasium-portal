@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, doc, onSnapshot, query, where, orderBy, limit,
-  runTransaction, getDocs,
+  runTransaction, getDocs, updateDoc, deleteDoc,
 } from 'firebase/firestore';
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
@@ -10,9 +10,10 @@ import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
-  CalendarDays, Briefcase,
+  CalendarDays, Briefcase, Pencil, Trash2, X,
 } from 'lucide-react';
-import { toast } from '../lib/notify';
+import { toast, confirmDialog } from '../lib/notify';
+import { SUB_ROLES } from '../lib/subRoles';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -80,7 +81,7 @@ function CardShell({ children, eligible, isMine }) {
   );
 }
 
-function OpenShiftCard({ shift, profile, onClaim }) {
+function OpenShiftCard({ shift, profile, onClaim, canAdmin, onEdit, onDelete }) {
   const [busy, setBusy] = useState(false);
   const eligible = canTake(shift.subRole, profile?.subRoles);
   const handleClick = async () => {
@@ -91,11 +92,31 @@ function OpenShiftCard({ shift, profile, onClaim }) {
   return (
     <CardShell eligible={eligible}>
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-widest font-bold text-orange-600">Open Shift</p>
           <p className="text-base font-bold text-gray-900 mt-0.5">{fmtDate(shift.date)}</p>
         </div>
-        <SubRolePill subRole={shift.subRole} />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <SubRolePill subRole={shift.subRole} />
+          {canAdmin && (
+            <>
+              <button
+                onClick={() => onEdit(shift)}
+                title="Edit this open shift"
+                className="rounded-md border border-gray-200 bg-white p-1 text-gray-400 hover:border-orange-300 hover:bg-orange-50 hover:text-orange-600"
+              >
+                <Pencil size={12} />
+              </button>
+              <button
+                onClick={() => onDelete(shift)}
+                title="Take this open shift down"
+                className="rounded-md border border-gray-200 bg-white p-1 text-gray-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+              >
+                <Trash2 size={12} />
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2 text-sm text-gray-700 mb-1">
         <Clock size={14} className="text-gray-400" />
@@ -129,7 +150,7 @@ function OpenShiftCard({ shift, profile, onClaim }) {
   );
 }
 
-function SwapCard({ swap, profile, onTake }) {
+function SwapCard({ swap, profile, onTake, canAdmin, onDelete }) {
   const [busy, setBusy] = useState(false);
   const isMine = swap.userId === profile?.uid;
   const eligible = !isMine && canTake(swap.shiftSubRole, profile?.subRoles);
@@ -141,13 +162,24 @@ function SwapCard({ swap, profile, onTake }) {
   return (
     <CardShell eligible={eligible || isMine} isMine={isMine}>
       <div className="flex items-start justify-between gap-3 mb-2">
-        <div>
+        <div className="min-w-0">
           <p className="text-xs uppercase tracking-widest font-bold text-orange-600 flex items-center gap-1.5">
             <ArrowRightLeft size={11} /> Swap
           </p>
           <p className="text-base font-bold text-gray-900 mt-0.5">{fmtDate(swap.shiftDate)}</p>
         </div>
-        <SubRolePill subRole={swap.shiftSubRole} />
+        <div className="flex items-center gap-1.5 shrink-0">
+          <SubRolePill subRole={swap.shiftSubRole} />
+          {canAdmin && (
+            <button
+              onClick={() => onDelete(swap)}
+              title="Cancel this swap request"
+              className="rounded-md border border-gray-200 bg-white p-1 text-gray-400 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
+        </div>
       </div>
       <div className="flex items-center gap-2 text-sm text-gray-700 mb-1">
         <Clock size={14} className="text-gray-400" />
@@ -184,10 +216,70 @@ function SwapCard({ swap, profile, onTake }) {
   );
 }
 
+// ─── Admin: edit-open-shift modal ─────────────────────────────────────────────
+
+/**
+ * Compact modal for editing an existing open shift's time + teaching level.
+ * Lives here (not in Admin.jsx) so admins can edit straight from the Shift
+ * Board without round-tripping through the admin panel. Sub-role / time
+ * updates write directly to the openShifts doc; the rules already allow
+ * any signed-in user to update openShifts (needed for the claim flow), so
+ * no rules change is required.
+ */
+function EditOpenShiftModal({ shift, onClose, onSave }) {
+  const [startTime, setStartTime] = useState(shift.startTime || '15:00');
+  const [endTime,   setEndTime]   = useState(shift.endTime   || '19:00');
+  const [subRole,   setSubRole]   = useState(shift.subRole   || 'Elementary');
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    setSaving(true);
+    try { await onSave({ startTime, endTime, subRole }); onClose(); }
+    finally { setSaving(false); }
+  };
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50 px-4" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-center justify-between mb-1">
+          <h2 className="text-lg font-bold text-gray-900">Edit open shift</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">{fmtDate(shift.date)}</p>
+        <div className="grid grid-cols-2 gap-2 mb-3">
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Start Time</label>
+            <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-orange-500 focus:outline-none" />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">End Time</label>
+            <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-orange-500 focus:outline-none" />
+          </div>
+        </div>
+        <div className="mb-4">
+          <label className="block text-xs text-gray-500 mb-1">Teaching Level</label>
+          <select value={subRole} onChange={e => setSubRole(e.target.value)}
+            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-orange-500 focus:outline-none">
+            {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+          </select>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">Cancel</button>
+          <button onClick={submit} disabled={saving}
+            className="rounded-lg bg-orange-500 px-4 py-2 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
+  const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
   const [hideIneligible, setHideIneligible] = useState(() => {
@@ -383,6 +475,54 @@ export default function ShiftBoard() {
     }
   };
 
+  // ─── Admin actions (visible only when canSeeAdminPanel) ──────────────────
+
+  const handleAdminEditOpenShift = async (patch) => {
+    if (!editingOpenShift) return;
+    try {
+      await updateDoc(doc(db, 'openShifts', editingOpenShift.id), {
+        startTime: patch.startTime,
+        endTime:   patch.endTime,
+        subRole:   patch.subRole,
+      });
+      toast.success('Open shift updated.');
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update open shift.');
+    }
+  };
+
+  const handleAdminDeleteOpenShift = async (shift) => {
+    const ok = await confirmDialog({
+      title: 'Take this open shift down?',
+      message: `${fmtDate(shift.date)} · ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}\n\nIt will be removed from the board and from anyone's claim list.`,
+      confirmText: 'Take down',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'openShifts', shift.id));
+      toast.success('Open shift removed.');
+    } catch (err) {
+      toast.error(err?.message || 'Failed to remove open shift.');
+    }
+  };
+
+  const handleAdminDeleteSwap = async (swap) => {
+    const ok = await confirmDialog({
+      title: 'Cancel this swap request?',
+      message: `${swap.userName}'s swap for ${fmtDate(swap.shiftDate)} (${fmtTime(swap.shiftStartTime)} – ${fmtTime(swap.shiftEndTime)}).\n\nThe shift stays with the original instructor. The request is removed from the board.`,
+      confirmText: 'Cancel request',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'chat', swap.id));
+      toast.success('Swap request cancelled.');
+    } catch (err) {
+      toast.error(err?.message || 'Failed to cancel swap request.');
+    }
+  };
+
   // ─── No-sub-roles warning banner ──────────────────────────────────────────
 
   const userHasNoSubRoles = (profile?.subRoles || []).length === 0;
@@ -448,7 +588,15 @@ export default function ShiftBoard() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {filteredOpen.map(s => (
-              <OpenShiftCard key={s.id} shift={s} profile={profile} onClaim={handleClaim} />
+              <OpenShiftCard
+                key={s.id}
+                shift={s}
+                profile={profile}
+                onClaim={handleClaim}
+                canAdmin={canSeeAdminPanel}
+                onEdit={setEditingOpenShift}
+                onDelete={handleAdminDeleteOpenShift}
+              />
             ))}
           </div>
         )}
@@ -479,11 +627,26 @@ export default function ShiftBoard() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {filteredSwaps.map(s => (
-              <SwapCard key={s.id} swap={s} profile={profile} onTake={handleTakeSwap} />
+              <SwapCard
+                key={s.id}
+                swap={s}
+                profile={profile}
+                onTake={handleTakeSwap}
+                canAdmin={canSeeAdminPanel}
+                onDelete={handleAdminDeleteSwap}
+              />
             ))}
           </div>
         )}
       </section>
+
+      {editingOpenShift && (
+        <EditOpenShiftModal
+          shift={editingOpenShift}
+          onClose={() => setEditingOpenShift(null)}
+          onSave={handleAdminEditOpenShift}
+        />
+      )}
     </div>
   );
 }

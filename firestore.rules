@@ -166,8 +166,12 @@ service cloud.firestore {
       allow read:   if isSignedIn();
       // Create / update: any signed-in user (chat + swap acceptance).
       allow create, update: if isSignedIn();
-      // Delete: owner only (rare).
-      allow delete: if isOwner() || isSuperAdmin();
+      // Delete: owner / super-admin can delete anything. Admins can delete
+      // shift-swap entries from the Shift Board so they can manage swap
+      // requests without going through an owner — but they CANNOT delete
+      // general team-chat messages (preserving chat as an audit-able log).
+      allow delete: if isOwner() || isSuperAdmin()
+                       || (isAdmin() && resource.data.type == 'shift_swap');
     }
 
     // Cross-centre support / feature-request chat. Owner / admin / super-admin

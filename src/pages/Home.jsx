@@ -69,7 +69,7 @@ const quickLinks = [
 ];
 
 export default function Home() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [careerPlanOpen, setCareerPlanOpen] = useState(false);
@@ -116,8 +116,11 @@ export default function Home() {
 
   const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
-  const isOwner = profile?.role === 'owner';
   const isStaff = profile?.uid && profile?.role !== 'owner' && profile?.role !== 'super_admin';
+  // Today's Snapshot is for everyone running ops — admins, owners, and
+  // super-admins. Previously gated to owner-only which left admins (who
+  // staff the centre day-to-day) without the coverage view at a glance.
+  const showTodaysSnapshot = canSeeAdminPanel;
 
   // 4-month plan staleness. Asking once a quarter (90 days) is the cadence
   // that catches life changes without nagging. Captured at mount via lazy
@@ -139,7 +142,7 @@ export default function Home() {
   return (
     // Owners see a wider container because Today's Snapshot includes the
     // coverage grid which benefits from extra room. Instructors stay narrow.
-    <div className={`mx-auto space-y-6 ${isOwner ? 'max-w-5xl' : 'max-w-3xl'}`}>
+    <div className={`mx-auto space-y-6 ${showTodaysSnapshot ? 'max-w-5xl' : 'max-w-3xl'}`}>
 
       {/* Greeting */}
       <div>
@@ -202,7 +205,7 @@ export default function Home() {
       )}
 
       {/* ── Today's Snapshot (owners only) ── */}
-      {isOwner && <TodaysSnapshot />}
+      {showTodaysSnapshot && <TodaysSnapshot />}
 
       {/* ── Upcoming Shift Card ── */}
       {profile?.role !== 'owner' && (
