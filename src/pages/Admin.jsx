@@ -427,7 +427,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
+  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -556,7 +556,52 @@ export default function Admin() {
 
   // User management
   const handleApprove = uid => updateDoc(doc(db, 'users', uid), { approved: true });
-  const handleReject  = uid => deleteDoc(doc(db, 'users', uid));
+
+  // Reject = disable the Firebase Auth account AND delete the Firestore
+  // profile. We can't do the Auth half from the client (the client SDK can
+  // only touch the *current* user), so this routes through the server-side
+  // endpoint at /api/users/reject-user, which uses the Admin SDK.
+  //
+  // Without the server route, a "rejected" user could still authenticate
+  // and just bounce on the pending screen — their credential would linger
+  // on the platform indefinitely. The endpoint fully removes them.
+  const handleReject = async (uid) => {
+    const target = users.find(u => u.id === uid);
+    const niceName = target?.displayName || target?.email || 'this user';
+    const ok = await confirmDialog({
+      title: `Reject ${niceName}?`,
+      message:
+        'Their Firebase login will be disabled and their profile will be removed. ' +
+        'They will need to sign up again from scratch if they want back in.',
+      confirmText: 'Reject user',
+      danger: true,
+    });
+    if (!ok) return;
+
+    try {
+      const idToken = user ? await user.getIdToken() : null;
+      if (!idToken) throw new Error('Not signed in.');
+      const r = await fetch('/api/users/reject-user', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${idToken}`,
+          'Content-Type':  'application/json',
+        },
+        body: JSON.stringify({ uid }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        throw new Error(data?.error || `Reject failed (${r.status}).`);
+      }
+      if (data.warning) {
+        toast.error(data.warning, 7000);
+      } else {
+        toast.success(`${niceName} has been rejected.`);
+      }
+    } catch (err) {
+      toast.error(err?.message || 'Failed to reject user.');
+    }
+  };
 
   // Approving a time-off request also clears any shifts the user already
   // had inside that range — otherwise they'd stay on the schedule on a day

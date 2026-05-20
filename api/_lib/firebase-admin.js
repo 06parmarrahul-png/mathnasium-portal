@@ -44,6 +44,16 @@ export function getFirestore() {
 }
 
 /**
+ * Server-side Firebase Auth admin handle. Lets API routes update / delete
+ * Firebase Auth user records — required because the client SDK can only
+ * touch the *current* user's account.
+ */
+export function getAuth() {
+  getApp();
+  return adminGetAuth();
+}
+
+/**
  * Verify a Firebase ID token. Used by the Checkout / Portal API routes to
  * confirm the caller is who they say they are before doing privileged work.
  * Throws on invalid tokens — callers should wrap in try / catch.
