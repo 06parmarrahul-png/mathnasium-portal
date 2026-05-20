@@ -3,6 +3,7 @@ import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, orderBy }
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Megaphone, Plus, Trash2, Pin } from 'lucide-react';
+import { confirmDialog } from '../lib/notify';
 
 const CATEGORIES = {
   general: { bg: 'bg-gray-100', text: 'text-gray-700', label: 'General' },
@@ -53,7 +54,13 @@ export default function Announcements() {
   };
 
   const handleDelete = async (id) => {
-    if (confirm('Delete this announcement?')) await deleteDoc(doc(db, 'announcements', id));
+    const ok = await confirmDialog({
+      title: 'Delete this announcement?',
+      message: 'It will be removed for everyone immediately.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (ok) await deleteDoc(doc(db, 'announcements', id));
   };
 
   const isOwner = profile?.role === 'owner';

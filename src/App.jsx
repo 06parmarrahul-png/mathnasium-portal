@@ -3,6 +3,7 @@ import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
+import NotifyHost from './components/NotifyHost';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Home from './pages/Home';
@@ -57,6 +58,10 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <AppRoutes />
+          {/* Single global host for toasts + confirm dialogs. Mounted once
+              here so any code path can call toast.success / confirmDialog
+              from src/lib/notify.js without prop drilling. */}
+          <NotifyHost />
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

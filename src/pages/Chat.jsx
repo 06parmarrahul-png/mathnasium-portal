@@ -3,6 +3,7 @@ import { collection, addDoc, onSnapshot, query, where, orderBy, limit, doc, runT
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
+import { toast } from '../lib/notify';
 
 export default function Chat() {
   const { profile, activeCenterId } = useAuth();
@@ -113,7 +114,7 @@ export default function Chat() {
   const handleAcceptShift = async (msg) => {
     if (!profile || msg.userId === profile.uid) return;
     if (msg.swapStatus !== 'open') {
-      alert('This shift has already been taken!');
+      toast.error('This shift has already been taken.');
       return;
     }
 
@@ -160,7 +161,7 @@ export default function Chat() {
         type: 'shift_confirmation',
       });
     } catch (err) {
-      alert(err?.message || 'Failed to accept shift. It may have already been taken.');
+      toast.error(err?.message || 'Failed to accept shift. It may have already been taken.');
     }
   };
 

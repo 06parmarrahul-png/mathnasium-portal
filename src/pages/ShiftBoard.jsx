@@ -12,6 +12,7 @@ import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
   CalendarDays, Briefcase,
 } from 'lucide-react';
+import { toast } from '../lib/notify';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -261,7 +262,7 @@ export default function ShiftBoard() {
 
   const handleClaim = async (openShift) => {
     if (!canTake(openShift.subRole, profile?.subRoles)) {
-      alert('You don\'t have the right teaching sub-role to claim this shift.');
+      toast.error('You don\'t have the right teaching sub-role to claim this shift.');
       return;
     }
     try {
@@ -310,7 +311,7 @@ export default function ShiftBoard() {
         type: 'shift_confirmation',
       });
 
-      alert('Shift claimed! It has been added to your schedule.');
+      toast.success('Shift claimed! It has been added to your schedule.');
 
       // Email confirmation to claimer + CC admins/owners. Fire-and-forget.
       try {
@@ -329,14 +330,14 @@ export default function ShiftBoard() {
         );
       } catch { /* email failure shouldn't disrupt UX */ }
     } catch (err) {
-      alert(err?.message || 'Failed to claim shift. Please try again.');
+      toast.error(err?.message || 'Failed to claim shift. Please try again.');
     }
   };
 
   const handleTakeSwap = async (swap) => {
     if (swap.userId === profile?.uid) return;
     if (!canTake(swap.shiftSubRole, profile?.subRoles)) {
-      alert('You don\'t have the right teaching sub-role to take this shift.');
+      toast.error('You don\'t have the right teaching sub-role to take this shift.');
       return;
     }
     try {
@@ -378,7 +379,7 @@ export default function ShiftBoard() {
         type: 'shift_confirmation',
       });
     } catch (err) {
-      alert(err?.message || 'Failed to take shift. It may have already been taken.');
+      toast.error(err?.message || 'Failed to take shift. It may have already been taken.');
     }
   };
 

@@ -6,6 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { toast, confirmDialog } from '../lib/notify';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
@@ -885,12 +886,18 @@ export default function Admin() {
   const handleSeedFixedStaffWeek = async () => {
     const dates = weekDays.map(d => format(d, 'yyyy-MM-dd'));
     await seedFixedShiftsForDates(dates);
-    alert('✅ Fixed staff shifts synced for this week with correct times.');
+    toast.success('Fixed staff shifts synced for this week with correct times.');
   };
 
   // One-time cleanup: delete ALL fixed staff shifts across all dates, then reseed the current week
   const handlePurgeAndReseed = async () => {
-    if (!confirm('This will delete ALL fixed staff shifts from Firestore and reseed the current week fresh. Continue?')) return;
+    const ok = await confirmDialog({
+      title: 'Purge & reseed fixed staff shifts?',
+      message: 'This will delete ALL fixed staff shifts from Firestore and reseed the current week fresh.',
+      confirmText: 'Purge & reseed',
+      danger: true,
+    });
+    if (!ok) return;
     const fixedNames = Object.keys(FIXED_SCHEDULES).map(n => n.toLowerCase());
     // Delete in chunks of 500 (Firestore batch limit)
     const toDelete = shifts.filter(s => fixedNames.includes(s.userName?.toLowerCase()));
@@ -903,20 +910,27 @@ export default function Admin() {
     // Reseed current week
     const dates = weekDays.map(d => format(d, 'yyyy-MM-dd'));
     await seedFixedShiftsForDates(dates);
-    alert(`✅ Purged ${toDelete.length} old fixed staff shifts and reseeded this week.`);
+    toast.success(`Purged ${toDelete.length} old fixed staff shifts and reseeded this week.`);
   };
 
-  // Reset ALL shifts in Firestore — complete clean slate
+  // Reset ALL shifts in Firestore — complete clean slate. Gated by a
+  // type-to-confirm input so an accidental click can't wipe everything.
   const handleResetAllShifts = async () => {
-    if (!confirm('⚠️ This will permanently delete EVERY shift from Firestore for ALL staff. This cannot be undone. Are you sure?')) return;
-    if (!confirm('Last chance — delete all shifts?')) return;
+    const ok = await confirmDialog({
+      title: 'Delete EVERY shift?',
+      message: 'This permanently removes every shift in Firestore for every staff member. This cannot be undone.',
+      confirmText: 'Delete all shifts',
+      danger: true,
+      requireText: 'DELETE',
+    });
+    if (!ok) return;
     const CHUNK = 490;
     for (let i = 0; i < shifts.length; i += CHUNK) {
       const b = writeBatch(db);
       shifts.slice(i, i + CHUNK).forEach(s => b.delete(doc(db, 'shifts', s.id)));
       await b.commit();
     }
-    alert(`✅ All ${shifts.length} shifts deleted. Fresh start!`);
+    toast.success(`All ${shifts.length} shifts deleted. Fresh start.`);
   };
 
   // ── Multi-center migration (Phase 1 groundwork) ──────────────────────────
@@ -926,13 +940,15 @@ export default function Admin() {
   const [migrationRunning, setMigrationRunning] = useState(false);
   const [migrationResult, setMigrationResult] = useState(null);
   const handleRunCenterMigration = async () => {
-    if (!confirm(
-      'Multi-center migration:\n\n' +
-      `• Creates a "${DEFAULT_CENTER_ID}" center doc if one doesn't exist\n` +
-      '• Stamps centerId="' + DEFAULT_CENTER_ID + '" onto every existing user, shift, availability, openShift, time-off request, chat, announcement, and notificationPreferences doc\n' +
-      '• Skips any doc that already has a centerId (safe to run multiple times)\n\n' +
-      'Continue?'
-    )) return;
+    const ok = await confirmDialog({
+      title: 'Run multi-center migration?',
+      message:
+        `• Creates a "${DEFAULT_CENTER_ID}" center doc if one doesn't exist\n` +
+        `• Stamps centerId="${DEFAULT_CENTER_ID}" onto every existing user, shift, availability, openShift, time-off request, chat, announcement, and notificationPreferences doc\n` +
+        '• Skips any doc that already has a centerId (safe to run multiple times)',
+      confirmText: 'Run migration',
+    });
+    if (!ok) return;
     setMigrationRunning(true);
     setMigrationResult(null);
     try {
@@ -1057,7 +1073,7 @@ export default function Admin() {
       notifySchedulePosted(draftSchedule, staffEmails);
 
       setDraftSchedule(null);
-      alert(`✅ Schedule posted! ${totalShifts} instructor shifts + fixed staff created. Staff notified.`);
+      toast.success(`Schedule posted! ${totalShifts} instructor shifts + fixed staff created. Staff notified.`);
     } catch (err) {
       setSchedError(`Failed to post: ${err.message}`);
     } finally {
@@ -2718,7 +2734,12 @@ export default function Admin() {
                       {req.status !== 'pending' && (
                         <button
                           onClick={async () => {
-                            if (confirm('Delete this request?')) await deleteDoc(doc(db, 'timeOffRequests', req.id));
+                            const ok = await confirmDialog({
+                              title: 'Delete this time-off request?',
+                              confirmText: 'Delete',
+                              danger: true,
+                            });
+                            if (ok) await deleteDoc(doc(db, 'timeOffRequests', req.id));
                           }}
                           className="text-gray-300 hover:text-red-400 transition-colors shrink-0">
                           <Trash2 size={15} />

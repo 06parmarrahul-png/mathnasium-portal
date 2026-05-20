@@ -18,6 +18,7 @@ import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
   getDay, addMonths, subMonths, isSameMonth,
 } from 'date-fns';
+import { toast } from '../lib/notify';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -997,12 +998,12 @@ export default function Schedule() {
       acceptedByName: null,
     });
     setSelectedDate(null);
-    alert('Posted to the Shift Board! Other instructors with the same teaching level can take it.');
+    toast.success('Posted to the Shift Board! Other instructors with the same teaching level can take it.');
   };
 
   const handleClaimOpenShift = async (openShift) => {
     if (openShift.status !== 'open') {
-      alert('This shift has already been claimed.');
+      toast.error('This shift has already been claimed.');
       return;
     }
     try {
@@ -1054,7 +1055,7 @@ export default function Schedule() {
         type: 'shift_confirmation',
       });
       setSelectedDate(null);
-      alert('Shift claimed! It has been added to your schedule.');
+      toast.success('Shift claimed! It has been added to your schedule.');
 
       // Email confirmation to claimer + CC admins/owners. Fire-and-forget.
       try {
@@ -1073,7 +1074,7 @@ export default function Schedule() {
         );
       } catch { /* email failure shouldn't disrupt UX */ }
     } catch (err) {
-      alert(err?.message || 'Failed to claim shift. Please try again.');
+      toast.error(err?.message || 'Failed to claim shift. Please try again.');
     }
   };
 
@@ -1089,7 +1090,7 @@ export default function Schedule() {
       createdAt: serverTimestamp(),
     });
     setSelectedDate(null);
-    alert('Time off request submitted! The admin team will review it.');
+    toast.success('Time off request submitted! The admin team will review it.');
   };
 
   // ── Cell state logic ──
