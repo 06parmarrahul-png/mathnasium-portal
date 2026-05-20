@@ -186,8 +186,9 @@ service cloud.firestore {
 
     match /announcements/{annId} {
       allow read:  if isSignedIn();
-      // Owner-only writes — instructors don't post announcements.
-      allow create, update, delete: if isOwner() || isSuperAdmin();
+      // Admin-panel writes — admins / owners / super-admins all post and
+      // manage announcements. Instructors / hosts can only read.
+      allow create, update, delete: if isOwner() || isSuperAdmin() || isAdmin();
     }
 
     match /notificationPreferences/{userId} {

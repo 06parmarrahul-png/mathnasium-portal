@@ -13,7 +13,7 @@ const CATEGORIES = {
 };
 
 export default function Announcements() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
   const [posts, setPosts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [title, setTitle] = useState('');
@@ -63,7 +63,9 @@ export default function Announcements() {
     if (ok) await deleteDoc(doc(db, 'announcements', id));
   };
 
-  const isOwner = profile?.role === 'owner';
+  // Anyone with admin-panel access can post + manage announcements —
+  // matches the Firestore rule. Instructors / hosts still read-only.
+  const canPostAnnouncements = canSeeAdminPanel;
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -75,14 +77,14 @@ export default function Announcements() {
             <p className="text-sm text-gray-500">Stay updated with the latest news</p>
           </div>
         </div>
-        {isOwner && (
+        {canPostAnnouncements && (
           <button onClick={() => setShowForm(!showForm)} className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition-colors hover:bg-red-700">
             <Plus size={16} /> New Post
           </button>
         )}
       </div>
 
-      {showForm && isOwner && (
+      {showForm && canPostAnnouncements && (
         <form onSubmit={handlePost} className="mb-6 rounded-xl border bg-white p-6 shadow-sm">
           <h3 className="mb-4 font-semibold text-gray-900">Create Announcement</h3>
           <div className="space-y-3">
@@ -123,7 +125,7 @@ export default function Announcements() {
               <p className="mb-3 whitespace-pre-wrap text-sm text-gray-600">{post.text}</p>
               <div className="flex items-center justify-between">
                 <span className="text-xs text-gray-400">Posted by {post.author}</span>
-                {isOwner && <button onClick={() => handleDelete(post.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>}
+                {canPostAnnouncements && <button onClick={() => handleDelete(post.id)} className="text-gray-400 hover:text-red-500"><Trash2 size={16} /></button>}
               </div>
             </div>
           );
