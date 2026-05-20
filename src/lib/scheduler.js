@@ -89,7 +89,7 @@ const DEFAULT_GUARANTEED_NAMES = ['Luke', 'Ainsley', 'Kaitlyn'];
  * caller via centerConfig); we accept it as a param so this helper stays
  * pure.
  */
-function clampToInstructionalHours(startTime, endTime, dayName, instructionalHours) {
+export function clampToInstructionalHours(startTime, endTime, dayName, instructionalHours) {
   const map = instructionalHours || DEFAULT_INSTRUCTIONAL_HOURS;
   const w = map[dayName];
   if (!w || !startTime || !endTime) return null;
@@ -101,7 +101,7 @@ function clampToInstructionalHours(startTime, endTime, dayName, instructionalHou
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
 
-function getWeekOfMonth(date) {
+export function getWeekOfMonth(date) {
   return Math.floor((date.getDate() - 1) / 7) + 1;
 }
 
@@ -184,7 +184,7 @@ function resolveAvailability(availabilityRecords, previousMonthsAvail, userId, d
 
 // ─── Fixed staff helpers ──────────────────────────────────────────────────────
 
-function parseAMPMtoHHMM(timeStr) {
+export function parseAMPMtoHHMM(timeStr) {
   if (!timeStr || timeStr.toLowerCase() === 'off') return null;
   const m = timeStr.trim().match(/^(\d+):(\d+)\s*(AM|PM)$/i);
   if (!m) return null;
@@ -235,7 +235,7 @@ function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
  * Elementary only = 1
  * Online only = 2 (not counted in ratio, handled separately)
  */
-function getSubRoleScore(instructor) {
+export function getSubRoleScore(instructor) {
   const subs = instructor.subRoles || [];
   const hasHS = subs.includes('Highschool');
   const hasEL = subs.includes('Elementary');
@@ -258,7 +258,7 @@ function getSubRoleScore(instructor) {
  * function stays robust even against legacy data that has both — anyone
  * with 'Online' is treated as online.
  */
-function isOnlineOnly(instructor) {
+export function isOnlineOnly(instructor) {
   return (instructor.subRoles || []).includes('Online');
 }
 
@@ -269,14 +269,14 @@ function isOnlineOnly(instructor) {
  *   - Highschool-capable → 'Highschool' (the higher-skill in-centre bucket)
  *   - everyone else      → 'Elementary'
  */
-function shiftSubRoleFor(instructor) {
+export function shiftSubRoleFor(instructor) {
   const subs = instructor.subRoles || [];
   if (subs.includes('Online')) return 'Online';
   if (subs.includes('Highschool')) return 'Highschool';
   return 'Elementary';
 }
 
-function isGuaranteed(instructor, guaranteedNames) {
+export function isGuaranteed(instructor, guaranteedNames) {
   // Per-user override (set via Admin → Manage Users → "Guaranteed shift" toggle)
   if (instructor.guaranteed === true) return true;
   const list = (Array.isArray(guaranteedNames) && guaranteedNames.length > 0)
@@ -294,7 +294,7 @@ function isGuaranteed(instructor, guaranteedNames) {
  * the day's instructor count is short of minPerDay they get auto-promoted
  * to role='Instructor' so they fill the gap.
  */
-function isHostRole(instructor) {
+export function isHostRole(instructor) {
   return (instructor.instructorType || '').toLowerCase() === 'host';
 }
 
