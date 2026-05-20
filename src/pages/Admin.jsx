@@ -1749,9 +1749,10 @@ export default function Admin() {
                     </div>
 
                     {/* Sub-roles / Teaching specializations.
-                        Online is its own platform — it's mutually exclusive
-                        with Elementary/Highschool. Selecting Online clears
-                        the in-centre sub-roles and vice versa. */}
+                        Online is its own platform for auto-scheduling, but
+                        an Online instructor can ALSO be tagged Elementary
+                        and/or Highschool so they're eligible to claim
+                        in-centre open shifts from the Shift Board. */}
                     <div>
                       <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
                       <div className="flex flex-wrap gap-2">
@@ -1759,43 +1760,19 @@ export default function Admin() {
                           const current = u.subRoles || [];
                           const active = current.includes(sr);
                           const style = SUB_ROLE_STYLES[sr];
-                          const isOnline = sr === 'Online';
-                          // Online is locked out while an in-centre sub-role is set;
-                          // in-centre sub-roles are locked out while Online is set.
-                          const onlineActive   = current.includes('Online');
-                          const inCentreActive = current.includes('Elementary') || current.includes('Highschool');
-                          const disabled = !active && (
-                            (isOnline && inCentreActive) ||
-                            (!isOnline && onlineActive)
-                          );
                           return (
                             <button
                               key={sr}
-                              disabled={disabled}
-                              title={disabled
-                                ? (isOnline
-                                    ? 'Online is a separate platform — remove Elementary/Highschool first'
-                                    : 'This instructor is Online-only — remove Online first')
-                                : ''}
                               onClick={() => {
-                                let updated;
-                                if (active) {
-                                  updated = current.filter(r => r !== sr);
-                                } else if (isOnline) {
-                                  // Picking Online wipes the in-centre sub-roles.
-                                  updated = ['Online'];
-                                } else {
-                                  // Picking an in-centre sub-role wipes Online.
-                                  updated = [...current.filter(r => r !== 'Online'), sr];
-                                }
+                                const updated = active
+                                  ? current.filter(r => r !== sr)
+                                  : [...current, sr];
                                 handleUpdateUserField(u.uid, 'subRoles', updated);
                               }}
                               className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
                                 active
                                   ? `${style.pillBg} ${style.pillText} border-transparent`
-                                  : disabled
-                                    ? 'bg-gray-50 text-gray-300 border-gray-100 cursor-not-allowed'
-                                    : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+                                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
                               }`}
                             >
                               <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
@@ -1808,7 +1785,7 @@ export default function Admin() {
                         )}
                       </div>
                       <p className="mt-1.5 text-xs text-gray-400">
-                        Online is a separate platform — can't be combined with Elementary or Highschool.
+                        Online instructors auto-schedule on the online platform, but can also be tagged Elementary or Highschool to claim in-centre open shifts.
                       </p>
                     </div>
 
