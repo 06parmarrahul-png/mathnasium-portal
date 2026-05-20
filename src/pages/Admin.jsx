@@ -1262,7 +1262,13 @@ export default function Admin() {
     URL.revokeObjectURL(url);
   };
 
-  // Parse Radius XLSX export — loads xlsx via script tag (no npm needed)
+  // Parse Radius XLSX export — loads xlsx via script tag (no npm needed).
+  //
+  // We do NOT hard-code column indices (`row[2]`, `row[4]`, ...). Radius
+  // changed their column order in the past and silently broke this import.
+  // Instead we locate the header row by looking for a known cell value
+  // ("Employee Name") and build a name→index map. If Radius adds or moves
+  // a column, the import still works as long as the header text is intact.
   const handleRadiusImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -1286,17 +1292,63 @@ export default function Admin() {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rows = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
 
-      const parsed = [];
-      for (const row of rows) {
-        const attendanceId = row[1];
-        const name = String(row[2] || '').trim();
-        const dateRaw = String(row[4] || '').trim();
-        const timeIn  = String(row[5] || '').trim();
-        const timeOut = String(row[6] || '').trim();
-        const durationHours = parseFloat(row[8]);
+      // Locate the header row + build a column map. Radius sometimes puts a
+      // title / company-name row above the actual headers, so we scan the
+      // first ~10 rows for one that looks like a header row.
+      const norm = (s) => String(s ?? '').trim().toLowerCase();
+      let headerIndex = -1;
+      let colMap = null;
+      const HEADER_SCAN_LIMIT = Math.min(rows.length, 10);
+      for (let i = 0; i < HEADER_SCAN_LIMIT; i++) {
+        const r = rows[i].map(norm);
+        // Find each column we need by keyword presence so cosmetic header
+        // tweaks ("Employee Name" → "Employee name", "Date" → "Shift Date")
+        // don't break us.
+        const find = (predicate) => r.findIndex(predicate);
+        const candidate = {
+          name:         find(c => c.includes('employee') && c.includes('name')),
+          attendanceId: find(c => c.includes('attendance') && c.includes('id')),
+          date:         find(c => c === 'date' || c.includes('shift date') || c.includes('work date')),
+          timeIn:       find(c => c.replace(/[^a-z]/g, '') === 'timein' || (c.includes('time') && c.includes('in') && !c.includes('out'))),
+          timeOut:      find(c => c.replace(/[^a-z]/g, '') === 'timeout' || (c.includes('time') && c.includes('out'))),
+          duration:     find(c => c.includes('duration') || c.includes('hours')),
+        };
+        // Accept this row as the header iff we located everything we need.
+        if (
+          candidate.name >= 0 && candidate.date >= 0 &&
+          candidate.timeIn >= 0 && candidate.timeOut >= 0 &&
+          candidate.duration >= 0
+        ) {
+          headerIndex = i;
+          colMap = candidate;
+          break;
+        }
+      }
+      if (!colMap) {
+        setRadiusError(
+          'Could not find the expected columns in this file. Make sure it is the Radius Employee Timesheet export with columns: Employee Name, Date, Time In, Time Out, Duration.'
+        );
+        return;
+      }
 
-        if (!name || name === 'Employee Name') continue;
-        if (typeof attendanceId !== 'number' || isNaN(attendanceId)) continue;
+      const parsed = [];
+      for (let i = headerIndex + 1; i < rows.length; i++) {
+        const row = rows[i];
+        const name    = String(row[colMap.name] || '').trim();
+        const dateRaw = String(row[colMap.date] || '').trim();
+        const timeIn  = String(row[colMap.timeIn] || '').trim();
+        const timeOut = String(row[colMap.timeOut] || '').trim();
+        const durationHours = parseFloat(row[colMap.duration]);
+        // attendanceId is optional — we keep the existing "must be numeric"
+        // filter when the column is present, since it's how Radius marks
+        // real rows vs total/summary rows. If the column isn't there we
+        // fall back to "has a parseable duration", which is just as good.
+        const attendanceId = colMap.attendanceId >= 0 ? row[colMap.attendanceId] : null;
+        if (colMap.attendanceId >= 0) {
+          if (typeof attendanceId !== 'number' || isNaN(attendanceId)) continue;
+        }
+
+        if (!name) continue;
         if (!dateRaw || isNaN(durationHours)) continue;
 
         // Parse DD/MM/YYYY → YYYY-MM-DD
@@ -1341,14 +1393,32 @@ export default function Admin() {
     setRadiusData(prev => [...prev, { name, date: payStart, timeIn: '', timeOut: '', actualHours: 0 }]);
   };
 
-  // Build comparison: for each person in payroll, match Radius rows
+  // Build comparison: for each person in payroll, match Radius rows.
+  //
+  // Real fuzzy name matcher. Radius sometimes uses "Brianna E. Smith" or
+  // "Sarah-Jane Doe" while the portal has "Brianna Smith" / "Sarah Jane
+  // Doe", and the old "strict equals after trim" missed both. We tokenise
+  // on whitespace AND hyphens, drop dots and apostrophes, and consider
+  // two names a match if their first token matches AND their last token
+  // matches. Single-word names fall back to exact-token equality.
   const comparisonSummary = useMemo(() => {
     if (radiusData.length === 0) return null;
+    const nameTokens = (raw) => String(raw || '')
+      .toLowerCase()
+      .replace(/[.'`]/g, '')      // drop punctuation that doesn't affect identity
+      .split(/[\s-]+/)            // split on whitespace + hyphens
+      .filter(Boolean);
+    const namesMatch = (a, b) => {
+      const ta = nameTokens(a);
+      const tb = nameTokens(b);
+      if (ta.length === 0 || tb.length === 0) return false;
+      if (ta.length === 1 || tb.length === 1) return ta[0] === tb[0];
+      return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
+    };
     return payrollSummary.map(person => {
-      // Fuzzy name match — Radius uses "First Last", portal uses "First Last"
       const radiusRows = radiusData
         .map((r, idx) => ({ ...r, _idx: idx }))
-        .filter(r => r.name.toLowerCase().trim() === person.name.toLowerCase().trim());
+        .filter(r => namesMatch(r.name, person.name));
       const actualHours = radiusRows.reduce((s, r) => s + r.actualHours, 0);
       const scheduledHours = person.totalHours;
       const diff = Math.round((actualHours - scheduledHours) * 100) / 100;
