@@ -208,7 +208,10 @@ export default function Home() {
       {showTodaysSnapshot && <TodaysSnapshot />}
 
       {/* ── Upcoming Shift Card ── */}
-      {profile?.role !== 'owner' && (
+      {/* Hidden for anyone with admin-panel access (super_admin / owner /
+          admin) — they care about today's coverage and announcements, not
+          their own next personal shift. Only instructors see this. */}
+      {!canSeeAdminPanel && (
         upcomingShift ? (
           <Link to="/schedule" className="group block">
             <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 shadow-lg shadow-red-200 transition-all hover:shadow-xl hover:shadow-red-200 hover:-translate-y-0.5">
@@ -361,6 +364,9 @@ export default function Home() {
       )}
 
       {/* ── Quick Actions ── */}
+      {/* Personal nav shortcuts — useful for instructors, just clutter for
+          admins / owners / super-admins who have the full sidebar already. */}
+      {!canSeeAdminPanel && (
       <div>
         <p className="mb-3 text-xs font-bold uppercase tracking-widest text-gray-400 px-0.5">
           Quick Actions
@@ -404,6 +410,7 @@ export default function Home() {
           )}
         </div>
       </div>
+      )}
 
       {/* 4-month plan modal — opened from the banner above. */}
       <CareerPlanModal
