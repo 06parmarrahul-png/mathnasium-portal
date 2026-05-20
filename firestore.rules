@@ -190,5 +190,28 @@ service cloud.firestore {
       // Self-only access for personal preferences.
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
+
+    // ── Audit log ────────────────────────────────────────────────────
+    // Append-only record of sensitive platform-operator actions. The
+    // value of this collection comes from the fact that entries cannot
+    // be revised after the fact — that's why update/delete are flat
+    // denied here for every role, including super-admins.
+    //
+    // Reads are limited to super-admins. (We may relax to "owners can
+    // read entries that touched their own centre" in a future pass; for
+    // now, super-admins viewing in the Super Admin dashboard is the
+    // single read path.)
+    //
+    // Writes are limited to authenticated users writing as themselves
+    // (request.resource.data.actorUid == request.auth.uid), which is
+    // what the client-side `logAuditEvent` helper does. This stops a
+    // malicious client from forging an entry that names someone else
+    // as the actor.
+    match /auditLog/{entryId} {
+      allow read:   if isSuperAdmin();
+      allow create: if isSignedIn()
+                       && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
   }
 }

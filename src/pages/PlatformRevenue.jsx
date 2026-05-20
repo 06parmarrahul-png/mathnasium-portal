@@ -7,6 +7,7 @@ import {
   CheckCircle2, AlertTriangle, Save, X, AlertOctagon, Clock, PauseCircle,
   Mail, Send, ExternalLink, Copy, Loader2, Link2, MinusCircle,
 } from 'lucide-react';
+import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 
 /**
  * Platform Revenue — what *we* charge each centre for using the product.
@@ -534,6 +535,7 @@ function CentreRow({
   center, isEditing, onStartEdit, onCancel, onSaved,
   onSendCheckoutLink, onOpenPortal, portalLoading,
 }) {
+  const { profile } = useAuth();
   const billing = center.billing || {};
   const [tier, setTier] = useState(billing.tier || 'free');
   const [amount, setAmount] = useState(String(billing.monthlyAmount ?? 0));
@@ -591,6 +593,21 @@ function CentreRow({
         { billing: next },
         { merge: true },
       );
+      // Audit: record what the super-admin changed. We diff against the
+      // pre-save snapshot so the log shows the meaningful before/after
+      // (not the whole billing blob).
+      const changed = {};
+      const prev = billing;
+      for (const k of ['tier', 'monthlyAmount', 'status', 'currentPeriodEnd', 'lastPaidAt', 'lastPaidAmount', 'customerEmail', 'notes']) {
+        if ((prev?.[k] ?? null) !== (next[k] ?? null)) {
+          changed[k] = { from: prev?.[k] ?? null, to: next[k] ?? null };
+        }
+      }
+      logAuditEvent(profile, {
+        action: AUDIT_ACTIONS.BILLING_UPDATE,
+        centerId: center.id,
+        details: { changed },
+      });
       onSaved?.();
     } catch (err) {
       setError(err?.message || 'Failed to save.');
@@ -647,6 +664,11 @@ function CentreRow({
         },
         { merge: true },
       );
+      logAuditEvent(profile, {
+        action: AUDIT_ACTIONS.BILLING_MARK_PAID,
+        centerId: center.id,
+        details: { amount: paidAmount, cadenceMonths: monthsToAdvance, periodEnd: nextPeriodEnd || null },
+      });
     } catch (err) {
       setError(err?.message || 'Failed to mark paid.');
     } finally {

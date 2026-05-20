@@ -10,6 +10,7 @@ import { doc, setDoc, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
+import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 
 const AuthContext = createContext(null);
 
@@ -80,11 +81,25 @@ export function AuthProvider({ children }) {
    * Switch which center is active (used by the sidebar center-switcher
    * for super-admins and multi-center staff). Persists the choice in
    * localStorage so it survives a page reload.
+   *
+   * Super-admin switches are written to the audit log so centre owners
+   * can see exactly when the platform operator dropped into their data.
+   * Multi-centre staff switches (e.g. an instructor flipping between
+   * their two centres) are not logged — that's normal app activity.
    */
   const switchCenter = (newCenterId) => {
     if (!newCenterId) return;
+    const prevCenterId = activeCenterId;
     persistActiveCenterId(newCenterId);
     setActiveCenterIdState(newCenterId);
+    if (profile?.role === 'super_admin' && newCenterId !== prevCenterId) {
+      // Fire-and-forget — see lib/audit.js for why we never await this.
+      logAuditEvent(profile, {
+        action: AUDIT_ACTIONS.CENTER_SWITCH,
+        centerId: newCenterId,
+        details: { fromCenterId: prevCenterId || null },
+      });
+    }
   };
 
   // Convenience helpers for role checks (read by routes / components).
