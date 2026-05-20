@@ -427,7 +427,7 @@ function AddOpenShiftModal({ date, onClose, onSave }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, activeCenterId, centerConfig, canSeeAdminPanel } = useAuth();
+  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -508,22 +508,51 @@ export default function Admin() {
   // Users use array-contains on centerIds (since some staff work at multiple
   // centers); everything else filters on the single centerId field.
   useEffect(() => {
+    // Sliding date window for shifts / availability / openShifts so live
+    // reads don't scale with centre-age. 180 days back covers payroll
+    // history, weekly grid navigation, and auto-scheduler look-back; older
+    // docs still exist in Firestore for ad-hoc queries.
+    const WINDOW_DAYS = 180;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - WINDOW_DAYS);
+    const y = cutoff.getFullYear();
+    const m = String(cutoff.getMonth() + 1).padStart(2, '0');
+    const d = String(cutoff.getDate()).padStart(2, '0');
+    const windowStart = `${y}-${m}-${d}`;
+
     const u1 = onSnapshot(
       query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
       snap => setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
     const u2 = onSnapshot(
-      query(collection(db, 'availability'), where('centerId', '==', activeCenterId), orderBy('date')),
+      query(
+        collection(db, 'availability'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', windowStart),
+        orderBy('date'),
+      ),
       snap => setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
     const u3 = onSnapshot(
-      query(collection(db, 'shifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', windowStart),
+        orderBy('date'),
+      ),
       snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
     const u4 = onSnapshot(
-      query(collection(db, 'openShifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+      query(
+        collection(db, 'openShifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', windowStart),
+        orderBy('date'),
+      ),
       snap => setOpenShiftsList(snap.docs.map(d => ({ id: d.id, ...d.data() })))
     );
+    // timeOffRequests stays unbounded — low volume per centre and no
+    // single `date` field to filter on (range lives in startDate/endDate).
     const u5 = onSnapshot(
       query(collection(db, 'timeOffRequests'), where('centerId', '==', activeCenterId)),
       snap => setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => {
@@ -2549,8 +2578,11 @@ export default function Admin() {
           )}
 
           {/* Currently-excluded salary staff. Click × on any chip to add them
-              back to payroll for this period. */}
-          {Array.isArray(centerConfig?.salaryStaff) && centerConfig.salaryStaff.length > 0 && (
+              back to payroll for this period. Owner / super-admin only:
+              writing to centerConfig.salaryStaff requires isOwnerAtCenter
+              in the Firestore rules, so plain admins would just see the
+              chips fail silently. Hide them entirely instead. */}
+          {canSeeCenterSettings && Array.isArray(centerConfig?.salaryStaff) && centerConfig.salaryStaff.length > 0 && (
             <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-4 py-3">
               <p className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-amber-900">
                 <UserX size={13} /> Excluded from hourly payroll
@@ -2603,15 +2635,20 @@ export default function Admin() {
                             <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">⚠ Discrepancy</span>
                           )}
                           {/* Quick toggle: mark this person as salaried so they
-                              drop off the hourly payroll on the next render. */}
-                          <button
-                            type="button"
-                            onClick={() => handleExcludeFromPayroll(person.name)}
-                            title="Mark as salary staff and exclude from this payroll"
-                            className="ml-2 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
-                          >
-                            <UserX size={10} /> Exclude
-                          </button>
+                              drop off the hourly payroll on the next render.
+                              Owner / super-admin only — writing salaryStaff
+                              is gated by Firestore rules so admins would
+                              just bounce here. */}
+                          {canSeeCenterSettings && (
+                            <button
+                              type="button"
+                              onClick={() => handleExcludeFromPayroll(person.name)}
+                              title="Mark as salary staff and exclude from this payroll"
+                              className="ml-2 inline-flex items-center gap-1 rounded-md border border-gray-200 bg-white px-1.5 py-0.5 text-[10px] font-medium text-gray-500 hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700"
+                            >
+                              <UserX size={10} /> Exclude
+                            </button>
+                          )}
                         </div>
                       </div>
                       <div className="text-right">

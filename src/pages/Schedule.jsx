@@ -35,6 +35,22 @@ function fmtTime(t) {
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// How far back the live listeners load. Older docs still exist in Firestore
+// — they just don't stream into the calendar on every page load, which would
+// scale linearly with centre-age across the network and Firestore bill.
+// 180 days covers the calendar's normal Prev/Next navigation comfortably
+// (about 6 months back). Bump this if a future "year-end report" feature
+// needs to look further; for the live calendar this is plenty.
+const LISTENER_WINDOW_DAYS = 180;
+function listenerWindowStart() {
+  const d = new Date();
+  d.setDate(d.getDate() - LISTENER_WINDOW_DAYS);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 // ─── Shift-type (location) helpers ─────────────────────────────────────
 // shiftType describes WHERE the instructor is working that shift — distinct
 // from subRole which describes WHAT they're teaching.
@@ -864,22 +880,44 @@ export default function Schedule() {
   const [openShifts, setOpenShifts] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
 
-  // ── Firestore listeners — all scoped to the active center ──
+  // ── Firestore listeners — all scoped to the active center and
+  //    bounded by a sliding date window so reads don't scale with
+  //    centre-age. See LISTENER_WINDOW_DAYS for the cutoff.
+  const windowStart = listenerWindowStart();
+
   useEffect(() => onSnapshot(
-    query(collection(db, 'availability'), where('centerId', '==', activeCenterId), orderBy('date')),
+    query(
+      collection(db, 'availability'),
+      where('centerId', '==', activeCenterId),
+      where('date', '>=', windowStart),
+      orderBy('date'),
+    ),
     snap => setAvailability(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), [activeCenterId]);
+  ), [activeCenterId, windowStart]);
 
   useEffect(() => onSnapshot(
-    query(collection(db, 'shifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+    query(
+      collection(db, 'shifts'),
+      where('centerId', '==', activeCenterId),
+      where('date', '>=', windowStart),
+      orderBy('date'),
+    ),
     snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), [activeCenterId]);
+  ), [activeCenterId, windowStart]);
 
   useEffect(() => onSnapshot(
-    query(collection(db, 'openShifts'), where('centerId', '==', activeCenterId)),
+    query(
+      collection(db, 'openShifts'),
+      where('centerId', '==', activeCenterId),
+      where('date', '>=', windowStart),
+    ),
     snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
-  ), [activeCenterId]);
+  ), [activeCenterId, windowStart]);
 
+  // Time-off requests are low-volume per centre (a few per month at most)
+  // and don't have a `date` field on the doc — the date range lives in
+  // startDate/endDate. We leave this listener unbounded for now; revisit
+  // if a centre ever piles up thousands.
   useEffect(() => onSnapshot(
     query(collection(db, 'timeOffRequests'), where('centerId', '==', activeCenterId)),
     snap => setTimeOffRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })))
