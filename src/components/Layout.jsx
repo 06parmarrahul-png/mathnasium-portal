@@ -189,8 +189,8 @@ export default function Layout({ children }) {
           migration has been run. After that, this renders nothing. */}
       <MigrationBanner />
       {open && <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={() => setOpen(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-30 w-64 transform bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex items-center gap-3 border-b border-gray-700 px-5 py-5">
+      <aside className={`fixed inset-y-0 left-0 z-30 w-64 flex flex-col transform bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="shrink-0 flex items-center gap-3 border-b border-gray-700 px-5 py-5">
           <Logo size={40} />
           <div>
             <h1 className="text-lg font-bold leading-tight text-white">Mathnasium</h1>
@@ -202,11 +202,11 @@ export default function Layout({ children }) {
         </div>
 
         {/* Center switcher (shown if user has multiple centers or is super-admin) */}
-        <div className="px-3 pt-3">
+        <div className="shrink-0 px-3 pt-3">
           <CenterSwitcher />
         </div>
 
-        <nav className="mt-3 flex flex-col gap-1 px-3 pb-32">
+        <nav className="mt-3 flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 px-3 pb-4">
           {navSections.map((section, idx) => (
             <div key={section.label || `sec-${idx}`} className={idx > 0 ? 'mt-4' : ''}>
               {section.label && (
@@ -236,7 +236,7 @@ export default function Layout({ children }) {
             </div>
           ))}
         </nav>
-        <div className="absolute bottom-0 left-0 right-0 border-t border-gray-700 p-4">
+        <div className="shrink-0 border-t border-gray-700 p-4">
           <div className="mb-3 flex items-center gap-3">
             <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${isSuperAdmin ? 'bg-purple-600' : 'bg-red-600'}`}>
               {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
