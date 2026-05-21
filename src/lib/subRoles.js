@@ -66,3 +66,27 @@ export function styleFor(subRole) {
   if (!subRole) return null;
   return SUB_ROLE_STYLES[subRole] || null;
 }
+
+/**
+ * Sick Pay override style. A shift with sickPay === true displays in
+ * deep burgundy across every surface — schedule calendar, admin weekly
+ * grid, coverage bars, day modal, home upcoming-shift card. Defined in
+ * one place so the colour can be tweaked without hunting through pages.
+ */
+export const SICK_PAY_STYLE = {
+  label:        'Sick Pay',
+  pillBg:       'bg-red-100',
+  pillText:     'text-red-900',
+  pillBorder:   'border-red-200',
+  dot:          'bg-red-900',
+  blockBg:      'bg-red-900',
+  blockText:    'text-white',
+  blockSubText: 'text-red-200',
+  stripe:       'bg-red-900',
+  hex:          '#7f1d1d', // Tailwind red-900 — deep burgundy
+};
+
+/** Convenience: returns SICK_PAY_STYLE if the shift is sick, else null. */
+export function sickStyleFor(shift) {
+  return shift?.sickPay ? SICK_PAY_STYLE : null;
+}

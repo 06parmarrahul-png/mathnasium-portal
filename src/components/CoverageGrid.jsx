@@ -188,13 +188,18 @@ export default function CoverageGrid({ day, centerConfig }) {
               const sub = subRoleStyleFor(day.subRoles?.[name]);
               const role = day.roles?.[name];
               const shift = shiftByName[name];
+              const isSick = !!day.sickPay?.[name];
               // Derive a single clean assignment label per person ("Manager",
               // "Highschool Instructor", "Host", "Online Instructor", etc.)
               // and use the centre's assignment-colour palette so the badge
               // matches the same scheme used elsewhere in the admin grid.
+              // Sick Pay swaps the badge to a burgundy "SICK" so it stays
+              // consistent with the bar colour.
               const assignment = assignmentFor({ role, subRole: day.subRoles?.[name] });
-              const badgeBg = assignmentColorHex(assignment, centerConfig);
+              const badgeBg = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
               const badgeText = contrastText(badgeBg);
+              const badgeLabel = isSick ? 'SICK' : assignmentShort(assignment);
+              const badgeTooltip = isSick ? `${assignment} · Sick Pay` : assignment;
               return (
                 <tr key={name} className="border-t border-gray-100 hover:bg-gray-50/40">
                   <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-2 py-1 font-medium text-gray-800 truncate min-w-[180px]">
@@ -204,9 +209,9 @@ export default function CoverageGrid({ day, centerConfig }) {
                       <span
                         className="shrink-0 ml-auto rounded px-1.5 text-[10px] font-bold uppercase tracking-wide"
                         style={{ backgroundColor: badgeBg, color: badgeText }}
-                        title={assignment}
+                        title={badgeTooltip}
                       >
-                        {assignmentShort(assignment)}
+                        {badgeLabel}
                       </span>
                     </div>
                   </td>
@@ -215,11 +220,14 @@ export default function CoverageGrid({ day, centerConfig }) {
                     const sEnd   = toMinutes(slot.end);
                     const inSlot = shift && shift.startMins < sEnd && shift.endMins > sStart;
                     const isHourMark = slot.start.endsWith(':00');
+                    // Sick Pay overrides the sub-role colour with burgundy
+                    // so the row reads as "out sick" at a glance.
+                    const barClass = isSick ? 'bg-red-900' : (sub?.blockBg || 'bg-blue-500');
                     return (
                       <td key={slot.start} className={`p-0 ${isHourMark ? 'border-r border-gray-200' : 'border-r border-gray-50'}`}>
                         <div
-                          className={`h-5 ${inSlot ? (sub?.blockBg || 'bg-blue-500') : 'bg-transparent'}`}
-                          title={inSlot ? `${name} · ${day.shiftTimes?.[name] || ''}` : ''}
+                          className={`h-5 ${inSlot ? barClass : 'bg-transparent'}`}
+                          title={inSlot ? `${name}${isSick ? ' (sick)' : ''} · ${day.shiftTimes?.[name] || ''}` : ''}
                         />
                       </td>
                     );

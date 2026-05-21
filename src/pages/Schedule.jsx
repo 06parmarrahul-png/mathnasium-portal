@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, sickStyleFor } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
@@ -204,16 +204,22 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
 
           {mode === 'main' && (
             <>
-              {/* My Shift */}
+              {/* My Shift — burgundy treatment when this shift is marked
+                  as Sick Pay so the instructor instantly sees they're
+                  not expected in but are still getting paid. */}
               {myShift && (
-                <div className="rounded-xl bg-blue-50 border border-blue-200 p-4">
+                <div className={myShift.sickPay
+                  ? 'rounded-xl bg-red-50 border border-red-300 p-4'
+                  : 'rounded-xl bg-blue-50 border border-blue-200 p-4'}>
                   <div className="flex items-center gap-2 mb-2">
-                    <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${myShift.sickPay ? 'bg-red-900' : 'bg-blue-500'}`}>
                       <Briefcase size={12} className="text-white" />
                     </div>
-                    <span className="text-xs font-bold text-blue-700 uppercase tracking-widest">Your Shift</span>
+                    <span className={`text-xs font-bold uppercase tracking-widest ${myShift.sickPay ? 'text-red-900' : 'text-blue-700'}`}>
+                      {myShift.sickPay ? 'Sick Pay' : 'Your Shift'}
+                    </span>
                   </div>
-                  <p className="text-base font-bold text-blue-900">{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
+                  <p className={`text-base font-bold ${myShift.sickPay ? 'text-red-900' : 'text-blue-900'}`}>{fmtTime(myShift.startTime)} – {fmtTime(myShift.endTime)}</p>
                   <div className="flex items-center gap-2 mt-1 flex-wrap">
                     {/* Where: in-centre vs online — most important info for the instructor */}
                     {(() => {
@@ -1277,9 +1283,11 @@ export default function Schedule() {
             if (state.type === 'shift') {
               // Color the shift block by sub-role so an instructor can scan
               // their calendar and see at a glance whether each day is
-              // Elementary / Highschool / Online. Falls back to the original
-              // blue if a legacy shift has no sub-role tag.
-              const sStyle = subRoleStyleFor(state.shift.subRole);
+              // Elementary / Highschool / Online. Sick Pay overrides every
+              // sub-role colour with deep burgundy so it's instantly
+              // distinguishable from a regular working day.
+              const sickStyle = sickStyleFor(state.shift);
+              const sStyle = sickStyle || subRoleStyleFor(state.shift.subRole);
               const blockBg     = sStyle ? sStyle.blockBg     : 'bg-blue-500';
               const blockText   = sStyle ? sStyle.blockText   : 'text-white';
               const blockSubText= sStyle ? sStyle.blockSubText: 'text-blue-100';

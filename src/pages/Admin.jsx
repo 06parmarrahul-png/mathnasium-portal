@@ -1790,7 +1790,11 @@ export default function Admin() {
                                   in Super Admin → Appearance). */}
                               {dayShifts.map(s => {
                                 const assignment = assignmentFor(s);
-                                const bg   = assignmentColorHex(assignment, centerConfig);
+                                // Sick Pay overrides the assignment palette
+                                // with deep burgundy so admins can scan the
+                                // grid and immediately see who called in sick.
+                                const isSick = !!s.sickPay;
+                                const bg   = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
                                 const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
@@ -1803,14 +1807,15 @@ export default function Admin() {
                                 // whom "online" is already implied). Full text
                                 // lives in the hover tooltip.
                                 const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
+                                const compactLabel = isSick ? 'SICK' : assignmentShort(assignment);
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
-                                    title={`${assignment} · ${where}`}
+                                    title={isSick ? `Sick Pay · ${assignment}` : `${assignment} · ${where}`}
                                     className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
                                     style={{ backgroundColor: bg, color: text }}>
                                     <div className="font-semibold leading-tight" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
-                                    <div className="uppercase tracking-wide opacity-90 leading-tight" style={{fontSize:'10px'}}>{assignmentShort(assignment)}{showWhere ? ` · ${where}` : ''}</div>
+                                    <div className="uppercase tracking-wide opacity-90 leading-tight" style={{fontSize:'10px'}}>{compactLabel}{!isSick && showWhere ? ` · ${where}` : ''}</div>
                                   </div>
                                 );
                               })}

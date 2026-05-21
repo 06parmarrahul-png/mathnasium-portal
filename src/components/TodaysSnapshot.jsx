@@ -67,6 +67,7 @@ export default function TodaysSnapshot() {
     const shiftTimes = {};
     const roles = {};
     const subRoles = {};
+    const sickPay  = {}; // name -> true if this person's today shift is sick
     for (const s of shifts) {
       const name = s.userName;
       if (!name || !s.startTime || !s.endTime) continue;
@@ -74,6 +75,7 @@ export default function TodaysSnapshot() {
       shiftTimes[name] = `${s.startTime} - ${s.endTime}`;
       roles[name]      = s.role || 'Instructor';
       subRoles[name]   = s.subRole;
+      if (s.sickPay) sickPay[name] = true;
     }
     return {
       date: todayStr,
@@ -83,6 +85,7 @@ export default function TodaysSnapshot() {
       shiftTimes,
       roles,
       subRoles,
+      sickPay,
     };
   }, [shifts, todayStr, dayOfWeek, now]);
 

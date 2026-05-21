@@ -214,7 +214,11 @@ export default function Home() {
       {!canSeeAdminPanel && (
         upcomingShift ? (
           <Link to="/schedule" className="group block">
-            <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-red-600 to-red-700 p-6 shadow-lg shadow-red-200 transition-all hover:shadow-xl hover:shadow-red-200 hover:-translate-y-0.5">
+            <div className={`relative overflow-hidden rounded-2xl p-6 shadow-lg transition-all hover:shadow-xl hover:-translate-y-0.5 ${
+              upcomingShift?.sickPay
+                ? 'bg-gradient-to-br from-red-900 to-red-950 shadow-red-300'
+                : 'bg-gradient-to-br from-red-600 to-red-700 shadow-red-200 hover:shadow-red-200'
+            }`}>
               {/* Decorative circle */}
               <div className="pointer-events-none absolute -right-8 -top-8 h-40 w-40 rounded-full bg-white/10" />
               <div className="pointer-events-none absolute -bottom-6 -right-2 h-24 w-24 rounded-full bg-white/5" />
@@ -226,7 +230,7 @@ export default function Home() {
                       <CalendarDays size={16} className="text-white" />
                     </div>
                     <span className="text-sm font-semibold text-red-100 uppercase tracking-widest">
-                      Upcoming Shift
+                      {upcomingShift?.sickPay ? 'Sick Pay' : 'Upcoming Shift'}
                     </span>
                   </div>
                   {days === 0 && (
