@@ -1262,13 +1262,61 @@ export default function Admin() {
       byPerson[key].sickHours  = Math.round(byPerson[key].sickHours  * 100) / 100;
     }
 
+    // ─── Stat (statutory holiday) pay ───────────────────────────────────
+    // For each stat holiday in the pay period, anyone with 15+ shifts in
+    // the 30 calendar days BEFORE that holiday qualifies. Their stat-pay
+    // hours for that day = avg hours per qualifying shift (BC ESA's
+    // "average day"), rounded to the nearest 0.01h. Multiple stat days
+    // in the same pay period add up.
+    //
+    // Note: people who qualify (15+ prior-30-day shifts) but have NO
+    // shifts in the pay period itself won't appear here, since this loop
+    // only walks byPerson — which is built from shifts inside the period.
+    // Rare (typically a vacationer); admin can add a manual entry.
+    const allShiftsByName = {};
+    for (const s of shifts) {
+      if (!s.userName || !s.date) continue;
+      if (!allShiftsByName[s.userName]) allShiftsByName[s.userName] = [];
+      allShiftsByName[s.userName].push(s);
+    }
+    const statHolidays = (Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [])
+      .filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
+    const minusDays = (dateStr, n) => {
+      const d = new Date(dateStr + 'T00:00:00');
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    };
+    for (const key of Object.keys(byPerson)) {
+      const person = byPerson[key];
+      const personShifts = allShiftsByName[person.name] || [];
+      person.statHours = 0;
+      person.statDays = 0;
+      person.statEntries = []; // [{ date, name, hours, basisShifts }]
+      for (const h of statHolidays) {
+        const windowStart = minusDays(h.date, 30);
+        const relevant = personShifts.filter(s => s.date >= windowStart && s.date < h.date);
+        if (relevant.length < 15) continue;
+        const totalHrs = relevant.reduce((sum, s) => sum + shiftHours(s), 0);
+        const avg = Math.round((totalHrs / relevant.length) * 100) / 100;
+        person.statHours += avg;
+        person.statDays  += 1;
+        person.statEntries.push({
+          date: h.date,
+          name: h.name || 'Statutory Holiday',
+          hours: avg,
+          basisShifts: relevant.length,
+        });
+      }
+      person.statHours = Math.round(person.statHours * 100) / 100;
+    }
+
     // Sort people alphabetically by last name
     return Object.values(byPerson).sort((a, b) => {
       const lastA = a.name.split(' ').pop() || a.name;
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, users, payStart, payEnd, salaryStaff, hiddenFromOps]);
+  }, [shifts, users, payStart, payEnd, salaryStaff, hiddenFromOps, centerConfig]);
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd
@@ -2722,6 +2770,16 @@ export default function Admin() {
                               <div className="mt-1 text-xs font-semibold text-amber-700">
                                 <span className="rounded bg-amber-100 px-1.5 py-0.5">
                                   Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            )}
+                            {(person.statDays || 0) > 0 && (
+                              <div
+                                className="mt-1 text-xs font-semibold text-purple-700"
+                                title={(person.statEntries || []).map(e => `${e.name} (${e.date}): ${e.hours.toFixed(2)}h · ${e.basisShifts} shifts in prior 30d`).join('\n')}
+                              >
+                                <span className="rounded bg-purple-100 px-1.5 py-0.5">
+                                  Stat: {person.statHours.toFixed(2)}h · {person.statDays} day{person.statDays !== 1 ? 's' : ''}
                                 </span>
                               </div>
                             )}
