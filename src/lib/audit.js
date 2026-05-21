@@ -69,4 +69,10 @@ export const AUDIT_ACTIONS = {
   CENTER_CREATE:   'super_admin.center_create',
   BILLING_UPDATE:  'super_admin.billing_update',
   BILLING_MARK_PAID: 'super_admin.billing_mark_paid',
+  // Role management from the Manage Roles screen. The role string
+  // is left as 'super_admin' in the action code (internal identifier) to
+  // keep the prefix stable across the codebase, even though the UI now
+  // labels that role "Enterprise".
+  ROLE_CHANGE:     'super_admin.role_change',
+  PROMOTE_CODE_SET: 'super_admin.promote_code_set',
 };

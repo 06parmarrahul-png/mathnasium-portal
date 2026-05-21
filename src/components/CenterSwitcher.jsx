@@ -65,7 +65,7 @@ export default function CenterSwitcher() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-xs text-gray-400 leading-tight">
-            {isSuperAdmin ? 'Viewing as Super Admin' : 'Center'}
+            {isSuperAdmin ? 'Viewing as Enterprise' : 'Center'}
           </p>
           <p className="text-sm font-semibold text-white truncate leading-tight">{activeLabel}</p>
         </div>
@@ -75,7 +75,7 @@ export default function CenterSwitcher() {
       {open && (
         <div className="absolute left-0 right-0 top-full mt-1 z-40 rounded-lg border border-gray-700 bg-gray-900 shadow-2xl max-h-72 overflow-y-auto">
           {visibleCenters.length === 0 ? (
-            <p className="px-3 py-3 text-xs text-gray-400 italic">No centers yet. Use Super Admin → New Center to create one.</p>
+            <p className="px-3 py-3 text-xs text-gray-400 italic">No centers yet. Use Manage Centres → New Centre to create one.</p>
           ) : (
             visibleCenters.map(c => {
               const isActive = c.id === activeCenterId;

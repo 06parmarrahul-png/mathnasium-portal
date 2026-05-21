@@ -58,6 +58,15 @@ export default function AuditLogs() {
       }
       case 'super_admin.billing_mark_paid':
         return `Marked paid${c}` + (e.details?.amount ? ` ($${e.details.amount})` : '');
+      case 'super_admin.role_change': {
+        const name = e.details?.targetName || e.targetUserId || 'user';
+        const from = e.details?.fromRole || '?';
+        const to   = e.details?.toRole   || '?';
+        const codeNote = e.details?.codeUsed ? ' · code-gated' : '';
+        return `Changed role: ${name} (${from} → ${to})${codeNote}`;
+      }
+      case 'super_admin.promote_code_set':
+        return e.details?.rotated ? 'Rotated owner-promotion code' : 'Set owner-promotion code';
       default:
         return e.action + c;
     }

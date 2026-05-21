@@ -196,6 +196,19 @@ service cloud.firestore {
       allow read, write: if isSignedIn() && request.auth.uid == userId;
     }
 
+    // ── Platform meta ────────────────────────────────────────────────
+    // Single doc at /platform/meta holding cross-centre settings — most
+    // notably the SHA-256 hash of the 4-digit owner-promotion code used
+    // by the Manage Roles screen. Plain text never lives in Firestore.
+    //
+    // Read + write: Enterprise only. The code gate is a coordination
+    // guardrail, not real security — Firestore rules still independently
+    // enforce that only Enterprise users can change the `role` field on
+    // user docs, so even if the hash leaked nothing escalates.
+    match /platform/{docId} {
+      allow read, write: if isSuperAdmin();
+    }
+
     // ── Audit log ────────────────────────────────────────────────────
     // Append-only record of sensitive platform-operator actions. The
     // value of this collection comes from the fact that entries cannot

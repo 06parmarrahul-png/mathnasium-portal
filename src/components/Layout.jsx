@@ -8,7 +8,7 @@ import MigrationBanner from './MigrationBanner';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
-  Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock,
+  Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -30,8 +30,11 @@ function todayStr() {
   return `${y}-${m}-${day}`;
 }
 
+// Role labels for user-visible surfaces. The underlying Firestore role string
+// stays 'super_admin' (so security rules + audit codes don't churn) but every
+// place a human sees the role, we render it as "Enterprise".
 const ROLE_LABEL = {
-  super_admin: 'Super Admin',
+  super_admin: 'Enterprise',
   owner:       'Owner',
   admin:       'Admin',
   instructor:  'Instructor',
@@ -88,25 +91,30 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
-  // Build nav based on role. Three sections — GENERAL / OWNER / ADMIN —
-  // visible to whoever's signed in. Items are added per-section based on
-  // role rather than building entirely different nav trees per role; that
-  // way the structure stays consistent and only what appears inside each
+  // Build nav based on role. Four sections — GENERAL / ENTERPRISE / OWNER /
+  // ADMIN — visible to whoever's signed in. Items are added per-section
+  // based on role rather than building entirely different nav trees per
+  // role; the structure stays consistent and only what appears inside each
   // section varies. Empty sections are dropped before render.
   //
   // Role guide:
-  //   instructor → GENERAL only (their personal app: Home, Announcements,
-  //                Schedule, Shift Board, Chat) + Notifications under ADMIN.
-  //   admin      → above + Admin Panel + Platform Chat under ADMIN.
-  //   owner      → above + Centre Analytics + Centre Settings under OWNER.
-  //   super_admin → above + Manage Centres + Platform Revenue + Audit Logs
-  //                  under OWNER. (Owners don't run other centres so the
-  //                  platform-operator items stay super-admin-only.)
+  //   instructor  → GENERAL only (Home, Announcements, Notifications, plus
+  //                 personal work: Scheduling, Shift Board, Chat).
+  //   admin       → above + ADMIN: Admin Panel.
+  //   owner       → above (no Scheduling — owners don't claim shifts
+  //                 personally) + OWNER: Centre Analytics, Centre Settings
+  //                 + ADMIN: Admin Panel.
+  //   super_admin → GENERAL (Home, Announcements, Notifications only —
+  //                 Enterprise doesn't run any centre's day-to-day) +
+  //                 ENTERPRISE: Manage Centres, Manage Roles, Platform
+  //                 Revenue, Platform Chat, Audit Logs + OWNER + ADMIN.
+  //                 ("super_admin" is the internal role string; the UI
+  //                 surface always says "Enterprise".)
   const general = [
     { to: '/',              label: 'Home',          icon: House },
     { to: '/announcements', label: 'Announcements', icon: Megaphone },
   ];
-  // Personal scheduling surfaces. Super-admins skip these entirely —
+  // Personal scheduling surfaces. Enterprise users skip these entirely —
   // they're the platform operator and shouldn't be claiming shifts at
   // someone else's centre. Owners skip Schedule (the personal-availability
   // page) since they run the business rather than take individual shifts,
@@ -120,41 +128,52 @@ export default function Layout({ children }) {
       { to: '/chat',        label: 'Chat',        icon: MessageSquare },
     );
   }
+  // Notifications is per-user preference — every signed-in user has one.
+  // Lives in GENERAL now (previously under ADMIN) so every role sees it
+  // in the same place.
+  general.push({ to: '/notifications', label: 'Notifications', icon: Bell });
 
-  const owner = [];
+  // ENTERPRISE — platform-operator only. Manage Centres, the new Manage
+  // Roles screen, Platform Revenue, Platform Chat (cross-centre operator
+  // chat), and the Audit Logs viewer all live here.
+  const enterprise = [];
   if (isSuperAdmin) {
-    owner.push({ to: '/super-admin', label: 'Manage Centres', icon: Building2 });
+    enterprise.push(
+      { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
+      { to: '/manage-roles',     label: 'Manage Roles',     icon: UserCog },
+      { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
+      { to: '/platform-chat',    label: 'Platform Chat',    icon: Headphones },
+      { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
+    );
   }
-  // Centre Analytics + Centre Settings = canSeeCenterSettings (owner +
-  // super-admin). Plain admins manage day-to-day ops but don't get strategic
-  // metrics or scheduler config.
+
+  // OWNER — per-centre strategic surfaces. Owners + Enterprise see these.
+  // Plain admins manage day-to-day ops but don't get strategic metrics or
+  // scheduler config.
+  const owner = [];
   if (isSuperAdmin || isOwner) {
     owner.push(
       { to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 },
       { to: '/center-settings',  label: 'Centre Settings',  icon: Settings },
     );
   }
-  if (isSuperAdmin) {
-    owner.push(
-      { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
-      { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
-    );
-  }
 
+  // ADMIN — Admin Panel for everyone who can see it. Platform Chat lives
+  // here for admins + owners; Enterprise viewers see it under the
+  // ENTERPRISE section above (so it doesn't appear twice).
   const admin = [];
   if (canSeeAdminPanel) {
     admin.push({ to: '/admin', label: 'Admin Panel', icon: Shield });
   }
-  if (isSuperAdmin || isOwner || isAdmin) {
+  if ((isAdmin || isOwner) && !isSuperAdmin) {
     admin.push({ to: '/platform-chat', label: 'Platform Chat', icon: Headphones });
   }
-  // Notifications is per-user preference — every signed-in user has one.
-  admin.push({ to: '/notifications', label: 'Notifications', icon: Bell });
 
   const navSections = [
-    { label: 'General', items: general },
-    { label: 'Owner',   items: owner   },
-    { label: 'Admin',   items: admin   },
+    { label: 'General',    items: general    },
+    { label: 'Enterprise', items: enterprise },
+    { label: 'Owner',      items: owner      },
+    { label: 'Admin',      items: admin      },
   ].filter(s => s.items.length > 0);
 
   // Simple path equality is enough now that nothing deep-links into

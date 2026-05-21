@@ -92,7 +92,7 @@ export default function PlatformChat() {
     }) : '';
   const initials = (name) => name?.split(' ').map(w => w.charAt(0)).join('').toUpperCase().slice(0, 2) || '??';
   const roleBadge = (role) => {
-    if (role === 'super_admin') return { label: 'Super Admin', cls: 'bg-purple-100 text-purple-700' };
+    if (role === 'super_admin') return { label: 'Enterprise', cls: 'bg-purple-100 text-purple-700' };
     if (role === 'owner')       return { label: 'Owner',       cls: 'bg-red-100 text-red-700' };
     if (role === 'admin')       return { label: 'Admin',       cls: 'bg-emerald-100 text-emerald-700' };
     return null;
@@ -211,7 +211,7 @@ export default function PlatformChat() {
               : role === 'owner'     ? 'bg-red-600'
               : 'bg-emerald-600';
             const roleLabel =
-              role === 'super_admin' ? 'Super Admin'
+              role === 'super_admin' ? 'Enterprise'
               : role === 'owner'     ? 'Owner'
               : 'Admin';
             const centreLabel = Array.isArray(m.centerIds) && m.centerIds.length > 0

@@ -13,6 +13,7 @@ import ShiftBoard from './pages/ShiftBoard';
 import Chat from './pages/Chat';
 import Admin from './pages/Admin';
 import SuperAdmin from './pages/SuperAdmin';
+import ManageRoles from './pages/ManageRoles';
 import NotificationPreferences from './pages/NotificationPreferences';
 import PlatformRevenue from './pages/PlatformRevenue';
 import PlatformChat from './pages/PlatformChat';
@@ -47,6 +48,7 @@ function AppRoutes() {
       <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
       <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
       <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
+      <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
       <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
       <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
       <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />

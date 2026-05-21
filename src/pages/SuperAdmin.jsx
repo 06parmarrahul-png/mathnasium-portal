@@ -17,17 +17,21 @@ import {
 } from 'lucide-react';
 
 /**
- * Super-Admin Dashboard — platform-owner controls.
+ * Manage Centres — Enterprise-only platform controls.
  *
- * Visible only to users with role === 'super_admin'.
- * Lets the platform operator:
- *  - List every center on the platform
- *  - Create a new center (only super-admin can do this)
- *  - Switch the active center to any center (god view / support mode)
+ * Visible only to users with role === 'super_admin' (displayed as
+ * "Enterprise" in the UI; the role string is preserved internally so
+ * security rules and audit codes don't churn).
+ *
+ * Lets the Enterprise operator:
+ *  - List every centre on the platform (shown at the top of the page)
+ *  - Create a new centre
+ *  - Edit appearance + operating days for the currently-active centre
+ *  - Switch the active centre to any centre (god view / support mode)
  *
  * Bootstrap section appears when the current user is an owner but NOT
- * yet a super-admin AND no super-admin exists on the platform — this
- * is how the very first super-admin gets created without Firebase
+ * yet Enterprise AND no Enterprise user exists on the platform — this
+ * is how the very first Enterprise account gets created without Firebase
  * Console access. After bootstrap, this section disappears.
  */
 
@@ -120,8 +124,8 @@ export default function SuperAdmin() {
           <Shield size={22} />
         </div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Super Admin</h1>
-          <p className="text-sm text-gray-500">Platform-level controls. Create centers, switch contexts, support any location.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Manage Centres</h1>
+          <p className="text-sm text-gray-500">Enterprise controls. Create centres, switch contexts, configure appearance + operating days.</p>
         </div>
       </div>
 
@@ -131,9 +135,9 @@ export default function SuperAdmin() {
           <div className="flex items-start gap-3 mb-3">
             <AlertTriangle size={20} className="text-amber-600 shrink-0 mt-0.5" />
             <div>
-              <h3 className="font-bold text-amber-900">No Super Admin Exists Yet</h3>
+              <h3 className="font-bold text-amber-900">No Enterprise User Exists Yet</h3>
               <p className="text-sm text-amber-800 mt-0.5">
-                The platform doesn't have a super-admin account. As the first owner, you can promote yourself to super-admin one time. This unlocks center creation and god-mode support across all centers.
+                The platform doesn't have an Enterprise account. As the first owner, you can promote yourself to Enterprise one time. This unlocks centre creation and god-mode support across all centres.
               </p>
             </div>
           </div>
@@ -148,45 +152,30 @@ export default function SuperAdmin() {
             className="flex items-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-amber-700 disabled:opacity-50 transition-colors"
           >
             <Shield size={15} />
-            {bootstrapping ? 'Promoting…' : 'Promote me to Super Admin'}
+            {bootstrapping ? 'Promoting…' : 'Promote me to Enterprise'}
           </button>
         </div>
       )}
 
-      {/* Centers list + create form (super-admin only) ─────────────────── */}
+      {/* Centres list (Enterprise only). Pinned to the very top of the page —
+          users said it was backwards to scroll past Create + Appearance +
+          Operating Days before reaching the actual list of what they have. */}
       {isSuperAdmin && (
         <>
-          <CreateCenterForm existing={centers.map(c => c.id)} />
-
-          <AppearanceEditor
-            activeCenterId={activeCenterId}
-            centerConfig={centerConfig}
-            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
-          />
-
-          <OperatingDaysEditor
-            activeCenterId={activeCenterId}
-            centerConfig={centerConfig}
-            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
-          />
-
-          {/* Holidays now live on the Admin Panel → Holidays tab so admins can
-              manage them too. Super-admins access them from the same place. */}
-
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-1">
               <Globe size={18} className="text-purple-600" />
-              <h3 className="font-semibold text-gray-900">All Centers ({centers.length})</h3>
+              <h3 className="font-semibold text-gray-900">All Centres ({centers.length})</h3>
             </div>
             <p className="text-sm text-gray-500 mb-4">
-              Switch to any center to see exactly what their owner sees — useful for support and debugging.
+              Switch to any centre to see exactly what their owner sees — useful for support and debugging.
             </p>
             {loading ? (
               <div className="flex items-center justify-center py-10">
                 <div className="h-6 w-6 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
               </div>
             ) : centers.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">No centers yet. Create one above.</p>
+              <p className="text-sm text-gray-400 italic">No centres yet. Create one below.</p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {centers.map(c => {
@@ -242,7 +231,24 @@ export default function SuperAdmin() {
             )}
           </div>
 
-          {/* Recent Activity moved to its own /audit-logs page so it's
+          {/* Create + per-centre configuration follow the centres list. */}
+          <CreateCenterForm existing={centers.map(c => c.id)} />
+
+          <AppearanceEditor
+            activeCenterId={activeCenterId}
+            centerConfig={centerConfig}
+            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
+          />
+
+          <OperatingDaysEditor
+            activeCenterId={activeCenterId}
+            centerConfig={centerConfig}
+            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
+          />
+
+          {/* Holidays now live on the Admin Panel → Holidays tab so admins can
+              manage them too. Enterprise users access them from the same place.
+              Recent Activity moved to its own /audit-logs page so it's
               easier to share with curious centre owners. */}
 
           <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">

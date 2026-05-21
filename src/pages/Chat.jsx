@@ -367,7 +367,7 @@ export default function Chat() {
               : role === 'admin'     ? 'bg-emerald-600'
               : 'bg-gray-500';
             const roleLabel =
-              role === 'super_admin' ? 'Super Admin'
+              role === 'super_admin' ? 'Enterprise'
               : role === 'owner'     ? 'Owner'
               : role === 'admin'     ? 'Admin'
               : (m.instructorType || '');
