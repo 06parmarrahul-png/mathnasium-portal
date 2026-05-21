@@ -73,7 +73,7 @@ export const DEFAULT_CENTER_CONFIG = {
   salaryStaff: [],
   // Fixed staff with hardcoded weekly schedules — keyed by display name.
   // {
-  //   'Jasper Wu': {
+  //   'Staff Name': {
   //     role: 'Center Director',
   //     countsTowardRatio: false,
   //     Monday: '11:00 AM - 7:00 PM',
@@ -238,18 +238,8 @@ export const LANGLEY_DEFAULT_CONFIG = {
   city:     'Langley',
   province: 'BC',
   guaranteedNames: ['Luke', 'Ainsley', 'Kaitlyn'],
-  salaryStaff:     ['Jasper Wu', 'Neeru Gill'],
+  salaryStaff:     ['Neeru Gill'],
   fixedStaff: {
-    'Jasper Wu': {
-      role: 'Center Director',
-      countsTowardRatio: false,
-      Monday:    '11:00 AM - 7:00 PM',
-      Tuesday:   '11:00 AM - 7:00 PM',
-      Wednesday: '11:00 AM - 7:00 PM',
-      Thursday:  '11:00 AM - 7:00 PM',
-      Friday:    '11:00 AM - 7:00 PM',
-      Saturday:  'Off',
-    },
     'Neeru Gill': {
       role: 'Dir. of Education',
       countsTowardRatio: false,

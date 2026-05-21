@@ -185,7 +185,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
           items={form?.salaryStaff || []}
           onAdd={v => addToList('salaryStaff', v)}
           onRemove={v => removeFromList('salaryStaff', v)}
-          placeholder="Full name (e.g., Jasper Wu)"
+          placeholder="Full name (e.g., Neeru Gill)"
           chipColor="amber"
         />
       </Section>

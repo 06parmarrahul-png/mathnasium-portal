@@ -12,7 +12,7 @@
  *   - Balance elementary vs highschool count across the day.
  * - Min/max counts only Leads + Instructors (in-centre).
  * - Dev Prasad and Bri MacDonald (Leads) DO count toward min/max.
- * - Jasper, Neeru: fixed, not counted.
+ * - Neeru: fixed, not counted.
  * - Sabrina: fixed, not counted. Vinod: manual scheduling (variable hours).
  * - Max shifts per week = Sun–Sat calendar week.
  * - If not enough staff to hit min, leave slots open (admin posts open shifts).
@@ -44,12 +44,6 @@ export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
 // When a center config doc exists, the scheduler uses that. When it doesn't
 // (pre-migration), it falls back to these.
 export const FIXED_SCHEDULES = {
-  'Jasper Wu': {
-    role: 'Center Director',
-    Monday: '11:00 AM - 7:00 PM', Tuesday: '11:00 AM - 7:00 PM',
-    Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
-    Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
-  },
   'Neeru Gill': {
     role: 'Dir. of Education',
     Monday: '11:00 AM - 7:30 PM', Tuesday: '11:00 AM - 7:30 PM',
