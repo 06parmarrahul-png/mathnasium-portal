@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { assignmentFor, assignmentShort, assignmentColorHex, contrastText } from '../lib/centerConfig';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -88,7 +89,7 @@ const rolePriority = (r) => {
   return 3;
 };
 
-export default function CoverageGrid({ day }) {
+export default function CoverageGrid({ day, centerConfig }) {
   const slots = useMemo(() => generateSlots(day.dayOfWeek), [day.dayOfWeek]);
 
   const sortedNames = useMemo(() => {
@@ -187,20 +188,26 @@ export default function CoverageGrid({ day }) {
               const sub = subRoleStyleFor(day.subRoles?.[name]);
               const role = day.roles?.[name];
               const shift = shiftByName[name];
-              const isHostRow   = role === 'Host';
-              const isOnlineRow = role === 'Online Instructor';
+              // Derive a single clean assignment label per person ("Manager",
+              // "Highschool Instructor", "Host", "Online Instructor", etc.)
+              // and use the centre's assignment-colour palette so the badge
+              // matches the same scheme used elsewhere in the admin grid.
+              const assignment = assignmentFor({ role, subRole: day.subRoles?.[name] });
+              const badgeBg = assignmentColorHex(assignment, centerConfig);
+              const badgeText = contrastText(badgeBg);
               return (
                 <tr key={name} className="border-t border-gray-100 hover:bg-gray-50/40">
-                  <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-2 py-1 font-medium text-gray-800 truncate">
+                  <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-2 py-1 font-medium text-gray-800 truncate min-w-[180px]">
                     <div className="flex items-center gap-1.5">
                       <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${sub?.dot || 'bg-gray-300'}`} />
                       <span className="truncate">{name}</span>
-                      {isHostRow && (
-                        <span className="shrink-0 ml-1 rounded bg-amber-100 text-amber-700 px-1 text-[10px] font-bold uppercase">Host</span>
-                      )}
-                      {isOnlineRow && (
-                        <span className="shrink-0 ml-1 rounded bg-indigo-100 text-indigo-700 px-1 text-[10px] font-bold uppercase">Online</span>
-                      )}
+                      <span
+                        className="shrink-0 ml-auto rounded px-1.5 text-[10px] font-bold uppercase tracking-wide"
+                        style={{ backgroundColor: badgeBg, color: badgeText }}
+                        title={assignment}
+                      >
+                        {assignmentShort(assignment)}
+                      </span>
                     </div>
                   </td>
                   {slots.map(slot => {

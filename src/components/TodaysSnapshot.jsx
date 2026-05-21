@@ -25,7 +25,7 @@ const DAY_NAMES = [
 ];
 
 export default function TodaysSnapshot() {
-  const { activeCenterId } = useAuth();
+  const { activeCenterId, centerConfig } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -165,7 +165,7 @@ export default function TodaysSnapshot() {
           </div>
 
           {/* Coverage grid (reuses the auto-scheduler component) */}
-          <CoverageGrid day={dayData} />
+          <CoverageGrid day={dayData} centerConfig={centerConfig} />
         </>
       )}
     </div>

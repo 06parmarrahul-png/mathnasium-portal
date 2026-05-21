@@ -298,6 +298,10 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
   const [role, setRole] = useState(shift.role || '');
   const [shiftType, setShiftType] = useState(shift.shiftType || 'In-Centre');
   const [subRole, setSubRole] = useState(shift.subRole || 'Elementary');
+  // Sick Pay flag — set when an instructor calls in sick. The shift stays
+  // on the schedule (so we have a record) but the payroll tab reports it
+  // under a separate "Sick" column instead of regular worked hours.
+  const [sickPay, setSickPay] = useState(!!shift.sickPay);
 
   return (
     <Modal
@@ -351,8 +355,30 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
             Required for shift swaps — only instructors with this sub-role can take it.
           </p>
         </div>
+
+        {/* Sick Pay toggle — flips this shift into the "Sick" payroll bucket
+            without removing it from the schedule. Useful when an instructor
+            calls in sick and you still want them paid for the planned hours. */}
+        <label className="flex items-start justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2 cursor-pointer">
+          <div className="pr-3">
+            <p className="text-xs font-semibold text-amber-900">Sick Pay</p>
+            <p className="text-xs text-amber-700/80 mt-0.5">
+              Mark this shift as sick. Hours are tracked separately on the payroll tab.
+            </p>
+          </div>
+          <div className="relative inline-flex shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              checked={sickPay}
+              onChange={e => setSickPay(e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+          </div>
+        </label>
+
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -684,8 +710,11 @@ export default function Admin() {
     await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole }) => {
-    await updateDoc(doc(db, 'shifts', editShiftModal.id), { startTime, endTime, role, shiftType, subRole });
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay }) => {
+    await updateDoc(doc(db, 'shifts', editShiftModal.id), {
+      startTime, endTime, role, shiftType, subRole,
+      sickPay: !!sickPay,
+    });
     setEditShiftModal(null);
   };
 
@@ -1189,7 +1218,11 @@ export default function Admin() {
     // Also include fixed staff from FIXED_SCHEDULES who may not have Firestore shifts yet
     const byPerson = {};
 
-    // From Firestore shifts
+    // From Firestore shifts. Each shift contributes to either the worked
+    // bucket (totalHours / shifts) OR the sick bucket (sickHours / sick
+    // shift count) based on its sickPay flag. Worked totals stay the
+    // headline figure; sick totals show as a separate column so payroll
+    // can pay them out under the sick-pay budget line.
     for (const s of periodShifts) {
       const key = s.userName || s.userId;
       if (!byPerson[key]) {
@@ -1199,23 +1232,34 @@ export default function Admin() {
           role: s.role || user?.instructorType || 'Instructor',
           shifts: [],
           totalHours: 0,
+          sickHours: 0,
+          sickCount: 0,
         };
       }
       const hrs = shiftHours(s);
+      const isSick = !!s.sickPay;
       byPerson[key].shifts.push({
         date: s.date,
         startTime: s.startTime,
         endTime: s.endTime,
         hours: hrs,
         shiftId: s.id,
+        sick: isSick,
       });
-      byPerson[key].totalHours += hrs;
+      if (isSick) {
+        byPerson[key].sickHours += hrs;
+        byPerson[key].sickCount += 1;
+      } else {
+        byPerson[key].totalHours += hrs;
+      }
     }
 
-    // Sort each person's shifts by date
+    // Sort each person's shifts by date + round totals so the UI doesn't
+    // show 7.000000001-style float dust.
     for (const key of Object.keys(byPerson)) {
       byPerson[key].shifts.sort((a, b) => a.date.localeCompare(b.date));
       byPerson[key].totalHours = Math.round(byPerson[key].totalHours * 100) / 100;
+      byPerson[key].sickHours  = Math.round(byPerson[key].sickHours  * 100) / 100;
     }
 
     // Sort people alphabetically by last name
@@ -2438,7 +2482,7 @@ export default function Admin() {
                               <div className="mt-3">
                                 {/* In edit mode, render against editingDay so the
                                     admin sees coverage update live as they tweak times. */}
-                                <CoverageGrid day={isEditing ? editingDay : day} />
+                                <CoverageGrid day={isEditing ? editingDay : day} centerConfig={centerConfig} />
                               </div>
                             )}
                           </div>
@@ -2665,8 +2709,17 @@ export default function Admin() {
                           </>
                         ) : (
                           <>
-                            <div className="text-sm font-bold text-green-700">{person.totalHours.toFixed(2)}h total</div>
-                            <div className="text-xs text-gray-400">{person.shifts.length} shift{person.shifts.length !== 1 ? 's' : ''}</div>
+                            <div className="text-sm font-bold text-green-700">{person.totalHours.toFixed(2)}h worked</div>
+                            <div className="text-xs text-gray-400">
+                              {person.shifts.length - (person.sickCount || 0)} worked shift{person.shifts.length - (person.sickCount || 0) !== 1 ? 's' : ''}
+                            </div>
+                            {(person.sickCount || 0) > 0 && (
+                              <div className="mt-1 text-xs font-semibold text-amber-700">
+                                <span className="rounded bg-amber-100 px-1.5 py-0.5">
+                                  Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                            )}
                           </>
                         )}
                       </div>
@@ -2701,8 +2754,13 @@ export default function Admin() {
                           });
                           const rowFlag = hasRadius && (s.shiftDiscrepancy || s.missingFromRadius);
                           return (
-                            <tr key={i} className={`transition-colors ${rowFlag ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-gray-50'}`}>
-                              <td className="px-5 py-2.5 text-gray-800 font-medium">{dateLabel}</td>
+                            <tr key={i} className={`transition-colors ${rowFlag ? 'bg-red-50 hover:bg-red-100' : s.sick ? 'bg-amber-50/60 hover:bg-amber-100/60' : 'hover:bg-gray-50'}`}>
+                              <td className="px-5 py-2.5 text-gray-800 font-medium">
+                                {dateLabel}
+                                {s.sick && (
+                                  <span className="ml-2 rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">Sick</span>
+                                )}
+                              </td>
                               <td className="px-4 py-2.5 text-gray-600 text-xs">{fmtT(s.startTime)} – {fmtT(s.endTime)}</td>
                               {hasRadius && (
                                 <td className="px-4 py-2.5 text-xs">
