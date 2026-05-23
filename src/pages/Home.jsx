@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import TodaysSnapshot from '../components/TodaysSnapshot';
 import CareerPlanModal from '../components/CareerPlanModal';
+import OwnerWelcome, { useOwnerWelcomeState } from '../components/OwnerWelcome';
 import {
   CalendarDays, MessageSquare, Users, Clock,
   ChevronRight, Megaphone, Pin, ArrowRight,
@@ -139,10 +140,21 @@ export default function Home() {
         ? `Planning to leave by ${formatPlanMonth(plan.expectedDepartureMonth)}`
         : null;
 
+  // Owner-only welcome hero. Fires for the first 14 days after an owner's
+  // first visit to Home, dismissible. Renders ABOVE the regular dashboard
+  // so they still see live data — it's a hero, not a hijack.
+  const ownerWelcome = useOwnerWelcomeState();
+  const [welcomeContinued, setWelcomeContinued] = useState(false);
+  const showWelcome = (ownerWelcome === 'show' || ownerWelcome === 'stamp') && !welcomeContinued;
+
   return (
     // Owners see a wider container because Today's Snapshot includes the
     // coverage grid which benefits from extra room. Instructors stay narrow.
     <div className={`mx-auto space-y-6 ${showTodaysSnapshot ? 'max-w-5xl' : 'max-w-3xl'}`}>
+
+      {showWelcome && (
+        <OwnerWelcome onContinue={() => setWelcomeContinued(true)} />
+      )}
 
       {/* Greeting */}
       <div>
