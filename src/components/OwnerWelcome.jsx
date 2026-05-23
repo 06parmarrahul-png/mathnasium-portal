@@ -151,30 +151,38 @@ export default function OwnerWelcome({ onContinue }) {
           {/* Greeting */}
           <div className="ow-fade-up max-w-3xl">
             <div className="inline-flex items-center gap-2 rounded-full bg-white/10 backdrop-blur px-3 py-1 text-xs font-medium text-white/90 mb-5">
-              <Sparkles size={12} /> Welcome to Mathnasium Portal
+              <Sparkles size={12} /> Welcome to Ratio
             </div>
             <h1 className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight leading-[1.05]">
               Welcome, {name}.
             </h1>
             <p className="mt-3 text-lg md:text-xl text-white/80 leading-snug">
-              {centreName} is now live on the platform.
+              {centreName} is now live on Ratio.
             </p>
           </div>
 
-          {/* Thank-you note. Glassmorphism card. */}
+          {/* Thank-you note. Glassmorphism card with the Ratio promise as
+              a pull-quote in the middle so the brand mantra gets a real
+              moment instead of being buried in prose. */}
           <div className="ow-fade-up ow-fade-up-1 mt-8 max-w-2xl rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 md:p-7">
             <p className="text-[15px] md:text-base text-white/90 leading-relaxed">
               {name === 'there' ? 'Hi,' : `${name},`} thanks for trusting us with how
-              {' '}{centreName} runs. I built this at my own centre because the things
-              I had to coordinate every week — who&apos;s covering Saturday, who can
-              swap with whom, how much we paid last month — were eating my evenings.
-              None of it should be hard.
+              {' '}{centreName} runs. Here&apos;s what we&apos;re promising you:
+            </p>
+            <p className="my-4 text-lg md:text-xl font-medium text-white leading-snug border-l-2 border-white/40 pl-4">
+              More time with students. More time with family. Less time on everything else.
+            </p>
+            <p className="text-[15px] md:text-base text-white/90 leading-relaxed">
+              I built this at my own centre because the things I had to coordinate
+              every week — who&apos;s covering Saturday, who can swap with whom, how
+              much we paid last month — were eating my evenings. None of it should
+              be hard.
             </p>
             <p className="mt-3 text-[15px] md:text-base text-white/90 leading-relaxed">
               Anything that doesn&apos;t work the way you&apos;d expect, message me directly
               from <Link to="/platform-chat" className="underline decoration-white/40 hover:decoration-white">Platform Chat</Link> and I&apos;ll fix it.
             </p>
-            <p className="mt-4 text-sm text-white/70">— Rahul, Mathnasium Portal</p>
+            <p className="mt-4 text-sm text-white/70">— Rahul, Ratio</p>
           </div>
 
           {/* Platform stats */}
