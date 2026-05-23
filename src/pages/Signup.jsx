@@ -168,6 +168,14 @@ export default function Signup() {
             <Link to="/login" className="font-medium text-red-600 hover:text-red-700">Sign In</Link>
           </p>
         </div>
+
+        {/* Ratio brand tagline — same treatment as the sign-in screen. */}
+        <p className="mt-6 text-center text-xs text-gray-400 leading-snug">
+          More time with students. More time with family. Less time on everything else.
+        </p>
+        <p className="mt-1.5 text-center text-[10px] uppercase tracking-[0.2em] text-gray-500">
+          Powered by Ratio
+        </p>
       </div>
     </div>
   );

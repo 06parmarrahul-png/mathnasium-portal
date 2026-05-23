@@ -249,6 +249,13 @@ export default function Layout({ children }) {
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
             <LogOut size={16} /> Sign Out
           </button>
+          {/* Ratio wordmark — tiny, muted, just enough to remind people
+              who builds the thing they're using. The full slogan lives on
+              the login/signup screens; here we keep it to the brand mark
+              so it doesn't compete with the user card above. */}
+          <p className="mt-3 text-center text-[10px] uppercase tracking-[0.25em] text-gray-500" title="More time with students. More time with family. Less time on everything else.">
+            Ratio
+          </p>
         </div>
       </aside>
       <div className="flex flex-1 flex-col overflow-hidden">

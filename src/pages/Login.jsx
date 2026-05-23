@@ -155,6 +155,16 @@ export default function Login() {
             </p>
           )}
         </div>
+
+        {/* Ratio brand tagline — small, muted, doesn't compete with the
+            sign-in form but lets the brand promise live somewhere
+            visible on the way in. */}
+        <p className="mt-6 text-center text-xs text-gray-400 leading-snug">
+          More time with students. More time with family. Less time on everything else.
+        </p>
+        <p className="mt-1.5 text-center text-[10px] uppercase tracking-[0.2em] text-gray-500">
+          Powered by Ratio
+        </p>
       </div>
     </div>
   );
