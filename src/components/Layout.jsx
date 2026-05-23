@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/f
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Logo from './Logo';
+import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
 import CenterSwitcher from './CenterSwitcher';
 import {
@@ -238,9 +239,18 @@ export default function Layout({ children }) {
         </nav>
         <div className="shrink-0 border-t border-gray-700 p-4">
           <div className="mb-3 flex items-center gap-3">
-            <div className={`flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold ${isSuperAdmin ? 'bg-purple-600' : 'bg-red-600'}`}>
-              {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
-            </div>
+            {/* Enterprise accounts get the Ratio brand mark as their
+                profile picture (they ARE Ratio, not a Mathnasium
+                centre). Everyone else keeps the initials-in-a-circle. */}
+            {isSuperAdmin ? (
+              <div className="shrink-0">
+                <RatioLogo size={32} alt={profile?.displayName || 'Ratio'} />
+              </div>
+            ) : (
+              <div className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold bg-red-600">
+                {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
+              </div>
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{profile?.displayName || 'User'}</p>
               <p className="truncate text-xs text-gray-400">{roleLabel}</p>
@@ -249,13 +259,16 @@ export default function Layout({ children }) {
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
             <LogOut size={16} /> Sign Out
           </button>
-          {/* Ratio wordmark — tiny, muted, just enough to remind people
-              who builds the thing they're using. The full slogan lives on
-              the login/signup screens; here we keep it to the brand mark
-              so it doesn't compete with the user card above. */}
-          <p className="mt-3 text-center text-[10px] uppercase tracking-[0.25em] text-gray-500" title="More time with students. More time with family. Less time on everything else.">
-            Ratio
-          </p>
+          {/* Ratio wordmark + brand mark — small, muted, sits below the
+              user card and Sign Out so the platform brand has a quiet
+              presence without competing with the centre's identity in
+              the header. */}
+          <div className="mt-3 flex items-center justify-center gap-1.5" title="More time with students. More time with family. Less time on everything else.">
+            <RatioLogo size={14} alt="Ratio" />
+            <span className="text-[10px] uppercase tracking-[0.25em] text-gray-500">
+              Ratio
+            </span>
+          </div>
         </div>
       </aside>
       <div className="flex flex-1 flex-col overflow-hidden">
