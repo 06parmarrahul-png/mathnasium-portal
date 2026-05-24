@@ -64,7 +64,7 @@ export default function RatioLogo({ size = 32, alt = 'Ratio' }) {
             width: '100%',
             height: '100%',
             display: 'block',
-            transform: 'scale(1.12)',
+            transform: 'scale(1.18)',
             transformOrigin: 'center',
             objectFit: 'cover',
           }}
