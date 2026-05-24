@@ -39,14 +39,37 @@ export default function RatioLogo({ size = 32, alt = 'Ratio' }) {
   }, []);
 
   if (src) {
+    // The shipped /ratio-logo.png has a small white border around the
+    // black rounded square. Rather than asking for a re-export, we
+    // clip it: a same-size wrapper with overflow:hidden and a slightly
+    // up-scaled image pushes the white edge off-frame, leaving just
+    // the black-rounded-square mark visible.
     return (
-      <img
-        src={src}
-        alt={alt}
-        width={size}
-        height={size}
-        style={{ borderRadius: Math.round(size * 0.22), display: 'block' }}
-      />
+      <span
+        style={{
+          display: 'inline-block',
+          width: size,
+          height: size,
+          borderRadius: Math.round(size * 0.22),
+          overflow: 'hidden',
+          lineHeight: 0,
+        }}
+      >
+        <img
+          src={src}
+          alt={alt}
+          width={size}
+          height={size}
+          style={{
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            transform: 'scale(1.12)',
+            transformOrigin: 'center',
+            objectFit: 'cover',
+          }}
+        />
+      </span>
     );
   }
 
