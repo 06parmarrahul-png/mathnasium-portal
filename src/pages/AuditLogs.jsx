@@ -72,6 +72,17 @@ export default function AuditLogs() {
     }
   };
 
+  // Map the internal role string (kept as 'super_admin' in Firestore for
+  // backwards-compat) to its UI label so audit entries display "Enterprise"
+  // instead of leaking the legacy identifier.
+  const roleLabel = (r) => {
+    if (r === 'super_admin') return 'Enterprise';
+    if (r === 'owner')       return 'Owner';
+    if (r === 'admin')       return 'Admin';
+    if (r === 'instructor')  return 'Instructor';
+    return r;
+  };
+
   const fmt = (ts) => {
     if (!ts?.seconds) return '';
     return new Date(ts.seconds * 1000).toLocaleString('en-US', {
@@ -113,7 +124,7 @@ export default function AuditLogs() {
                   <p className="text-sm text-gray-800 leading-snug">{describe(e)}</p>
                   <p className="text-xs text-gray-400 mt-0.5">
                     <span className="font-medium text-gray-500">{e.actorName || e.actorUid}</span>
-                    {e.actorRole ? ` · ${e.actorRole}` : ''}
+                    {e.actorRole ? ` · ${roleLabel(e.actorRole)}` : ''}
                   </p>
                 </div>
                 <span className="shrink-0 text-xs text-gray-400 whitespace-nowrap">{fmt(e.createdAt)}</span>
