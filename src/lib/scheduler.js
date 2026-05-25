@@ -350,9 +350,15 @@ export function generateSchedule({
   const workingDays = getDaysInMonth(year, monthNumber);
   const fixedStaffNames = new Set(Object.keys(fixedStaffMap));
 
-  // Eligible form instructors: approved, not owner, not fixed staff
+  // Eligible form instructors: approved, not owner, not Enterprise, not
+  // fixed staff. Enterprise (super_admin) accounts have global platform
+  // access but aren't centre staff — if one ever submits availability
+  // by accident we still don't want them on the assignment grid.
   const formInstructors = instructors.filter(
-    u => u.approved && u.role !== 'owner' && !fixedStaffNames.has(u.displayName)
+    u => u.approved
+      && u.role !== 'owner'
+      && u.role !== 'super_admin'
+      && !fixedStaffNames.has(u.displayName)
   );
 
   // Tracking
