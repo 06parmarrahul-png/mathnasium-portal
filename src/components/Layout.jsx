@@ -238,16 +238,29 @@ export default function Layout({ children }) {
           ))}
         </nav>
         <div className="shrink-0 border-t border-gray-700 p-4">
-          <div className="mb-3 flex items-center gap-3">
-            {/* Enterprise accounts get the Ratio brand mark as their
-                profile picture (they ARE Ratio, not a Mathnasium
-                centre). Everyone else keeps the initials-in-a-circle. */}
+          {/* User card — clickable. Goes to /account for self-service
+              profile + email + password management. Enterprise accounts
+              keep the Ratio brand mark; everyone else shows their
+              uploaded photoURL (if set) or a coloured initials circle.
+              Title attribute makes the click target discoverable. */}
+          <Link
+            to="/account"
+            onClick={() => setOpen(false)}
+            title="Account Details"
+            className="mb-3 -mx-1 flex items-center gap-3 rounded-lg px-1 py-1 transition-colors hover:bg-gray-700/60"
+          >
             {isSuperAdmin ? (
               <div className="shrink-0">
                 <RatioLogo size={32} alt={profile?.displayName || 'Ratio'} />
               </div>
+            ) : profile?.photoURL ? (
+              <img
+                src={profile.photoURL}
+                alt={profile?.displayName || 'Profile picture'}
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
             ) : (
-              <div className="flex h-8 w-8 items-center justify-center rounded-full text-sm font-bold bg-red-600">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-sm font-bold bg-red-600">
                 {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
               </div>
             )}
@@ -255,7 +268,7 @@ export default function Layout({ children }) {
               <p className="truncate text-sm font-medium">{profile?.displayName || 'User'}</p>
               <p className="truncate text-xs text-gray-400">{roleLabel}</p>
             </div>
-          </div>
+          </Link>
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
             <LogOut size={16} /> Sign Out
           </button>

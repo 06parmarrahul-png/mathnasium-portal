@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore, serverTimestamp } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
   apiKey: "AIzaSyDRbIRAdA_3ndsbgBiCQia6uL1gHQx8Uv4",
@@ -14,4 +15,8 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
+// Storage is used for user-uploaded profile pictures. See storage.rules
+// for the security policy (each user can only write their own
+// profile-pictures/{uid}/* path).
+export const storage = getStorage(app);
 export { serverTimestamp };

@@ -20,6 +20,7 @@ import PlatformChat from './pages/PlatformChat';
 import CenterAnalytics from './pages/CenterAnalytics';
 import CenterSettings from './pages/CenterSettings';
 import AuditLogs from './pages/AuditLogs';
+import AccountDetails from './pages/AccountDetails';
 
 function NotFound() {
   return (
@@ -55,6 +56,7 @@ function AppRoutes() {
       <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
       <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
+      <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// Mathnasium Portal — Firebase Storage rules.
+//
+// Only one user-uploaded surface today: profile pictures, written
+// under /profile-pictures/{uid}/*. Each authenticated user can read
+// any profile picture (so chat / shift board / manage users can show
+// someone else's avatar) but can only WRITE to their own folder.
+//
+// Deploy with: firebase deploy --only storage
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // ─── Profile pictures ─────────────────────────────────────────
+    // Read: any authenticated user can see anyone's avatar.
+    // Write: only the user themselves, and only image files <= 5 MB.
+    match /profile-pictures/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.size < 5 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Block everything else by default.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
