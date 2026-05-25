@@ -143,7 +143,7 @@ export default function Layout({ children }) {
       { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
       { to: '/manage-roles',     label: 'Manage Roles',     icon: UserCog },
       { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
-      { to: '/platform-chat',    label: 'Platform Chat',    icon: Headphones },
+      { to: '/platform-chat',    label: 'Leadership Chat',    icon: Headphones },
       { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
     );
   }
@@ -167,7 +167,7 @@ export default function Layout({ children }) {
     admin.push({ to: '/admin', label: 'Admin Panel', icon: Shield });
   }
   if ((isAdmin || isOwner) && !isSuperAdmin) {
-    admin.push({ to: '/platform-chat', label: 'Platform Chat', icon: Headphones });
+    admin.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
   }
 
   const navSections = [

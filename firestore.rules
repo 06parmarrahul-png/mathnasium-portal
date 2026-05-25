@@ -174,13 +174,26 @@ service cloud.firestore {
                        || (isAdmin() && resource.data.type == 'shift_swap');
     }
 
-    // Cross-centre support / feature-request chat. Owner / admin / super-admin
-    // only — instructors and hosts do not see this collection at all.
+    // Owners Chat — cross-centre peer space for owners and Enterprise
+    // only. Admins were dropped when Leadership Chat split into two
+    // scopes; admins use the per-centre centerLeadership channel below
+    // for everything they used to use this for.
     match /platformChat/{msgId} {
-      allow read:   if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin());
-      allow create: if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin())
+      allow read:   if isSignedIn() && (isOwner() || isSuperAdmin());
+      allow create: if isSignedIn() && (isOwner() || isSuperAdmin())
                     && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (isOwner() || isSuperAdmin() || isAdmin());
+      allow update: if isSignedIn() && (isOwner() || isSuperAdmin());
+      allow delete: if isOwner() || isSuperAdmin();
+    }
+
+    // Centre Leadership Chat — per-centre management space for admin,
+    // owner, and Enterprise. Each message carries a centerId; reads are
+    // role-gated here but the client also filters by activeCenterId.
+    match /centerLeadership/{msgId} {
+      allow read:   if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin());
+      allow create: if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin())
+                    && request.resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin());
       allow delete: if isOwner() || isSuperAdmin();
     }
 

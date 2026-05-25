@@ -51,6 +51,14 @@
       ]
     },
     {
+      "collectionGroup": "centerLeadership",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centerId",  "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "announcements",
       "queryScope": "COLLECTION",
       "fields": [
