@@ -67,7 +67,10 @@ export default function Login() {
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
           <div className="mx-auto mb-4 inline-block"><Logo size={72} /></div>
-          <h1 className="text-3xl font-bold text-white">Mathnasium Langley</h1>
+          {/* No centre is known yet at sign-in time — the user picks
+              theirs in the form below (or has one from their existing
+              account). Keep the header centre-neutral. */}
+          <h1 className="text-3xl font-bold text-white">Mathnasium</h1>
           <p className="mt-1 text-gray-400">Instructor Portal</p>
         </div>
         <div className="rounded-2xl bg-white p-8 shadow-2xl">

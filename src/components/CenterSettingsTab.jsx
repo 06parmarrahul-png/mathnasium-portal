@@ -194,7 +194,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
       <Section
         title="Fixed Staff Schedules"
         icon={Users}
-        hint="Staff with hardcoded weekly schedules (e.g., Center Director, Manager). Editor coming in a later pass — for now, edit lib/scheduler.js FIXED_SCHEDULES or write directly to Firestore at centers/{id}/config/main.fixedStaff."
+        hint="Staff with hardcoded weekly schedules (e.g., Centre Director, Manager). A full in-app editor is on the roadmap — for now, message Rahul in Leadership Chat if you need a fixed-staff entry added, changed, or removed."
       >
         <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-500">
           {Object.keys(form?.fixedStaff || {}).length === 0

@@ -278,7 +278,7 @@ function EditOpenShiftModal({ shift, onClose, onSave }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel, centerConfig } = useAuth();
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
@@ -392,11 +392,14 @@ export default function ShiftBoard() {
         });
       });
 
-      // Confirmation message in chat (keeps the audit trail)
+      // Confirmation message in chat (keeps the audit trail). userName
+      // mirrors the active centre's display name so multi-centre staff
+      // and Doug/Sylvia at Chilliwack don't see "Mathnasium Langley" on
+      // their system messages.
       await addDoc(collection(db, 'chat'), {
         text: `✅ ${profile.displayName} claimed the open shift on ${fmtDate(openShift.date)} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
         userId: 'system',
-        userName: 'Mathnasium Langley',
+        userName: centerConfig?.name || 'Mathnasium',
         userRole: 'system',
         centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),

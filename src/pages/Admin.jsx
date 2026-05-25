@@ -1164,7 +1164,7 @@ export default function Admin() {
 
       await addDoc(collection(db, 'chat'), {
         text: `📅 The ${draftSchedule.month} ${draftSchedule.year} schedule has been posted!\n\n${totalShifts} shifts across ${draftSchedule.days.length} working days. Check your schedule on the Schedule page.`,
-        userId: 'system', userName: 'Mathnasium Langley', userRole: 'system',
+        userId: 'system', userName: centerConfig?.name || 'Mathnasium', userRole: 'system',
         centerId: activeCenterId,
         createdAt: serverTimestamp(), type: 'schedule_posted',
       });

@@ -1092,7 +1092,7 @@ export default function Schedule() {
       await addDoc(collection(db, 'chat'), {
         text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
         userId: 'system',
-        userName: 'Mathnasium Langley',
+        userName: centerConfig?.name || 'Mathnasium',
         userRole: 'system',
         centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),
