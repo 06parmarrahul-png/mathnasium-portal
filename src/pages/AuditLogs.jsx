@@ -67,6 +67,12 @@ export default function AuditLogs() {
       }
       case 'super_admin.promote_code_set':
         return e.details?.rotated ? 'Rotated owner-promotion code' : 'Set owner-promotion code';
+      case 'super_admin.center_assignment': {
+        const name = e.details?.targetName || e.targetUserId || 'user';
+        const from = (e.details?.fromCentres || []).join(', ') || 'none';
+        const to   = (e.details?.toCentres   || []).join(', ') || 'none';
+        return `Reassigned centres: ${name} (${from} → ${to})`;
+      }
       default:
         return e.action + c;
     }

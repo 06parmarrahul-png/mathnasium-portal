@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { toast, confirmDialog } from '../lib/notify';
 import {
-  UserCog, ShieldAlert, Shield, Building2, KeyRound, AlertTriangle, Lock, X,
+  UserCog, ShieldAlert, Shield, Building2, KeyRound, AlertTriangle, Lock, X, MapPin,
 } from 'lucide-react';
 
 /**
@@ -167,6 +167,44 @@ export default function ManageRoles() {
     }
   };
 
+  const handleMoveCentre = (user) => {
+    setModal({ mode: 'centres', user });
+  };
+
+  const applyCentreAssignment = async ({ user, nextCentres }) => {
+    const fromCentres = Array.isArray(user.centerIds) ? user.centerIds
+                       : user.centerId ? [user.centerId] : [];
+    if (nextCentres.length === 0) {
+      toast.error('Pick at least one centre.');
+      return false;
+    }
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        centerIds: nextCentres,
+        // Keep the legacy single-centre field roughly in sync so any
+        // older code that reads centerId still resolves to something
+        // sensible (first selected centre).
+        centerId: nextCentres[0],
+        centersChangedAt: serverTimestamp(),
+        centersChangedBy: profile.uid,
+      });
+      logAuditEvent(profile, {
+        action: AUDIT_ACTIONS.CENTER_ASSIGNMENT,
+        targetUserId: user.uid,
+        details: {
+          fromCentres,
+          toCentres: nextCentres,
+          targetName: user.displayName || user.email || user.uid,
+        },
+      });
+      toast.success(`${user.displayName || 'User'} moved to ${nextCentres.join(', ')}.`);
+      return true;
+    } catch (err) {
+      toast.error(err?.message || 'Failed to update centres.');
+      return false;
+    }
+  };
+
   const handleDemoteOwner = async (user) => {
     const ok = await confirmDialog({
       title: 'Demote owner?',
@@ -309,45 +347,65 @@ export default function ManageRoles() {
                   </div>
 
                   {/* Action buttons. Self-edit is blocked at the handler
-                      level too; here we just dim the row. */}
+                      level too; here we just dim the row. Centre move
+                      is available alongside the role actions as a
+                      fallback for when a user signed up under the wrong
+                      centre or needs multi-centre access. */}
                   {isMe ? (
                     <span className="text-xs text-gray-400 italic">Can't edit yourself</span>
-                  ) : role === 'super_admin' ? (
-                    <span className="flex items-center gap-1 text-xs text-purple-700">
-                      <Shield size={12} /> Enterprise account
-                    </span>
-                  ) : role === 'owner' ? (
-                    <button
-                      onClick={() => handleDemoteOwner(u)}
-                      className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
-                    >
-                      Demote to Admin
-                    </button>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {role !== 'instructor' && (
+                    <div className="flex flex-wrap gap-2 items-center">
+                      {role === 'super_admin' ? (
+                        <span className="flex items-center gap-1 text-xs text-purple-700">
+                          <Shield size={12} /> Enterprise account
+                        </span>
+                      ) : role === 'owner' ? (
                         <button
-                          onClick={() => handleQuickRoleChange(u, 'instructor')}
-                          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                          onClick={() => handleDemoteOwner(u)}
+                          className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
                         >
-                          → Instructor
+                          Demote to Admin
+                        </button>
+                      ) : (
+                        <>
+                          {role !== 'instructor' && (
+                            <button
+                              onClick={() => handleQuickRoleChange(u, 'instructor')}
+                              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                            >
+                              → Instructor
+                            </button>
+                          )}
+                          {role !== 'admin' && (
+                            <button
+                              onClick={() => handleQuickRoleChange(u, 'admin')}
+                              className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                            >
+                              → Admin
+                            </button>
+                          )}
+                          <button
+                            onClick={() => handlePromoteToOwner(u)}
+                            className="flex items-center gap-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                            title="Owner promotion requires the 4-digit code"
+                          >
+                            <Lock size={11} /> → Owner
+                          </button>
+                        </>
+                      )}
+                      {/* Centre move — available for everyone except
+                          Enterprise (they have global access already).
+                          Enterprise accounts skip this since centerIds
+                          doesn't gate their reach. */}
+                      {role !== 'super_admin' && (
+                        <button
+                          onClick={() => handleMoveCentre(u)}
+                          className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                          title="Change which centres this user belongs to"
+                        >
+                          <MapPin size={11} /> Move centre
                         </button>
                       )}
-                      {role !== 'admin' && (
-                        <button
-                          onClick={() => handleQuickRoleChange(u, 'admin')}
-                          className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
-                        >
-                          → Admin
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handlePromoteToOwner(u)}
-                        className="flex items-center gap-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
-                        title="Owner promotion requires the 4-digit code"
-                      >
-                        <Lock size={11} /> → Owner
-                      </button>
                     </div>
                   )}
                 </li>
@@ -357,7 +415,18 @@ export default function ManageRoles() {
         )}
       </div>
 
-      {modal && (
+      {modal && modal.mode === 'centres' && (
+        <CentreAssignmentModal
+          user={modal.user}
+          centers={centers}
+          onClose={() => setModal(null)}
+          onSave={async (nextCentres) => {
+            const ok = await applyCentreAssignment({ user: modal.user, nextCentres });
+            if (ok) setModal(null);
+          }}
+        />
+      )}
+      {modal && modal.mode !== 'centres' && (
         <RoleCodeModal
           mode={modal.mode}
           user={modal.user}
@@ -371,6 +440,120 @@ export default function ManageRoles() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Modal: centre access (which centres a user belongs to) ───────────────
+
+function CentreAssignmentModal({ user, centers, onClose, onSave }) {
+  // Seed the working set from whichever shape the user doc carries.
+  const initial = Array.isArray(user.centerIds) ? user.centerIds
+                : user.centerId ? [user.centerId] : [];
+  const [selected, setSelected] = useState(new Set(initial));
+  const [saving, setSaving] = useState(false);
+
+  const toggle = (centerId) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(centerId)) next.delete(centerId); else next.add(centerId);
+      return next;
+    });
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(Array.from(selected));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sortedCentres = [...centers].sort((a, b) =>
+    (a.name || a.id).localeCompare(b.name || b.id),
+  );
+
+  const dirty = (() => {
+    if (selected.size !== initial.length) return true;
+    return initial.some(id => !selected.has(id));
+  })();
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+        <div className="flex items-start justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <div className="rounded-lg bg-purple-100 p-1.5 text-purple-700"><MapPin size={16} /></div>
+            <h3 className="font-bold text-gray-900">Centre Access</h3>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+
+        <p className="mb-3 text-sm text-gray-600">
+          Pick the centres <strong>{user.displayName || user.email}</strong> belongs to.
+          Tick more than one for multi-centre staff.
+        </p>
+
+        {sortedCentres.length === 0 ? (
+          <p className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 text-sm text-gray-500 italic">
+            No centres exist yet. Create one in Manage Centres first.
+          </p>
+        ) : (
+          <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+            {sortedCentres.map(c => {
+              const checked = selected.has(c.id);
+              return (
+                <label
+                  key={c.id}
+                  className={`flex items-center gap-3 rounded-lg border px-3 py-2 cursor-pointer transition-colors ${
+                    checked
+                      ? 'border-purple-300 bg-purple-50'
+                      : 'border-gray-200 bg-white hover:bg-gray-50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(c.id)}
+                    className="accent-purple-600 h-4 w-4"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 truncate">{c.name || c.id}</p>
+                    <p className="text-xs text-gray-500 truncate">
+                      {[c.city, c.province].filter(Boolean).join(', ') || c.id}
+                    </p>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        )}
+
+        {selected.size === 0 && sortedCentres.length > 0 && (
+          <div className="mt-3 flex items-start gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+            <span>Pick at least one centre. A user with no centres can't access any data.</span>
+          </div>
+        )}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="rounded-lg border border-gray-300 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={saving || !dirty || selected.size === 0}
+            className="rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

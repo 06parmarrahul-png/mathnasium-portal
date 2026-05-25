@@ -75,4 +75,7 @@ export const AUDIT_ACTIONS = {
   // labels that role "Enterprise".
   ROLE_CHANGE:     'super_admin.role_change',
   PROMOTE_CODE_SET: 'super_admin.promote_code_set',
+  // Centre access changes from the Manage Roles screen — when an
+  // Enterprise user updates which centres a member belongs to.
+  CENTER_ASSIGNMENT: 'super_admin.center_assignment',
 };
