@@ -213,6 +213,15 @@ function ProfilePictureCard({ profile }) {
       setError('Image must be under 4 MB.'); return;
     }
     setUploading(true);
+    // 30s safety net — Storage misconfigurations (no bucket, rules
+    // not deployed, CORS) sometimes leave the SDK promise hanging
+    // forever. Without this, the UI sits on "uploading" with no clue.
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      setUploading(false);
+      setError('Upload timed out after 30 seconds. Likely cause: Firebase Storage isn\'t enabled yet, or storage.rules hasn\'t been deployed. Run: npx firebase-tools deploy --only storage');
+    }, 30000);
     try {
       // Stable path per user — uploading overwrites the previous one,
       // so we don't accumulate orphan files.
@@ -220,7 +229,9 @@ function ProfilePictureCard({ profile }) {
       const path = `profile-pictures/${profile.uid}/avatar.${ext}`;
       const ref = storageRef(storage, path);
       await uploadBytes(ref, file, { contentType: file.type });
+      if (timedOut) return;
       const url = await getDownloadURL(ref);
+      if (timedOut) return;
       await updateDoc(doc(db, 'users', profile.uid), {
         photoURL: url,
         photoPath: path,
@@ -228,9 +239,25 @@ function ProfilePictureCard({ profile }) {
       });
       toast.success('Profile picture updated.');
     } catch (err) {
-      setError(err?.message || 'Upload failed.');
+      // Surface common Firebase Storage error codes with actionable
+      // hints — most "stuck" uploads turn out to be one of these.
+      const code = err?.code || '';
+      if (code === 'storage/unauthorized') {
+        setError('Permission denied. Storage rules need to be deployed: npx firebase-tools deploy --only storage');
+      } else if (code === 'storage/bucket-not-found' || code === 'storage/project-not-found') {
+        setError('Storage bucket isn\'t set up. Enable Storage in Firebase Console → Build → Storage.');
+      } else if (code === 'storage/unauthenticated') {
+        setError('You appear to be signed out. Refresh the page and sign back in.');
+      } else if (code === 'storage/quota-exceeded') {
+        setError('Storage quota exceeded.');
+      } else if (code === 'storage/retry-limit-exceeded' || code?.includes('network')) {
+        setError('Network error. Check your connection and try again.');
+      } else {
+        setError(err?.message || `Upload failed${code ? ` (${code})` : ''}.`);
+      }
     } finally {
-      setUploading(false);
+      clearTimeout(timeout);
+      if (!timedOut) setUploading(false);
     }
   };
 

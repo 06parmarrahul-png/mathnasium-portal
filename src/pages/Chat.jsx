@@ -4,6 +4,7 @@ import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 import { toast } from '../lib/notify';
+import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
   const { profile, activeCenterId } = useAuth();
@@ -12,6 +13,15 @@ export default function Chat() {
   const [sending, setSending] = useState(false);
   const bottomRef = useRef(null);
   const [centerUsers, setCenterUsers] = useState([]);
+  // Profile viewer state. Opens when a teammate's avatar / name is
+  // clicked anywhere in this page — main message stream and the
+  // right-hand members roster.
+  const [viewingUser, setViewingUser] = useState(null);
+  const openProfile = (uid) => {
+    if (!uid || uid === 'system') return;
+    const u = centerUsers.find(x => x.uid === uid);
+    if (u) setViewingUser(u);
+  };
 
   // Roster of everyone at this centre — feeds the members sidebar so users
   // can see who else has access to whichever channel they're looking at.
@@ -307,14 +317,38 @@ export default function Chat() {
               );
             }
 
+            // Avatar + name are click targets that open the profile
+            // viewer for that message's sender.
+            const senderUser = centerUsers.find(u => u.uid === msg.userId);
             return (
               <div key={msg.id} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : ''}`}>
-                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white ${msg.userRole === 'owner' ? 'bg-red-600' : 'bg-gray-600'}`}>
-                  {initials(msg.userName)}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openProfile(msg.userId)}
+                  title={`View ${msg.userName || 'profile'}`}
+                  className="shrink-0 transition-transform hover:scale-105 active:scale-95"
+                >
+                  {senderUser?.photoURL ? (
+                    <img
+                      src={senderUser.photoURL}
+                      alt={msg.userName || 'Profile picture'}
+                      className="h-8 w-8 rounded-full object-cover"
+                    />
+                  ) : (
+                    <div className={`flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white ${msg.userRole === 'owner' ? 'bg-red-600' : 'bg-gray-600'}`}>
+                      {initials(msg.userName)}
+                    </div>
+                  )}
+                </button>
                 <div className={`max-w-xs sm:max-w-sm ${isMe ? 'text-right' : ''}`}>
                   <div className="mb-0.5 flex items-center gap-2">
-                    <span className={`text-xs font-medium ${isMe ? 'text-red-600' : 'text-gray-700'}`}>{isMe ? 'You' : msg.userName}</span>
+                    <button
+                      type="button"
+                      onClick={() => openProfile(msg.userId)}
+                      className={`text-xs font-medium hover:underline ${isMe ? 'text-red-600' : 'text-gray-700'}`}
+                    >
+                      {isMe ? 'You' : msg.userName}
+                    </button>
                     {msg.userRole === 'owner' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-600">Owner</span>}
                     <span className="text-xs text-gray-400">{formatTime(msg.createdAt)}</span>
                   </div>
@@ -372,12 +406,23 @@ export default function Chat() {
               : role === 'admin'     ? 'Admin'
               : (m.instructorType || '');
             return (
-              <div key={m.id || m.uid}
-                title={m.email || m.displayName}
-                className={`flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50 ${isMe ? 'bg-red-50/40' : ''}`}>
-                <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${avatarBg}`}>
-                  {(m.displayName || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
-                </div>
+              <button
+                key={m.id || m.uid}
+                type="button"
+                onClick={() => setViewingUser(m)}
+                title={`View ${m.displayName || m.email || 'profile'}`}
+                className={`w-full text-left flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors hover:bg-gray-50 ${isMe ? 'bg-red-50/40' : ''}`}>
+                {m.photoURL ? (
+                  <img
+                    src={m.photoURL}
+                    alt={m.displayName || 'Profile picture'}
+                    className="h-7 w-7 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <div className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white ${avatarBg}`}>
+                    {(m.displayName || '?').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+                  </div>
+                )}
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold text-gray-800">
                     {m.displayName || '—'}
@@ -387,11 +432,14 @@ export default function Chat() {
                     <p className="truncate text-[10px] text-gray-400">{roleLabel}</p>
                   )}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
       </aside>
+
+      {/* Profile viewer — opens when a name or avatar is clicked. */}
+      <UserProfileModal user={viewingUser} onClose={() => setViewingUser(null)} />
     </div>
   );
 }
