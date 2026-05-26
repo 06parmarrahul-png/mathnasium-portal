@@ -26,7 +26,7 @@
 //
 // Required env vars (set in Vercel project settings):
 //   RESEND_API_KEY    - from https://resend.com/api-keys
-//   RESEND_FROM       - e.g. "Mathnasium Langley <noreply@mathnasiumlangley.com>"
+//   RESEND_FROM       - e.g. "Ratio <noreply@mathnasiumlangley.com>"
 //                       (must use a Resend-verified domain in production;
 //                        for testing, use "onboarding@resend.dev")
 
@@ -83,14 +83,14 @@ function bodyToHtml({ to_name, body, cta_text, cta_link }) {
 <p style="margin:0 0 14px 0;">Hi ${esc(to_name || 'Team')},</p>
 ${bodyHtml}
 ${ctaBlock}
-<p style="margin:24px 0 0 0;color:#6b7280;font-size:12px;">— Mathnasium Langley</p>
+<p style="margin:24px 0 0 0;color:#6b7280;font-size:12px;">— Ratio</p>
 </div>`;
 }
 
 function bodyToText({ to_name, body, cta_text, cta_link }) {
   let txt = `Hi ${to_name || 'Team'},\n\n${body}`;
   if (cta_link) txt += `\n\n${cta_text || 'Open the portal'}: ${cta_link}`;
-  txt += `\n\n— Mathnasium Langley`;
+  txt += `\n\n— Ratio`;
   return txt;
 }
 

@@ -1,6 +1,10 @@
 /**
  * emailService.js
- * Handles all notification emails for the Mathnasium Langley portal.
+ * Handles all notification emails for the Ratio platform (Mathnasium
+ * Langley, Chilliwack, and any future centres). Sign-off in every
+ * template is "— Ratio" so the branding stays consistent across
+ * centres; centre-specific context appears in the subject line and
+ * body, not the footer.
  *
  * Architecture: this file builds the subject + plain-text body for each
  * notification, batches the recipients into a single payload, and POSTs to
