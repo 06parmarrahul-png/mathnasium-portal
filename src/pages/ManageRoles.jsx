@@ -8,6 +8,7 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   UserCog, ShieldAlert, Shield, Building2, KeyRound, AlertTriangle, Lock, X, MapPin,
+  Mail,
 } from 'lucide-react';
 
 /**
@@ -169,6 +170,39 @@ export default function ManageRoles() {
 
   const handleMoveCentre = (user) => {
     setModal({ mode: 'centres', user });
+  };
+
+  // Fire a Resend-backed password reset email to the target user. Uses
+  // the same /api/send-password-reset endpoint the public Login page
+  // calls, so there's exactly one delivery path to maintain.
+  const handleSendResetLink = async (user) => {
+    if (!user?.email) {
+      toast.error('No email on file for this user.');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Send password reset?',
+      message: `An email will be sent to ${user.email} with a link to reset their password. The link expires in one hour.`,
+      confirmText: 'Send reset email',
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/send-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: user.email,
+          continueUrl: window.location.origin + '/login',
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `Request failed (${r.status}).`);
+      }
+      toast.success(`Reset email sent to ${user.email}.`);
+    } catch (err) {
+      toast.error(err?.message || 'Failed to send reset email.');
+    }
   };
 
   const applyCentreAssignment = async ({ user, nextCentres }) => {
@@ -404,6 +438,19 @@ export default function ManageRoles() {
                           title="Change which centres this user belongs to"
                         >
                           <MapPin size={11} /> Move centre
+                        </button>
+                      )}
+                      {/* Send password reset — available for everyone.
+                          Fires the Resend-backed reset email so the
+                          user can recover their account without the
+                          Firebase-default-sender spam issue. */}
+                      {u.email && (
+                        <button
+                          onClick={() => handleSendResetLink(u)}
+                          className="flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
+                          title="Email a password-reset link to this user"
+                        >
+                          <Mail size={11} /> Send reset
                         </button>
                       )}
                     </div>

@@ -20,7 +20,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [resetMode, setResetMode] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-  const { login, resetPassword } = useAuth();
+  const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
@@ -47,16 +47,28 @@ export default function Login() {
     }
     setLoading(true);
     try {
-      await resetPassword(email);
+      // Route through our own /api/send-password-reset (Resend-backed)
+      // instead of Firebase's default sender. Firebase's reset emails
+      // come from noreply@<project>.firebaseapp.com and tend to land
+      // in spam; this version arrives from the verified Resend domain
+      // and reliably hits the inbox.
+      const r = await fetch('/api/send-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: email.trim(),
+          continueUrl: window.location.origin + '/login',
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `Reset request failed (${r.status}).`);
+      }
+      // Endpoint deliberately returns success for unknown emails too —
+      // we just trust it and show the same confirmation either way.
       setResetSent(true);
     } catch (err) {
-      const code = err?.code || '';
-      // For privacy, treat user-not-found the same as success — don't leak which emails exist.
-      if (code === 'auth/user-not-found' || code === 'auth/invalid-email') {
-        setResetSent(true);
-      } else {
-        setError(FRIENDLY_ERRORS[code] || 'Could not send reset email. Please try again.');
-      }
+      setError(err?.message || 'Could not send reset email. Please try again.');
     } finally {
       setLoading(false);
     }
