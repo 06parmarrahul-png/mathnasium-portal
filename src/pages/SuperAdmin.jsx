@@ -6,13 +6,12 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  DEFAULT_CENTER_CONFIG, DEFAULT_ASSIGNMENT_COLORS,
-  ASSIGNMENT_COLOR_KEYS, assignmentColorHex, contrastText, ALL_WEEKDAYS,
+  DEFAULT_CENTER_CONFIG, ALL_WEEKDAYS,
 } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import {
   Shield, ShieldAlert, Globe, Plus, Building2, Users,
-  ArrowRight, CheckCircle2, AlertTriangle, Palette, Save, RotateCcw,
+  ArrowRight, CheckCircle2, AlertTriangle, Save,
   CalendarDays,
 } from 'lucide-react';
 
@@ -125,7 +124,7 @@ export default function SuperAdmin() {
         </div>
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Manage Centres</h1>
-          <p className="text-sm text-gray-500">Enterprise controls. Create centres, switch contexts, configure appearance + operating days.</p>
+          <p className="text-sm text-gray-500">Enterprise controls. Create centres, switch contexts, configure operating days. (Role colours moved to Centre Settings.)</p>
         </div>
       </div>
 
@@ -234,11 +233,9 @@ export default function SuperAdmin() {
           {/* Create + per-centre configuration follow the centres list. */}
           <CreateCenterForm existing={centers.map(c => c.id)} />
 
-          <AppearanceEditor
-            activeCenterId={activeCenterId}
-            centerConfig={centerConfig}
-            activeCenterName={centers.find(c => c.id === activeCenterId)?.name || activeCenterId}
-          />
+          {/* Appearance / role colours moved to Centre Settings so owners
+              can rebrand their own centre. Enterprise still edits per-centre
+              colours from there after switching into the centre. */}
 
           <OperatingDaysEditor
             activeCenterId={activeCenterId}
@@ -269,135 +266,6 @@ export default function SuperAdmin() {
 
 // Recent Activity (audit log viewer) lives on its own page now —
 // see src/pages/AuditLogs.jsx.
-
-// ─── Sub-component: Appearance (shift colors) editor ─────────────────────
-
-function AppearanceEditor({ activeCenterId, centerConfig, activeCenterName }) {
-  // Local working copy of the shift-assignment color map. Seeded from the
-  // active center's config (merged with the built-in defaults so every
-  // assignment has a value to start from).
-  const initial = () => {
-    const out = {};
-    for (const role of ASSIGNMENT_COLOR_KEYS) {
-      out[role] = assignmentColorHex(role, centerConfig);
-    }
-    return out;
-  };
-  const [colors, setColors] = useState(initial);
-  const [saving, setSaving] = useState(false);
-  const [savedAt, setSavedAt] = useState(null);
-  const [error, setError] = useState('');
-
-  // Re-seed if the active center changes (switchCenter) or config updates.
-  useEffect(() => {
-    const out = {};
-    for (const role of ASSIGNMENT_COLOR_KEYS) {
-      out[role] = assignmentColorHex(role, centerConfig);
-    }
-    setColors(out);
-  }, [centerConfig, activeCenterId]);
-
-  const dirty = ASSIGNMENT_COLOR_KEYS.some(
-    r => colors[r] !== assignmentColorHex(r, centerConfig)
-  );
-
-  const setOne = (role, hex) => setColors(c => ({ ...c, [role]: hex }));
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError('');
-    try {
-      await setDoc(
-        doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { assignmentColors: colors, updatedAt: serverTimestamp() },
-        { merge: true },
-      );
-      setSavedAt(Date.now());
-      setTimeout(() => setSavedAt(null), 3000);
-    } catch (err) {
-      setError(err?.message || 'Failed to save colors.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleReset = () => {
-    // Reset to the built-in defaults (visually) — not saved until "Save".
-    const out = {};
-    for (const role of ASSIGNMENT_COLOR_KEYS) out[role] = DEFAULT_ASSIGNMENT_COLORS[role];
-    setColors(out);
-  };
-
-  return (
-    <div className="rounded-2xl border bg-white p-5 shadow-sm">
-      <div className="flex items-center gap-2 mb-1">
-        <Palette size={18} className="text-purple-600" />
-        <h3 className="font-semibold text-gray-900">Appearance — Shift Colors</h3>
-      </div>
-      <p className="text-sm text-gray-500 mb-4">
-        Each shift on the admin weekly grid is filled with its assignment's
-        color (these also tint the payroll cards). Changes apply to{' '}
-        <strong>{activeCenterName}</strong> only — the center you're currently
-        viewing. Use the sidebar switcher to edit a different center.
-      </p>
-
-      <div className="grid gap-3 sm:grid-cols-2">
-        {ASSIGNMENT_COLOR_KEYS.map(role => (
-          <div key={role} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
-            {/* Live swatch preview */}
-            <span
-              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold"
-              style={{ backgroundColor: colors[role], color: contrastText(colors[role]) }}
-            >
-              {role.split(' ').map(w => w[0]).join('').slice(0, 2)}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-800 truncate">{role}</p>
-              <p className="text-xs text-gray-400 font-mono">{colors[role]}</p>
-            </div>
-            <input
-              type="color"
-              value={colors[role]}
-              onChange={e => setOne(role, e.target.value)}
-              className="shrink-0 h-9 w-12 rounded cursor-pointer border border-gray-200 bg-white"
-              title={`Pick color for ${role}`}
-            />
-          </div>
-        ))}
-      </div>
-
-      <div className="mt-4 flex items-center gap-2 flex-wrap">
-        <button
-          onClick={handleSave}
-          disabled={!dirty || saving}
-          className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50 transition-colors"
-        >
-          <Save size={14} />
-          {saving ? 'Saving…' : 'Save Colors'}
-        </button>
-        <button
-          onClick={handleReset}
-          disabled={saving}
-          className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
-        >
-          <RotateCcw size={13} />
-          Reset to defaults
-        </button>
-        {dirty && !savedAt && (
-          <span className="flex items-center gap-1 text-xs text-amber-700">
-            <AlertTriangle size={13} /> Unsaved changes
-          </span>
-        )}
-        {savedAt && !dirty && (
-          <span className="flex items-center gap-1 text-xs text-emerald-700">
-            <CheckCircle2 size={13} /> Saved
-          </span>
-        )}
-        {error && <span className="text-xs text-red-600">{error}</span>}
-      </div>
-    </div>
-  );
-}
 
 // ─── Sub-component: Operating Days editor ────────────────────────────────
 

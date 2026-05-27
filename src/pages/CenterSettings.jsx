@@ -1,5 +1,6 @@
 import { useAuth } from '../contexts/AuthContext';
 import CenterSettingsTab from '../components/CenterSettingsTab';
+import AppearanceEditor from '../components/AppearanceEditor';
 import { ShieldAlert } from 'lucide-react';
 
 /**
@@ -26,8 +27,16 @@ export default function CenterSettings() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl">
+    <div className="mx-auto max-w-7xl space-y-6">
       <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
+      {/* Role / shift colours — owners + Enterprise can rebrand their own
+          centre here. (Previously lived only on Manage Centres, but owners
+          asked to have it under their own Centre Settings page.) */}
+      <AppearanceEditor
+        activeCenterId={activeCenterId}
+        centerConfig={centerConfig}
+        activeCenterName={centerConfig?.name || activeCenterId}
+      />
     </div>
   );
 }
