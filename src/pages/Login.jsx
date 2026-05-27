@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import Logo from '../components/Logo';
+import RatioLogo from '../components/RatioLogo';
 
 const FRIENDLY_ERRORS = {
   'auth/invalid-credential':  'Invalid email or password.',
@@ -78,12 +78,12 @@ export default function Login() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-red-900 px-4">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 inline-block"><Logo size={72} /></div>
+          <div className="mx-auto mb-4 inline-block"><RatioLogo size={72} /></div>
           {/* No centre is known yet at sign-in time — the user picks
               theirs in the form below (or has one from their existing
               account). Keep the header centre-neutral. */}
-          <h1 className="text-3xl font-bold text-white">Mathnasium</h1>
-          <p className="mt-1 text-gray-400">Instructor Portal</p>
+          <h1 className="text-3xl font-bold text-white">Ratio Solved</h1>
+          <p className="mt-1 text-gray-400">Staff Scheduling</p>
         </div>
         <div className="rounded-2xl bg-white p-8 shadow-2xl">
           <h2 className="mb-6 text-xl font-bold text-gray-900">{resetMode ? 'Reset Password' : 'Sign In'}</h2>
