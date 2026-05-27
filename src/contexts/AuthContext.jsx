@@ -6,7 +6,7 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, setDoc, onSnapshot } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
@@ -76,6 +76,44 @@ export function AuthProvider({ children }) {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveCenterIdState((cur) => cur === next ? cur : next);
   }, [profile]);
+
+  // First-login seed for notificationPreferences. Most staff have never
+  // opened the Notification Preferences page, so the shift-reminder cron
+  // had nobody to email. On the user's first authenticated load we drop
+  // in a sensible default doc (email on, 1 day before) — they can still
+  // change it later. We only write when the doc doesn't already exist,
+  // so this never clobbers a user who's already customised their prefs.
+  useEffect(() => {
+    if (!profile?.uid) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const ref = doc(db, 'notificationPreferences', profile.uid);
+        const snap = await getDoc(ref);
+        if (cancelled || snap.exists()) return;
+        await setDoc(ref, {
+          userId:             profile.uid,
+          userName:           profile.displayName || '',
+          centerId:           getActiveCenterId(profile),
+          email:              profile.email || '',
+          phone:              profile.phone || '',
+          emailEnabled:       true,
+          smsEnabled:         false,
+          reminderTiming:     '1day',
+          shiftSwapNotify:    true,
+          announcementNotify: true,
+          seededAt:           new Date().toISOString(),
+          updatedAt:          new Date().toISOString(),
+        });
+      } catch (err) {
+        // Don't break the app if the seed fails — worst case the user
+        // just doesn't get default reminders until they visit the prefs
+        // page themselves.
+        console.warn('[notif-prefs seed] skipped:', err?.message || err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [profile?.uid, profile?.email, profile?.displayName, profile?.phone, profile]);
 
   /**
    * Switch which center is active (used by the sidebar center-switcher
