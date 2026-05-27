@@ -161,6 +161,10 @@ export default function SuperAdmin() {
           Operating Days before reaching the actual list of what they have. */}
       {isSuperAdmin && (
         <>
+          {/* Create new centre pinned to the top — quickest action for
+              Enterprise onboarding a new location. */}
+          <CreateCenterForm existing={centers.map(c => c.id)} />
+
           <div className="rounded-2xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-1">
               <Globe size={18} className="text-purple-600" />
@@ -174,7 +178,7 @@ export default function SuperAdmin() {
                 <div className="h-6 w-6 animate-spin rounded-full border-4 border-purple-600 border-t-transparent" />
               </div>
             ) : centers.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">No centres yet. Create one below.</p>
+              <p className="text-sm text-gray-400 italic">No centres yet. Create one above.</p>
             ) : (
               <div className="grid gap-3 sm:grid-cols-2">
                 {centers.map(c => {
@@ -229,9 +233,6 @@ export default function SuperAdmin() {
               </div>
             )}
           </div>
-
-          {/* Create + per-centre configuration follow the centres list. */}
-          <CreateCenterForm existing={centers.map(c => c.id)} />
 
           {/* Appearance / role colours moved to Centre Settings so owners
               can rebrand their own centre. Enterprise still edits per-centre
