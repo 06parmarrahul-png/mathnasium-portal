@@ -108,16 +108,14 @@ export default async function handler(req, res) {
     cancel_url:  `${baseUrl}/platform-revenue?cancelled=${encodeURIComponent(centerId)}`,
     // metadata flows through to the webhook so we know which centre paid.
     metadata: { centerId, tier, billing },
-    subscription_data: { metadata: { centerId, tier, billing } },
     // 14-day trial so the centre pays nothing on activation — matches the
-    // pricing page's "14-day free trial" promise.
-    subscription_data_trial_period_days: undefined,
+    // pricing page's "14-day free trial" promise. Trial config has to live
+    // on the subscription_data object, not at the top level.
+    subscription_data: {
+      metadata: { centerId, tier, billing },
+      trial_period_days: 14,
+    },
     allow_promotion_codes: true,
-  };
-  // Stripe needs trial config on the subscription_data object.
-  params.subscription_data = {
-    ...params.subscription_data,
-    trial_period_days: 14,
   };
 
   if (existing.stripeCustomerId) {
