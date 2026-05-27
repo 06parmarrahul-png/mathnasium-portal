@@ -38,7 +38,12 @@ export default function Chat() {
   // coordinate without disrupting the main feed. Messages carry a `channel`
   // field; legacy messages without one fall back to 'all'.
   const [channel, setChannel] = useState('all');
-  const isOnlineMember = (profile?.subRoles || []).includes('Online') || profile?.role === 'super_admin';
+  // Who can see the Online side channel: Online sub-role staff, plus admins,
+  // owners, and super-admins so leadership can oversee / chime in.
+  const isOnlineMember = (profile?.subRoles || []).includes('Online')
+    || profile?.role === 'super_admin'
+    || profile?.role === 'owner'
+    || profile?.role === 'admin';
   // If somebody loses Online access while looking at the Online tab, bounce
   // them back to All so they don't get stuck on an empty/hidden channel.
   useEffect(() => {
@@ -82,8 +87,14 @@ export default function Chat() {
     const base = centerUsers.filter(u =>
       u.approved && u.internal !== true && u.displayName !== 'Admin Team',
     );
+    // Online roster includes the Online sub-role plus leadership (admin /
+    // owner / super-admin) so the Online team can see who's watching.
     const filtered = channel === 'online'
-      ? base.filter(u => (u.subRoles || []).includes('Online') || u.role === 'super_admin')
+      ? base.filter(u =>
+          (u.subRoles || []).includes('Online')
+          || u.role === 'super_admin'
+          || u.role === 'owner'
+          || u.role === 'admin')
       : base;
     return [...filtered].sort((a, b) => {
       const ra = ROLE_ORDER[a.role] ?? 9;
