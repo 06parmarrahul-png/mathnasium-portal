@@ -36,11 +36,19 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 // view and the customer-facing pricing page never tell different stories.
 // Suggested amounts are the monthly list price; annual billing is handled
 // at the Stripe Price level (20% off) so we don't need a separate row here.
+//
+// `setupFee` is a one-time charge added as an invoice item on the first
+// Stripe Checkout invoice (handled in api/stripe/create-checkout-session.js).
+// Founder tier is the "Founding 10" launch program — locked-in $79/mo for
+// life with no setup fee. Cap it at 10 active founders (we surface a counter
+// in the summary cards below).
+const FOUNDER_CAP = 10;
 const TIERS = [
-  { key: 'free',    label: 'Free',    suggestedAmount: 0,  color: 'bg-gray-100 text-gray-700' },
-  { key: 'starter', label: 'Starter', suggestedAmount: 29, color: 'bg-emerald-100 text-emerald-800' },
-  { key: 'growth',  label: 'Growth',  suggestedAmount: 49, color: 'bg-blue-100 text-blue-800' },
-  { key: 'pro',     label: 'Pro',     suggestedAmount: 79, color: 'bg-purple-100 text-purple-800' },
+  { key: 'free',    label: 'Free',    suggestedAmount: 0,   setupFee: 0,    color: 'bg-gray-100 text-gray-700' },
+  { key: 'founder', label: 'Founder', suggestedAmount: 79,  setupFee: 0,    color: 'bg-rose-100 text-rose-800',     limited: true },
+  { key: 'starter', label: 'Starter', suggestedAmount: 99,  setupFee: 500,  color: 'bg-emerald-100 text-emerald-800' },
+  { key: 'growth',  label: 'Growth',  suggestedAmount: 149, setupFee: 1000, color: 'bg-blue-100 text-blue-800' },
+  { key: 'pro',     label: 'Pro',     suggestedAmount: 299, setupFee: 2500, color: 'bg-purple-100 text-purple-800' },
 ];
 
 const STATUSES = [
@@ -159,6 +167,7 @@ export default function PlatformRevenue() {
 
   const counts = { active: 0, trial: 0, past_due: 0, cancelled: 0, free: 0 };
   let paidThisMonth = 0;
+  let founderSeats = 0;
   for (const c of centers) {
     const s = effectiveStatus(c);
     if (counts[s] != null) counts[s]++;
@@ -166,8 +175,12 @@ export default function PlatformRevenue() {
     if (lastPaid && lastPaid >= today.slice(0, 7) + '-01') {
       paidThisMonth += Number(c.billing.lastPaidAmount) || 0;
     }
+    // Count active founder-tier seats so we know how many of the FOUNDER_CAP
+    // launch spots are still available. Cancelled founders free up a slot.
+    if (c?.billing?.tier === 'founder' && s !== 'cancelled') founderSeats++;
   }
   const paying = counts.active + counts.trial + counts.past_due;
+  const founderSeatsLeft = Math.max(0, FOUNDER_CAP - founderSeats);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
@@ -201,6 +214,10 @@ export default function PlatformRevenue() {
           <FleetChip count={counts.cancelled} style={statusStyle('cancelled')} />
           <span className="rounded-full bg-gray-50 px-3 py-1.5 text-xs font-semibold text-gray-600">
             Free · {counts.free}
+          </span>
+          <span className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-bold text-rose-700">
+            Founders · {founderSeats}/{FOUNDER_CAP}
+            {founderSeatsLeft > 0 && <span className="ml-1 font-medium text-rose-500">· {founderSeatsLeft} left</span>}
           </span>
           {counts.past_due > 0 && (
             <span className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-rose-700">
@@ -336,12 +353,17 @@ function StripeCheckoutModal({ center, user, onClose }) {
     const t = TIERS.find(x => x.key === tier);
     if (!t) return 0;
     if (billing === 'annual') {
-      // Mirror the setup-stripe-products.js annual amounts (20% off).
-      const annualMap = { starter: 276, growth: 468, pro: 756 };
+      // Mirror the setup-stripe-products.js annual amounts (20% off, rounded).
+      const annualMap = { founder: 760, starter: 950, growth: 1430, pro: 2870 };
       return annualMap[tier] ?? t.suggestedAmount * 12;
     }
     return t.suggestedAmount;
   })();
+
+  // Setup fee — added as a one-time invoice item by the API. Shown to the
+  // super-admin so they know the total first-invoice amount.
+  const selectedSetupFee = (TIERS.find(x => x.key === tier)?.setupFee) || 0;
+  const isFounder = tier === 'founder';
 
   return (
     <div
@@ -433,7 +455,18 @@ function StripeCheckoutModal({ center, user, onClose }) {
                     <span className="ml-1 text-xs font-normal text-gray-500">{billing === 'annual' ? '/ year' : '/ month'}</span>
                   </span>
                 </div>
-                <p className="mt-1 text-[11px] text-gray-500">
+                {selectedSetupFee > 0 && (
+                  <div className="mt-1.5 flex items-center justify-between text-xs">
+                    <span className="text-gray-500">One-time setup fee</span>
+                    <span className="font-semibold text-gray-700">{fmtMoney(selectedSetupFee)}</span>
+                  </div>
+                )}
+                {isFounder && (
+                  <p className="mt-2 inline-flex items-center gap-1 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-bold text-rose-800">
+                    <CheckCircle2 size={10} /> Founding 10 · locked rate for life · no setup fee
+                  </p>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-500">
                   14-day free trial · card on file but no charge until day 15 · cancel anytime via Customer Portal
                 </p>
               </div>

@@ -10,8 +10,14 @@
 // caller must have role === 'super_admin' in their Firestore profile.
 //
 // Request body:
-//   { centerId: 'langley', tier: 'starter' | 'growth' | 'pro',
+//   { centerId: 'langley',
+//     tier:    'founder' | 'starter' | 'growth' | 'pro',
 //     billing: 'monthly' | 'annual' }
+//
+// Setup fees: Starter / Growth / Pro have a one-time setup fee. If a Price
+// ID is configured in env (STRIPE_PRICE_{TIER}_SETUP), it's added to the
+// first invoice via add_invoice_items so the customer pays subscription +
+// setup at the same time. Founder tier has no setup fee.
 //
 // Response:
 //   200 { url: 'https://checkout.stripe.com/c/pay/...', sessionId: '...' }
@@ -32,12 +38,23 @@ function stripeClient() {
 // Map (tier, billing) → Stripe Price ID env var name. These are set in
 // Vercel after running scripts/setup-stripe-products.js.
 const PRICE_ENV = {
+  founder_monthly: 'STRIPE_PRICE_FOUNDER_MONTHLY',
+  founder_annual:  'STRIPE_PRICE_FOUNDER_ANNUAL',
   starter_monthly: 'STRIPE_PRICE_STARTER_MONTHLY',
   starter_annual:  'STRIPE_PRICE_STARTER_ANNUAL',
   growth_monthly:  'STRIPE_PRICE_GROWTH_MONTHLY',
   growth_annual:   'STRIPE_PRICE_GROWTH_ANNUAL',
   pro_monthly:     'STRIPE_PRICE_PRO_MONTHLY',
   pro_annual:      'STRIPE_PRICE_PRO_ANNUAL',
+};
+
+// Map tier → one-time Setup-Fee Price ID env var name. Tiers without a
+// setup fee (founder) intentionally have no entry — the code only adds an
+// invoice item when both the env var name exists AND the env var is set.
+const SETUP_FEE_ENV = {
+  starter: 'STRIPE_PRICE_STARTER_SETUP',
+  growth:  'STRIPE_PRICE_GROWTH_SETUP',
+  pro:     'STRIPE_PRICE_PRO_SETUP',
 };
 
 async function readJson(req) {
@@ -101,22 +118,38 @@ export default async function handler(req, res) {
     ? origin.replace(/\/$/, '')
     : `https://${req.headers.host || 'example.com'}`;
 
+  // Setup fee (one-time) — only attached if (a) this tier has a configured
+  // setup-fee env var and (b) the env var is actually populated in Vercel.
+  // Missing var = silently skipped, so the route stays safe if you forget
+  // to update env after re-running the Stripe setup script.
+  const setupFeeEnvKey = SETUP_FEE_ENV[tier];
+  const setupFeePriceId = setupFeeEnvKey ? process.env[setupFeeEnvKey] : null;
+
   const params = {
     mode: 'subscription',
     line_items: [{ price: priceId, quantity: 1 }],
     success_url: `${baseUrl}/platform-revenue?subscribed=${encodeURIComponent(centerId)}`,
     cancel_url:  `${baseUrl}/platform-revenue?cancelled=${encodeURIComponent(centerId)}`,
     // metadata flows through to the webhook so we know which centre paid.
-    metadata: { centerId, tier, billing },
+    metadata: { centerId, tier, billing, hasSetupFee: setupFeePriceId ? 'yes' : 'no' },
     // 14-day trial so the centre pays nothing on activation — matches the
     // pricing page's "14-day free trial" promise. Trial config has to live
     // on the subscription_data object, not at the top level.
+    //
+    // Note on setup fees + trial: Stripe charges add_invoice_items on the
+    // FIRST invoice issued. With a trial, that's the invoice generated when
+    // the trial ends, so the customer is charged subscription + setup fee
+    // together on day 15. No surprise charge during trial.
     subscription_data: {
       metadata: { centerId, tier, billing },
       trial_period_days: 14,
     },
     allow_promotion_codes: true,
   };
+
+  if (setupFeePriceId) {
+    params.subscription_data.add_invoice_items = [{ price: setupFeePriceId, quantity: 1 }];
+  }
 
   if (existing.stripeCustomerId) {
     params.customer = existing.stripeCustomerId;

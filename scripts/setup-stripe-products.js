@@ -13,10 +13,17 @@
 //   3. Copy the printed Price IDs into your Vercel environment variables
 //      (we'll wire them into Checkout Sessions in Phase 2.1).
 //
-// PRICING (matches the public ratio.app marketing site)
-//   Starter — $29 CAD / month  or  $276 CAD / year  ($23/mo equivalent, 20% off)
-//   Growth  — $49 CAD / month  or  $468 CAD / year  ($39/mo equivalent, 20% off)
-//   Pro     — $79 CAD / month  or  $756 CAD / year  ($63/mo equivalent, 20% off)
+// PRICING (matches the public ratiosolved.com marketing site)
+//   Founder — $79  CAD / month  or  $760  CAD / year  ($63/mo equivalent, 20% off)   · LAUNCH ONLY, capped at 10 active seats · no setup fee
+//   Starter — $99  CAD / month  or  $950  CAD / year  ($79/mo equivalent, 20% off)   · $500   one-time setup fee
+//   Growth  — $149 CAD / month  or  $1,430 CAD / year ($119/mo equivalent, 20% off)  · $1,000 one-time setup fee
+//   Pro     — $299 CAD / month  or  $2,870 CAD / year ($239/mo equivalent, 20% off)  · $2,500 one-time setup fee
+//
+// MIGRATING FROM OLD PRICES ($29 / $49 / $79)
+//   Stripe Products are kept active; this script creates NEW Prices at the
+//   new amounts. After running, copy the printed Price IDs into Vercel —
+//   the OLD env-var values can be left in Stripe (you don't delete old
+//   Prices) but the new Price IDs become the source of truth.
 
 import Stripe from 'stripe';
 
@@ -30,14 +37,33 @@ const stripe = new Stripe(SECRET, { apiVersion: '2024-06-20' });
 
 const CURRENCY = 'cad';
 
-// Each entry becomes one Stripe Product + two Prices (monthly + annual).
+// Each entry becomes one Stripe Product + two recurring Prices (monthly +
+// annual) + optionally a one-time Price for the setup fee.
+//
+// `setupFeeCents` of 0 = no separate setup-fee Price gets created.
 const PLANS = [
+  {
+    key:         'founder',
+    name:        'Ratio Founder',
+    description: 'Founding 10 launch program. Locked-in $79/mo for life. No setup fee. Limited to 10 active seats.',
+    monthlyCents: 7900,   // $79
+    annualCents:  76000,  // $760 ($63/mo equivalent, 20% off)
+    setupFeeCents: 0,
+    features: [
+      'Locked-in rate for life',
+      'No setup fee',
+      'Everything in Growth',
+      'Founding-customer Slack channel',
+      'Priority feature requests',
+    ],
+  },
   {
     key:         'starter',
     name:        'Ratio Starter',
-    description: 'Up to 10 instructors. Single centre. Everything you need to stop using a spreadsheet.',
-    monthlyCents: 2900,   // $29
-    annualCents:  27600,  // $276 ($23/mo equivalent)
+    description: 'Up to 15 instructors. Single centre. Everything you need to stop using a spreadsheet.',
+    monthlyCents: 9900,    // $99
+    annualCents:  95000,   // $950 ($79/mo equivalent)
+    setupFeeCents: 50000,  // $500 one-time
     features: [
       'Smart scheduling + drag-and-drop',
       'Availability & time-off',
@@ -48,9 +74,10 @@ const PLANS = [
   {
     key:         'growth',
     name:        'Ratio Growth',
-    description: 'Up to 18 instructors. Multi-centre ready. Where most Mathnasium franchises land.',
-    monthlyCents: 4900,   // $49
-    annualCents:  46800,  // $468 ($39/mo equivalent)
+    description: 'Up to 50 instructors. Multi-centre ready. Where most Mathnasium franchises land.',
+    monthlyCents: 14900,    // $149
+    annualCents:  143000,   // $1,430 ($119/mo equivalent)
+    setupFeeCents: 100000,  // $1,000 one-time
     features: [
       'Everything in Starter',
       'Payroll automation + exports',
@@ -63,8 +90,9 @@ const PLANS = [
     key:         'pro',
     name:        'Ratio Pro',
     description: 'Unlimited instructors and centres. Built for franchises and regional operators.',
-    monthlyCents: 7900,   // $79
-    annualCents:  75600,  // $756 ($63/mo equivalent)
+    monthlyCents: 29900,    // $299
+    annualCents:  287000,   // $2,870 ($239/mo equivalent)
+    setupFeeCents: 250000,  // $2,500 one-time
     features: [
       'Everything in Growth',
       'Multi-centre rollups',
@@ -90,6 +118,21 @@ async function findPrice(productId, unitAmount, interval) {
       price.unit_amount === unitAmount &&
       price.currency    === CURRENCY &&
       price.recurring?.interval === interval
+    ) {
+      return price;
+    }
+  }
+  return null;
+}
+
+// Look up an existing one-time (non-recurring) price for a product at a
+// given amount. Used for the setup-fee Prices.
+async function findOneTimePrice(productId, unitAmount) {
+  for await (const price of stripe.prices.list({ product: productId, active: true, limit: 100 })) {
+    if (
+      price.unit_amount === unitAmount &&
+      price.currency    === CURRENCY &&
+      !price.recurring
     ) {
       return price;
     }
@@ -143,7 +186,26 @@ async function ensurePlan(plan) {
     console.log(`     · Annual exists   $${(plan.annualCents / 100).toFixed(2)} CAD  (${annual.id})`);
   }
 
-  return { plan, product, monthly, annual };
+  // One-time setup fee (added to first invoice via add_invoice_items in the
+  // create-checkout-session route). Only created if the plan defines one.
+  let setupFee = null;
+  if (plan.setupFeeCents && plan.setupFeeCents > 0) {
+    setupFee = await findOneTimePrice(product.id, plan.setupFeeCents);
+    if (!setupFee) {
+      setupFee = await stripe.prices.create({
+        product:     product.id,
+        unit_amount: plan.setupFeeCents,
+        currency:    CURRENCY,
+        nickname:    `${plan.name} · Setup Fee (one-time)`,
+        metadata:    { tier: plan.key, billing: 'setup_fee' },
+      });
+      console.log(`     + Setup fee       $${(plan.setupFeeCents / 100).toFixed(2)} CAD  (${setupFee.id})`);
+    } else {
+      console.log(`     · Setup fee exists $${(plan.setupFeeCents / 100).toFixed(2)} CAD  (${setupFee.id})`);
+    }
+  }
+
+  return { plan, product, monthly, annual, setupFee };
 }
 
 (async () => {
@@ -164,6 +226,9 @@ async function ensurePlan(plan) {
     const KEY = r.plan.key.toUpperCase();
     console.log(`  STRIPE_PRICE_${KEY}_MONTHLY=${r.monthly.id}`);
     console.log(`  STRIPE_PRICE_${KEY}_ANNUAL=${r.annual.id}`);
+    if (r.setupFee) {
+      console.log(`  STRIPE_PRICE_${KEY}_SETUP=${r.setupFee.id}`);
+    }
   }
   console.log(`\n  STRIPE_PUBLISHABLE_KEY=pk_${mode === 'LIVE' ? 'live' : 'test'}_…   (from dashboard.stripe.com/apikeys)`);
   console.log(`  STRIPE_SECRET_KEY=${SECRET.slice(0, 8)}…   (do NOT commit; use Vercel env)`);
