@@ -32,6 +32,12 @@ import HolidaysEditor from '../components/HolidaysEditor';
 import {
   notifyOpenShift, notifySchedulePosted, notifyTimeOffDecision,
 } from '../lib/emailService';
+import {
+  resolveUserForCenter,
+  membershipFieldPath,
+  isPerCentreField,
+  buildInitialMembership,
+} from '../lib/centerMembership';
 
 const MONTHS = [
   'January','February','March','April','May','June',
@@ -601,16 +607,54 @@ export default function Admin() {
       && u.internal !== true
       && u.displayName !== 'Admin Team';
 
-  const approvedUsers = users
+  // Resolve every user against the active centre so per-centre fields
+  // (instructorType, priority, subRoles, guaranteed, approved, etc.)
+  // hoist to the top level for this centre's view. Reads downstream
+  // (`u.priority`, `u.instructorType`, …) keep working unchanged but
+  // now reflect the centre-scoped value instead of a global one.
+  const usersForCentre = useMemo(
+    () => users.map(u => resolveUserForCenter(u, activeCenterId)),
+    [users, activeCenterId],
+  );
+
+  const approvedUsers = usersForCentre
     .filter(u => u.approved && isVisibleStaff(u))
     .sort((a, b) => {
       const firstName = name => (name || '').split(' ')[0].toLowerCase();
       return firstName(a.displayName).localeCompare(firstName(b.displayName));
     });
-  const pendingUsers  = users.filter(u => !u.approved && isVisibleStaff(u));
+  const pendingUsers  = usersForCentre.filter(u => !u.approved && isVisibleStaff(u));
 
   // User management
-  const handleApprove = uid => updateDoc(doc(db, 'users', uid), { approved: true });
+  //
+  // Approval is per-centre — an admin at Centre A approving a user
+  // does NOT auto-approve them at Centre B. We also seed a default
+  // membership entry the first time we touch this centre's record so
+  // every other field has a per-centre row to live in.
+  const handleApprove = async (uid) => {
+    const target = users.find(u => u.uid === uid || u.id === uid);
+    const existing = target?.centerMemberships?.[activeCenterId];
+    const payload = existing
+      ? { [membershipFieldPath(activeCenterId, 'approved')]: true }
+      : {
+          [`centerMemberships.${activeCenterId}`]: {
+            ...buildInitialMembership({
+              instructorType: target?.instructorType,
+              priority:       target?.priority,
+              maxDaysPerWeek: target?.maxDaysPerWeek,
+              subRoles:       target?.subRoles,
+              guaranteed:     target?.guaranteed,
+              approved:       true,
+            }),
+          },
+        };
+    // Keep legacy top-level `approved` in sync the FIRST time a user
+    // gets approved anywhere — so any code that still reads the top
+    // level (or queries for approved:true) keeps working. After that
+    // we leave it alone — per-centre is the source of truth.
+    if (target && target.approved !== true) payload.approved = true;
+    await updateDoc(doc(db, 'users', uid), payload);
+  };
 
   // Reject = disable the Firebase Auth account AND delete the Firestore
   // profile. We can't do the Auth half from the client (the client SDK can
@@ -702,8 +746,45 @@ export default function Admin() {
       notifyTimeOffDecision(req, recipient, 'approved');
     }
   };
-  const handleUpdateUserField = (uid, field, value) =>
-    updateDoc(doc(db, 'users', uid), { [field]: value });
+  // Per-centre operational fields (instructorType, priority, subRoles,
+  // guaranteed, approved, maxDaysPerWeek) write to the active centre's
+  // membership entry. Everything else writes to the top-level field as
+  // before. See src/lib/centerMembership.js for the full list.
+  //
+  // First-touch seeding: if there's no membership entry for this centre
+  // yet, we create the whole map so subsequent edits don't see undefined
+  // siblings. This is what keeps a user's Centre A edits truly isolated
+  // from their Centre B settings.
+  const handleUpdateUserField = async (uid, field, value) => {
+    if (!isPerCentreField(field)) {
+      await updateDoc(doc(db, 'users', uid), { [field]: value });
+      return;
+    }
+    const target = users.find(u => u.uid === uid || u.id === uid);
+    const hasMembership = !!target?.centerMemberships?.[activeCenterId];
+    if (hasMembership) {
+      await updateDoc(doc(db, 'users', uid), {
+        [membershipFieldPath(activeCenterId, field)]: value,
+      });
+      return;
+    }
+    // No row for this centre yet — seed it with sensible defaults
+    // (carried over from the legacy top-level values so the user
+    // doesn't appear to reset when an admin clicks one field) and
+    // overlay the new value for the field being edited.
+    const seeded = buildInitialMembership({
+      instructorType: target?.instructorType,
+      priority:       target?.priority,
+      maxDaysPerWeek: target?.maxDaysPerWeek,
+      subRoles:       target?.subRoles,
+      guaranteed:     target?.guaranteed,
+      approved:       target?.approved,
+    });
+    seeded[field] = value;
+    await updateDoc(doc(db, 'users', uid), {
+      [`centerMemberships.${activeCenterId}`]: seeded,
+    });
+  };
 
   // Shift CRUD
   const handleAddShift = async (shiftData) => {
@@ -1226,7 +1307,10 @@ export default function Admin() {
     for (const s of periodShifts) {
       const key = s.userName || s.userId;
       if (!byPerson[key]) {
-        const user = users.find(u => u.displayName === s.userName || u.uid === s.userId);
+        // usersForCentre hoists the per-centre instructorType so payroll
+        // shows "Host" vs "Instructor" based on what they did AT THIS
+        // CENTRE, not whatever they happen to be at another one.
+        const user = usersForCentre.find(u => u.displayName === s.userName || u.uid === s.userId);
         byPerson[key] = {
           name: s.userName || key,
           role: s.role || user?.instructorType || 'Instructor',
@@ -1316,7 +1400,7 @@ export default function Admin() {
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, users, payStart, payEnd, salaryStaff, hiddenFromOps, centerConfig]);
+  }, [shifts, usersForCentre, payStart, payEnd, salaryStaff, hiddenFromOps, centerConfig]);
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd

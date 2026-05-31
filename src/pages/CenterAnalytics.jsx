@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { AnalyticsTab } from './Admin';
 import { ShieldAlert } from 'lucide-react';
+import { resolveUserForCenter } from '../lib/centerMembership';
 
 /**
  * Standalone Centre Analytics page. Pulls `shifts` + `users` for the
@@ -32,6 +33,16 @@ export default function CenterAnalytics() {
     return () => { u1(); u2(); };
   }, [activeCenterId, canSeeCenterSettings]);
 
+  // Resolve users against the active centre so analytics counts use the
+  // per-centre `approved` flag — a user approved at another centre but
+  // pending here should not show up as active for this centre. Mirrors
+  // the same hoisting we do in Admin.jsx → usersForCentre. Hooks must
+  // run before any early return.
+  const usersForCentre = useMemo(
+    () => users.map(u => resolveUserForCenter(u, activeCenterId)),
+    [users, activeCenterId],
+  );
+
   if (!canSeeCenterSettings) {
     return (
       <div className="mx-auto max-w-md text-center py-16">
@@ -46,7 +57,7 @@ export default function CenterAnalytics() {
     <div className="mx-auto max-w-7xl">
       <AnalyticsTab
         shifts={shifts}
-        users={users}
+        users={usersForCentre}
         centerConfig={centerConfig}
         activeCenterId={activeCenterId}
       />

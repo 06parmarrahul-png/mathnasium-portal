@@ -21,8 +21,14 @@ rules_version = '2';
 // CRITICAL FIELDS THAT REQUIRE OWNER PRIVILEGE:
 //   On user docs, the following fields can ONLY be changed by an owner
 //   (or the user themselves keeping the same value):
-//     role, approved, centerId, centerIds, guaranteed
+//     role, approved, centerId, centerIds, guaranteed, centerMemberships
 //   This prevents privilege escalation from the dev console.
+//
+//   `centerMemberships` is the per-centre operational state map (added
+//   when role / priority became centre-scoped). A user editing their own
+//   profile must not be able to flip their own approval, instructorType,
+//   or any other field inside that map — admin / owner / super-admin
+//   only.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -104,7 +110,13 @@ service cloud.firestore {
          && request.resource.data.centerId     == resource.data.centerId
          && request.resource.data.centerIds    == resource.data.centerIds
          && (!('guaranteed' in request.resource.data) ||
-              request.resource.data.guaranteed  == resource.data.guaranteed))
+              request.resource.data.guaranteed  == resource.data.guaranteed)
+         // Lock per-centre membership state — a user must not be able
+         // to self-approve, give themselves priority 1, or flip
+         // instructorType in their own membership map. Uses get() so
+         // the comparison works whether or not the field is set.
+         && request.resource.data.get('centerMemberships', null)
+            == resource.data.get('centerMemberships', null))
       );
 
       // Delete: owner / super-admin freely. Admins can delete non-elevated

@@ -11,6 +11,7 @@ import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
+import { buildInitialMembership } from '../lib/centerMembership';
 
 const AuthContext = createContext(null);
 
@@ -192,6 +193,19 @@ export function AuthProvider({ children }) {
     // move them to another center by editing centerIds in Manage Users
     // (or, for multi-center staff, add a second center to the array).
     const centerId = extras.centerId || DEFAULT_CENTER_ID;
+    // Operational fields (instructorType, priority, approved, etc.) are
+    // now scoped per-centre via `centerMemberships`. The top-level copies
+    // are kept as the legacy fallback so reads in any code path that
+    // hasn't been migrated yet still produce a sensible value. See
+    // src/lib/centerMembership.js for the full rationale.
+    const initialMembership = buildInitialMembership({
+      instructorType: 'Instructor',
+      priority:       2,
+      maxDaysPerWeek: 5,
+      subRoles:       [],
+      guaranteed:     false,
+      approved:       false,
+    });
     const profileData = {
       uid: cred.user.uid,
       email: cleanEmail,
@@ -206,6 +220,11 @@ export function AuthProvider({ children }) {
       // Multi-center fields — primary + array (for staff who work at multiple)
       centerId,
       centerIds: [centerId],
+      // Per-centre operational state. Editing in Centre A no longer
+      // changes role / priority / approval in Centre B.
+      centerMemberships: {
+        [centerId]: initialMembership,
+      },
       createdAt: new Date().toISOString(),
     };
     await setDoc(doc(db, 'users', cred.user.uid), profileData);
