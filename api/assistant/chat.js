@@ -36,7 +36,7 @@
 import { getFirestore, authenticateRequest } from '../_lib/firebase-admin.js';
 import { runTool, TOOL_DEFINITIONS } from './_tools.js';
 
-const MODEL          = 'gemini-1.5-flash';
+const MODEL          = 'gemini-2.5-flash';
 const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 const HISTORY_LIMIT  = 30;     // messages of context to feed the model
 const MAX_TOOL_TURNS = 6;      // hard ceiling on tool-call iterations
