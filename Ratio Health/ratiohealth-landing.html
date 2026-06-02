@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ratio Health — Workforce Scheduling for Canadian Health Authorities</title>
+<meta name="description" content="Ratio Health is union-aware workforce scheduling built for Canadian health authorities. Canadian-hosted, FOIPPA-aligned, designed around HEABC collective agreements.">
+<meta name="robots" content="index, follow">
+<meta property="og:title" content="Ratio Health — Workforce Scheduling for Canadian Health Authorities">
+<meta property="og:description" content="Union-aware scheduling built for Canadian health authorities. Canadian-hosted, FOIPPA-aligned.">
+<meta property="og:type" content="website">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #0A2540;
+    --navy-dark: #061A2E;
+    --teal: #0E7C7B;
+    --ink: #1A1F2E;
+    --muted: #5A6478;
+    --line: #E2E6EE;
+    --bg: #FAFBFC;
+    --white: #FFFFFF;
+    --accent: #C9A961;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: var(--ink);
+    background: var(--white);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container { max-width: 1100px; margin: 0 auto; padding: 0 28px; }
+
+  /* Nav */
+  nav {
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 0;
+  }
+  .logo {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--navy);
+    letter-spacing: -0.02em;
+  }
+  .logo span { color: var(--teal); font-weight: 400; }
+  .nav-links { display: flex; gap: 32px; align-items: center; }
+  .nav-links a {
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .nav-links a:hover { color: var(--teal); }
+  .nav-cta {
+    background: var(--navy);
+    color: var(--white) !important;
+    padding: 9px 18px;
+    border-radius: 4px;
+    font-size: 14px;
+  }
+  .nav-cta:hover { background: var(--navy-dark); color: var(--white) !important; }
+
+  /* Hero */
+  .hero {
+    padding: 96px 0 80px;
+    background: linear-gradient(180deg, var(--white) 0%, var(--bg) 100%);
+    border-bottom: 1px solid var(--line);
+  }
+  .eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin-bottom: 20px;
+  }
+  h1 {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 56px;
+    line-height: 1.08;
+    color: var(--navy);
+    letter-spacing: -0.025em;
+    max-width: 820px;
+    margin-bottom: 24px;
+    font-weight: 600;
+  }
+  .hero-sub {
+    font-size: 19px;
+    color: var(--muted);
+    max-width: 680px;
+    margin-bottom: 36px;
+  }
+  .hero-ctas { display: flex; gap: 14px; flex-wrap: wrap; }
+  .btn {
+    display: inline-block;
+    padding: 14px 24px;
+    border-radius: 4px;
+    font-size: 15px;
+    font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    border: 1px solid transparent;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--navy); color: var(--white); }
+  .btn-primary:hover { background: var(--navy-dark); }
+  .btn-secondary { background: transparent; color: var(--navy); border-color: var(--line); }
+  .btn-secondary:hover { border-color: var(--navy); }
+
+  /* Trust strip */
+  .trust {
+    padding: 32px 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--white);
+  }
+  .trust-inner {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 32px;
+    align-items: center;
+  }
+  .trust-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--muted);
+    font-weight: 500;
+  }
+  .trust-item svg { flex-shrink: 0; color: var(--teal); }
+
+  /* Sections */
+  section { padding: 88px 0; }
+  .section-eyebrow {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    margin-bottom: 14px;
+  }
+  h2 {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 38px;
+    line-height: 1.15;
+    color: var(--navy);
+    letter-spacing: -0.02em;
+    margin-bottom: 18px;
+    font-weight: 600;
+  }
+  .section-lead {
+    font-size: 18px;
+    color: var(--muted);
+    max-width: 680px;
+    margin-bottom: 56px;
+  }
+
+  /* Problem */
+  .problem { background: var(--navy); color: var(--white); }
+  .problem h2 { color: var(--white); }
+  .problem .section-eyebrow { color: var(--accent); }
+  .problem-stat {
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 28px;
+    line-height: 1.4;
+    max-width: 820px;
+    color: var(--white);
+    font-weight: 400;
+  }
+  .problem-stat strong { color: var(--accent); font-weight: 600; }
+  .problem-footnote {
+    margin-top: 28px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.6);
+  }
+
+  /* Features */
+  .features { background: var(--bg); }
+  .feature-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 24px;
+  }
+  .feature {
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 32px 28px;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .feature:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(10, 37, 64, 0.06);
+  }
+  .feature-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 8px;
+    background: rgba(14, 124, 123, 0.08);
+    color: var(--teal);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  .feature h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--navy);
+    margin-bottom: 10px;
+  }
+  .feature p {
+    font-size: 15px;
+    color: var(--muted);
+  }
+
+  /* Compliance */
+  .compliance-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 56px;
+  }
+  .compliance-block h3 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--navy);
+    margin-bottom: 18px;
+    padding-bottom: 12px;
+    border-bottom: 2px solid var(--line);
+  }
+  .compliance-list { list-style: none; }
+  .compliance-list li {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 15px;
+  }
+  .compliance-list li:last-child { border-bottom: none; }
+  .compliance-list .status {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 3px;
+  }
+  .status-done { background: rgba(14, 124, 123, 0.12); color: var(--teal); }
+  .status-progress { background: rgba(201, 169, 97, 0.18); color: #8B7330; }
+  .compliance-list .label { font-weight: 500; color: var(--ink); }
+  .compliance-list .desc { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+  /* Origin */
+  .origin { background: var(--bg); }
+  .origin-inner {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr;
+    gap: 80px;
+    align-items: start;
+  }
+  .origin p {
+    font-size: 17px;
+    color: var(--ink);
+    margin-bottom: 18px;
+    line-height: 1.7;
+  }
+  .origin p:last-child { color: var(--muted); }
+
+  /* CTA */
+  .cta {
+    background: var(--navy);
+    color: var(--white);
+    text-align: center;
+  }
+  .cta h2 { color: var(--white); max-width: 720px; margin: 0 auto 18px; }
+  .cta p {
+    font-size: 18px;
+    color: rgba(255,255,255,0.75);
+    max-width: 600px;
+    margin: 0 auto 36px;
+  }
+  .cta-form {
+    display: flex;
+    gap: 8px;
+    max-width: 460px;
+    margin: 0 auto;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .cta-form input {
+    flex: 1;
+    min-width: 240px;
+    padding: 14px 18px;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(255,255,255,0.06);
+    color: var(--white);
+    border-radius: 4px;
+    font-size: 15px;
+    font-family: inherit;
+  }
+  .cta-form input::placeholder { color: rgba(255,255,255,0.5); }
+  .cta-form input:focus { outline: none; border-color: var(--accent); }
+  .cta-form button {
+    background: var(--accent);
+    color: var(--navy-dark);
+    border: none;
+    font-weight: 600;
+  }
+  .cta-form button:hover { background: #B89953; }
+  .cta-note {
+    margin-top: 22px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.5);
+  }
+
+  /* Footer */
+  footer {
+    background: var(--navy-dark);
+    color: rgba(255,255,255,0.6);
+    padding: 48px 0 32px;
+    font-size: 13px;
+  }
+  .footer-inner {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 48px;
+    margin-bottom: 32px;
+  }
+  .footer-brand .logo { color: var(--white); }
+  .footer-brand p { margin-top: 12px; max-width: 320px; }
+  footer h4 {
+    color: var(--white);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  footer ul { list-style: none; }
+  footer ul li { margin-bottom: 8px; }
+  footer a { color: rgba(255,255,255,0.6); text-decoration: none; }
+  footer a:hover { color: var(--white); }
+  .footer-bottom {
+    border-top: 1px solid rgba(255,255,255,0.1);
+    padding-top: 24px;
+    display: flex;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  @media (max-width: 820px) {
+    h1 { font-size: 38px; }
+    h2 { font-size: 28px; }
+    section { padding: 64px 0; }
+    .hero { padding: 64px 0 56px; }
+    .trust-inner { grid-template-columns: 1fr 1fr; gap: 18px; }
+    .feature-grid, .compliance-grid, .origin-inner, .footer-inner { grid-template-columns: 1fr; gap: 32px; }
+    .nav-links { gap: 18px; }
+    .nav-links a:not(.nav-cta) { display: none; }
+    .problem-stat { font-size: 22px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="container nav-inner">
+    <div class="logo">Ratio<span> Health</span></div>
+    <div class="nav-links">
+      <a href="#problem">Why Ratio</a>
+      <a href="#compliance">Compliance</a>
+      <a href="#origin">About</a>
+      <a href="#contact" class="nav-cta">Request a briefing</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="container">
+    <div class="eyebrow">Workforce Scheduling for Canadian Health Authorities</div>
+    <h1>Scheduling that respects the collective agreement, the credential, and the clinician.</h1>
+    <p class="hero-sub">Ratio Health is a workforce scheduling platform purpose-built for the realities of BC and Canadian healthcare — HEABC-aligned, Canadian-hosted, and designed from day one for the procurement and privacy standards public health authorities require.</p>
+    <div class="hero-ctas">
+      <a href="#contact" class="btn btn-primary">Request a briefing</a>
+      <a href="#compliance" class="btn btn-secondary">Review our compliance posture</a>
+    </div>
+  </div>
+</header>
+
+<div class="trust">
+  <div class="container trust-inner">
+    <div class="trust-item">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 2L3 7v6c0 5 3.8 9.4 9 11 5.2-1.6 9-6 9-11V7l-9-5z"/></svg>
+      Canadian-hosted (AWS ca-central-1)
+    </div>
+    <div class="trust-item">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
+      FOIPPA &amp; BC PIPA-aligned
+    </div>
+    <div class="trust-item">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+      Built for HEABC environments
+    </div>
+    <div class="trust-item">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+      Full audit trail by design
+    </div>
+  </div>
+</div>
+
+<section id="problem" class="problem">
+  <div class="container">
+    <div class="section-eyebrow">The problem we're solving</div>
+    <h2>Canadian healthcare runs on scheduling. Most of it isn't working.</h2>
+    <p class="problem-stat">Vacancy rates, float-pool failures, and last-minute overtime aren't a staffing problem alone — they're <strong>a scheduling-system problem.</strong> Tools designed for retail or generic enterprise workforces can't model seniority lists, can't respect collective agreement constraints, and can't verify a credential at the moment a shift is assigned. So managers do it on paper, spreadsheets, and phone calls — and clinicians burn out filling the gaps.</p>
+    <p class="problem-footnote">Ratio Health is built to sit inside the constraints Canadian health authorities actually work within — not around them.</p>
+  </div>
+</section>
+
+<section id="features" class="features">
+  <div class="container">
+    <div class="section-eyebrow">What's different</div>
+    <h2>Built for the constraints, not in spite of them.</h2>
+    <p class="section-lead">Four design principles, baked in from the first line of code — not bolted on after an RFP.</p>
+
+    <div class="feature-grid">
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M3 12h18M3 18h12"/></svg>
+        </div>
+        <h3>Seniority-aware assignment</h3>
+        <p>Vacancy fill, overtime offers, and shift posting follow seniority — modelled on HEABC NBA Article 25, not retail logic. Master lists are exportable and audit-postable.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4"/><path d="M21 12c0 4.97-4.03 9-9 9s-9-4.03-9-9 4.03-9 9-9c2.5 0 4.76 1.02 6.4 2.66"/></svg>
+        </div>
+        <h3>Credential gating</h3>
+        <p>Integrates with BCCNM, CPSBC, and the BC Care Aide Registry. An expired credential can't be scheduled — full stop. Renewal alerts fire to staff and managers automatically.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <h3>Self-scheduling with guardrails</h3>
+        <p>Staff pick shifts inside collective agreement boundaries — fatigue rules, max consecutive shifts, premium thresholds. The system enforces the agreement so managers don't have to.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        </div>
+        <h3>Audit-grade logging</h3>
+        <p>Every schedule change, every override, every login. Immutable trail for grievances, FOI requests, and PIA evidence — without manager paperwork.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>
+        </div>
+        <h3>Layer, don't replace</h3>
+        <p>Ratio Health can operate as the optimization and vacancy-fill layer on top of existing core scheduling systems. We're built to integrate, not to rip and replace.</p>
+      </div>
+
+      <div class="feature">
+        <div class="feature-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v6m0 6v6m11-7h-6m-6 0H1"/></svg>
+        </div>
+        <h3>Single-tenant deployment</h3>
+        <p>Dedicated infrastructure available for health authority deployments. SAML SSO, Azure AD integration, and role-based access included as standard.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="compliance">
+  <div class="container">
+    <div class="section-eyebrow">Compliance posture</div>
+    <h2>Transparent about what we have and what's in progress.</h2>
+    <p class="section-lead">Healthcare buyers deserve clarity, not certification-washing. Here's exactly where we are.</p>
+
+    <div class="compliance-grid">
+      <div class="compliance-block">
+        <h3>In place today</h3>
+        <ul class="compliance-list">
+          <li>
+            <span class="status status-done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <div>
+              <div class="label">Canadian data residency</div>
+              <div class="desc">All personal information stored and accessed within Canada (AWS ca-central-1).</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <div>
+              <div class="label">PIPEDA &amp; BC PIPA compliance</div>
+              <div class="desc">Privacy policy, data-processing agreement, and sub-processor disclosure available on request.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <div>
+              <div class="label">Encryption at rest &amp; in transit</div>
+              <div class="desc">AES-256 at rest, TLS 1.3 in transit. Key management via AWS KMS.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <div>
+              <div class="label">SAML / Azure AD SSO</div>
+              <div class="desc">Federated authentication with role-based access control.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-done">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><polyline points="20 6 9 17 4 12"/></svg>
+            </span>
+            <div>
+              <div class="label">PIA support documentation</div>
+              <div class="desc">Template Privacy Impact Assessment package available to accelerate FOIPPA s.69(5) review.</div>
+            </div>
+          </li>
+        </ul>
+      </div>
+
+      <div class="compliance-block">
+        <h3>In progress</h3>
+        <ul class="compliance-list">
+          <li>
+            <span class="status status-progress">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><circle cx="12" cy="12" r="9"/></svg>
+            </span>
+            <div>
+              <div class="label">SOC 2 Type II</div>
+              <div class="desc">Readiness underway. Observation window targeted to close within the next 12 months.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-progress">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><circle cx="12" cy="12" r="9"/></svg>
+            </span>
+            <div>
+              <div class="label">ISO 27001 + ISO 27799</div>
+              <div class="desc">Healthcare-specific information security management certification on the roadmap following SOC 2.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-progress">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><circle cx="12" cy="12" r="9"/></svg>
+            </span>
+            <div>
+              <div class="label">Independent STRA</div>
+              <div class="desc">Security Threat &amp; Risk Assessment available for any deployment requiring a Statement of Acceptable Risk.</div>
+            </div>
+          </li>
+          <li>
+            <span class="status status-progress">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><circle cx="12" cy="12" r="9"/></svg>
+            </span>
+            <div>
+              <div class="label">BC Bid &amp; Bids and Tenders registration</div>
+              <div class="desc">Active on BC Bid and the Fraser Health vendor portal for solicitation visibility.</div>
+            </div>
+          </li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="origin" class="origin">
+  <div class="container">
+    <div class="origin-inner">
+      <div>
+        <div class="section-eyebrow">Who we are</div>
+        <h2>Canadian-built, healthcare-focused.</h2>
+      </div>
+      <div>
+        <p>Ratio was founded on a simple observation: the public systems that touch the most lives — healthcare among them — are running on scheduling tools that were never designed for them.</p>
+        <p>We started by building workforce scheduling for service businesses, where we learned what it means to ship software that managers actually use every shift. Ratio Health applies that engineering discipline to a harder problem — one defined by collective agreements, credential gates, and the trust the public places in its health authorities.</p>
+        <p>We're a Canadian company, building for Canadian healthcare. Our roadmap is shaped by clinicians, scheduling managers, and the procurement and privacy standards public bodies have to operate within.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact" class="cta">
+  <div class="container">
+    <h2>Request a briefing.</h2>
+    <p>For health authority workforce, staffing, IT, and procurement leads. We'll share our compliance package, technical architecture, and what a pilot deployment looks like.</p>
+    <form class="cta-form" onsubmit="event.preventDefault(); alert('Thank you. We will be in touch.');">
+      <input type="email" placeholder="your.name@healthauthority.ca" required>
+      <button type="submit" class="btn">Request briefing</button>
+    </form>
+    <div class="cta-note">We respond to all health authority and public sector inquiries within two business days.</div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <div class="logo">Ratio<span style="color: var(--accent);"> Health</span></div>
+        <p>Workforce scheduling built for Canadian health authorities.</p>
+      </div>
+      <div>
+        <h4>Product</h4>
+        <ul>
+          <li><a href="#features">Capabilities</a></li>
+          <li><a href="#compliance">Compliance</a></li>
+          <li><a href="#contact">Request briefing</a></li>
+        </ul>
+      </div>
+      <div>
+        <h4>Company</h4>
+        <ul>
+          <li><a href="#origin">About</a></li>
+          <li><a href="mailto:health@ratiosolved.com">Contact</a></li>
+          <li><a href="#">Privacy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <div>&copy; 2026 Ratio Health. A Canadian company.</div>
+      <div>health@ratiosolved.com</div>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -48,6 +48,7 @@ export const PER_CENTRE_FIELDS = [
   'guaranteed',
   'approved',
   'maxDaysPerWeek',
+  'isVolunteer',
 ];
 
 /**
@@ -70,6 +71,7 @@ export function getMembership(user, centerId) {
     guaranteed:      user.guaranteed,
     approved:        user.approved,
     maxDaysPerWeek:  user.maxDaysPerWeek,
+    isVolunteer:     user.isVolunteer,
   };
   if (!centerId) return top;
   const m = user.centerMemberships?.[centerId];
@@ -81,6 +83,7 @@ export function getMembership(user, centerId) {
     guaranteed:      m.guaranteed      ?? top.guaranteed,
     approved:        m.approved        ?? top.approved,
     maxDaysPerWeek:  m.maxDaysPerWeek  ?? top.maxDaysPerWeek,
+    isVolunteer:     m.isVolunteer     ?? top.isVolunteer,
   };
 }
 
@@ -133,5 +136,6 @@ export function buildInitialMembership(defaults = {}) {
     subRoles:       defaults.subRoles       ?? [],
     guaranteed:     defaults.guaranteed     ?? false,
     approved:       defaults.approved       ?? false,
+    isVolunteer:    defaults.isVolunteer    ?? false,
   };
 }

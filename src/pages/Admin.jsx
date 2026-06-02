@@ -47,6 +47,7 @@ const MONTHS = [
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
+  'Volunteer',
 ];
 
 // Sub-roles (teaching specializations) live in src/lib/subRoles.js.
@@ -645,6 +646,7 @@ export default function Admin() {
               subRoles:       target?.subRoles,
               guaranteed:     target?.guaranteed,
               approved:       true,
+              isVolunteer:    target?.isVolunteer,
             }),
           },
         };
@@ -779,6 +781,7 @@ export default function Admin() {
       subRoles:       target?.subRoles,
       guaranteed:     target?.guaranteed,
       approved:       target?.approved,
+      isVolunteer:    target?.isVolunteer,
     });
     seeded[field] = value;
     await updateDoc(doc(db, 'users', uid), {
@@ -879,8 +882,14 @@ export default function Admin() {
         previousMonthsAvail.push(monthAvail);
       }
 
+      // Volunteers are not auto-scheduled — they're unpaid help that the
+      // owner adds to specific days manually. They stay in approvedUsers
+      // for the "Add from approved staff" picker in Edit Day mode, but
+      // the auto-scheduler ignores them.
+      const schedulableUsers = approvedUsers.filter(u => u.isVolunteer !== true);
+
       const result = generateSchedule({
-        instructors: approvedUsers,
+        instructors: schedulableUsers,
         availability: filteredAvailability,
         previousMonthsAvail,
         month: schedMonth,
@@ -944,9 +953,16 @@ export default function Admin() {
     const defaults = DRAFT_DEFAULT_HOURS[editingDay.dayOfWeek] || DRAFT_DEFAULT_HOURS.Monday;
     const isHost = u?.instructorType === 'Host';
     const [defStart, defEnd] = isHost ? defaults.host : defaults.instr;
+    // Volunteers get role='Volunteer' so the shift is visually labelled as
+    // such on the schedule. Payroll filtering keys off the user flag, not
+    // the shift role, so this is purely cosmetic / informational.
+    const role = u?.isVolunteer === true
+      ? 'Volunteer'
+      : (u?.instructorType || 'Instructor');
     setEditingDay(p => ({
       ...p,
       assignedEmployees: [...p.assignedEmployees, name],
+      roles:      { ...(p.roles      || {}), [name]: role },
       subRoles:   { ...(p.subRoles   || {}), [name]: pickedSubRole },
       shiftTimes: { ...(p.shiftTimes || {}), [name]: `${defStart} - ${defEnd}` },
     }));
@@ -1271,6 +1287,18 @@ export default function Admin() {
     new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [])
   ), [centerConfig]);
 
+  // Volunteers — per-user toggle in Manage Users. Excluded from hourly
+  // payroll AND from the Radius timesheet compare so they don't appear on
+  // pay reports at all. Resolved against the active centre so a person
+  // can be a volunteer at one centre and paid staff at another.
+  const volunteerNames = useMemo(() => {
+    const set = new Set();
+    for (const u of usersForCentre) {
+      if (u.isVolunteer === true && u.displayName) set.add(u.displayName);
+    }
+    return set;
+  }, [usersForCentre]);
+
   // Owners, super-admins, and the shared "Admin Team" account never belong
   // on payroll either — keep their names out by display name (which is what
   // shifts reference).
@@ -1292,7 +1320,9 @@ export default function Admin() {
       s.date >= payStart &&
       s.date <= payEnd &&
       s.status !== 'draft' &&
+      s.role !== 'Volunteer' &&
       !salaryStaff.has(s.userName) &&
+      !volunteerNames.has(s.userName) &&
       !hiddenFromOps.has(s.userName)
     );
 
@@ -1400,7 +1430,7 @@ export default function Admin() {
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, usersForCentre, payStart, payEnd, salaryStaff, hiddenFromOps, centerConfig]);
+  }, [shifts, usersForCentre, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, centerConfig]);
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd
@@ -2189,6 +2219,28 @@ export default function Admin() {
                           className="peer sr-only"
                         />
                         <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+                      </label>
+                    </div>
+
+                    {/* Volunteer toggle — flags this user as unpaid help.
+                        Excluded from hourly payroll + Radius compare; also
+                        skipped by the auto-scheduler (owner adds them to
+                        specific days manually in Edit Day mode). */}
+                    <div className="mt-2 flex items-start justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <div className="pr-3">
+                        <p className="text-xs font-semibold text-gray-700">Volunteer</p>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Unpaid help. Their shifts never show up in payroll or Radius reports, and they aren&apos;t auto-scheduled — add them to specific days manually.
+                        </p>
+                      </div>
+                      <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={u.isVolunteer === true}
+                          onChange={e => handleUpdateUserField(u.uid, 'isVolunteer', e.target.checked)}
+                          className="peer sr-only"
+                        />
+                        <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
                       </label>
                     </div>
                   </div>
