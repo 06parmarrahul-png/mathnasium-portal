@@ -54,7 +54,12 @@ export default function TodaysSnapshot() {
         where('date', '==', todayStr),
       ),
       snap => {
-        setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        // Drafts are excluded — Today's Snapshot reflects what's actually
+        // happening, not what's been planned but not yet published.
+        const rows = snap.docs
+          .map(d => ({ id: d.id, ...d.data() }))
+          .filter(s => s.status !== 'draft');
+        setShifts(rows);
         setLoading(false);
       },
       () => setLoading(false),

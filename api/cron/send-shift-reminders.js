@@ -158,6 +158,8 @@ export default async function handler(req, res) {
     for (const docSnap of snap.docs) {
       const shift = docSnap.data() || {};
       if (shift.reminderSentAt) continue; // already emailed for this shift
+      // Skip drafts — instructor hasn't been told about this shift yet.
+      if (shift.status === 'draft') continue;
       toSend.push({
         shiftRef:  docSnap.ref,
         email:     lookup.email,

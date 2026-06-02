@@ -172,7 +172,10 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
       role,
       shiftType,
       subRole,
-      status: 'live',
+      // New shifts land as drafts. The owner reviews them on the weekly
+      // grid (drafts show striped) and clicks Publish when ready.
+      // Instructors don't see drafts on their Schedule page.
+      status: 'draft',
     });
     onClose();
   };
@@ -299,7 +302,7 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
 }
 
 // ── Edit Shift Modal ───────────────────────────────────────────────────────────
-function EditShiftModal({ shift, onClose, onSave, onDelete }) {
+function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   const [startTime, setStartTime] = useState(shift.startTime || '15:00');
   const [endTime, setEndTime] = useState(shift.endTime || '20:00');
   const [role, setRole] = useState(shift.role || '');
@@ -383,6 +386,22 @@ function EditShiftModal({ shift, onClose, onSave, onDelete }) {
             <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:border-white" />
           </div>
         </label>
+
+        {/* Draft state banner + Publish button — only shown when this shift
+            is still in draft. Publishing flips status to 'live' so the
+            instructor sees it on their Schedule. */}
+        {shift.status === 'draft' && (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+            <p className="font-semibold mb-0.5">This shift is a draft</p>
+            <p className="text-amber-800/80">The instructor can&apos;t see it until you publish.</p>
+            <button
+              onClick={() => onPublish && onPublish()}
+              className="mt-2 w-full rounded-lg bg-emerald-600 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+            >
+              Publish this shift
+            </button>
+          </div>
+        )}
 
         <div className="flex gap-2 pt-1">
           <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay })}
@@ -839,8 +858,10 @@ export default function Admin() {
   const totalAssignedHours = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
+    // Includes drafts — admin's header total is "planned hours this week",
+    // not "hours instructors have been told about".
     return shifts
-      .filter(s => s.date >= ws && s.date <= we && s.status !== 'draft')
+      .filter(s => s.date >= ws && s.date <= we)
       .reduce((sum, s) => sum + shiftHours(s), 0);
   }, [shifts, weekStart]);
 
@@ -1073,7 +1094,11 @@ export default function Admin() {
           endTime: toHHMM(parts[1]),
           role: sched.role,
           subRole: 'Elementary',
-          status: 'live',
+          // Fixed-staff shifts also land as drafts so admin can review the
+          // whole month together before publishing. (They have predictable
+          // hours so review is fast, but the draft step keeps the
+          // experience consistent.)
+          status: 'draft',
           autoScheduled: true,
           fixedStaff: true,
         });
@@ -1227,6 +1252,105 @@ export default function Admin() {
     }
   };
 
+  // Publish a set of draft shifts. Flips each one's status from 'draft'
+  // to 'live' atomically. Idempotent: anything that's already live is
+  // skipped, so calling this on a mixed set is safe.
+  //
+  // Email/chat notification fires only the *first* time shifts are
+  // published in a given month — we check whether any live shifts
+  // already exist for that month before sending, so editing one shift
+  // and re-publishing doesn't spam staff. `silent: true` skips notify
+  // entirely (useful for per-shift publishes that follow a big bulk
+  // publish in the same minute).
+  const handlePublishShifts = async (shiftDocs, { silent = false } = {}) => {
+    const drafts = (shiftDocs || []).filter(s => s.status === 'draft');
+    if (drafts.length === 0) {
+      toast.info('Nothing to publish — these shifts are already live.');
+      return { published: 0 };
+    }
+    // Group dates by YYYY-MM so we can decide per-month whether this is
+    // a first-publish (notify) or a follow-up (silent).
+    const monthsTouched = new Set(drafts.map(s => (s.date || '').slice(0, 7)));
+
+    const batch = writeBatch(db);
+    for (const s of drafts) {
+      batch.update(doc(db, 'shifts', s.id), {
+        status: 'live',
+        publishedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+
+    if (!silent) {
+      // For each month touched, decide whether this is the first publish
+      // (no other live shifts in that month yet) and notify if so.
+      for (const ym of monthsTouched) {
+        const monthStart = `${ym}-01`;
+        const [yy, mm] = ym.split('-').map(Number);
+        const lastDay = new Date(yy, mm, 0).getDate();
+        const monthEnd = `${ym}-${String(lastDay).padStart(2, '0')}`;
+        const otherLiveInMonth = shifts.filter(s =>
+          s.status !== 'draft' &&
+          s.date >= monthStart && s.date <= monthEnd &&
+          !drafts.some(d => d.id === s.id)
+        );
+        if (otherLiveInMonth.length > 0) continue; // not the first publish
+
+        // First publish for this month — drop a chat post + notify staff.
+        const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-US',
+          { month: 'long', year: 'numeric' });
+        await addDoc(collection(db, 'chat'), {
+          text: `📅 The ${monthLabel} schedule is live! Check your shifts on the Schedule page.`,
+          userId: 'system',
+          userName: centerConfig?.name || 'Mathnasium',
+          userRole: 'system',
+          centerId: activeCenterId,
+          createdAt: serverTimestamp(),
+          type: 'schedule_posted',
+        });
+
+        // Reuse the existing schedule-posted email template by faking a
+        // minimal draftSchedule-shaped object out of the just-published shifts.
+        const publishedThisMonth = drafts.filter(s => s.date >= monthStart && s.date <= monthEnd);
+        const fakeDraft = {
+          month: new Date(yy, mm - 1, 1).toLocaleDateString('en-US', { month: 'long' }),
+          year:  yy,
+          days:  Object.values(
+            publishedThisMonth.reduce((acc, s) => {
+              if (!acc[s.date]) acc[s.date] = { date: s.date, assignedEmployees: [] };
+              acc[s.date].assignedEmployees.push(s.userName);
+              return acc;
+            }, {})
+          ),
+        };
+        const staffEmails = approvedUsers
+          .filter(u => u.email)
+          .map(u => ({ email: u.email, displayName: u.displayName }));
+        notifySchedulePosted(fakeDraft, staffEmails);
+      }
+    }
+
+    toast.success(`Published ${drafts.length} shift${drafts.length === 1 ? '' : 's'}.`);
+    return { published: drafts.length };
+  };
+
+  // Wrappers for the three publish granularities — keep call sites simple.
+  const handlePublishSingleShift = (s) => handlePublishShifts([s]);
+  const handlePublishDay = (dateStr) => {
+    const dayDrafts = shifts.filter(s => s.date === dateStr && s.status === 'draft');
+    return handlePublishShifts(dayDrafts);
+  };
+  const handlePublishWeek = (weekStartDate, weekEndDate) => {
+    const weekDrafts = shifts.filter(s =>
+      s.date >= weekStartDate && s.date <= weekEndDate && s.status === 'draft'
+    );
+    return handlePublishShifts(weekDrafts);
+  };
+  const handlePublishAllDrafts = () => {
+    const allDrafts = shifts.filter(s => s.status === 'draft');
+    return handlePublishShifts(allDrafts);
+  };
+
   const handlePostSchedule = async () => {
     if (!draftSchedule) return;
     setPosting(true);
@@ -1248,7 +1372,10 @@ export default function Admin() {
             date: day.date, startTime, endTime,
             role: day.roles?.[name] || 'Instructor',
             subRole: day.subRoles?.[name] || 'Elementary',
-            status: 'live', autoScheduled: true,
+            // Drafts by default — owner publishes from the weekly grid
+            // (per-shift / per-day / per-week). Instructors don't see
+            // drafts; the "schedule posted" email fires on first publish.
+            status: 'draft', autoScheduled: true,
           });
         }
       }
@@ -1259,21 +1386,11 @@ export default function Admin() {
 
       const totalShifts = draftSchedule.days.reduce((s, d) => s + d.assignedEmployees.length, 0);
 
-      await addDoc(collection(db, 'chat'), {
-        text: `📅 The ${draftSchedule.month} ${draftSchedule.year} schedule has been posted!\n\n${totalShifts} shifts across ${draftSchedule.days.length} working days. Check your schedule on the Schedule page.`,
-        userId: 'system', userName: centerConfig?.name || 'Mathnasium', userRole: 'system',
-        centerId: activeCenterId,
-        createdAt: serverTimestamp(), type: 'schedule_posted',
-      });
-
-      const staffEmails = approvedUsers
-        .filter(u => u.email)
-        .map(u => ({ email: u.email, displayName: u.displayName }));
-      // Fire-and-forget; failures are logged in emailService.
-      notifySchedulePosted(draftSchedule, staffEmails);
-
+      // No chat post / staff email here anymore — those happen on Publish,
+      // since instructors don't see drafts. Owner goes to the weekly grid
+      // to review and publish.
       setDraftSchedule(null);
-      toast.success(`Schedule posted! ${totalShifts} instructor shifts + fixed staff created. Staff notified.`);
+      toast.success(`${totalShifts} shifts saved as drafts. Open the weekly grid to review and publish.`);
     } catch (err) {
       setSchedError(`Failed to post: ${err.message}`);
     } finally {
@@ -1795,6 +1912,42 @@ export default function Admin() {
               </button>
             </div>
 
+            {/* Publish bar — surfaces draft counts and one-click bulk actions.
+                Hidden when nothing is in draft so it doesn't add noise to a
+                cleanly-published view. */}
+            {(() => {
+              const ws = format(weekStart, 'yyyy-MM-dd');
+              const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
+              const draftsThisWeek = shifts.filter(s => s.status === 'draft' && s.date >= ws && s.date <= we).length;
+              const draftsAll      = shifts.filter(s => s.status === 'draft').length;
+              if (draftsAll === 0) return null;
+              return (
+                <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b bg-amber-50/60 text-xs">
+                  <span className="font-semibold text-amber-800">
+                    {draftsAll} draft shift{draftsAll === 1 ? '' : 's'} pending
+                    {draftsThisWeek !== draftsAll && ` (${draftsThisWeek} this week)`}
+                  </span>
+                  <span className="text-amber-700/80">— instructors don&apos;t see drafts until you publish.</span>
+                  <div className="ml-auto flex flex-wrap items-center gap-2">
+                    {draftsThisWeek > 0 && (
+                      <button
+                        onClick={() => handlePublishWeek(ws, we)}
+                        className="rounded-lg bg-emerald-600 px-3 py-1.5 font-semibold text-white hover:bg-emerald-700 transition-colors"
+                      >
+                        Publish this week ({draftsThisWeek})
+                      </button>
+                    )}
+                    <button
+                      onClick={handlePublishAllDrafts}
+                      className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 font-semibold text-emerald-700 hover:bg-emerald-50 transition-colors"
+                    >
+                      Publish all drafts ({draftsAll})
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
             {/* Grid — table-fixed so columns share the width evenly and long
                 shift labels can't stretch the table sideways. The wrapper is a
                 scroll pane (max-height) so the day-header row can stay pinned
@@ -1809,8 +1962,11 @@ export default function Admin() {
                       const ds = format(d, 'yyyy-MM-dd');
                       const holiday = holidayFor(d, centerConfig);
                       const portalNames = new Set(users.map(u => u.displayName));
+                      // Include drafts in the planned-hours header so admin sees
+                      // the full scheduled picture; visual stripes on the cells
+                      // already mark which ones are draft vs published.
                       const dayTotalHrs = shifts
-                        .filter(s => s.date === ds && s.status !== 'draft' && portalNames.has(s.userName))
+                        .filter(s => s.date === ds && portalNames.has(s.userName))
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       const headerBg = holiday
@@ -1892,9 +2048,12 @@ export default function Admin() {
 
                   {/* ── Instructor rows ── */}
                   {approvedUsers.map(u => {
+                    // Per-instructor weekly hours include drafts — admin needs
+                    // the full planned total when deciding fairness. Stripes on
+                    // the cells already mark drafts vs published.
                     const totalHrs = weekDays.reduce((sum, d) => {
                       const ds = format(d, 'yyyy-MM-dd');
-                      return sum + shifts.filter(s => s.userId === u.uid && s.date === ds && s.status !== 'draft')
+                      return sum + shifts.filter(s => s.userId === u.uid && s.date === ds)
                         .reduce((s2, sh) => s2 + shiftHours(sh), 0);
                     }, 0);
                     const displayHrs = isNaN(totalHrs) ? 0 : Math.round(totalHrs * 10) / 10;
@@ -1949,13 +2108,17 @@ export default function Admin() {
                               )}
                               {/* Existing shifts — the whole block is filled
                                   with the shift's assignment color (editable
-                                  in Super Admin → Appearance). */}
+                                  in Super Admin → Appearance). Drafts (not
+                                  yet published) get a diagonal stripe overlay
+                                  + dashed border + "DRAFT" tag so admins can
+                                  see what's planned vs committed. */}
                               {dayShifts.map(s => {
                                 const assignment = assignmentFor(s);
                                 // Sick Pay overrides the assignment palette
                                 // with deep burgundy so admins can scan the
                                 // grid and immediately see who called in sick.
                                 const isSick = !!s.sickPay;
+                                const isDraft = s.status === 'draft';
                                 const bg   = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
@@ -1970,13 +2133,25 @@ export default function Admin() {
                                 // lives in the hover tooltip.
                                 const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
                                 const compactLabel = isSick ? 'SICK' : assignmentShort(assignment);
+                                // Diagonal stripes via repeating-linear-gradient.
+                                // Layered on top of the base color so the assignment
+                                // colour is still legible underneath.
+                                const draftStripes = `repeating-linear-gradient(135deg, rgba(255,255,255,0.35) 0 6px, rgba(255,255,255,0) 6px 12px)`;
+                                const styleBlock = isDraft
+                                  ? { backgroundImage: `${draftStripes}, linear-gradient(${bg}, ${bg})`, color: text }
+                                  : { backgroundColor: bg, color: text };
                                 return (
                                   <div key={s.id}
                                     onClick={() => setEditShiftModal(s)}
-                                    title={isSick ? `Sick Pay · ${assignment}` : `${assignment} · ${where}`}
-                                    className="rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden"
-                                    style={{ backgroundColor: bg, color: text }}>
-                                    <div className="font-semibold leading-tight" style={{fontSize:'11px'}}>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</div>
+                                    title={`${isDraft ? 'Draft (not published) · ' : ''}${isSick ? `Sick Pay · ${assignment}` : `${assignment} · ${where}`}`}
+                                    className={`rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden ${isDraft ? 'border border-dashed border-white/70 ring-1 ring-gray-300' : ''}`}
+                                    style={styleBlock}>
+                                    <div className="font-semibold leading-tight flex items-center gap-1" style={{fontSize:'11px'}}>
+                                      <span>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</span>
+                                      {isDraft && (
+                                        <span className="ml-auto rounded bg-white/85 text-gray-700 px-1 py-px font-bold tracking-wider" style={{fontSize:'8px'}}>DRAFT</span>
+                                      )}
+                                    </div>
                                     <div className="uppercase tracking-wide opacity-90 leading-tight" style={{fontSize:'10px'}}>{compactLabel}{!isSick && showWhere ? ` · ${where}` : ''}</div>
                                   </div>
                                 );
@@ -2010,9 +2185,13 @@ export default function Admin() {
                         );
                       }
                       const portalNames2 = new Set(users.map(u => u.displayName));
-                      const dayShiftsAll = shifts.filter(s => s.date === ds && s.status !== 'draft');
+                      // Totals include drafts (admin needs to see total planned
+                      // headcount + hours) but flag how many are still in draft
+                      // so they know there's work to publish.
+                      const dayShiftsAll = shifts.filter(s => s.date === ds);
                       const dayShiftsPortal = dayShiftsAll.filter(s => portalNames2.has(s.userName));
                       const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
+                      const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
                       const hrs = dayShiftsPortal.reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
@@ -2022,6 +2201,20 @@ export default function Admin() {
                             <div className="space-y-0.5">
                               <span className="font-semibold text-gray-700">{count} staff</span>
                               <div className="text-purple-600 font-semibold">{hrsDisplay}h total</div>
+                              {draftCount > 0 && (
+                                <>
+                                  <div className="text-amber-600 text-[10px] font-semibold uppercase tracking-wide">
+                                    {draftCount} draft
+                                  </div>
+                                  <button
+                                    onClick={() => handlePublishDay(ds)}
+                                    className="mt-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-700 transition-colors"
+                                    title={`Publish all ${draftCount} draft shift${draftCount === 1 ? '' : 's'} on this day`}
+                                  >
+                                    Publish day
+                                  </button>
+                                </>
+                              )}
                               {dayShiftsNoAccount.length > 0 && (
                                 <div className="text-gray-400 text-xs">
                                   +{dayShiftsNoAccount.length} no account
@@ -2375,12 +2568,12 @@ export default function Admin() {
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                   <div>
                     <h3 className="font-bold text-gray-900 text-lg">Draft: {draftSchedule.month} {draftSchedule.year}</h3>
-                    <p className="text-sm text-gray-500">Review and edit before posting. Instructors won't see this until you post.</p>
+                    <p className="text-sm text-gray-500">Review and edit, then save. Shifts land as drafts in the weekly grid — instructors won&apos;t see them until you click Publish.</p>
                   </div>
                   <button onClick={handlePostSchedule} disabled={posting}
                     className="flex items-center gap-2 rounded-lg bg-green-600 px-5 py-2.5 text-sm font-bold text-white shadow-md hover:bg-green-700 disabled:opacity-50 transition-colors">
                     <Send size={16} />
-                    {posting ? 'Posting…' : 'Post Schedule'}
+                    {posting ? 'Saving…' : 'Save as drafts'}
                   </button>
                 </div>
                 <div className="grid grid-cols-3 gap-3">
@@ -2698,7 +2891,7 @@ export default function Admin() {
                 <button onClick={handlePostSchedule} disabled={posting}
                   className="flex items-center gap-2 rounded-lg bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50">
                   <CheckCircle size={18} />
-                  {posting ? 'Posting…' : `Post Schedule for ${draftSchedule.month} ${draftSchedule.year}`}
+                  {posting ? 'Saving…' : `Save ${draftSchedule.month} ${draftSchedule.year} as drafts`}
                 </button>
               </div>
             </>
@@ -3189,6 +3382,10 @@ export default function Admin() {
           onClose={() => setEditShiftModal(null)}
           onSave={handleSaveEditShift}
           onDelete={handleDeleteEditShift}
+          onPublish={async () => {
+            await handlePublishSingleShift(editShiftModal);
+            setEditShiftModal(null);
+          }}
         />
       )}
 

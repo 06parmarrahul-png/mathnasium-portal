@@ -936,7 +936,13 @@ export default function Schedule() {
   const startPad   = getDay(monthStart);
 
   // ── My data ──
-  const myShifts = useMemo(() => shifts.filter(s => s.userId === profile?.uid), [shifts, profile]);
+  // Drafts (status === 'draft') are hidden from instructors — they only see
+  // shifts the owner has explicitly published. Legacy shifts with no status
+  // field stay visible (treated as live).
+  const myShifts = useMemo(
+    () => shifts.filter(s => s.userId === profile?.uid && s.status !== 'draft'),
+    [shifts, profile],
+  );
   const myAvailMap = useMemo(() => {
     const m = {};
     availability.filter(a => a.userId === profile?.uid).forEach(a => { m[a.date] = a; });

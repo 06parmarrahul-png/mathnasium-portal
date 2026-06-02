@@ -108,8 +108,9 @@ export default function Home() {
   ), [activeCenterId]);
 
   const upcomingShift = useMemo(() => {
+    // Skip drafts — instructors don't see unpublished shifts on Home.
     return shifts
-      .filter(s => s.date >= todayStr)
+      .filter(s => s.date >= todayStr && s.status !== 'draft')
       .sort((a, b) => a.date.localeCompare(b.date))[0] || null;
   }, [shifts, todayStr]);
 
