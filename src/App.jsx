@@ -4,6 +4,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import NotifyHost from './components/NotifyHost';
+import OwnerAssistant from './components/OwnerAssistant';
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Home from './pages/Home';
@@ -72,6 +73,9 @@ export default function App() {
               here so any code path can call toast.success / confirmDialog
               from src/lib/notify.js without prop drilling. */}
           <NotifyHost />
+          {/* Floating "Jarvis" chat widget — internally gates to owners
+              only via useAuth(), so it's safe to mount globally here. */}
+          <OwnerAssistant />
         </AuthProvider>
       </BrowserRouter>
     </ErrorBoundary>

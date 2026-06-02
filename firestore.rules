@@ -256,5 +256,24 @@ service cloud.firestore {
                        && request.resource.data.actorUid == request.auth.uid;
       allow update, delete: if false;
     }
+
+    // ── Owner Assistant ──────────────────────────────────────────────
+    // Per-owner chatbot scratchpad: long-term memory summary at the
+    // root doc, message log + events in subcollections. Every doc is
+    // strictly siloed to the owner identified in the path. Nobody else
+    // — not other owners, not admins, not super-admins — can read or
+    // write another owner's assistant data from the client. The
+    // server-side handler uses the Admin SDK and bypasses these rules,
+    // so it still has full access for the API route.
+    match /ownerAssistant/{uid} {
+      allow read, write: if isSignedIn()
+                            && request.auth.uid == uid
+                            && isOwner();
+      match /{sub=**} {
+        allow read, write: if isSignedIn()
+                              && request.auth.uid == uid
+                              && isOwner();
+      }
+    }
   }
 }
