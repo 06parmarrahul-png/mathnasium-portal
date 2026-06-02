@@ -1,9 +1,9 @@
 // POST /api/assistant/chat
 //
-// Backend for the OwnerAssistant widget. Calls Claude with tool use,
-// executes tools server-side, and writes the assistant's reply (plus
-// any tool-call records) into the owner's Firestore message log so the
-// widget's onSnapshot subscription updates in real time.
+// Backend for the OwnerAssistant widget. Calls Google Gemini with tool
+// use, executes tools server-side, and writes the assistant's reply
+// (plus any tool-call records) into the owner's Firestore message log
+// so the widget's onSnapshot subscription updates in real time.
 //
 // Auth: Firebase ID token in Authorization: Bearer. Caller MUST be an
 // approved user with role === 'owner'. Everyone else gets 403.
@@ -14,27 +14,31 @@
 // Response: 200 { ok: true } — actual content is written to Firestore.
 //
 // Env vars (set in Vercel project settings):
-//   ANTHROPIC_API_KEY     - from https://console.anthropic.com/
-//   FIREBASE_SERVICE_ACCOUNT - already used by other API routes
+//   GEMINI_API_KEY            - from https://aistudio.google.com/app/apikey (free)
+//   FIREBASE_SERVICE_ACCOUNT  - already used by other API routes
 //   RESEND_API_KEY, RESEND_FROM - already used by /api/send-email
 //
+// Why Gemini (and not Claude / OpenAI):
+//   Google AI Studio gives a real free tier (1,500 req/day on Flash) that
+//   covers owner-scale traffic comfortably. Quality is plenty for chat,
+//   data lookups, and email drafting. If you ever want to upgrade, swap
+//   GEMINI_URL + the request-shape mapper for an Anthropic/OpenAI client
+//   and leave everything else (widget, Firestore, tools) untouched.
+//
 // Notes:
-//   - We deliberately use plain fetch() against the Anthropic REST API
-//     rather than adding the @anthropic-ai/sdk dependency. Keeps the
-//     Vercel function cold-start small.
+//   - Plain fetch() against the Gemini REST API — no SDK dependency.
 //   - Memory model: short-term = last N messages from Firestore;
 //     long-term = a free-text "summary" field on /ownerAssistant/{uid}
-//     that Claude can update via the save_long_term_memory tool.
+//     that the model can update via the save_long_term_memory tool.
 //   - Tool loop is bounded (MAX_TOOL_TURNS) so a runaway model can't
 //     burn an entire serverless budget.
 
 import { getFirestore, authenticateRequest } from '../_lib/firebase-admin.js';
 import { runTool, TOOL_DEFINITIONS } from './_tools.js';
 
-const ANTHROPIC_URL  = 'https://api.anthropic.com/v1/messages';
-const ANTHROPIC_VER  = '2023-06-01';
-const MODEL          = 'claude-sonnet-4-5-20250929';
-const HISTORY_LIMIT  = 30;     // messages of context to feed Claude
+const MODEL          = 'gemini-2.0-flash';
+const GEMINI_URL     = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
+const HISTORY_LIMIT  = 30;     // messages of context to feed the model
 const MAX_TOOL_TURNS = 6;      // hard ceiling on tool-call iterations
 const MAX_TOKENS     = 1024;
 
@@ -54,17 +58,56 @@ async function readJson(req) {
 }
 
 /**
- * Convert a Firestore message doc into the shape Claude's Messages API
- * expects. We collapse tool-trace docs (role: 'tool') because they're
- * UI-only — Claude doesn't need to re-see its prior tool output.
+ * Convert Firestore message docs to Gemini's `contents` shape.
+ * Gemini uses role: 'user' | 'model' (note: 'model', not 'assistant')
+ * and wraps content in a `parts` array. We drop UI-only tool-trace
+ * docs because they're not part of the model's conversation history.
  */
-function toClaudeMessages(docs) {
+function toGeminiContents(docs) {
   return docs
     .filter((d) => d.role === 'user' || d.role === 'assistant')
     .map((d) => ({
-      role: d.role,
-      content: String(d.content || ''),
+      role: d.role === 'assistant' ? 'model' : 'user',
+      parts: [{ text: String(d.content || '') }],
     }));
+}
+
+/**
+ * Translate our shared TOOL_DEFINITIONS (Claude-style `input_schema`)
+ * into Gemini's `functionDeclarations` (uses `parameters` instead and
+ * accepts a narrower JSON-Schema subset).
+ */
+function toGeminiTools(defs) {
+  return [{
+    functionDeclarations: defs.map((d) => ({
+      name: d.name,
+      description: d.description,
+      parameters: sanitizeSchema(d.input_schema),
+    })),
+  }];
+}
+
+/**
+ * Strip fields Gemini's schema parser doesn't understand. It's stricter
+ * than Claude's — extra props can cause a 400. We keep type / properties
+ * / required / description / enum / items, which covers everything our
+ * tools actually use.
+ */
+function sanitizeSchema(schema) {
+  if (!schema || typeof schema !== 'object') return { type: 'object' };
+  const out = {};
+  if (schema.type) out.type = schema.type;
+  if (schema.description) out.description = schema.description;
+  if (schema.enum) out.enum = schema.enum;
+  if (schema.items) out.items = sanitizeSchema(schema.items);
+  if (schema.properties) {
+    out.properties = {};
+    for (const [k, v] of Object.entries(schema.properties)) {
+      out.properties[k] = sanitizeSchema(v);
+    }
+  }
+  if (schema.required) out.required = schema.required;
+  return out;
 }
 
 function systemPrompt({ profile, centerName, summary, today }) {
@@ -86,25 +129,20 @@ ${summaryBlock}
 Keep replies short unless the request actually needs depth.`;
 }
 
-async function callClaude({ apiKey, system, messages, tools }) {
-  const res = await fetch(ANTHROPIC_URL, {
+async function callGemini({ apiKey, system, contents, tools }) {
+  const res = await fetch(`${GEMINI_URL}?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
-    headers: {
-      'content-type':      'application/json',
-      'x-api-key':         apiKey,
-      'anthropic-version': ANTHROPIC_VER,
-    },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      model:      MODEL,
-      max_tokens: MAX_TOKENS,
-      system,
-      messages,
+      systemInstruction: { parts: [{ text: system }] },
+      contents,
       tools,
+      generationConfig: { maxOutputTokens: MAX_TOKENS, temperature: 0.7 },
     }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
-    throw new Error(`Anthropic ${res.status}: ${text.slice(0, 500)}`);
+    throw new Error(`Gemini ${res.status}: ${text.slice(0, 500)}`);
   }
   return res.json();
 }
@@ -115,8 +153,8 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not set' });
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY not set' });
 
   // Auth — owner only.
   const session = await authenticateRequest(req);
@@ -161,45 +199,54 @@ export default async function handler(req, res) {
     today: new Date().toISOString().slice(0, 10),
   });
 
-  // Conversation we hand Claude. If the optimistic user message somehow
-  // didn't make it in (race condition), append it explicitly.
-  let convo = toClaudeMessages(recent);
-  if (convo.length === 0 || convo[convo.length - 1].role !== 'user') {
-    convo.push({ role: 'user', content: userMessage });
+  // Gemini requires the first turn to be from 'user'. The Firestore log
+  // always starts with one (the widget writes the user message before
+  // calling us), but guard anyway.
+  let contents = toGeminiContents(recent);
+  if (contents.length === 0 || contents[0].role !== 'user') {
+    contents.unshift({ role: 'user', parts: [{ text: userMessage }] });
   }
 
-  // Tool loop. Each turn either ends (stop_reason !== 'tool_use') or
-  // runs tools and feeds results back. Bounded by MAX_TOOL_TURNS.
+  const tools = toGeminiTools(TOOL_DEFINITIONS);
+
+  // Tool loop. Each turn either ends (no functionCall parts in the
+  // model's reply) or runs tools and feeds functionResponse parts back.
+  // Bounded by MAX_TOOL_TURNS so a misbehaving model can't loop forever.
   let finalText = '';
   const toolTrace = [];
   try {
     for (let turn = 0; turn < MAX_TOOL_TURNS; turn++) {
-      const resp = await callClaude({
-        apiKey,
-        system,
-        messages: convo,
-        tools: TOOL_DEFINITIONS,
-      });
+      const resp = await callGemini({ apiKey, system, contents, tools });
 
-      // Always push assistant turn so the next iteration sees it.
-      convo.push({ role: 'assistant', content: resp.content });
+      const candidate = resp?.candidates?.[0];
+      const parts = candidate?.content?.parts || [];
+      if (parts.length === 0) {
+        finalText = '(no response)';
+        break;
+      }
 
-      if (resp.stop_reason !== 'tool_use') {
-        finalText = (resp.content || [])
-          .filter((b) => b.type === 'text')
-          .map((b) => b.text)
+      // Echo the model turn back into contents so the next iteration
+      // sees its own function calls (Gemini requires this for the
+      // functionResponse to match up).
+      contents.push({ role: 'model', parts });
+
+      const functionCalls = parts.filter((p) => p.functionCall);
+      if (functionCalls.length === 0) {
+        finalText = parts
+          .filter((p) => typeof p.text === 'string')
+          .map((p) => p.text)
           .join('\n')
           .trim();
         break;
       }
 
-      // Run every tool_use block, collect tool_result blocks.
-      const toolUses = (resp.content || []).filter((b) => b.type === 'tool_use');
-      const results = [];
-      for (const tu of toolUses) {
+      // Run every requested tool, then collect functionResponse parts.
+      const responseParts = [];
+      for (const p of functionCalls) {
+        const fc = p.functionCall;
         let out;
         try {
-          out = await runTool(tu.name, tu.input || {}, {
+          out = await runTool(fc.name, fc.args || {}, {
             profile,
             centerId: body?.centerId || null,
             db,
@@ -208,14 +255,15 @@ export default async function handler(req, res) {
         } catch (err) {
           out = { error: err?.message || 'tool failed' };
         }
-        toolTrace.push({ name: tu.name, input: tu.input, output: out });
-        results.push({
-          type: 'tool_result',
-          tool_use_id: tu.id,
-          content: JSON.stringify(out).slice(0, 6000),
+        toolTrace.push({ name: fc.name, input: fc.args, output: out });
+        responseParts.push({
+          functionResponse: {
+            name: fc.name,
+            response: { result: out },
+          },
         });
       }
-      convo.push({ role: 'user', content: results });
+      contents.push({ role: 'user', parts: responseParts });
     }
   } catch (err) {
     finalText = `I hit an error reaching the model: ${err?.message || err}`;
