@@ -432,13 +432,19 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
   const userAvail = availability.filter(a => a.userId === user.uid);
   const userShifts = shifts.filter(s => s.userId === user.uid);
   const isFull = (a) => a?.startTime === '00:00' && (a?.endTime === '23:59' || a?.endTime === '24:00');
+  // weekDays is pre-filtered to operating days only (e.g. Mon–Sat = 6
+  // entries, not 7), so use first/last instead of index 6.
+  const firstDay = weekDays[0];
+  const lastDay  = weekDays[weekDays.length - 1];
   return (
     <Modal
       title={`Availability — ${user.displayName}`}
       onClose={onClose}
     >
       <p className="text-xs text-gray-500 -mt-2 mb-3">
-        Week of {format(weekDays[0], 'MMM d')} – {format(weekDays[6], 'MMM d, yyyy')}
+        {firstDay && lastDay
+          ? <>Week of {format(firstDay, 'MMM d')} – {format(lastDay, 'MMM d, yyyy')}</>
+          : 'No operating days this week'}
       </p>
       <div className="space-y-2">
         {weekDays.map(d => {
