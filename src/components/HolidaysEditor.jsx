@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
+import { toast } from '../lib/notify';
 import {
   Plus, AlertTriangle, CalendarDays, CalendarX, Trash2,
 } from 'lucide-react';
@@ -94,8 +95,17 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showPast, setShowPast] = useState(false);
+  // Optimistic local copy — render this immediately on edit so the UI
+  // doesn't appear frozen while we wait for the Firestore listener to fire.
+  // We resync from props whenever centerConfig.holidays changes.
+  const [localHolidays, setLocalHolidays] = useState(
+    Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : []
+  );
+  useEffect(() => {
+    setLocalHolidays(Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : []);
+  }, [centerConfig?.holidays]);
 
-  const holidays = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+  const holidays = localHolidays;
   const todayStr = (() => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -104,7 +114,13 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
   const upcoming = sorted.filter(h => (h?.date || '') >= todayStr);
   const past     = sorted.filter(h => (h?.date || '') <  todayStr);
 
+  // Save the next list, optimistically updating local state first so the
+  // UI feels instant. If Firestore rejects (permission, network, etc.)
+  // we roll back to the previous server-truth state and surface the
+  // error visibly so silent failures stop being a thing.
   const saveList = async (next) => {
+    const prev = localHolidays;
+    setLocalHolidays(next);
     setSaving(true);
     setError('');
     try {
@@ -114,7 +130,13 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
         { merge: true },
       );
     } catch (err) {
-      setError(err?.message || 'Failed to save holidays.');
+      // Roll the optimistic update back so the user sees the data revert.
+      setLocalHolidays(prev);
+      // eslint-disable-next-line no-console
+      console.error('[holidays] save failed:', err);
+      const msg = `Could not save: ${err?.message || err?.code || 'unknown error'}`;
+      setError(`${msg}. Try again or contact your platform operator.`);
+      toast.error(msg, 7000);
     } finally {
       setSaving(false);
     }
