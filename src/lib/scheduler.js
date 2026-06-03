@@ -601,11 +601,15 @@ export function generateSchedule({
             `ℹ ${dayName} ${dayMonth} ${dayNumber}: ${candidate.inst.displayName} (Host) promoted to Instructor to cover staffing shortfall.`
           );
         } else {
-          // Regular Host shift — admin/operational coverage for the full
-          // submitted availability (this is the point of the Host role).
+          // Regular Host shift — clamped to instructional hours so a
+          // "Full Day" availability submission doesn't auto-create a
+          // 10-hour shift. Admins add admin/prep time manually after
+          // the schedule is generated.
           roles[candidate.inst.displayName] = 'Host';
           subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
-          if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+          const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
+          if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
+          else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
         }
 
         totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
@@ -630,7 +634,12 @@ export function generateSchedule({
       assignedNames.push(candidate.inst.displayName);
       roles[candidate.inst.displayName] = 'Online Instructor';
       subRoles[candidate.inst.displayName] = 'Online';
-      if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
+      // Clamp Online instructors to instructional hours too — a "Full Day"
+      // availability shouldn't become a 24-hour online shift. Admin can
+      // extend manually for flex hours after the fact.
+      const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
+      if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
+      else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
 
       totalAssignments[candidate.inst.uid] = (totalAssignments[candidate.inst.uid] || 0) + 1;
       if (!weeklyAssignments[candidate.inst.uid]) weeklyAssignments[candidate.inst.uid] = {};
