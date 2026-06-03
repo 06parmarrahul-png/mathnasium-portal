@@ -156,15 +156,28 @@ export function AuthProvider({ children }) {
   // when the active center changes. activeCenterId is guaranteed truthy by
   // getActiveCenterId() — it always returns at least DEFAULT_CENTER_ID — so
   // we can subscribe unconditionally.
-  useEffect(() => (
-    onSnapshot(
+  //
+  // Depends on BOTH activeCenterId AND the auth user so the listener
+  // re-establishes after sign-out → sign-in. Without re-subscribing on
+  // auth change, signing out tears down the listener (Firestore rules
+  // require isSignedIn for reads) and a subsequent sign-in leaves
+  // centerConfig stuck at defaults — the symptom: holidays, salary
+  // staff list, etc. appear to "disappear" after re-auth even though
+  // they're safely in Firestore. Skipping the subscribe while signed
+  // out also avoids a noisy permission-denied error in dev tools.
+  useEffect(() => {
+    if (!user) {
+      setCenterConfig(DEFAULT_CENTER_CONFIG);
+      return;
+    }
+    return onSnapshot(
       doc(db, 'centers', activeCenterId, 'config', 'main'),
       (snap) => {
         setCenterConfig(mergeCenterConfig(snap.exists() ? snap.data() : null));
       },
       () => setCenterConfig(DEFAULT_CENTER_CONFIG),
-    )
-  ), [activeCenterId]);
+    );
+  }, [activeCenterId, user]);
 
   const login = async (email, password) => {
     await signInWithEmailAndPassword(auth, email.trim(), password);
