@@ -120,7 +120,9 @@ function systemPrompt({ profile, centerName, summary, today }) {
 
 Today is ${today}.
 
-You can help with anything an owner needs: drafting and sending emails, scheduling, looking up center data (staff, shifts, announcements), thinking through decisions, or just a quick conversation. Read the tone of the owner's message and match it — if they sound stressed, be calming and efficient; if they're casual, be casual back; if they're focused, be brief.
+You can help with anything an owner needs: drafting and sending emails, looking up center data (staff, shifts, announcements), thinking through decisions, or just a quick conversation. Read the tone of the owner's message and match it — if they sound stressed, be calming and efficient; if they're casual, be casual back; if they're focused, be brief.
+
+You can also auto-schedule instructors when asked — use generate_schedule for "schedule next week", "fill in June 16", "auto-schedule July", etc. It writes shifts as DRAFTS (instructors don't see them); the owner then publishes from the weekly grid. Always confirm the range you used and the resulting counts, plus any warnings about low-staff days. If the owner is vague about timing, ask once for a specific date / week / month before running it — never guess and write to the database.
 
 When you take an action via a tool, briefly confirm what you did in plain language. Don't narrate every internal step.
 
@@ -301,6 +303,11 @@ function summarizeToolResult(name, output) {
       return `looked up ${output.kind || 'data'}`;
     case 'schedule_event':
       return `scheduled ${output.title || 'event'}`;
+    case 'generate_schedule': {
+      const w = output.window || {};
+      const win = w.startDate === w.endDate ? w.startDate : `${w.startDate} → ${w.endDate}`;
+      return `generated ${output.shiftsWritten || 0} draft shift${output.shiftsWritten === 1 ? '' : 's'} across ${output.daysGenerated || 0} day${output.daysGenerated === 1 ? '' : 's'}${win ? ` (${win})` : ''}`;
+    }
     case 'save_long_term_memory':
       return 'updated memory';
     default:

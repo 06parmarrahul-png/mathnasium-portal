@@ -603,6 +603,15 @@ export default function Admin() {
   // Auto-scheduler state
   const [schedMonth, setSchedMonth]   = useState(MONTHS[new Date().getMonth()]);
   const [schedYear, setSchedYear]     = useState(new Date().getFullYear());
+  // Range type: 'month' (current behaviour), 'week' (Mon–Sat of picked
+  // date), or 'day' (single picked date). When week/day, the scheduler
+  // takes startDate/endDate instead of month/year.
+  const [schedRangeType, setSchedRangeType] = useState('month');
+  const [schedDayDate,   setSchedDayDate]   = useState(format(new Date(), 'yyyy-MM-dd'));
+  // Default week-anchor is the current week's Monday.
+  const [schedWeekDate,  setSchedWeekDate]  = useState(
+    format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
+  );
   const [draftSchedule, setDraftSchedule] = useState(null);
   const [generating, setGenerating]   = useState(false);
   const [posting, setPosting]         = useState(false);
@@ -996,12 +1005,28 @@ export default function Admin() {
       // the auto-scheduler ignores them.
       const schedulableUsers = approvedUsers.filter(u => u.isVolunteer !== true);
 
+      // Range routing — day/week passes explicit startDate/endDate so the
+      // engine doesn't generate anything outside the picked window.
+      const rangeArgs = (() => {
+        if (schedRangeType === 'day') {
+          return { startDate: schedDayDate, endDate: schedDayDate };
+        }
+        if (schedRangeType === 'week') {
+          const wkStart = new Date(schedWeekDate + 'T00:00:00');
+          const wkEnd   = addDays(wkStart, 6);
+          return {
+            startDate: format(wkStart, 'yyyy-MM-dd'),
+            endDate:   format(wkEnd,   'yyyy-MM-dd'),
+          };
+        }
+        return { month: schedMonth, year: schedYear };
+      })();
+
       const result = generateSchedule({
         instructors: schedulableUsers,
         availability: filteredAvailability,
         previousMonthsAvail,
-        month: schedMonth,
-        year: schedYear,
+        ...rangeArgs,
         config: schedConfig,
         centerConfig,   // per-center hours, fixed staff, guaranteed names
       });
@@ -2574,20 +2599,84 @@ export default function Admin() {
             <p className="text-sm text-gray-500 mb-5">
               Reads instructor availability from Firestore and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
             </p>
+            {/* Range type toggle — Day / Week / Month. Picker below
+                switches based on selection. */}
+            <div className="mb-3">
+              <label className="mb-1 block text-sm font-medium text-gray-700">Schedule for</label>
+              <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
+                {[
+                  { key: 'day',   label: 'Day'   },
+                  { key: 'week',  label: 'Week'  },
+                  { key: 'month', label: 'Month' },
+                ].map(opt => {
+                  const active = schedRangeType === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSchedRangeType(opt.key)}
+                      className={`px-3 py-1.5 transition-colors ${active
+                        ? 'bg-purple-600 text-white font-semibold'
+                        : 'bg-white text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Month</label>
-                <select value={schedMonth} onChange={e => setSchedMonth(e.target.value)}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none">
-                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Year</label>
-                <input type="number" value={schedYear} min={2025} max={2030}
-                  onChange={e => setSchedYear(Number(e.target.value))}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
-              </div>
+              {schedRangeType === 'month' && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Month</label>
+                    <select value={schedMonth} onChange={e => setSchedMonth(e.target.value)}
+                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none">
+                      {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">Year</label>
+                    <input type="number" value={schedYear} min={2025} max={2030}
+                      onChange={e => setSchedYear(Number(e.target.value))}
+                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
+                  </div>
+                </>
+              )}
+              {schedRangeType === 'week' && (
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">
+                    Week starting (Mon)
+                  </label>
+                  <input
+                    type="date"
+                    value={schedWeekDate}
+                    onChange={e => {
+                      // Snap to the Monday of the picked date so the user
+                      // can't accidentally start a "week" on a Wednesday.
+                      const picked = new Date(e.target.value + 'T00:00:00');
+                      const mon    = startOfWeek(picked, { weekStartsOn: 1 });
+                      setSchedWeekDate(format(mon, 'yyyy-MM-dd'));
+                    }}
+                    className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Generates {format(new Date(schedWeekDate + 'T00:00:00'), 'MMM d')} – {format(addDays(new Date(schedWeekDate + 'T00:00:00'), 6), 'MMM d, yyyy')}
+                  </p>
+                </div>
+              )}
+              {schedRangeType === 'day' && (
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-gray-700">Date</label>
+                  <input
+                    type="date"
+                    value={schedDayDate}
+                    onChange={e => setSchedDayDate(e.target.value)}
+                    className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none"
+                  />
+                </div>
+              )}
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Min staff/day</label>
                 <input type="number" value={schedConfig.minPerDay} min={1} max={20}

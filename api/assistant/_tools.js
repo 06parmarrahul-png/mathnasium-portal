@@ -12,6 +12,8 @@
 
 import { Resend } from 'resend';
 import { FieldValue } from 'firebase-admin/firestore';
+import { generateSchedule } from '../../src/lib/scheduler.js';
+import { mergeCenterConfig } from '../../src/lib/centerConfig.js';
 
 // ── Schemas advertised to Claude ─────────────────────────────────────
 export const TOOL_DEFINITIONS = [
@@ -65,6 +67,31 @@ export const TOOL_DEFINITIONS = [
         notes:     { type: 'string' },
       },
       required: ['title', 'startISO'],
+    },
+  },
+  {
+    name: 'generate_schedule',
+    description:
+      'Auto-schedule instructors for a day, week, or month. Reads availability ' +
+      'and approved staff from Firestore, runs the scheduler engine, and writes ' +
+      'the resulting shifts as DRAFTS to the active centre. The owner publishes ' +
+      'from the weekly grid afterwards (instructors do not see drafts). ' +
+      'For range="day" supply date; for range="week" supply weekStartDate (a ' +
+      'Monday); for range="month" supply month + year. Returns counts and any ' +
+      'warnings (low-staff days, host promotions, etc.).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        range: { type: 'string', enum: ['day', 'week', 'month'] },
+        date:           { type: 'string', description: 'YYYY-MM-DD — for range="day"' },
+        weekStartDate:  { type: 'string', description: 'YYYY-MM-DD Monday — for range="week"' },
+        month:          { type: 'string', description: 'Month name like "June" — for range="month"' },
+        year:           { type: 'number', description: 'e.g. 2026 — for range="month"' },
+        minPerDay:      { type: 'number', description: 'Optional override (default 8)' },
+        maxPerDay:      { type: 'number', description: 'Optional override (default 11)' },
+        maxDaysPerWeek: { type: 'number', description: 'Optional override (default 5)' },
+      },
+      required: ['range'],
     },
   },
   {
@@ -211,6 +238,177 @@ const TOOL_HANDLERS = {
         createdAt: new Date(),
       });
     return { ok: true, id: ref.id, title };
+  },
+
+  async generate_schedule(input, ctx) {
+    const centerId = ctx.centerId;
+    if (!centerId) throw new Error('no active centerId in context');
+    const range = String(input.range || '').toLowerCase();
+    if (!['day', 'week', 'month'].includes(range)) {
+      throw new Error('range must be "day", "week", or "month"');
+    }
+
+    // Resolve the start/end window before doing any I/O so input errors
+    // surface fast and cheap.
+    const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+    let startDateStr, endDateStr, monthArg, yearArg;
+    if (range === 'day') {
+      if (!isYmd(input.date)) throw new Error('range="day" requires date "YYYY-MM-DD"');
+      startDateStr = endDateStr = input.date;
+    } else if (range === 'week') {
+      if (!isYmd(input.weekStartDate)) throw new Error('range="week" requires weekStartDate "YYYY-MM-DD"');
+      startDateStr = input.weekStartDate;
+      const wkStart = new Date(startDateStr + 'T00:00:00');
+      const wkEnd   = new Date(wkStart);
+      wkEnd.setDate(wkStart.getDate() + 6);
+      endDateStr = `${wkEnd.getFullYear()}-${String(wkEnd.getMonth() + 1).padStart(2, '0')}-${String(wkEnd.getDate()).padStart(2, '0')}`;
+    } else {
+      if (!input.month) throw new Error('range="month" requires month name');
+      if (!input.year)  throw new Error('range="month" requires year');
+      monthArg = String(input.month);
+      yearArg  = Number(input.year);
+    }
+
+    // ── Load everything the scheduler needs ────────────────────────────
+    // Centre config (instructional hours, fixed staff, guaranteed names,
+    // operatingDays, holidays, salaryStaff).
+    const cfgSnap = await ctx.db.collection('centers').doc(centerId)
+      .collection('config').doc('main').get();
+    const centerConfig = mergeCenterConfig(cfgSnap.exists ? cfgSnap.data() : null);
+
+    // Approved staff at this centre, excluding volunteers (mirrors the
+    // client-side handleGenerate flow).
+    const usersSnap = await ctx.db.collection('users')
+      .where('centerIds', 'array-contains', centerId)
+      .get();
+    const allUsers = usersSnap.docs.map(d => {
+      const u = d.data();
+      const m = u.centerMemberships?.[centerId] || {};
+      return {
+        uid:            d.id,
+        displayName:    u.displayName,
+        email:          u.email,
+        role:           u.role,
+        approved:       m.approved        ?? u.approved        ?? false,
+        instructorType: m.instructorType  ?? u.instructorType  ?? 'Instructor',
+        priority:       m.priority        ?? u.priority        ?? 2,
+        subRoles:       m.subRoles        ?? u.subRoles        ?? [],
+        guaranteed:     m.guaranteed      ?? u.guaranteed      ?? false,
+        maxDaysPerWeek: m.maxDaysPerWeek  ?? u.maxDaysPerWeek  ?? 5,
+        isVolunteer:    m.isVolunteer     ?? u.isVolunteer     ?? false,
+      };
+    });
+    const schedulableUsers = allUsers.filter(u =>
+      u.approved && u.role !== 'owner' && u.role !== 'super_admin'
+      && u.isVolunteer !== true
+    );
+
+    // Availability — pull a wide-enough window. For month we cover the
+    // month + the 6 calendar months before it for dayName fallback; for
+    // day/week we still pull 6 months back so the fallback works.
+    const sixMonthsAgo = (() => {
+      const d = new Date(startDateStr || `${yearArg}-01-01`);
+      d.setMonth(d.getMonth() - 6);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    })();
+    const availSnap = await ctx.db.collection('availability')
+      .where('centerId', '==', centerId)
+      .where('date', '>=', sixMonthsAgo)
+      .get();
+    const allAvail = availSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+    // Approved time-off — used to suppress availability for those dates.
+    const toSnap = await ctx.db.collection('timeOffRequests')
+      .where('centerId', '==', centerId)
+      .where('status', '==', 'approved')
+      .get();
+    const approvedTimeOff = new Set();
+    toSnap.docs.forEach(r => {
+      const data = r.data();
+      if (!data.startDate || !data.endDate) return;
+      const cur = new Date(data.startDate + 'T00:00:00');
+      const end = new Date(data.endDate + 'T00:00:00');
+      while (cur <= end) {
+        const ds = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}-${String(cur.getDate()).padStart(2, '0')}`;
+        approvedTimeOff.add(`${data.userId}-${ds}`);
+        cur.setDate(cur.getDate() + 1);
+      }
+    });
+    const filteredAvail = allAvail.filter(a =>
+      !approvedTimeOff.has(`${a.userId}-${a.date}`)
+    );
+
+    // ── Run the engine ───────────────────────────────────────────────
+    const result = generateSchedule({
+      instructors: schedulableUsers,
+      availability: filteredAvail,
+      previousMonthsAvail: [],
+      ...(monthArg
+        ? { month: monthArg, year: yearArg }
+        : { startDate: startDateStr, endDate: endDateStr }),
+      config: {
+        minPerDay:      Number.isFinite(input.minPerDay)      ? Number(input.minPerDay)      : 8,
+        maxPerDay:      Number.isFinite(input.maxPerDay)      ? Number(input.maxPerDay)      : 11,
+        maxDaysPerWeek: Number.isFinite(input.maxDaysPerWeek) ? Number(input.maxDaysPerWeek) : 5,
+      },
+      centerConfig,
+    });
+
+    // ── Persist the generated shifts as DRAFTS ───────────────────────
+    // Skip fixed staff in this write — they get re-seeded separately by
+    // the owner's "Sync Fixed Staff This Week" action if needed. (The
+    // engine does include them in scheduleDays for coverage math, but
+    // they're written from the fixedStaff config map, not from this
+    // result.)
+    const fixedNameSet = new Set(Object.keys(centerConfig.fixedStaff || {}));
+    let writeCount = 0;
+    const BATCH = 450;
+    const toWrite = [];
+    for (const day of result.days) {
+      for (const name of day.assignedEmployees) {
+        if (fixedNameSet.has(name)) continue;
+        const user = schedulableUsers.find(u => u.displayName === name);
+        const shiftStr = day.shiftTimes?.[name] || '';
+        const [startRaw, endRaw] = shiftStr.includes(' - ')
+          ? shiftStr.split(' - ') : ['15:00', '20:00'];
+        toWrite.push({
+          userId: user?.uid || name,
+          userName: name,
+          centerId,
+          date: day.date,
+          startTime: (startRaw || '15:00').trim(),
+          endTime:   (endRaw   || '20:00').trim(),
+          role: day.roles?.[name] || 'Instructor',
+          subRole: day.subRoles?.[name] || 'Elementary',
+          status: 'draft',
+          autoScheduled: true,
+          scheduledByAssistant: true,
+        });
+      }
+    }
+
+    for (let i = 0; i < toWrite.length; i += BATCH) {
+      const batch = ctx.db.batch();
+      const slice = toWrite.slice(i, i + BATCH);
+      for (const s of slice) {
+        const ref = ctx.db.collection('shifts').doc();
+        batch.set(ref, s);
+      }
+      await batch.commit();
+      writeCount += slice.length;
+    }
+
+    return {
+      ok: true,
+      range,
+      window: { startDate: result.startDate, endDate: result.endDate },
+      daysGenerated:   result.days.length,
+      shiftsWritten:   writeCount,
+      warningsCount:   (result.warnings || []).length,
+      warnings:        (result.warnings || []).slice(0, 12), // truncate so the LLM context stays tight
+      openShiftNeeded: (result.openShiftNeeded || []).length,
+      note: 'Shifts saved as drafts. Owner publishes from Admin → weekly grid.',
+    };
   },
 
   async save_long_term_memory(input, ctx) {

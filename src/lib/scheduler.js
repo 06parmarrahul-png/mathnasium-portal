@@ -109,23 +109,44 @@ function getSunSatWeekKey(date) {
 }
 
 function getDaysInMonth(year, monthNumber) {
-  const days = [];
   const date = new Date(year, monthNumber - 1, 1);
-  while (date.getMonth() === monthNumber - 1) {
-    const dayOfWeek = date.getDay();
+  const endDate = new Date(year, monthNumber, 0); // last day of month
+  return getDaysInRange(date, endDate);
+}
+
+/**
+ * Build the day descriptor list for any start..end date range (inclusive).
+ * Mirrors getDaysInMonth's shape so the rest of the engine doesn't care
+ * whether the caller asked for a month, a week, a single day, or anything
+ * in between. Filters Mon–Sat by default; the operatingDays clause inside
+ * generateSchedule narrows further per centre.
+ *
+ * `startDate` and `endDate` may be Date objects or 'YYYY-MM-DD' strings.
+ */
+function getDaysInRange(startDate, endDate) {
+  const toDate = (v) => v instanceof Date
+    ? new Date(v.getFullYear(), v.getMonth(), v.getDate())
+    : new Date(`${v}T00:00:00`);
+  const cursor = toDate(startDate);
+  const end    = toDate(endDate);
+  const days = [];
+  while (cursor <= end) {
+    const dayOfWeek = cursor.getDay();
     const pythonWeekday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // Mon=0..Sat=5
+    const y = cursor.getFullYear();
+    const m = String(cursor.getMonth() + 1).padStart(2, '0');
+    const d = String(cursor.getDate()).padStart(2, '0');
     days.push({
-      date: new Date(date),
-      dateStr: date.toISOString().split('T')[0],
-      dayNumber: date.getDate(),
+      date: new Date(cursor),
+      dateStr: `${y}-${m}-${d}`,
+      dayNumber: cursor.getDate(),
       dayName: DAY_NAMES[pythonWeekday] ?? null,
       pythonWeekday,
-      weekOfMonth: getWeekOfMonth(date),
-      weekKey: getSunSatWeekKey(date),
+      weekOfMonth: getWeekOfMonth(cursor),
+      weekKey: getSunSatWeekKey(cursor),
     });
-    date.setDate(date.getDate() + 1);
+    cursor.setDate(cursor.getDate() + 1);
   }
-  // Filter Mon–Sat only (pythonWeekday 0–5)
   return days.filter(d => d.pythonWeekday >= 0 && d.pythonWeekday <= 5);
 }
 
@@ -297,12 +318,20 @@ export function isHostRole(instructor) {
 /**
  * generateSchedule
  *
+ * Range can be specified in one of two ways:
+ *   1. `month` + `year` (legacy) — generates the whole month
+ *   2. `startDate` + `endDate` — generates any inclusive date range
+ *      ('YYYY-MM-DD' strings or Date objects). Useful for one-day or
+ *      one-week fills without disturbing the rest of the schedule.
+ *
  * @param {Object} params
  * @param {Array}  params.instructors          - Approved non-owner users from Firestore
- * @param {Array}  params.availability         - Current month availability docs
- * @param {Array}  params.previousMonthsAvail  - Array of arrays, each being one prior month's availability docs
- * @param {string} params.month                - e.g. 'May'
- * @param {number} params.year                 - e.g. 2026
+ * @param {Array}  params.availability         - Availability docs covering the range
+ * @param {Array}  params.previousMonthsAvail  - Optional fallback availability from prior months
+ * @param {string} [params.month]              - e.g. 'May' (used when no startDate/endDate)
+ * @param {number} [params.year]               - e.g. 2026 (used when no startDate/endDate)
+ * @param {string|Date} [params.startDate]     - Inclusive range start
+ * @param {string|Date} [params.endDate]       - Inclusive range end
  * @param {Object} params.config               - { minPerDay, maxPerDay, maxDaysPerWeek }
  * @param {Object} params.centerConfig         - per-center settings (instructionalHours, fixedStaff,
  *                                                guaranteedNames). Falls back to legacy hardcoded values
@@ -314,6 +343,8 @@ export function generateSchedule({
   previousMonthsAvail = [],
   month,
   year,
+  startDate,
+  endDate,
   config = {},
   centerConfig = {},
 }) {
@@ -344,10 +375,22 @@ export function generateSchedule({
       .filter(Boolean),
   );
 
-  const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
-  if (!monthNumber) throw new Error(`Invalid month: ${month}`);
-
-  const workingDays = getDaysInMonth(year, monthNumber);
+  // Two range modes:
+  //  - startDate + endDate (preferred for day/week fills)
+  //  - month + year (legacy — whole month)
+  // If both are passed, the explicit range wins.
+  let workingDays;
+  let rangeLabel; // Human-friendly label for warnings / summaries
+  if (startDate && endDate) {
+    workingDays = getDaysInRange(startDate, endDate);
+    rangeLabel = '';
+  } else {
+    if (!month) throw new Error('generateSchedule: pass startDate/endDate or month+year');
+    const monthNumber = MONTH_NAME_TO_NUMBER[month.toLowerCase()];
+    if (!monthNumber) throw new Error(`Invalid month: ${month}`);
+    workingDays = getDaysInMonth(year, monthNumber);
+    rangeLabel = `${month} ${year}`;
+  }
   const fixedStaffNames = new Set(Object.keys(fixedStaffMap));
 
   // Eligible form instructors: approved, not owner, not Enterprise, not
@@ -374,8 +417,14 @@ export function generateSchedule({
   const warnings = [];
   const openShiftNeeded = []; // Days that need open shift postings
 
+  // Use each day's own month name in warnings so a multi-month range
+  // (or a stray week that straddles two months) labels correctly.
+  const monthNames = ['January','February','March','April','May','June',
+                      'July','August','September','October','November','December'];
+
   for (const day of workingDays) {
     const { dateStr, dayName, dayNumber, weekOfMonth, weekKey } = day;
+    const dayMonth = monthNames[day.date.getMonth()];
 
     // Skip days this center is closed (configured in Super Admin → Operating
     // Days or → Holidays). getDaysInMonth already drops Sundays; this also
@@ -549,7 +598,7 @@ export function generateSchedule({
           if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
           else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
           warnings.push(
-            `ℹ ${dayName} ${month} ${dayNumber}: ${candidate.inst.displayName} (Host) promoted to Instructor to cover staffing shortfall.`
+            `ℹ ${dayName} ${dayMonth} ${dayNumber}: ${candidate.inst.displayName} (Host) promoted to Instructor to cover staffing shortfall.`
           );
         } else {
           // Regular Host shift — admin/operational coverage for the full
@@ -596,7 +645,7 @@ export function generateSchedule({
     if (inCentreTotal < minPerDay) {
       const shortfall = minPerDay - inCentreTotal;
       warnings.push(
-        `⚠ ${dayName} ${month} ${dayNumber}: Only ${inCentreTotal} in-centre staff (need ${minPerDay}). ${shortfall} open shift${shortfall > 1 ? 's' : ''} needed.`
+        `⚠ ${dayName} ${dayMonth} ${dayNumber}: Only ${inCentreTotal} in-centre staff (need ${minPerDay}). ${shortfall} open shift${shortfall > 1 ? 's' : ''} needed.`
       );
       for (let i = 0; i < shortfall; i++) {
         openShiftNeeded.push({ date: dateStr, dayName, dayNumber });
@@ -604,7 +653,7 @@ export function generateSchedule({
     }
 
     if (inCentre.length === 0 && hosts.length === 0 && onlineOnly.length === 0 && fixedToday.length === 0) {
-      warnings.push(`⚠ ${dayName} ${month} ${dayNumber}: No staff available at all.`);
+      warnings.push(`⚠ ${dayName} ${dayMonth} ${dayNumber}: No staff available at all.`);
     }
 
     scheduleDays.push({
@@ -633,9 +682,27 @@ export function generateSchedule({
     employeeSummary[name] = count;
   }
 
+  // Derive a friendly summary label for the range (used by callers that
+  // were built around month/year). For a true date range, fall back to
+  // a "Jun 16 – Jun 22" style label.
+  let summaryMonth = month;
+  let summaryYear  = year;
+  if ((!month || !year) && workingDays.length > 0) {
+    const first = workingDays[0].date;
+    const last  = workingDays[workingDays.length - 1].date;
+    summaryMonth = monthNames[first.getMonth()];
+    summaryYear  = first.getFullYear();
+    if (first.getMonth() !== last.getMonth() || first.getFullYear() !== last.getFullYear()) {
+      summaryMonth = `${monthNames[first.getMonth()].slice(0, 3)} ${first.getDate()} – ${monthNames[last.getMonth()].slice(0, 3)} ${last.getDate()}`;
+    }
+  }
+
   return {
-    month,
-    year,
+    month: summaryMonth,
+    year:  summaryYear,
+    rangeLabel,
+    startDate: workingDays[0]?.dateStr || null,
+    endDate:   workingDays[workingDays.length - 1]?.dateStr || null,
     days: scheduleDays,
     employeeSummary,
     warnings,
