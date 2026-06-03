@@ -216,7 +216,11 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
         {selectedUser && (
           <div className={`rounded-lg px-3 py-2 text-xs ${avail.length > 0 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
             {avail.length > 0
-              ? <>✓ Available: {avail.map(a => `${a.startTime}–${a.endTime}`).join(', ')}</>
+              ? <>✓ Available: {avail.map(a => (
+                  (a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00'))
+                    ? 'Full day'
+                    : `${a.startTime}–${a.endTime}`
+                )).join(', ')}</>
               : '⚠ No availability submitted for this date'}
           </div>
         )}
@@ -418,6 +422,82 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   );
 }
 
+// ── User Availability (Week) Modal ─────────────────────────────────────────
+// Owner / admin clicks a name in the weekly-grid left column → modal opens
+// showing that person's availability for each day of the visible week.
+// Read-only: this is a viewing tool, not an editor. Includes their already-
+// scheduled shifts on each day so the admin can compare "available 3–7"
+// vs "scheduled 4–6" at a glance.
+function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }) {
+  const userAvail = availability.filter(a => a.userId === user.uid);
+  const userShifts = shifts.filter(s => s.userId === user.uid);
+  const isFull = (a) => a?.startTime === '00:00' && (a?.endTime === '23:59' || a?.endTime === '24:00');
+  return (
+    <Modal
+      title={`Availability — ${user.displayName}`}
+      onClose={onClose}
+    >
+      <p className="text-xs text-gray-500 -mt-2 mb-3">
+        Week of {format(weekDays[0], 'MMM d')} – {format(weekDays[6], 'MMM d, yyyy')}
+      </p>
+      <div className="space-y-2">
+        {weekDays.map(d => {
+          const ds = format(d, 'yyyy-MM-dd');
+          const dayAvail   = userAvail.filter(a => a.date === ds);
+          const dayShifts  = userShifts.filter(s => s.date === ds);
+          const hasAnything = dayAvail.length > 0 || dayShifts.length > 0;
+          return (
+            <div
+              key={ds}
+              className={`rounded-lg border px-3 py-2 ${hasAnything ? 'bg-white border-gray-200' : 'bg-gray-50 border-gray-100'}`}
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <p className="text-sm font-semibold text-gray-800">
+                  {format(d, 'EEE')} <span className="text-gray-400 font-normal">· {format(d, 'MMM d')}</span>
+                </p>
+                {!hasAnything && (
+                  <span className="text-xs text-gray-400 italic">No availability submitted</span>
+                )}
+              </div>
+              {dayAvail.length > 0 && (
+                <div className="mt-1 space-y-1">
+                  {dayAvail.map((a, i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className="text-xs text-emerald-800 font-medium">
+                        {isFull(a) ? 'Full day · anytime' : `${fmtHHMM(a.startTime)} – ${fmtHHMM(a.endTime)}`}
+                      </span>
+                      {a.comment && (
+                        <span className="text-xs text-blue-600 italic truncate">&quot;{a.comment}&quot;</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {dayShifts.length > 0 && (
+                <div className="mt-1 space-y-1">
+                  {dayShifts.map(s => (
+                    <div key={s.id} className="flex items-center gap-2">
+                      <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
+                      <span className="text-xs text-gray-700">
+                        Scheduled {fmtHHMM(s.startTime)} – {fmtHHMM(s.endTime)}
+                        {s.role ? ` · ${s.role}` : ''}
+                      </span>
+                      {s.status === 'draft' && (
+                        <span className="rounded bg-amber-100 px-1 py-px text-[10px] font-bold uppercase tracking-wider text-amber-700">Draft</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Modal>
+  );
+}
+
 // ── Add Open Shift Modal ───────────────────────────────────────────────────────
 function AddOpenShiftModal({ date, onClose, onSave }) {
   const [startTime, setStartTime] = useState('15:00');
@@ -512,6 +592,7 @@ export default function Admin() {
   const [addShiftModal, setAddShiftModal]       = useState(null); // { date, user }
   const [editShiftModal, setEditShiftModal]     = useState(null); // shift object
   const [addOpenShiftModal, setAddOpenShiftModal] = useState(null); // { date }
+  const [availabilityModalUser, setAvailabilityModalUser] = useState(null); // user object
 
   // Auto-scheduler state
   const [schedMonth, setSchedMonth]   = useState(MONTHS[new Date().getMonth()]);
@@ -1140,24 +1221,6 @@ export default function Admin() {
 
   // Reset ALL shifts in Firestore — complete clean slate. Gated by a
   // type-to-confirm input so an accidental click can't wipe everything.
-  const handleResetAllShifts = async () => {
-    const ok = await confirmDialog({
-      title: 'Delete EVERY shift?',
-      message: 'This permanently removes every shift in Firestore for every staff member. This cannot be undone.',
-      confirmText: 'Delete all shifts',
-      danger: true,
-      requireText: 'DELETE',
-    });
-    if (!ok) return;
-    const CHUNK = 490;
-    for (let i = 0; i < shifts.length; i += CHUNK) {
-      const b = writeBatch(db);
-      shifts.slice(i, i + CHUNK).forEach(s => b.delete(doc(db, 'shifts', s.id)));
-      await b.commit();
-    }
-    toast.success(`All ${shifts.length} shifts deleted. Fresh start.`);
-  };
-
   // ── Multi-center migration (Phase 1 groundwork) ──────────────────────────
   // One-time backfill: creates the centers/langley doc and stamps centerId
   // onto every existing doc that doesn't already have one. Safe to run
@@ -1905,11 +1968,6 @@ export default function Admin() {
                 className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors">
                 <RotateCcw size={12} /> Fix Duplicates
               </button>
-              <button onClick={handleResetAllShifts}
-                title="Wipe every shift from Firestore — complete fresh start"
-                className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-red-50 hover:border-red-300 hover:text-red-600 transition-colors">
-                <Trash2 size={12} /> Reset All Shifts
-              </button>
             </div>
 
             {/* Publish bar — surfaces draft counts and one-click bulk actions.
@@ -2061,13 +2119,18 @@ export default function Admin() {
                     return (
                       <tr key={u.uid} className="border-b hover:bg-gray-50 transition-colors group">
                         <td className="px-4 py-2 border-r">
-                          <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setAvailabilityModalUser(u)}
+                            title={`View ${u.displayName}'s availability for this week`}
+                            className="flex items-center gap-2 w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-blue-50 hover:ring-1 hover:ring-blue-200 transition-colors"
+                          >
                             <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-xs font-bold text-red-700 shrink-0">{initials}</div>
                             <div>
                               <div className="font-semibold text-gray-800 text-xs">{u.displayName}</div>
                               <div className="text-gray-400" style={{fontSize:'10px'}}>{displayHrs}h · {u.instructorType || 'Instructor'}</div>
                             </div>
-                          </div>
+                          </button>
                         </td>
                         {weekDays.map(d => {
                           const ds = format(d, 'yyyy-MM-dd');
@@ -2097,12 +2160,17 @@ export default function Admin() {
                                   {/* Hover tooltip showing availability times */}
                                   <div className="hidden group-hover/avail:block absolute right-0 top-4 z-20 w-52 rounded-lg border border-green-200 bg-white shadow-lg p-2">
                                     <p className="text-xs font-semibold text-green-700 mb-1">Available</p>
-                                    {dayAvail.map((a, i) => (
-                                      <div key={i}>
-                                        <p className="text-xs text-gray-600">{fmtHHMM(a.startTime)} – {fmtHHMM(a.endTime)}</p>
-                                        {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">"{a.comment}"</p>}
-                                      </div>
-                                    ))}
+                                    {dayAvail.map((a, i) => {
+                                      const isFull = a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00');
+                                      return (
+                                        <div key={i}>
+                                          <p className="text-xs text-gray-600">
+                                            {isFull ? 'Full day' : `${fmtHHMM(a.startTime)} – ${fmtHHMM(a.endTime)}`}
+                                          </p>
+                                          {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">&quot;{a.comment}&quot;</p>}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 </div>
                               )}
@@ -3365,6 +3433,16 @@ export default function Admin() {
           /center-analytics and /center-settings respectively. */}
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
+      {availabilityModalUser && (
+        <UserAvailabilityModal
+          user={availabilityModalUser}
+          weekDays={weekDays}
+          availability={availability}
+          shifts={shifts}
+          onClose={() => setAvailabilityModalUser(null)}
+        />
+      )}
+
       {addShiftModal && (
         <AddShiftModal
           date={addShiftModal.date}

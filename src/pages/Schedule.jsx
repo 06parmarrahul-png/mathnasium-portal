@@ -33,6 +33,24 @@ function fmtTime(t) {
   return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+/**
+ * True if this availability covers the whole day (Full Day sentinel
+ * 00:00 – 23:59). Used to render "Full day" instead of a literal time
+ * range anywhere availability is displayed.
+ */
+export function isFullDayAvail(startTime, endTime) {
+  return startTime === '00:00' && (endTime === '23:59' || endTime === '24:00');
+}
+
+/**
+ * Format an availability range for display. Returns "Full day" when the
+ * range covers the whole 24h, otherwise "9:00 AM – 5:00 PM"-style.
+ */
+export function fmtAvailRange(startTime, endTime) {
+  if (isFullDayAvail(startTime, endTime)) return 'Full day';
+  return `${fmtTime(startTime)} – ${fmtTime(endTime)}`;
+}
+
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // How far back the live listeners load. Older docs still exist in Firestore
@@ -338,28 +356,26 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
             const isFri = dow === 5;
             const isSat = dow === 6;
 
-            // First entry is the marquee "Full Day" option (covers admin prep
-            // and cleanup, not just teaching hours), rendered with a distinct
-            // style below so it's the obvious one-tap choice. Range comes from
-            // the active center's operatingHours via the fullDayByDow prop —
-            // each Mathnasium can have its own hours.
-            const fullDay = fullDayByDow[dow] || DEFAULT_FULL_DAY_BY_DOW[dow];
-            const fullDayLabel = `Full Day (${fmtTime(fullDay.start)} – ${fmtTime(fullDay.end)})`;
+            // First entry is the marquee "Full Day" option — literally the
+            // whole day (00:00–23:59). The admin can then schedule the
+            // instructor anywhere within that window. Rendered with a
+            // distinct style below as the obvious one-tap choice.
+            const fullDayLabel = 'Full Day';
             const PRESETS = isClosedDay ? [] : isSat ? [
-              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
+              { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
               { label: '10:00 AM – 2:00 PM', start: '10:00', end: '14:00' },
               { label: '10:30 AM – 2:00 PM', start: '10:30', end: '14:00' },
               { label: '10:00 AM – 1:30 PM', start: '10:00', end: '13:30' },
               { label: '10:30 AM – 1:30 PM', start: '10:30', end: '13:30' },
             ] : isFri ? [
-              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
+              { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
               { label: '3:00 PM – 6:00 PM', start: '15:00', end: '18:00' },
               { label: '3:30 PM – 6:00 PM', start: '15:30', end: '18:00' },
               { label: '3:00 PM – 5:30 PM', start: '15:00', end: '17:30' },
               { label: '3:30 PM – 5:30 PM', start: '15:30', end: '17:30' },
               { label: '4:00 PM – 6:00 PM', start: '16:00', end: '18:00' },
             ] : [
-              { label: fullDayLabel, start: fullDay.start, end: fullDay.end, fullDay: true },
+              { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
               { label: '3:00 PM – 7:00 PM', start: '15:00', end: '19:00' },
               { label: '3:30 PM – 7:00 PM', start: '15:30', end: '19:00' },
               { label: '3:00 PM – 6:30 PM', start: '15:00', end: '18:30' },
@@ -396,8 +412,8 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
                                 <span className="text-base">⏰</span>
                                 Full Day
                               </span>
-                              <span className="text-xs font-medium text-emerald-600">
-                                {p.label.replace('Full Day ', '').replace(/[()]/g, '')}
+                              <span className="text-xs font-medium text-emerald-600/70">
+                                Anytime
                               </span>
                             </button>
                           );
@@ -624,9 +640,11 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
         if (ds < todayStr) continue;
 
         if (useFullDay) {
-          const r = fullDayByDow[dow];
-          if (!r) continue; // Sundays etc. — skip
-          items.push({ date: ds, startTime: r.start, endTime: r.end, dow });
+          // Full Day = the whole 24h window. Admin can schedule the
+          // instructor anywhere they want within the day. (Closed days
+          // are filtered out via isOperatingDay on the day-toggle row,
+          // so anything that makes it here is a valid operating day.)
+          items.push({ date: ds, startTime: '00:00', endTime: '23:59', dow });
         } else {
           items.push({ date: ds, startTime, endTime, dow });
         }
@@ -735,15 +753,11 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
             </div>
 
             {useFullDay ? (
-              <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/60 p-3 text-xs space-y-1">
-                <p className="font-semibold text-emerald-800 mb-1.5">
-                  Available the entire day (includes admin prep & cleanup, not just teaching):
+              <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/60 p-3 text-xs">
+                <p className="flex items-center gap-2 font-semibold text-emerald-800">
+                  <span className="text-base">⏰</span>
+                  Available all day — admin can schedule you anytime.
                 </p>
-                <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-emerald-700">
-                  <span>Mon–Thu · {fmtTime(fullDayByDow[1].start)} – {fmtTime(fullDayByDow[1].end)}</span>
-                  <span>Fri · {fmtTime(fullDayByDow[5].start)} – {fmtTime(fullDayByDow[5].end)}</span>
-                  <span>Sat · {fmtTime(fullDayByDow[6].start)} – {fmtTime(fullDayByDow[6].end)}</span>
-                </div>
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
@@ -1323,11 +1337,12 @@ export default function Schedule() {
               );
             } else if (state.type === 'available') {
               cellBg = 'bg-emerald-50/60 hover:bg-emerald-50 cursor-pointer';
+              const isFull = isFullDayAvail(state.avail.startTime, state.avail.endTime);
               content = (
                 <div className="mt-1 rounded-lg bg-emerald-500 px-1.5 py-1 shadow-sm">
                   <p className="text-white text-xs font-bold leading-tight">Available</p>
                   <p className="text-emerald-100 text-xs leading-tight">
-                    {fmtTime(state.avail.startTime)}
+                    {isFull ? 'Full day' : fmtTime(state.avail.startTime)}
                   </p>
                 </div>
               );
