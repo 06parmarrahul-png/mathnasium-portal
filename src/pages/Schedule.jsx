@@ -133,10 +133,19 @@ function buildFullDayByDow(centerConfig) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
   const [mode, setMode] = useState('main');
-  const [startTime, setStartTime] = useState('15:00');
-  const [endTime, setEndTime] = useState('20:00');
+  // Default the time inputs to this centre's configured instructional
+  // hours for the picked date's day-of-week. Falls back to 15:00–20:00
+  // only if config is missing or doesn't have hours for this weekday.
+  const dayDefault = (() => {
+    const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const dayName = DOW[date.getDay()];
+    const h = centerConfig?.instructionalHours?.[dayName];
+    return h?.start && h?.end ? h : { start: '15:00', end: '20:00' };
+  })();
+  const [startTime, setStartTime] = useState(dayDefault.start);
+  const [endTime, setEndTime] = useState(dayDefault.end);
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
   const [toStart, setToStart] = useState(format(date, 'yyyy-MM-dd'));
@@ -605,12 +614,20 @@ function weekMatchesRecurrence(date, recurrence) {
 function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayByDow, centerConfig, onClose, onSaveBulk }) {
   const [selectedDays, setSelectedDays] = useState([]);
   const [recurrence, setRecurrence] = useState('every');
-  const [startTime, setStartTime] = useState('15:00');
-  const [endTime, setEndTime] = useState('20:00');
+  // Default custom-time inputs to this centre's Monday instructional
+  // hours — the most common case for staff filling out availability.
+  // The user can change them; per-day variation comes from "Full Day".
+  const weeklyDefault = centerConfig?.instructionalHours?.Monday;
+  const [startTime, setStartTime] = useState(weeklyDefault?.start || '15:00');
+  const [endTime, setEndTime] = useState(weeklyDefault?.end || '20:00');
   const [useFullDay, setUseFullDay] = useState(false);
   const [scope, setScope] = useState('thisMonth'); // 'thisMonth' | 'nextMonth' | 'both'
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Dates the user has X'd out from the preview before saving — they
+  // submit availability for everything else. Cleared when the inputs
+  // change so excludes don't quietly persist across edits.
+  const [excludedDates, setExcludedDates] = useState(() => new Set());
 
   // Build preview as [{date, startTime, endTime}] — per-day times when "Full Day"
   // is on (Saturday's 10–2 differs from Monday's 3–7), or the modal's chosen
@@ -639,6 +656,8 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
         const ds = format(d, 'yyyy-MM-dd');
         if (ds < todayStr) continue;
 
+        // Skip dates the user X'd out from the preview.
+        if (excludedDates.has(ds)) continue;
         if (useFullDay) {
           // Full Day = the whole 24h window. Admin can schedule the
           // instructor anywhere they want within the day. (Closed days
@@ -651,7 +670,14 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
       }
     }
     return items;
-  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow]);
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates]);
+
+  // Reset the excluded-dates set when the generators change — otherwise
+  // an old exclude on Aug 19 would silently apply if the user later
+  // switches days/recurrence/scope.
+  useEffect(() => {
+    setExcludedDates(new Set());
+  }, [selectedDays, recurrence, scope]);
 
   const toggleDay = (dow) => {
     setSelectedDays(prev =>
@@ -826,26 +852,53 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
                 <span className="text-xs font-bold text-gray-600 uppercase tracking-widest">
                   Preview — {preview.length} day{preview.length !== 1 ? 's' : ''}
                 </span>
-                {overwriteCount > 0 && (
-                  <span className="text-xs text-orange-600 font-semibold">
-                    ⚠ Overwrites {overwriteCount} existing
-                  </span>
-                )}
+                <div className="flex items-center gap-3">
+                  {excludedDates.size > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setExcludedDates(new Set())}
+                      className="text-xs font-semibold text-blue-600 hover:text-blue-800 transition-colors"
+                    >
+                      Restore {excludedDates.size} removed
+                    </button>
+                  )}
+                  {overwriteCount > 0 && (
+                    <span className="text-xs text-orange-600 font-semibold">
+                      ⚠ Overwrites {overwriteCount} existing
+                    </span>
+                  )}
+                </div>
               </div>
+              <p className="text-[11px] text-gray-500 mb-2">Click the × on any date to skip it.</p>
               <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {preview.map(item => (
-                  <span
-                    key={item.date}
-                    title={`${fmtTime(item.startTime)} – ${fmtTime(item.endTime)}`}
-                    className={`rounded-lg px-2 py-1 text-xs font-medium ${
-                      existingDates.has(item.date)
-                        ? 'bg-orange-100 text-orange-700'
-                        : 'bg-emerald-100 text-emerald-700'
-                    }`}
-                  >
-                    {new Date(item.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                  </span>
-                ))}
+                {preview.map(item => {
+                  const isOverwrite = existingDates.has(item.date);
+                  return (
+                    <span
+                      key={item.date}
+                      title={`${fmtTime(item.startTime)} – ${fmtTime(item.endTime)}`}
+                      className={`group inline-flex items-center gap-1 rounded-lg pl-2 pr-1 py-1 text-xs font-medium ${
+                        isOverwrite
+                          ? 'bg-orange-100 text-orange-700'
+                          : 'bg-emerald-100 text-emerald-700'
+                      }`}
+                    >
+                      {new Date(item.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      <button
+                        type="button"
+                        onClick={() => setExcludedDates(prev => new Set(prev).add(item.date))}
+                        title="Remove this date from the batch"
+                        className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold transition-colors ${
+                          isOverwrite
+                            ? 'text-orange-500 hover:bg-orange-200 hover:text-orange-800'
+                            : 'text-emerald-500 hover:bg-emerald-200 hover:text-emerald-800'
+                        }`}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -1491,6 +1544,7 @@ export default function Schedule() {
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
           fullDayByDow={fullDayByDow}
+          centerConfig={centerConfig}
           isClosedDay={isCenterClosedOn(selectedDate, centerConfig)}
           onClose={() => setSelectedDate(null)}
           onSaveAvail={handleSaveAvail}

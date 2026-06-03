@@ -133,11 +133,38 @@ function Modal({ title, onClose, children }) {
   );
 }
 
+// Map JS getDay() → centerConfig day name (Mon–Sat). Sunday returns null
+// so callers can fall back gracefully on centres that don't operate Sundays.
+const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Resolve "what should the time fields default to?" for a given date + user
+// from this centre's config. Hosts → operating hours (full open-to-close);
+// everyone else → instructional hours (teaching window). Falls back to
+// the legacy 3pm–8pm range only if the config doesn't have hours for the
+// day-of-week at all (which shouldn't happen post-migration).
+function defaultShiftTimesFor(date, userLike, centerConfig) {
+  const FALLBACK = { start: '15:00', end: '20:00' };
+  if (!date) return FALLBACK;
+  const d = typeof date === 'string' ? new Date(date + 'T00:00:00') : date;
+  const dayName = DOW_NAMES[d.getDay()];
+  if (!dayName) return FALLBACK;
+  const isHost = (userLike?.instructorType || '').toLowerCase() === 'host';
+  const bucket = isHost
+    ? centerConfig?.operatingHours
+    : centerConfig?.instructionalHours;
+  const hours = bucket?.[dayName];
+  return hours && hours.start && hours.end ? hours : FALLBACK;
+}
+
 // ── Add Shift Modal ────────────────────────────────────────────────────────────
-function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
+function AddShiftModal({ date, user, users, availability, centerConfig, onClose, onSave }) {
   const [selectedUser, setSelectedUser] = useState(user?.uid || '');
-  const [startTime, setStartTime] = useState('15:00');
-  const [endTime, setEndTime] = useState('20:00');
+  // Default the time fields from this centre's configured hours for the
+  // picked date's day-of-week — Hosts get operating hours, instructors
+  // get instructional hours. Updates if the selected user changes.
+  const initialDefaults = defaultShiftTimesFor(date, user, centerConfig);
+  const [startTime, setStartTime] = useState(initialDefaults.start);
+  const [endTime, setEndTime] = useState(initialDefaults.end);
   const [role, setRole] = useState(user?.instructorType || '');
   const [shiftType, setShiftType] = useState('In-Centre');
   // Default sub-role guesses from the instructor's teaching track.
@@ -154,10 +181,15 @@ function AddShiftModal({ date, user, users, availability, onClose, onSave }) {
   const availComment = avail.find(a => a.comment)?.comment || '';
 
   // When the instructor selection changes, re-guess the sub-role default
+  // AND re-default the time fields (Host vs Instructor have different
+  // default windows).
   const handleSelectUser = (uid) => {
     setSelectedUser(uid);
     const next = users.find(u => u.uid === uid);
     setSubRole(guessSubRole(next));
+    const d = defaultShiftTimesFor(date, next, centerConfig);
+    setStartTime(d.start);
+    setEndTime(d.end);
   };
 
   const handleSubmit = async () => {
@@ -505,9 +537,13 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
 }
 
 // ── Add Open Shift Modal ───────────────────────────────────────────────────────
-function AddOpenShiftModal({ date, onClose, onSave }) {
-  const [startTime, setStartTime] = useState('15:00');
-  const [endTime, setEndTime] = useState('20:00');
+function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
+  // Open shifts default to instructional hours for that day (it's the
+  // teaching window someone would be claiming). Owner can override before
+  // saving.
+  const initial = defaultShiftTimesFor(date, null, centerConfig);
+  const [startTime, setStartTime] = useState(initial.start);
+  const [endTime, setEndTime] = useState(initial.end);
   const [role, setRole] = useState('');
   const [subRole, setSubRole] = useState('Elementary');
 
@@ -3544,6 +3580,7 @@ export default function Admin() {
           user={addShiftModal.user}
           users={approvedUsers}
           availability={availability}
+          centerConfig={centerConfig}
           onClose={() => setAddShiftModal(null)}
           onSave={handleAddShift}
         />
@@ -3565,6 +3602,7 @@ export default function Admin() {
       {addOpenShiftModal && (
         <AddOpenShiftModal
           date={addOpenShiftModal.date}
+          centerConfig={centerConfig}
           onClose={() => setAddOpenShiftModal(null)}
           onSave={handleAddOpenShift}
         />
