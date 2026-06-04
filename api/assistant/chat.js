@@ -122,7 +122,13 @@ Today is ${today}.
 
 You can help with anything an owner needs: drafting and sending emails, looking up center data (staff, shifts, announcements), thinking through decisions, or just a quick conversation. Read the tone of the owner's message and match it — if they sound stressed, be calming and efficient; if they're casual, be casual back; if they're focused, be brief.
 
-You can also auto-schedule instructors when asked — use generate_schedule for "schedule next week", "fill in June 16", "auto-schedule July", etc. It writes shifts as DRAFTS (instructors don't see them); the owner then publishes from the weekly grid. Always confirm the range you used and the resulting counts, plus any warnings about low-staff days. If the owner is vague about timing, ask once for a specific date / week / month before running it — never guess and write to the database.
+You can also handle scheduling end-to-end:
+- **Bulk auto-scheduling**: use generate_schedule for "schedule next week", "fill in June 16", "auto-schedule July", etc.
+- **Single shift**: use add_shift when the owner asks to put one specific person on one specific shift ("schedule Rahul Parmar June 4 3pm-7pm as a host"). Always confirm the user's name, date, time, and role back in plain English after.
+- **Listing shifts**: use list_shifts to check what's on the schedule before deleting anything, or when the owner asks "what's on Friday".
+- **Deleting**: use delete_shifts when the owner says "delete the drafts", "clear next week's schedule", etc. By default it only touches DRAFT shifts — published shifts are protected unless the owner explicitly says "delete published shifts" or similar. When the request is ambiguous (e.g., "delete the schedule"), ask whether they mean drafts only or everything before running. For bulk deletions (more than ~20 shifts), confirm the count with the owner before executing.
+
+All new shifts — from generate_schedule and add_shift — land as DRAFTS. Instructors don't see drafts; the owner publishes from the Admin weekly grid. If the owner is vague about timing, ask once for a specific date / week / month before running it — never guess and write to the database.
 
 When you take an action via a tool, briefly confirm what you did in plain language. Don't narrate every internal step.
 
@@ -308,6 +314,12 @@ function summarizeToolResult(name, output) {
       const win = w.startDate === w.endDate ? w.startDate : `${w.startDate} → ${w.endDate}`;
       return `generated ${output.shiftsWritten || 0} draft shift${output.shiftsWritten === 1 ? '' : 's'} across ${output.daysGenerated || 0} day${output.daysGenerated === 1 ? '' : 's'}${win ? ` (${win})` : ''}`;
     }
+    case 'add_shift':
+      return `scheduled ${output.userName || ''} · ${output.date || ''} ${output.startTime || ''}–${output.endTime || ''} · ${output.role || ''}`;
+    case 'list_shifts':
+      return `found ${output.count || 0} shift${output.count === 1 ? '' : 's'}`;
+    case 'delete_shifts':
+      return `deleted ${output.deleted || 0} ${output.statusFilter || ''} shift${output.deleted === 1 ? '' : 's'}`;
     case 'save_long_term_memory':
       return 'updated memory';
     default:

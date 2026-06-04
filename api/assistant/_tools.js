@@ -95,6 +95,65 @@ export const TOOL_DEFINITIONS = [
     },
   },
   {
+    name: 'add_shift',
+    description:
+      'Manually schedule one specific person for one specific shift. Writes ' +
+      'as a DRAFT — the owner publishes from the weekly grid afterwards. ' +
+      'Use this when the owner asks to "schedule Rahul Parmar June 4 3pm-7pm ' +
+      'as a host" or similar. Looks up the user by displayName (case-insensitive ' +
+      'first+last match) at the active centre. Times must be 24-hour HH:MM.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        userName:  { type: 'string', description: 'Staff member full name (matches displayName at this centre)' },
+        date:      { type: 'string', description: 'Shift date as YYYY-MM-DD' },
+        startTime: { type: 'string', description: '24-hour start time as HH:MM (e.g. "15:00")' },
+        endTime:   { type: 'string', description: '24-hour end time as HH:MM (e.g. "19:00")' },
+        role:      { type: 'string', description: 'Role tag: Instructor, Lead, Host, Online Instructor, Volunteer, Manager, etc. Defaults to the user\'s instructorType.' },
+        shiftType: { type: 'string', enum: ['In-Centre', 'Online', 'Both'], description: 'Defaults to In-Centre' },
+        subRole:   { type: 'string', enum: ['Elementary', 'Highschool', 'Online'], description: 'Teaching level. Defaults to the user\'s primary sub-role.' },
+      },
+      required: ['userName', 'date', 'startTime', 'endTime'],
+    },
+  },
+  {
+    name: 'list_shifts',
+    description:
+      'List existing shifts at the active centre, optionally filtered by date / ' +
+      'date range / user / status. Use this BEFORE delete_shifts so you can ' +
+      'confirm the count with the owner. Default status is "draft" since that\'s ' +
+      'the common case (deleting auto-generated drafts).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date:      { type: 'string', description: 'YYYY-MM-DD single date' },
+        startDate: { type: 'string', description: 'Range start (inclusive)' },
+        endDate:   { type: 'string', description: 'Range end (inclusive)' },
+        userName:  { type: 'string', description: 'Filter to one staff member by displayName' },
+        status:    { type: 'string', enum: ['draft', 'live', 'all'], description: 'Defaults to "all"' },
+        limit:     { type: 'number', description: 'Max shifts to return (default 50)' },
+      },
+    },
+  },
+  {
+    name: 'delete_shifts',
+    description:
+      'Delete shifts at the active centre. Defaults to draft shifts only (safety ' +
+      'rail — never deletes published shifts unless status="live" or "all" is ' +
+      'explicitly set). Confirm with the owner first by calling list_shifts when ' +
+      'the count is non-obvious. Returns the number deleted.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        date:      { type: 'string', description: 'YYYY-MM-DD single date' },
+        startDate: { type: 'string', description: 'Range start (inclusive)' },
+        endDate:   { type: 'string', description: 'Range end (inclusive)' },
+        userName:  { type: 'string', description: 'Limit to one staff member' },
+        status:    { type: 'string', enum: ['draft', 'live', 'all'], description: 'Defaults to "draft" — published shifts are protected unless you opt in.' },
+      },
+    },
+  },
+  {
     name: 'save_long_term_memory',
     description:
       'Append a durable fact about the owner to long-term memory ' +
@@ -408,6 +467,192 @@ const TOOL_HANDLERS = {
       warnings:        (result.warnings || []).slice(0, 12), // truncate so the LLM context stays tight
       openShiftNeeded: (result.openShiftNeeded || []).length,
       note: 'Shifts saved as drafts. Owner publishes from Admin → weekly grid.',
+    };
+  },
+
+  async add_shift(input, ctx) {
+    const centerId = ctx.centerId;
+    if (!centerId) throw new Error('no active centerId in context');
+
+    const reqName = String(input.userName || '').trim();
+    if (!reqName) throw new Error('userName required');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.date || ''))) {
+      throw new Error('date must be YYYY-MM-DD');
+    }
+    const hhmm = /^\d{2}:\d{2}$/;
+    if (!hhmm.test(String(input.startTime || ''))) throw new Error('startTime must be HH:MM');
+    if (!hhmm.test(String(input.endTime   || ''))) throw new Error('endTime must be HH:MM');
+
+    // Look up the user by displayName at the active centre. Case-insensitive
+    // exact match first, then first+last token match so "rahul parmar" finds
+    // "Rahul Parmar". If multiple match, refuse and ask the owner to clarify.
+    const usersSnap = await ctx.db.collection('users')
+      .where('centerIds', 'array-contains', centerId)
+      .get();
+    const candidates = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const norm = (s) => String(s || '').toLowerCase().trim();
+    const tokens = (s) => norm(s).split(/\s+/).filter(Boolean);
+    const reqNorm = norm(reqName);
+    const reqTokens = tokens(reqName);
+    let matches = candidates.filter(u => norm(u.displayName) === reqNorm);
+    if (matches.length === 0) {
+      matches = candidates.filter(u => {
+        const uTokens = tokens(u.displayName);
+        if (uTokens.length === 0) return false;
+        return reqTokens[0] === uTokens[0]
+          && (reqTokens[reqTokens.length - 1] === uTokens[uTokens.length - 1]);
+      });
+    }
+    if (matches.length === 0) {
+      return { error: `No staff member named "${reqName}" at this centre.` };
+    }
+    if (matches.length > 1) {
+      return {
+        error: `Multiple staff match "${reqName}". Be more specific.`,
+        candidates: matches.map(u => u.displayName),
+      };
+    }
+    const user = matches[0];
+    const m = user.centerMemberships?.[centerId] || {};
+    const instructorType = m.instructorType || user.instructorType || 'Instructor';
+    const userSubRoles   = m.subRoles       || user.subRoles       || [];
+
+    // Default role from instructorType unless caller specified.
+    const role = String(input.role || instructorType).trim() || 'Instructor';
+
+    // Default subRole from the user's primary teaching track.
+    let subRole = input.subRole;
+    if (!subRole) {
+      if (userSubRoles.includes('Online'))         subRole = 'Online';
+      else if (userSubRoles.includes('Highschool'))subRole = 'Highschool';
+      else                                          subRole = 'Elementary';
+    }
+
+    const shiftType = input.shiftType || 'In-Centre';
+
+    const payload = {
+      userId:   user.id || user.uid,
+      userName: user.displayName,
+      centerId,
+      date:     input.date,
+      startTime: input.startTime,
+      endTime:   input.endTime,
+      role,
+      shiftType,
+      subRole,
+      // Manual assistant additions land as DRAFTS, same as the manual
+      // Add Shift modal — owner publishes from the weekly grid.
+      status: 'draft',
+      autoScheduled: false,
+      scheduledByAssistant: true,
+    };
+    const ref = await ctx.db.collection('shifts').add(payload);
+    return {
+      ok: true,
+      shiftId: ref.id,
+      userName: user.displayName,
+      date: input.date,
+      startTime: input.startTime,
+      endTime: input.endTime,
+      role,
+      subRole,
+      shiftType,
+      note: 'Saved as draft. Owner publishes from Admin → weekly grid.',
+    };
+  },
+
+  async list_shifts(input, ctx) {
+    const centerId = ctx.centerId;
+    if (!centerId) throw new Error('no active centerId in context');
+    const limit = Math.min(Math.max(Number(input.limit) || 50, 1), 200);
+
+    // Build the Firestore query incrementally. Date is the primary filter
+    // index; we always require a centerId match. Status / userName get
+    // applied client-side to keep the index requirements minimal.
+    let q = ctx.db.collection('shifts').where('centerId', '==', centerId);
+    if (input.date) {
+      q = q.where('date', '==', input.date);
+    } else {
+      if (input.startDate) q = q.where('date', '>=', input.startDate);
+      if (input.endDate)   q = q.where('date', '<=', input.endDate);
+    }
+    const snap = await q.get();
+    const wantStatus = input.status && input.status !== 'all' ? input.status : null;
+    const wantName = input.userName
+      ? String(input.userName).toLowerCase().trim()
+      : null;
+    const items = [];
+    for (const d of snap.docs) {
+      const s = d.data() || {};
+      if (wantStatus && (s.status || 'live') !== wantStatus) continue;
+      if (wantName && String(s.userName || '').toLowerCase().trim() !== wantName) continue;
+      items.push({
+        id: d.id,
+        userName: s.userName || '',
+        date: s.date,
+        startTime: s.startTime,
+        endTime: s.endTime,
+        role: s.role || '',
+        subRole: s.subRole || '',
+        status: s.status || 'live',
+      });
+      if (items.length >= limit) break;
+    }
+    items.sort((a, b) =>
+      (a.date || '').localeCompare(b.date || '') ||
+      (a.startTime || '').localeCompare(b.startTime || ''),
+    );
+    return { count: items.length, items };
+  },
+
+  async delete_shifts(input, ctx) {
+    const centerId = ctx.centerId;
+    if (!centerId) throw new Error('no active centerId in context');
+
+    // Default status filter is 'draft' — never deletes published shifts
+    // unless the caller explicitly opts in. This is the safety rail
+    // that prevents an off-the-cuff "delete the schedule" prompt from
+    // wiping out committed shifts.
+    const wantStatus = input.status && ['draft', 'live', 'all'].includes(input.status)
+      ? input.status
+      : 'draft';
+
+    let q = ctx.db.collection('shifts').where('centerId', '==', centerId);
+    if (input.date) {
+      q = q.where('date', '==', input.date);
+    } else {
+      if (input.startDate) q = q.where('date', '>=', input.startDate);
+      if (input.endDate)   q = q.where('date', '<=', input.endDate);
+    }
+    const snap = await q.get();
+    const wantName = input.userName
+      ? String(input.userName).toLowerCase().trim()
+      : null;
+    const toDelete = [];
+    for (const d of snap.docs) {
+      const s = d.data() || {};
+      if (wantStatus !== 'all' && (s.status || 'live') !== wantStatus) continue;
+      if (wantName && String(s.userName || '').toLowerCase().trim() !== wantName) continue;
+      toDelete.push(d);
+    }
+    if (toDelete.length === 0) {
+      return {
+        ok: true,
+        deleted: 0,
+        statusFilter: wantStatus,
+        note: 'Nothing matched the filter — nothing deleted.',
+      };
+    }
+    const BATCH = 450;
+    for (let i = 0; i < toDelete.length; i += BATCH) {
+      const batch = ctx.db.batch();
+      for (const d of toDelete.slice(i, i + BATCH)) batch.delete(d.ref);
+      await batch.commit();
+    }
+    return {
+      ok: true,
+      deleted: toDelete.length,
+      statusFilter: wantStatus,
     };
   },
 
