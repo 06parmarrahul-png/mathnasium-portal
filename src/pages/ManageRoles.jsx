@@ -35,17 +35,21 @@ import {
  */
 
 const ROLE_LABELS = {
-  super_admin: 'Enterprise',
-  owner:       'Owner',
-  admin:       'Admin',
-  instructor:  'Instructor',
+  super_admin:     'Enterprise',
+  owner:           'Owner',
+  admin_assistant: 'Admin Assistant',
+  admin:           'Admin',
+  instructor:      'Instructor',
 };
 
 const ROLE_COLORS = {
-  super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
-  owner:       'bg-red-100 text-red-700 border-red-200',
-  admin:       'bg-emerald-100 text-emerald-700 border-emerald-200',
-  instructor:  'bg-gray-100 text-gray-600 border-gray-200',
+  super_admin:     'bg-purple-100 text-purple-700 border-purple-200',
+  owner:           'bg-red-100 text-red-700 border-red-200',
+  // Admin Assistant gets owner-level access but is not in Owner Chat,
+  // so it gets its own teal palette to signal "owner-like but distinct".
+  admin_assistant: 'bg-teal-100 text-teal-700 border-teal-200',
+  admin:           'bg-emerald-100 text-emerald-700 border-emerald-200',
+  instructor:      'bg-gray-100 text-gray-600 border-gray-200',
 };
 
 async function sha256Hex(text) {
@@ -125,7 +129,7 @@ export default function ManageRoles() {
       })
       .sort((a, b) => {
         // Surface elevated roles at the top so they're easy to find.
-        const order = { super_admin: 0, owner: 1, admin: 2, instructor: 3 };
+        const order = { super_admin: 0, owner: 1, admin_assistant: 2, admin: 3, instructor: 4 };
         const ra = order[a.role] ?? 9;
         const rb = order[b.role] ?? 9;
         if (ra !== rb) return ra - rb;
@@ -136,8 +140,8 @@ export default function ManageRoles() {
   // ─── Role change handlers ──────────────────────────────────────────
 
   /** Quick instructor ↔ admin toggle. No code prompt — Enterprise can
-   *  flip these freely.  Owner / Enterprise roles are handled below
-   *  via the modal flow. */
+   *  flip these freely. Owner / Enterprise / Admin Assistant changes are
+   *  handled below via the modal flow (they require the 4-digit code). */
   const handleQuickRoleChange = async (user, nextRole) => {
     if (user.uid === profile.uid) {
       toast.error("You can't change your own role here.");
@@ -147,8 +151,10 @@ export default function ManageRoles() {
       toast.error('Demote another Enterprise user from the Demote button.');
       return;
     }
-    if (user.role === 'owner' || nextRole === 'owner' || nextRole === 'super_admin') {
-      toast.error('Use the elevated-role buttons for owner / Enterprise changes.');
+    if (user.role === 'owner' || user.role === 'admin_assistant'
+        || nextRole === 'owner' || nextRole === 'super_admin'
+        || nextRole === 'admin_assistant') {
+      toast.error('Use the elevated-role buttons for owner / Admin Assistant / Enterprise changes.');
       return;
     }
     const ok = await confirmDialog({
@@ -160,12 +166,33 @@ export default function ManageRoles() {
     await applyRoleChange(user, nextRole, { codeUsed: false });
   };
 
+  // Owner promotion + Admin Assistant promotion share the same 4-digit
+  // code path — both grant centre-level privileged access. AA is the
+  // softer variant (no Owner Chat access) but is still owner-equivalent
+  // for data writes, so it shouldn't be a one-click change either.
   const handlePromoteToOwner = (user) => {
     if (!codeMeta.hasCode) {
       setModal({ mode: 'set_then_promote', user, targetRole: 'owner' });
     } else {
       setModal({ mode: 'promote', user, targetRole: 'owner' });
     }
+  };
+  const handlePromoteToAdminAssistant = (user) => {
+    if (!codeMeta.hasCode) {
+      setModal({ mode: 'set_then_promote', user, targetRole: 'admin_assistant' });
+    } else {
+      setModal({ mode: 'promote', user, targetRole: 'admin_assistant' });
+    }
+  };
+  const handleDemoteAdminAssistant = async (user) => {
+    const ok = await confirmDialog({
+      title: 'Demote Admin Assistant?',
+      message: `${user.displayName || user.email} is currently Admin Assistant. Demote to Admin? They'll keep centre access but lose Centre Settings and the ability to manage other admins.`,
+      confirmText: 'Demote to Admin',
+      danger: true,
+    });
+    if (!ok) return;
+    await applyRoleChange(user, 'admin', { codeUsed: false });
   };
 
   const handleMoveCentre = (user) => {
@@ -400,6 +427,13 @@ export default function ManageRoles() {
                         >
                           Demote to Admin
                         </button>
+                      ) : role === 'admin_assistant' ? (
+                        <button
+                          onClick={() => handleDemoteAdminAssistant(u)}
+                          className="rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                        >
+                          Demote to Admin
+                        </button>
                       ) : (
                         <>
                           {role !== 'instructor' && (
@@ -418,6 +452,13 @@ export default function ManageRoles() {
                               → Admin
                             </button>
                           )}
+                          <button
+                            onClick={() => handlePromoteToAdminAssistant(u)}
+                            className="flex items-center gap-1 rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
+                            title="Admin Assistant has owner-level access at the centre, but is not in Owner Chat. Requires the 4-digit code."
+                          >
+                            <Lock size={11} /> → Admin Assistant
+                          </button>
                           <button
                             onClick={() => handlePromoteToOwner(u)}
                             className="flex items-center gap-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"

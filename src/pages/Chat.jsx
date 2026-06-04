@@ -43,6 +43,7 @@ export default function Chat() {
   const isOnlineMember = (profile?.subRoles || []).includes('Online')
     || profile?.role === 'super_admin'
     || profile?.role === 'owner'
+    || profile?.role === 'admin_assistant'
     || profile?.role === 'admin';
   // If somebody loses Online access while looking at the Online tab, bounce
   // them back to All so they don't get stuck on an empty/hidden channel.
@@ -94,6 +95,7 @@ export default function Chat() {
           (u.subRoles || []).includes('Online')
           || u.role === 'super_admin'
           || u.role === 'owner'
+          || u.role === 'admin_assistant'
           || u.role === 'admin')
       : base;
     return [...filtered].sort((a, b) => {
@@ -407,14 +409,16 @@ export default function Chat() {
             const isMe = m.uid === profile?.uid;
             const role = m.role || 'instructor';
             const avatarBg =
-              role === 'super_admin' ? 'bg-purple-600'
-              : role === 'owner'     ? 'bg-red-600'
-              : role === 'admin'     ? 'bg-emerald-600'
+              role === 'super_admin'     ? 'bg-purple-600'
+              : role === 'owner'         ? 'bg-red-600'
+              : role === 'admin_assistant' ? 'bg-teal-600'
+              : role === 'admin'         ? 'bg-emerald-600'
               : 'bg-gray-500';
             const roleLabel =
-              role === 'super_admin' ? 'Enterprise'
-              : role === 'owner'     ? 'Owner'
-              : role === 'admin'     ? 'Admin'
+              role === 'super_admin'     ? 'Enterprise'
+              : role === 'owner'         ? 'Owner'
+              : role === 'admin_assistant' ? 'Admin Assistant'
+              : role === 'admin'         ? 'Admin'
               : (m.instructorType || '');
             return (
               <button

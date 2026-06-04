@@ -42,7 +42,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdmin, canSeeAdminPanel } = useAuth();
+  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -121,7 +121,9 @@ export default function Layout({ children }) {
   // page) since they run the business rather than take individual shifts,
   // but they keep Shift Board and Chat for awareness / coverage gaps.
   if (!isSuperAdmin) {
-    if (!isOwner) {
+    // Owners + AA skip the personal Schedule page (they run the centre,
+    // they don't take individual shifts). Everyone else gets it.
+    if (!isOwner && !isAdminAssistant) {
       general.push({ to: '/schedule', label: 'Scheduling', icon: CalendarDays });
     }
     general.push(
@@ -148,25 +150,25 @@ export default function Layout({ children }) {
     );
   }
 
-  // OWNER — per-centre strategic surfaces. Owners + Enterprise see these.
+  // OWNER — per-centre strategic surfaces. Owners + AA + Enterprise see these.
   // Plain admins manage day-to-day ops but don't get strategic metrics or
   // scheduler config.
   const owner = [];
-  if (isSuperAdmin || isOwner) {
+  if (isSuperAdmin || isOwner || isAdminAssistant) {
     owner.push(
       { to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 },
       { to: '/center-settings',  label: 'Centre Settings',  icon: Settings },
     );
   }
 
-  // ADMIN — Admin Panel for everyone who can see it. Platform Chat lives
-  // here for admins + owners; Enterprise viewers see it under the
+  // ADMIN — Admin Panel for everyone who can see it. Leadership Chat lives
+  // here for admins + owners + AA; Enterprise viewers see it under the
   // ENTERPRISE section above (so it doesn't appear twice).
   const admin = [];
   if (canSeeAdminPanel) {
     admin.push({ to: '/admin', label: 'Admin Panel', icon: Shield });
   }
-  if ((isAdmin || isOwner) && !isSuperAdmin) {
+  if ((isAdmin || isOwner || isAdminAssistant) && !isSuperAdmin) {
     admin.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
   }
 

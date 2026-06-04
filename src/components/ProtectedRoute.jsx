@@ -70,7 +70,11 @@ export default function ProtectedRoute({ children, requireOwner = false, require
   }
 
   const role = profile.role;
-  const canSeeAdminPanel = role === 'admin' || role === 'owner' || role === 'super_admin';
+  // admin_assistant is owner-equivalent for centre-level access.
+  const canSeeAdminPanel = role === 'admin'
+    || role === 'admin_assistant'
+    || role === 'owner'
+    || role === 'super_admin';
 
   if (requireSuperAdmin && role !== 'super_admin') {
     return <NotAuthorized />;

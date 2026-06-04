@@ -55,6 +55,21 @@ service cloud.firestore {
       return profileExists() && profile().role == 'super_admin';
     }
 
+    // Administrative Assistant — owner-equivalent for everything except
+    // the Owners-only platformChat. Treated like an owner by isOwnerLike()
+    // below; the platformChat block uses the strict isOwner() above.
+    function isAdminAssistant() {
+      return profileExists() && profile().role == 'admin_assistant';
+    }
+
+    // True for any role that should be treated the same as the centre
+    // owner for permission checks (centre config writes, user management,
+    // shift management, etc.). NEVER use this for platformChat — that's
+    // strictly isOwner() || isSuperAdmin().
+    function isOwnerLike() {
+      return isOwner() || isAdminAssistant();
+    }
+
     function isAdmin() {
       return profileExists() && profile().role == 'admin';
     }
@@ -68,14 +83,14 @@ service cloud.firestore {
     match /centers/{centerId} {
       allow read: if true;
       allow create: if isSuperAdmin();
-      allow update, delete: if isOwner() || isSuperAdmin();
+      allow update, delete: if isOwnerLike() || isSuperAdmin();
 
       // Sub-docs (config/main with holidays, salaryStaff, operating days,
       // fixed staff, etc.) — admins can write these too so they can
       // manage day-to-day operations from the Admin Panel.
       match /{document=**} {
         allow read:  if isSignedIn();
-        allow write: if isOwner() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
     }
 
@@ -96,11 +111,12 @@ service cloud.firestore {
       //   - Each user can update their own profile EXCEPT privilege fields
       //     (role, approved, centerId, centerIds, guaranteed stay locked).
       allow update: if isSignedIn() && (
-        isOwner() ||
+        isOwnerLike() ||
         isSuperAdmin() ||
         (isAdmin()
          && resource.data.role != 'owner'
          && resource.data.role != 'super_admin'
+         && resource.data.role != 'admin_assistant'
          && request.resource.data.role      == resource.data.role
          && request.resource.data.centerId  == resource.data.centerId
          && request.resource.data.centerIds == resource.data.centerIds) ||
@@ -122,10 +138,11 @@ service cloud.firestore {
       // Delete: owner / super-admin freely. Admins can delete non-elevated
       // users (instructors / hosts / other admins), never owners or
       // super-admins.
-      allow delete: if isOwner() || isSuperAdmin() ||
+      allow delete: if isOwnerLike() || isSuperAdmin() ||
         (isAdmin()
          && resource.data.role != 'owner'
-         && resource.data.role != 'super_admin');
+         && resource.data.role != 'super_admin'
+         && resource.data.role != 'admin_assistant');
     }
 
     // ─── Per-tenant collections ────────────────────────────────────────
@@ -139,7 +156,7 @@ service cloud.firestore {
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       // Admins can delete shifts too — they manage the schedule day-to-day.
-      allow delete: if isOwner() || isSuperAdmin() || isAdmin();
+      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
     }
 
     match /availability/{availId} {
@@ -148,7 +165,7 @@ service cloud.firestore {
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
       // Update / delete: yours, or owner.
       allow update, delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isOwner() || isSuperAdmin()
+        resource.data.userId == request.auth.uid || isOwnerLike() || isSuperAdmin()
       );
     }
 
@@ -156,11 +173,11 @@ service cloud.firestore {
       allow read:   if isSignedIn();
       // Admins create + delete open shifts too — same surface they see in
       // the Scheduler tab.
-      allow create: if isOwner() || isSuperAdmin() || isAdmin();
+      allow create: if isOwnerLike() || isSuperAdmin() || isAdmin();
       // Update needed for claim flow — any signed-in user can mark
       // an open shift as claimed via transaction.
       allow update: if isSignedIn();
-      allow delete: if isOwner() || isSuperAdmin() || isAdmin();
+      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
     }
 
     match /timeOffRequests/{reqId} {
@@ -170,7 +187,7 @@ service cloud.firestore {
       // Update / delete: yours, or anyone who manages staff (admin / owner / super-admin)
       // approves or denies the request.
       allow update, delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isOwner() || isSuperAdmin() || isAdmin()
+        resource.data.userId == request.auth.uid || isOwnerLike() || isSuperAdmin() || isAdmin()
       );
     }
 
@@ -182,7 +199,7 @@ service cloud.firestore {
       // shift-swap entries from the Shift Board so they can manage swap
       // requests without going through an owner — but they CANNOT delete
       // general team-chat messages (preserving chat as an audit-able log).
-      allow delete: if isOwner() || isSuperAdmin()
+      allow delete: if isOwnerLike() || isSuperAdmin()
                        || (isAdmin() && resource.data.type == 'shift_swap');
     }
 
@@ -199,21 +216,21 @@ service cloud.firestore {
     }
 
     // Centre Leadership Chat — per-centre management space for admin,
-    // owner, and Enterprise. Each message carries a centerId; reads are
+    // owner, AA, and Enterprise. Each message carries a centerId; reads are
     // role-gated here but the client also filters by activeCenterId.
     match /centerLeadership/{msgId} {
-      allow read:   if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin());
-      allow create: if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin())
+      allow read:   if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin());
+      allow create: if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin())
                     && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (isAdmin() || isOwner() || isSuperAdmin());
-      allow delete: if isOwner() || isSuperAdmin();
+      allow update: if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin());
+      allow delete: if isOwnerLike() || isSuperAdmin();
     }
 
     match /announcements/{annId} {
       allow read:  if isSignedIn();
       // Admin-panel writes — admins / owners / super-admins all post and
       // manage announcements. Instructors / hosts can only read.
-      allow create, update, delete: if isOwner() || isSuperAdmin() || isAdmin();
+      allow create, update, delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
     }
 
     match /notificationPreferences/{userId} {
@@ -268,11 +285,11 @@ service cloud.firestore {
     match /ownerAssistant/{uid} {
       allow read, write: if isSignedIn()
                             && request.auth.uid == uid
-                            && isOwner();
+                            && isOwnerLike();
       match /{sub=**} {
         allow read, write: if isSignedIn()
                               && request.auth.uid == uid
-                              && isOwner();
+                              && isOwnerLike();
       }
     }
   }

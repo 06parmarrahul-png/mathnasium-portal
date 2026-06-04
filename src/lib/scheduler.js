@@ -400,6 +400,7 @@ export function generateSchedule({
   const formInstructors = instructors.filter(
     u => u.approved
       && u.role !== 'owner'
+      && u.role !== 'admin_assistant'
       && u.role !== 'super_admin'
       && !fixedStaffNames.has(u.displayName)
   );

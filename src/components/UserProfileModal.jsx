@@ -20,17 +20,19 @@ import {
  */
 
 const ROLE_LABEL = {
-  super_admin: 'Enterprise',
-  owner:       'Owner',
-  admin:       'Admin',
-  instructor:  'Instructor',
+  super_admin:     'Enterprise',
+  owner:           'Owner',
+  admin_assistant: 'Admin Assistant',
+  admin:           'Admin',
+  instructor:      'Instructor',
 };
 
 const ROLE_PILL = {
-  super_admin: 'bg-purple-100 text-purple-700 border-purple-200',
-  owner:       'bg-red-100 text-red-700 border-red-200',
-  admin:       'bg-emerald-100 text-emerald-700 border-emerald-200',
-  instructor:  'bg-gray-100 text-gray-600 border-gray-200',
+  super_admin:     'bg-purple-100 text-purple-700 border-purple-200',
+  owner:           'bg-red-100 text-red-700 border-red-200',
+  admin_assistant: 'bg-teal-100 text-teal-700 border-teal-200',
+  admin:           'bg-emerald-100 text-emerald-700 border-emerald-200',
+  instructor:      'bg-gray-100 text-gray-600 border-gray-200',
 };
 
 function initialsOf(user) {
@@ -89,9 +91,10 @@ export default function UserProfileModal({ user, onClose }) {
               />
             ) : (
               <div className={`flex h-16 w-16 items-center justify-center rounded-full text-xl font-bold text-white border-2 border-white/30 ${
-                role === 'super_admin' ? 'bg-purple-600'
-                  : role === 'owner'   ? 'bg-red-600'
-                  : role === 'admin'   ? 'bg-emerald-600'
+                role === 'super_admin'      ? 'bg-purple-600'
+                  : role === 'owner'        ? 'bg-red-600'
+                  : role === 'admin_assistant' ? 'bg-teal-600'
+                  : role === 'admin'        ? 'bg-emerald-600'
                   : 'bg-gray-600'
               }`}>
                 {initials}

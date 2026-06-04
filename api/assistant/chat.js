@@ -169,7 +169,12 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: 'Not authenticated' });
   const profile = session.profile;
   if (!profile?.approved) return res.status(403).json({ error: 'Account not approved' });
-  if (profile.role !== 'owner') return res.status(403).json({ error: 'Owners only' });
+  // Owner-equivalent roles can use the assistant. Plain admins, instructors,
+  // and super-admins are excluded — super-admins use their own surfaces, and
+  // the assistant is intentionally scoped to per-centre owner/AA workflow.
+  if (profile.role !== 'owner' && profile.role !== 'admin_assistant') {
+    return res.status(403).json({ error: 'Owners only' });
+  }
 
   let body;
   try { body = await readJson(req); }

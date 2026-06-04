@@ -142,13 +142,24 @@ export function AuthProvider({ children }) {
   };
 
   // Convenience helpers for role checks (read by routes / components).
+  //
+  // `admin_assistant` is owner-EQUIVALENT for everything centre-level
+  // (admin panel, centre settings, payroll, scheduling, users, etc.) but
+  // is intentionally NOT included in `isOwner` so they don't appear in
+  // the Owners-only cross-centre platformChat. Use `isOwnerLike` for
+  // permission gates where AA should be treated the same as the owner.
   const role = profile?.role || null;
-  const isSuperAdmin = role === 'super_admin';
-  const isOwner      = role === 'owner';
-  const isAdmin      = role === 'admin';   // distinct from owner (no center settings)
-  const isInstructor = role === 'instructor';
-  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdmin;
-  const canSeeCenterSettings = isSuperAdmin || isOwner;
+  const isSuperAdmin       = role === 'super_admin';
+  const isOwner            = role === 'owner';
+  const isAdminAssistant   = role === 'admin_assistant';
+  const isAdmin            = role === 'admin';   // distinct from owner (no center settings)
+  const isInstructor       = role === 'instructor';
+  // True for any role that should see what the owner sees at the centre
+  // level (owner + AA + super-admin). DON'T use this for platformChat —
+  // that one is strictly owner+super_admin.
+  const isOwnerLike        = isOwner || isAdminAssistant || isSuperAdmin;
+  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
+  const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant;
   const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
@@ -278,6 +289,8 @@ export function AuthProvider({ children }) {
       role,
       isSuperAdmin,
       isOwner,
+      isAdminAssistant,
+      isOwnerLike,
       isAdmin,
       isInstructor,
       canSeeAdminPanel,

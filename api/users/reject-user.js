@@ -61,7 +61,7 @@ export default async function handler(req, res) {
   const caller = session.profile;
   const callerRole = caller?.role || '';
   // Anyone without admin-panel access has no business here.
-  if (!['super_admin', 'owner', 'admin'].includes(callerRole)) {
+  if (!['super_admin', 'owner', 'admin_assistant', 'admin'].includes(callerRole)) {
     return res.status(403).json({ error: 'Not authorized' });
   }
 
@@ -91,7 +91,11 @@ export default async function handler(req, res) {
   }
   if (callerRole !== 'super_admin') {
     // Owners can't reject other owners. Admins can't reject owners or admins.
-    const PRIVILEGE = { instructor: 1, admin: 2, owner: 3, super_admin: 4 };
+    // AA sits between admin and owner — has owner-level data access but
+    // is not an owner. For rejection privilege, treat them as a notch
+    // above admin: an AA can be rejected by an owner or super-admin, but
+    // not by an admin or another AA.
+    const PRIVILEGE = { instructor: 1, admin: 2, admin_assistant: 2.5, owner: 3, super_admin: 4 };
     if ((PRIVILEGE[targetRole] || 0) >= (PRIVILEGE[callerRole] || 0)) {
       return res.status(403).json({
         error: 'You cannot reject a user with equal or higher privilege.',

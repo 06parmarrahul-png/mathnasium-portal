@@ -358,7 +358,10 @@ const TOOL_HANDLERS = {
       };
     });
     const schedulableUsers = allUsers.filter(u =>
-      u.approved && u.role !== 'owner' && u.role !== 'super_admin'
+      u.approved
+      && u.role !== 'owner'
+      && u.role !== 'admin_assistant'
+      && u.role !== 'super_admin'
       && u.isVolunteer !== true
     );
 

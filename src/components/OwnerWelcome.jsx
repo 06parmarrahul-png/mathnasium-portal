@@ -49,8 +49,10 @@ function daysSince(date) {
  */
 // eslint-disable-next-line react-refresh/only-export-components
 export function useOwnerWelcomeState() {
-  const { profile, isOwner } = useAuth();
-  if (!profile || !isOwner) return 'hide';
+  // Show the welcome banner to AA too — they have the same setup tasks
+  // as the owner (centre settings, fixed staff, holidays, etc.).
+  const { profile, isOwnerLike } = useAuth();
+  if (!profile || !isOwnerLike) return 'hide';
   if (profile.ownerWelcomeDismissed) return 'hide';
   const startedAt = tsToDate(profile.ownerWelcomeStartAt);
   if (!startedAt) return 'stamp';  // first owner-Home visit

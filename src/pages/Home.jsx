@@ -118,7 +118,10 @@ export default function Home() {
 
   const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
-  const isStaff = profile?.uid && profile?.role !== 'owner' && profile?.role !== 'super_admin';
+  const isStaff = profile?.uid
+    && profile?.role !== 'owner'
+    && profile?.role !== 'admin_assistant'
+    && profile?.role !== 'super_admin';
   // Today's Snapshot is for everyone running ops — admins, owners, and
   // super-admins. Previously gated to owner-only which left admins (who
   // staff the centre day-to-day) without the coverage view at a glance.
@@ -408,7 +411,7 @@ export default function Home() {
             </Link>
           ))}
 
-          {profile?.role === 'owner' && (
+          {(profile?.role === 'owner' || profile?.role === 'admin_assistant') && (
             <Link
               to="/admin"
               className="group flex items-center gap-4 rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition-all hover:shadow-md hover:-translate-y-0.5"

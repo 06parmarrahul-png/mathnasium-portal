@@ -20,7 +20,9 @@ import { Sparkles, X, Send, Loader2 } from 'lucide-react';
 const HISTORY_LIMIT = 50;
 
 export default function OwnerAssistant() {
-  const { profile, isOwner, activeCenterId } = useAuth();
+  // AA gets the same assistant as the owner — the API handler verifies the
+  // role and the Firestore rules already include them via isOwnerLike().
+  const { profile, isOwnerLike, activeCenterId } = useAuth();
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -34,7 +36,7 @@ export default function OwnerAssistant() {
   // /ownerAssistant/{uid}/messages subcollection — Firestore rules enforce
   // that nobody else can read it.
   useEffect(() => {
-    if (!ownerUid || !isOwner) return;
+    if (!ownerUid || !isOwnerLike) return;
     const q = query(
       collection(db, 'ownerAssistant', ownerUid, 'messages'),
       orderBy('createdAt', 'asc'),
@@ -45,7 +47,7 @@ export default function OwnerAssistant() {
     }, (err) => {
       console.warn('[OwnerAssistant] history subscribe failed:', err?.message);
     });
-  }, [ownerUid, isOwner]);
+  }, [ownerUid, isOwnerLike]);
 
   // Auto-scroll to newest message when the panel is open.
   useEffect(() => {
@@ -59,8 +61,8 @@ export default function OwnerAssistant() {
     return `Hi ${name}. I'm your assistant — ask me about your center, schedule something, draft an email, or just chat.`;
   }, [profile?.displayName]);
 
-  // Owner-only gate. Render nothing for everyone else.
-  if (!isOwner || !ownerUid) return null;
+  // Owner / AA gate. Render nothing for everyone else.
+  if (!isOwnerLike || !ownerUid) return null;
 
   async function send() {
     const text = input.trim();
