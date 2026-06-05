@@ -10,6 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
+  CalendarRange, Users, Wallet,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -92,98 +93,124 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
-  // Build nav based on role. Four sections — GENERAL / ENTERPRISE / OWNER /
-  // ADMIN — visible to whoever's signed in. Items are added per-section
-  // based on role rather than building entirely different nav trees per
-  // role; the structure stays consistent and only what appears inside each
-  // section varies. Empty sections are dropped before render.
+  // Build nav based on role. Sections appear in this order:
+  //   GENERAL → MANAGE → INSIGHTS → COMMUNICATE → ENTERPRISE → SETTINGS
+  // ordered roughly by how often a new owner needs each thing. The
+  // "Manage" group breaks the old Admin Panel mega-tab into three
+  // verb-named destinations a brand-new owner can scan and understand
+  // without prior training. Holidays moved under Settings, time off is
+  // a sub-tab of Manage Schedule, and Shift Board is hidden for owners
+  // (they see open shifts inside Manage Schedule already).
   //
   // Role guide:
-  //   instructor  → GENERAL only (Home, Announcements, Notifications, plus
-  //                 personal work: Scheduling, Shift Board, Chat).
-  //   admin       → above + ADMIN: Admin Panel.
-  //   owner       → above (no Scheduling — owners don't claim shifts
-  //                 personally) + OWNER: Centre Analytics, Centre Settings
-  //                 + ADMIN: Admin Panel.
-  //   super_admin → GENERAL (Home, Announcements, Notifications only —
-  //                 Enterprise doesn't run any centre's day-to-day) +
-  //                 ENTERPRISE: Manage Centres, Manage Roles, Platform
-  //                 Revenue, Platform Chat, Audit Logs + OWNER + ADMIN.
-  //                 ("super_admin" is the internal role string; the UI
-  //                 surface always says "Enterprise".)
+  //   instructor  → GENERAL + personal Scheduling / Shift Board / Chat.
+  //   admin       → GENERAL + MANAGE + COMMUNICATE.
+  //   admin_asst. → GENERAL + MANAGE + INSIGHTS + COMMUNICATE + SETTINGS,
+  //                 PLUS personal Scheduling (they take shifts).
+  //   owner       → GENERAL + MANAGE + INSIGHTS + COMMUNICATE + SETTINGS.
+  //   super_admin → above + ENTERPRISE: Manage Centres, Manage Roles,
+  //                 Platform Revenue, Leadership Chat, Audit Logs.
   const general = [
-    { to: '/',              label: 'Home',          icon: House },
-    { to: '/announcements', label: 'Announcements', icon: Megaphone },
+    { to: '/', label: 'Home', icon: House },
   ];
   // Personal scheduling surfaces. Enterprise users skip these entirely —
   // they're the platform operator and shouldn't be claiming shifts at
   // someone else's centre. Owners skip Schedule (the personal-availability
   // page) since they run the business rather than take individual shifts,
-  // but they keep Shift Board and Chat for awareness / coverage gaps.
-  if (!isSuperAdmin) {
-    // Owners skip the personal Schedule page (they run the centre, they
-    // don't take individual shifts). Admin Assistants get it back since
-    // they ARE scheduled like regular staff — they need to submit
-    // availability and see their own shifts.
-    if (!isOwner) {
-      general.push({ to: '/schedule', label: 'Scheduling', icon: CalendarDays });
-    }
-    general.push(
-      { to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount },
-      { to: '/chat',        label: 'Chat',        icon: MessageSquare },
+  // but AA gets it back (they ARE scheduled like staff).
+  if (!isSuperAdmin && !isOwner) {
+    general.push({ to: '/schedule', label: 'My Schedule', icon: CalendarDays });
+  }
+  // Shift Board is for instructors and AA (anyone who can claim shifts).
+  // Owners see open shifts inside Manage Schedule and don't need a
+  // separate sidebar item.
+  if (!isSuperAdmin && !isOwner) {
+    general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
+  }
+
+  // MANAGE — verb-named top-level destinations for the three things an
+  // owner does every day. Each links to a focused view of what used to
+  // be a tab inside the old Admin Panel. Internal Admin component reads
+  // ?tab= from the URL so the existing tab system keeps working.
+  const manage = [];
+  if (canSeeAdminPanel) {
+    manage.push(
+      { to: '/admin?tab=spreadsheet', label: 'Manage Schedule', icon: CalendarRange },
+      { to: '/admin?tab=users',       label: 'Manage Staff',    icon: Users },
+      { to: '/admin?tab=payroll',     label: 'Manage Payroll',  icon: Wallet },
     );
   }
-  // Notifications is per-user preference — every signed-in user has one.
-  // Lives in GENERAL now (previously under ADMIN) so every role sees it
-  // in the same place.
-  general.push({ to: '/notifications', label: 'Notifications', icon: Bell });
 
-  // ENTERPRISE — platform-operator only. Manage Centres, the new Manage
-  // Roles screen, Platform Revenue, Platform Chat (cross-centre operator
-  // chat), and the Audit Logs viewer all live here.
+  // INSIGHTS — strategy / metrics surface. Owners + AA + Enterprise.
+  // Plain admins run day-to-day ops but don't see strategic metrics.
+  const insights = [];
+  if (isSuperAdmin || isOwner || isAdminAssistant) {
+    insights.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
+  }
+
+  // COMMUNICATE — chat, announcements, personal notification prefs.
+  // Everyone sees these (instructors all the way up to Enterprise).
+  const communicate = [];
+  if (!isSuperAdmin) {
+    communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
+  }
+  if ((isAdmin || isOwner || isAdminAssistant) && !isSuperAdmin) {
+    communicate.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
+  }
+  communicate.push(
+    { to: '/announcements', label: 'Announcements', icon: Megaphone },
+    { to: '/notifications', label: 'Notifications', icon: Bell },
+  );
+
+  // ENTERPRISE — platform-operator only. Sits between COMMUNICATE and
+  // SETTINGS so super-admin tools are grouped together but don't crowd
+  // the per-centre nav above.
   const enterprise = [];
   if (isSuperAdmin) {
     enterprise.push(
       { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
       { to: '/manage-roles',     label: 'Manage Roles',     icon: UserCog },
       { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
-      { to: '/platform-chat',    label: 'Leadership Chat',    icon: Headphones },
+      { to: '/platform-chat',    label: 'Leadership Chat',  icon: Headphones },
       { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
     );
   }
 
-  // OWNER — per-centre strategic surfaces. Owners + AA + Enterprise see these.
-  // Plain admins manage day-to-day ops but don't get strategic metrics or
-  // scheduler config.
-  const owner = [];
+  // SETTINGS — one-time / rare-touch configuration. Sits at the bottom
+  // so it doesn't crowd the daily-use items above. Centre Settings
+  // includes Holidays as a sub-section (one less sidebar row for the
+  // owner to scan past).
+  const settingsSection = [];
   if (isSuperAdmin || isOwner || isAdminAssistant) {
-    owner.push(
-      { to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 },
-      { to: '/center-settings',  label: 'Centre Settings',  icon: Settings },
-    );
-  }
-
-  // ADMIN — Admin Panel for everyone who can see it. Leadership Chat lives
-  // here for admins + owners + AA; Enterprise viewers see it under the
-  // ENTERPRISE section above (so it doesn't appear twice).
-  const admin = [];
-  if (canSeeAdminPanel) {
-    admin.push({ to: '/admin', label: 'Admin Panel', icon: Shield });
-  }
-  if ((isAdmin || isOwner || isAdminAssistant) && !isSuperAdmin) {
-    admin.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
+    settingsSection.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
   }
 
   const navSections = [
-    { label: 'General',    items: general    },
-    { label: 'Enterprise', items: enterprise },
-    { label: 'Owner',      items: owner      },
-    { label: 'Admin',      items: admin      },
+    { label: 'General',     items: general     },
+    { label: 'Manage',      items: manage      },
+    { label: 'Insights',    items: insights    },
+    { label: 'Communicate', items: communicate },
+    { label: 'Enterprise',  items: enterprise  },
+    { label: 'Settings',    items: settingsSection },
   ].filter(s => s.items.length > 0);
 
-  // Simple path equality is enough now that nothing deep-links into
-  // admin?tab= from the sidebar.
-  const isActive = (item) => location.pathname === item.to;
+  // Path equality + (when the link carries a ?tab= query string)
+  // also matches the active tab. This keeps Manage Schedule /
+  // Manage Staff / Manage Payroll distinct in the sidebar even
+  // though they all point at /admin underneath.
+  const currentTab = new URLSearchParams(location.search).get('tab') || 'spreadsheet';
+  const isActive = (item) => {
+    const [path, queryStr] = item.to.split('?');
+    if (location.pathname !== path) return false;
+    if (!queryStr) {
+      // Item has no ?tab=, so it's only active when no tab is selected
+      // (the default landing). Avoids /admin matching /admin?tab=users.
+      if (path === '/admin') return currentTab === 'spreadsheet';
+      return true;
+    }
+    const itemTab = new URLSearchParams(queryStr).get('tab');
+    return itemTab === currentTab;
+  };
 
   // Role badge for the bottom user card
   const roleLabel = ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor');

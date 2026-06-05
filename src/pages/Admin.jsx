@@ -1947,34 +1947,60 @@ export default function Admin() {
 
   const pendingRequestsCount = timeOffRequests.filter(r => r.status === 'pending').length;
 
-  // Center Settings is owner / super-admin only — plain admins run
-  // day-to-day operations but don't change the center's configuration.
-  const tabs = [
-    { key: 'spreadsheet',  label: 'Scheduler',      icon: Table },
-    { key: 'users',        label: 'Manage Users',   icon: UserCheck },
-    { key: 'scheduler',    label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
-    { key: 'payroll',      label: 'Payroll',        icon: DollarSign },
-    { key: 'requests',     label: 'Requests',       icon: CalendarRange },
-    // Holidays is visible to all admin-panel roles (admin / owner / super-admin)
-    // so anyone who manages day-to-day ops can add a closure.
-    { key: 'holidays',     label: 'Holidays',       icon: CalendarX },
-    // Analytics + Center Settings used to live here as tabs. They are now
-    // standalone sidebar destinations (/center-analytics, /center-settings)
-    // for owners / super-admins, so they no longer clutter this tab strip.
-  ];
+  // Each top-level sidebar entry now scopes the page to a small group
+  // of related sub-tabs. "Manage Schedule" shows weekly grid +
+  // auto-scheduler + time-off requests; "Manage Staff" and "Manage
+  // Payroll" are single-view pages (no sub-tab bar). Tabs that aren't
+  // in the current group stay reachable by direct URL (so deep links
+  // don't break) but don't appear in the tab strip.
+  const TAB_GROUPS = {
+    spreadsheet: ['spreadsheet', 'scheduler', 'requests'],
+    scheduler:   ['spreadsheet', 'scheduler', 'requests'],
+    requests:    ['spreadsheet', 'scheduler', 'requests'],
+    users:       ['users'],
+    payroll:     ['payroll'],
+    holidays:    ['holidays'],
+  };
+  const TAB_DEFS = {
+    spreadsheet: { label: 'Weekly Grid',    icon: Table },
+    scheduler:   { label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
+    requests:    { label: 'Time Off',       icon: CalendarRange },
+    users:       { label: 'Manage Users',   icon: UserCheck },
+    payroll:     { label: 'Payroll',        icon: DollarSign },
+    holidays:    { label: 'Holidays',       icon: CalendarX },
+  };
+  const visibleTabKeys = TAB_GROUPS[tab] || Object.keys(TAB_DEFS);
+  const tabs = visibleTabKeys.map(k => ({ key: k, ...TAB_DEFS[k] }));
+
+  // Friendly per-tab page header. Mirrors the sidebar labels so the
+  // owner sees "Manage Schedule" / "Manage Staff" / "Manage Payroll"
+  // as the page title when they navigate via the redesigned sidebar.
+  const pageTitleByTab = {
+    spreadsheet: { title: 'Manage Schedule', subtitle: 'Weekly grid + auto-scheduler + time-off requests', icon: CalendarRange,    bg: 'bg-blue-100 text-blue-600' },
+    users:       { title: 'Manage Staff',    subtitle: 'Approve, roles, sub-roles, priority',           icon: Users,            bg: 'bg-emerald-100 text-emerald-600' },
+    scheduler:   { title: 'Auto-Scheduler',  subtitle: 'Generate a draft schedule from availability',   icon: Wand2,            bg: 'bg-purple-100 text-purple-600' },
+    payroll:     { title: 'Manage Payroll',  subtitle: 'Hourly summary + Radius timesheet compare',     icon: DollarSign,       bg: 'bg-amber-100 text-amber-600' },
+    requests:    { title: 'Time Off Requests', subtitle: 'Approve or deny time off',                    icon: CalendarRange,    bg: 'bg-orange-100 text-orange-600' },
+    holidays:    { title: 'Holidays',        subtitle: 'Stat holidays + centre closures',               icon: CalendarX,        bg: 'bg-purple-100 text-purple-600' },
+  };
+  const pageHeader = pageTitleByTab[tab] || { title: 'Admin Panel', subtitle: 'Manage instructors and shifts', icon: Settings, bg: 'bg-purple-100 text-purple-600' };
+  const PageIcon = pageHeader.icon;
 
   return (
     <div className="mx-auto max-w-7xl">
       {/* Header */}
       <div className="mb-6 flex items-center gap-3">
-        <div className="rounded-lg bg-purple-100 p-2 text-purple-600"><Settings size={22} /></div>
+        <div className={`rounded-lg p-2 ${pageHeader.bg}`}><PageIcon size={22} /></div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Admin Panel</h1>
-          <p className="text-sm text-gray-500">Manage instructors and shifts</p>
+          <h1 className="text-2xl font-bold text-gray-900">{pageHeader.title}</h1>
+          <p className="text-sm text-gray-500">{pageHeader.subtitle}</p>
         </div>
       </div>
 
-      {/* Tabs */}
+      {/* Sub-tabs — only shown when the current section has more than one
+          view. "Manage Staff" / "Manage Payroll" / "Holidays" are
+          single-view pages so the bar is suppressed. */}
+      {tabs.length > 1 && (
       <div className="mb-6 flex gap-1 border-b overflow-x-auto">
         {tabs.map(t => (
           <button key={t.key} onClick={() => selectTab(t.key)}
@@ -1993,6 +2019,7 @@ export default function Admin() {
           </button>
         ))}
       </div>
+      )}
 
       {/* ── SPREADSHEET (Weekly Calendar Grid) ──────────────────────────────── */}
       {tab === 'spreadsheet' && (

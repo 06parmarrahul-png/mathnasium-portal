@@ -1,6 +1,7 @@
 import { useAuth } from '../contexts/AuthContext';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import AppearanceEditor from '../components/AppearanceEditor';
+import HolidaysEditor from '../components/HolidaysEditor';
 import { ShieldAlert } from 'lucide-react';
 
 /**
@@ -29,6 +30,14 @@ export default function CenterSettings() {
   return (
     <div className="mx-auto max-w-7xl space-y-6">
       <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
+      {/* Holidays moved here from the old Admin Panel tab so all one-time
+          centre config lives in a single Settings page. Owners + AA can
+          add stat closures, renovations, etc. */}
+      <HolidaysEditor
+        activeCenterId={activeCenterId}
+        centerConfig={centerConfig}
+        activeCenterName={centerConfig?.name || activeCenterId}
+      />
       {/* Role / shift colours — owners + Enterprise can rebrand their own
           centre here. (Previously lived only on Manage Centres, but owners
           asked to have it under their own Centre Settings page.) */}
