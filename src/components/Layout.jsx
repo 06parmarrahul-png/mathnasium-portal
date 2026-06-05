@@ -121,9 +121,11 @@ export default function Layout({ children }) {
   // page) since they run the business rather than take individual shifts,
   // but they keep Shift Board and Chat for awareness / coverage gaps.
   if (!isSuperAdmin) {
-    // Owners + AA skip the personal Schedule page (they run the centre,
-    // they don't take individual shifts). Everyone else gets it.
-    if (!isOwner && !isAdminAssistant) {
+    // Owners skip the personal Schedule page (they run the centre, they
+    // don't take individual shifts). Admin Assistants get it back since
+    // they ARE scheduled like regular staff — they need to submit
+    // availability and see their own shifts.
+    if (!isOwner) {
       general.push({ to: '/schedule', label: 'Scheduling', icon: CalendarDays });
     }
     general.push(

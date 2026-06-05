@@ -397,10 +397,12 @@ export function generateSchedule({
   // fixed staff. Enterprise (super_admin) accounts have global platform
   // access but aren't centre staff — if one ever submits availability
   // by accident we still don't want them on the assignment grid.
+  // Owners and super-admins never appear on the schedule (they run the
+  // centre, they don't take shifts). Admin Assistants DO appear — they're
+  // owner-equivalent for permissions but operate as staff for scheduling.
   const formInstructors = instructors.filter(
     u => u.approved
       && u.role !== 'owner'
-      && u.role !== 'admin_assistant'
       && u.role !== 'super_admin'
       && !fixedStaffNames.has(u.displayName)
   );

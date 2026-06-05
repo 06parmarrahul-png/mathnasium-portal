@@ -118,9 +118,11 @@ export default function Home() {
 
   const days = upcomingShift ? daysUntil(upcomingShift.date) : null;
 
+  // Admin Assistants count as staff for the home page treatment — they
+  // take shifts, so they see the upcoming-shift card the same as
+  // instructors. Owners and super-admins run the centre and don't.
   const isStaff = profile?.uid
     && profile?.role !== 'owner'
-    && profile?.role !== 'admin_assistant'
     && profile?.role !== 'super_admin';
   // Today's Snapshot is for everyone running ops — admins, owners, and
   // super-admins. Previously gated to owner-only which left admins (who

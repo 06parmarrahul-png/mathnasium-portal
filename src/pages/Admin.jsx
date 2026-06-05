@@ -754,8 +754,11 @@ export default function Admin() {
   // fallback so the existing internal account stays hidden until someone
   // sets the flag on its user doc — once the flag is set the name match
   // becomes irrelevant.
+  // Admin Assistants show up in the staff list — they get scheduled and
+  // appear on payroll like anyone else. Only true Owners and super-admins
+  // are hidden from operational surfaces.
   const isVisibleStaff = (u) =>
-    u && u.role !== 'owner' && u.role !== 'admin_assistant' && u.role !== 'super_admin'
+    u && u.role !== 'owner' && u.role !== 'super_admin'
       && u.internal !== true
       && u.displayName !== 'Admin Team';
 
@@ -1552,7 +1555,7 @@ export default function Admin() {
   const hiddenFromOps = useMemo(() => {
     const set = new Set();
     for (const u of users) {
-      const hidden = u.role === 'owner' || u.role === 'admin_assistant' || u.role === 'super_admin'
+      const hidden = u.role === 'owner' || u.role === 'super_admin'
         || u.internal === true
         || u.displayName === 'Admin Team';
       if (hidden && u.displayName) set.add(u.displayName);
