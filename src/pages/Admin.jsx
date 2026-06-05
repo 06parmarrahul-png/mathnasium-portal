@@ -2197,6 +2197,51 @@ export default function Admin() {
         return;
       }
 
+      // Normalise Radius's Duration column to actual decimal hours.
+      // Radius exports duration in MINUTES (a 4-hour shift comes through
+      // as 242 — i.e. 4h 2min = 242 minutes — not 242 hours). Treating
+      // it as hours was producing nonsense totals like "2,095h" instead
+      // of "35h" for a pay period. Handles three observed formats:
+      //   - minutes as a plain number (242)        → divide by 60
+      //   - decimal hours (4.03)                   → leave alone
+      //   - "HH:MM" string ("04:02")              → parse to hours
+      // Heuristic for the numeric case: anything > 24 is minutes (nobody
+      // works > 24 hours in a single shift; the largest legitimate
+      // hour value we'd ever see is ~16).
+      const normaliseDuration = (raw) => {
+        if (raw == null || raw === '') return NaN;
+        const s = String(raw).trim();
+        if (s.includes(':')) {
+          const [h, m] = s.split(':').map(Number);
+          if (Number.isFinite(h) && Number.isFinite(m)) return h + (m / 60);
+        }
+        const n = parseFloat(s);
+        if (!Number.isFinite(n)) return NaN;
+        return n > 24 ? n / 60 : n;
+      };
+      // Belt-and-suspenders: when timeIn + timeOut are both present, compute
+      // duration from those instead — Radius's Duration column has been
+      // unreliable across export versions.
+      const minutesFromHHMM = (str) => {
+        if (!str) return null;
+        const m = String(str).trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/);
+        if (!m) return null;
+        let h = parseInt(m[1], 10);
+        const min = parseInt(m[2], 10);
+        const ampm = (m[3] || '').toUpperCase();
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        return h * 60 + min;
+      };
+      const hoursFromTimes = (inStr, outStr) => {
+        const a = minutesFromHHMM(inStr);
+        const b = minutesFromHHMM(outStr);
+        if (a == null || b == null) return null;
+        let diff = b - a;
+        if (diff < 0) diff += 24 * 60; // shift crossed midnight
+        return diff / 60;
+      };
+
       const parsed = [];
       for (let i = headerIndex + 1; i < rows.length; i++) {
         const row = rows[i];
@@ -2204,7 +2249,14 @@ export default function Admin() {
         const dateRaw = String(row[colMap.date] || '').trim();
         const timeIn  = String(row[colMap.timeIn] || '').trim();
         const timeOut = String(row[colMap.timeOut] || '').trim();
-        const durationHours = parseFloat(row[colMap.duration]);
+        const fromTimes = hoursFromTimes(timeIn, timeOut);
+        const fromCol   = normaliseDuration(row[colMap.duration]);
+        // Prefer the time-in / time-out computation when we have both
+        // (most accurate). Fall back to the (normalised) Duration column
+        // when times are missing or unparseable.
+        const actualHours = Number.isFinite(fromTimes) ? fromTimes
+                          : Number.isFinite(fromCol)   ? fromCol
+                          : NaN;
         // attendanceId is optional — we keep the existing "must be numeric"
         // filter when the column is present, since it's how Radius marks
         // real rows vs total/summary rows. If the column isn't there we
@@ -2215,7 +2267,7 @@ export default function Admin() {
         }
 
         if (!name) continue;
-        if (!dateRaw || isNaN(durationHours)) continue;
+        if (!dateRaw || !Number.isFinite(actualHours)) continue;
 
         // Parse DD/MM/YYYY → YYYY-MM-DD
         if (!dateRaw.includes('/')) continue;
@@ -2224,7 +2276,7 @@ export default function Admin() {
         const [d, m, y] = parts;
         const dateStr = `${y.trim()}-${String(m.trim()).padStart(2,'0')}-${String(d.trim()).padStart(2,'0')}`;
 
-        parsed.push({ name, date: dateStr, timeIn, timeOut, actualHours: durationHours });
+        parsed.push({ name, date: dateStr, timeIn, timeOut, actualHours });
       }
 
       if (parsed.length === 0) {
