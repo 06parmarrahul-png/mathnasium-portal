@@ -20,6 +20,7 @@ import {
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
@@ -236,9 +237,7 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
         {/* Show selected instructor name when pre-filled */}
         {user && (
           <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2">
-            <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-xs font-bold text-red-700">
-              {user.displayName?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
-            </div>
+            <Avatar user={user} size={28} />
             <span className="text-sm font-medium text-gray-800">{user.displayName}</span>
             {user.instructorType && <span className="text-xs text-gray-400">· {user.instructorType}</span>}
           </div>
@@ -473,11 +472,14 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
       title={`Availability — ${user.displayName}`}
       onClose={onClose}
     >
-      <p className="text-xs text-gray-500 -mt-2 mb-3">
-        {firstDay && lastDay
-          ? <>Week of {format(firstDay, 'MMM d')} – {format(lastDay, 'MMM d, yyyy')}</>
-          : 'No operating days this week'}
-      </p>
+      <div className="-mt-2 mb-3 flex items-center gap-2">
+        <Avatar user={user} size={28} />
+        <p className="text-xs text-gray-500">
+          {firstDay && lastDay
+            ? <>Week of {format(firstDay, 'MMM d')} – {format(lastDay, 'MMM d, yyyy')}</>
+            : 'No operating days this week'}
+        </p>
+      </div>
       <div className="space-y-2">
         {weekDays.map(d => {
           const ds = format(d, 'yyyy-MM-dd');
@@ -2601,7 +2603,7 @@ export default function Admin() {
                             title={`View ${u.displayName}'s availability for this week`}
                             className="flex items-center gap-2 w-full text-left rounded-md px-1 py-0.5 -mx-1 hover:bg-blue-50 hover:ring-1 hover:ring-blue-200 transition-colors"
                           >
-                            <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-xs font-bold text-red-700 shrink-0">{initials}</div>
+                            <Avatar user={u} size={28} />
                             <div>
                               <div className="font-semibold text-gray-800 text-xs">{u.displayName}</div>
                               <div className="text-gray-400" style={{fontSize:'10px'}}>{displayHrs}h · {u.instructorType || 'Instructor'}</div>
@@ -2856,9 +2858,7 @@ export default function Admin() {
                 <ul className="divide-y divide-gray-100">
                   {filtered.map(u => (
                     <li key={u.id} className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-gray-50">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-yellow-100 text-xs font-bold text-yellow-700 shrink-0">
-                        {u.displayName?.charAt(0)?.toUpperCase() || '?'}
-                      </div>
+                      <Avatar user={u} size={32} roleColored={false} className="ring-2 ring-yellow-100" />
                       <div className="min-w-0 flex-1">
                         <p className="font-medium text-gray-900 truncate">{u.displayName || u.email}</p>
                         <p className="text-xs text-gray-500 truncate">{u.email}</p>
@@ -2930,9 +2930,7 @@ export default function Admin() {
                           onClick={() => setEditStaffUser(u)}
                           className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
                         >
-                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-100 text-sm font-bold text-red-700 shrink-0">
-                            {u.displayName?.charAt(0)?.toUpperCase() || '?'}
-                          </div>
+                          <Avatar user={u} size={36} />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-gray-900 truncate">{u.displayName || u.email}</p>
@@ -3306,11 +3304,12 @@ export default function Admin() {
                               {editingDay.assignedEmployees.map(name => {
                                 const sub = subRoleStyleFor(editingDay.subRoles?.[name]);
                                 const [startTime, endTime] = parseShiftTimeStr(editingDay.shiftTimes?.[name]);
-                                const initials = (name || '').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+                                const userForAvatar = usersForCentre.find(uu => uu.displayName === name)
+                                  || { displayName: name };
                                 return (
                                   <div key={name} className="flex items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 shadow-sm">
-                                    <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${sub?.blockBg || 'bg-gray-400'}`}>
-                                      {initials || '?'}
+                                    <div className={`shrink-0 rounded-full ${sub?.blockBg || ''} ring-2 ring-white`} style={{ padding: '2px' }}>
+                                      <Avatar user={userForAvatar} size={28} roleColored={false} />
                                     </div>
                                     <div className="min-w-0 flex-1">
                                       <div className="flex items-center justify-between mb-1.5">
@@ -3404,7 +3403,8 @@ export default function Admin() {
                                   const subRole = day.subRoles?.[name];
                                   const time = day.shiftTimes?.[name];
                                   const sub = subRoleStyleFor(subRole);
-                                  const initials = (name || '').split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+                                  const userForAvatar = usersForCentre.find(uu => uu.displayName === name)
+                                    || { displayName: name };
                                   const isHostRow   = role === 'Host';
                                   const isOnlineRow = role === 'Online Instructor';
                                   return (
@@ -3413,10 +3413,11 @@ export default function Admin() {
                                       className="flex items-center gap-2.5 rounded-lg border border-gray-200 bg-white px-2.5 py-2 hover:border-gray-300 hover:shadow-sm transition-all"
                                     >
                                       <div
-                                        className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${sub ? sub.blockBg : 'bg-gray-400'}`}
+                                        className={`shrink-0 rounded-full ${sub?.blockBg || ''}`}
                                         title={subRole || 'No sub-role'}
+                                        style={{ padding: '2px' }}
                                       >
-                                        {initials || '?'}
+                                        <Avatar user={userForAvatar} size={28} roleColored={false} />
                                       </div>
                                       <div className="min-w-0 flex-1">
                                         <p className="text-xs font-semibold text-gray-900 truncate">{name}</p>
@@ -3654,10 +3655,10 @@ export default function Admin() {
                     {/* Person header */}
                     <div className={`flex items-center justify-between px-5 py-3 border-b ${isDiscrepant ? 'bg-red-50' : 'bg-gray-50'}`}>
                       <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold"
-                          style={{ backgroundColor: bg, color: contrastText(bg) }}>
-                          {person.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2)}
-                        </div>
+                        <Avatar
+                          user={usersForCentre.find(uu => uu.displayName === person.name) || { displayName: person.name }}
+                          size={32}
+                        />
                         <div>
                           <span className="font-semibold text-gray-900">{person.name}</span>
                           <span className="ml-2 text-xs text-gray-500">{person.role}</span>
