@@ -1,21 +1,50 @@
+import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import AppearanceEditor from '../components/AppearanceEditor';
 import HolidaysEditor from '../components/HolidaysEditor';
-import { ShieldAlert } from 'lucide-react';
+import { ShieldAlert, Settings, CalendarX, Palette } from 'lucide-react';
 
 /**
- * Standalone Centre Settings page. Thin wrapper around the existing
- * CenterSettingsTab component so it can be reached directly from the
- * sidebar instead of as a tab inside the Admin Panel.
+ * Standalone Centre Settings page with tabs.
  *
- * Visible to owners and super-admins (canSeeCenterSettings = true).
- * Plain admins are blocked here — they manage day-to-day ops on the
- * Admin Panel, but Center Settings (instructional hours, fixed staff,
- * etc.) is owner-only because it changes how scheduling works.
+ * Tabs:
+ *   General   — identity, instructional + operating hours, salaried staff
+ *   Holidays  — one-off centre closures (stat holidays, renovations)
+ *   Colours   — role / shift colour palette for this centre
+ *
+ * Visible to owners / Admin Assistants / super-admins (canSeeCenterSettings).
+ * Plain admins are blocked here — they manage day-to-day ops on Manage
+ * Staff / Manage Schedule, but centre config (hours, salaried list,
+ * holidays, colours) is owner-level because it changes how scheduling
+ * and payroll behave.
+ *
+ * Active tab is persisted in the URL (?tab=general|holidays|colours) so
+ * refreshing or sharing the link lands you back on the same view.
  */
+
+const TABS = [
+  { key: 'general',  label: 'General',  icon: Settings },
+  { key: 'holidays', label: 'Holidays', icon: CalendarX },
+  { key: 'colours',  label: 'Colours',  icon: Palette  },
+];
+
 export default function CenterSettings() {
   const { activeCenterId, centerConfig, canSeeCenterSettings } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => {
+    const t = searchParams.get('tab');
+    return TABS.some(x => x.key === t) ? t : 'general';
+  });
+
+  const selectTab = (key) => {
+    setTab(key);
+    const next = new URLSearchParams(searchParams);
+    if (key === 'general') next.delete('tab');
+    else next.set('tab', key);
+    setSearchParams(next, { replace: true });
+  };
 
   if (!canSeeCenterSettings) {
     return (
@@ -29,23 +58,60 @@ export default function CenterSettings() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-6">
-      <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
-      {/* Holidays moved here from the old Admin Panel tab so all one-time
-          centre config lives in a single Settings page. Owners + AA can
-          add stat closures, renovations, etc. */}
-      <HolidaysEditor
-        activeCenterId={activeCenterId}
-        centerConfig={centerConfig}
-        activeCenterName={centerConfig?.name || activeCenterId}
-      />
-      {/* Role / shift colours — owners + Enterprise can rebrand their own
-          centre here. (Previously lived only on Manage Centres, but owners
-          asked to have it under their own Centre Settings page.) */}
-      <AppearanceEditor
-        activeCenterId={activeCenterId}
-        centerConfig={centerConfig}
-        activeCenterName={centerConfig?.name || activeCenterId}
-      />
+      {/* Page header */}
+      <div className="flex items-center gap-3">
+        <div className="rounded-lg bg-purple-100 p-2 text-purple-600"><Settings size={22} /></div>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Centre Settings</h1>
+          <p className="text-sm text-gray-500">
+            Configure <strong>{centerConfig?.name || activeCenterId}</strong>.
+            One-time setup that affects scheduling, payroll, and the look of the schedule grid.
+          </p>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b overflow-x-auto">
+        {TABS.map(t => {
+          const active = tab === t.key;
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => selectTab(t.key)}
+              className={`flex items-center gap-2 border-b-2 px-4 py-3 text-sm font-medium whitespace-nowrap transition-colors ${
+                active
+                  ? 'border-purple-600 text-purple-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Icon size={16} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tab body */}
+      {tab === 'general' && (
+        <CenterSettingsTab activeCenterId={activeCenterId} centerConfig={centerConfig} />
+      )}
+
+      {tab === 'holidays' && (
+        <HolidaysEditor
+          activeCenterId={activeCenterId}
+          centerConfig={centerConfig}
+          activeCenterName={centerConfig?.name || activeCenterId}
+        />
+      )}
+
+      {tab === 'colours' && (
+        <AppearanceEditor
+          activeCenterId={activeCenterId}
+          centerConfig={centerConfig}
+          activeCenterName={centerConfig?.name || activeCenterId}
+        />
+      )}
     </div>
   );
 }

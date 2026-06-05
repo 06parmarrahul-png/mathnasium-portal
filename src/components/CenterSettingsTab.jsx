@@ -6,12 +6,13 @@ import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock,
 
 /**
  * Edit per-center settings: identity, instructional + operating hours,
- * guaranteed names list, salary staff list.
+ * salaried-staff list.
  *
- * Fixed-staff editor intentionally not included this pass — those entries
- * have complex per-day shift strings and editing them safely is its own
- * project. They remain editable in code via lib/scheduler.js FIXED_SCHEDULES
- * (or via direct Firestore writes to centers/{id}/config/main.fixedStaff).
+ * Guaranteed shift is now a per-user toggle in Manage Staff (under each
+ * staff member's Edit modal), not a centre-wide names list. Fixed-staff
+ * editing isn't surfaced here yet — message support to add / change a
+ * fixed-staff entry; the auto-scheduler reads them straight from
+ * centers/{id}/config/main.fixedStaff in the meantime.
  *
  * Saves write to centers/{centerId}/config/main and the change flows back
  * out to every consumer via the AuthContext subscription.
@@ -160,22 +161,10 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
         />
       </Section>
 
-      {/* Guaranteed names */}
-      <Section
-        title="Guaranteed Shift — First Names"
-        icon={Users}
-        hint="Anyone whose first name appears here is guaranteed a shift when they submit availability. Per-user toggle in Manage Users overrides this list."
-      >
-        <ListEditor
-          items={form?.guaranteedNames || []}
-          onAdd={v => addToList('guaranteedNames', v)}
-          onRemove={v => removeFromList('guaranteedNames', v)}
-          placeholder="First name (e.g., Luke)"
-          chipColor="emerald"
-        />
-      </Section>
-
-      {/* Salary staff */}
+      {/* Salary staff — kept here because it's a one-time configuration
+          step ("which staff are salaried?") that affects payroll output.
+          Guaranteed-shift management is on the per-user toggle in Manage
+          Staff; fixed-staff editing isn't surfaced here yet. */}
       <Section
         title="Salaried Staff — Excluded from Hourly Payroll"
         icon={Users}
@@ -188,28 +177,6 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
           placeholder="Full name (e.g., Neeru Gill)"
           chipColor="amber"
         />
-      </Section>
-
-      {/* Fixed staff editor placeholder */}
-      <Section
-        title="Fixed Staff Schedules"
-        icon={Users}
-        hint="Staff with hardcoded weekly schedules (e.g., Centre Director, Manager). A full in-app editor is on the roadmap — for now, message Rahul in Leadership Chat if you need a fixed-staff entry added, changed, or removed."
-      >
-        <div className="rounded-lg bg-gray-50 border border-gray-200 px-4 py-3 text-sm text-gray-500">
-          {Object.keys(form?.fixedStaff || {}).length === 0
-            ? 'No fixed staff configured. The auto-scheduler is using the default (legacy) fixed staff list from code.'
-            : (
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(form.fixedStaff).map(([name, sched]) => (
-                  <span key={name} className="rounded-full bg-white border border-gray-300 px-3 py-1 text-xs">
-                    <strong className="text-gray-800">{name}</strong>
-                    <span className="text-gray-400"> · {sched.role || '—'}</span>
-                  </span>
-                ))}
-              </div>
-            )}
-        </div>
       </Section>
 
       {/* Save bar */}
