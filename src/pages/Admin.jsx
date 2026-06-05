@@ -4,14 +4,14 @@ import {
   collection, onSnapshot, doc, updateDoc, deleteDoc,
   addDoc, query, where, orderBy, writeBatch, getDoc, getDocs, setDoc,
 } from 'firebase/firestore';
-import { db, serverTimestamp } from '../firebase';
+import { db, auth, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
-  DollarSign, Download, CalendarRange, BarChart3,
+  DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
   Users, TrendingUp, Activity, Briefcase, Copy, CalendarX,
 } from 'lucide-react';
 import {
@@ -536,6 +536,316 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
   );
 }
 
+// ── Add Staff Modal ──────────────────────────────────────────────────────
+// Owner / AA / admin creates a new staff account without making the new
+// hire sign up themselves. The server-side handler (POST /api/users/
+// create-staff) creates the Auth account, writes a pre-approved Firestore
+// profile, and emails a "set your password" link. Owner never sees or
+// touches a password.
+function AddStaffModal({ onClose, onSubmit }) {
+  const [email, setEmail] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [instructorType, setInstructorType] = useState('Instructor');
+  const [priority, setPriority] = useState(2);
+  const [subRoles, setSubRoles] = useState(['Elementary']);
+  const [sendResetEmail, setSendResetEmail] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggleSubRole = (sr) => {
+    setSubRoles(p => p.includes(sr) ? p.filter(x => x !== sr) : [...p, sr]);
+  };
+
+  const handleSubmit = async () => {
+    setError('');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+      setError('Enter a valid email.');
+      return;
+    }
+    if (!displayName.trim()) {
+      setError('Enter the staff member\'s full name.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSubmit({
+        email: email.trim().toLowerCase(),
+        displayName: displayName.trim(),
+        phone: phone.trim(),
+        instructorType,
+        priority,
+        subRoles,
+        sendResetEmail,
+      });
+    } catch (err) {
+      setError(err?.message || 'Could not create account.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title="Add Staff" onClose={onClose}>
+      <p className="text-xs text-gray-500 -mt-2 mb-3">
+        Creates a pre-approved account at your centre. The new staff member
+        gets an email with a link to set their own password and sign in.
+      </p>
+      <div className="space-y-3">
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Full name</label>
+          <input
+            type="text" autoFocus value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            placeholder="Jane Doe"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Email</label>
+          <input
+            type="email" value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="jane@example.com"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Phone <span className="text-gray-400 font-normal">(optional)</span></label>
+          <input
+            type="tel" value={phone}
+            onChange={e => setPhone(e.target.value)}
+            placeholder="604-555-0199"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+          />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Role / Type</label>
+            <select
+              value={instructorType}
+              onChange={e => setInstructorType(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            >
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-gray-600 mb-1">Priority</label>
+            <select
+              value={priority}
+              onChange={e => setPriority(Number(e.target.value))}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            >
+              <option value={1}>1 — High</option>
+              <option value={2}>2 — Medium</option>
+              <option value={3}>3 — Low</option>
+            </select>
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Teaching Sub-Roles</label>
+          <div className="flex flex-wrap gap-2">
+            {SUB_ROLES.map(sr => {
+              const active = subRoles.includes(sr);
+              const style = SUB_ROLE_STYLES[sr];
+              return (
+                <button
+                  key={sr}
+                  type="button"
+                  onClick={() => toggleSubRole(sr)}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
+                    active
+                      ? `${style.pillBg} ${style.pillText} border-transparent`
+                      : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
+                  {sr}
+                </button>
+              );
+            })}
+          </div>
+          <p className="mt-1 text-xs text-gray-400">Required so they can claim and be auto-scheduled.</p>
+        </div>
+        <label className="flex items-start gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 cursor-pointer">
+          <input
+            type="checkbox" checked={sendResetEmail}
+            onChange={e => setSendResetEmail(e.target.checked)}
+            className="mt-0.5 accent-red-600 h-4 w-4"
+          />
+          <span className="text-xs text-gray-700">
+            <strong>Email a &ldquo;set your password&rdquo; link now.</strong>{' '}
+            <span className="text-gray-500">
+              Off only if you&apos;ll resend later from the staff card.
+            </span>
+          </span>
+        </label>
+
+        {error && (
+          <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700 flex items-start gap-2">
+            <AlertTriangle size={13} className="shrink-0 mt-0.5" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div className="flex gap-2 pt-1">
+          <button
+            onClick={onClose}
+            disabled={saving}
+            className="flex-1 rounded-lg border border-gray-300 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            disabled={saving}
+            className="flex-1 rounded-lg bg-red-600 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-50 flex items-center justify-center gap-2"
+          >
+            {saving ? <><Loader2 size={14} className="animate-spin" /> Creating…</> : <><UserPlus size={14} /> Create staff</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ── Edit Staff Modal ─────────────────────────────────────────────────────
+// Owner / AA / admin tweaks role / priority / sub-roles / toggles on an
+// existing staff member. All writes go through onUpdateField so per-centre
+// membership semantics + Firestore rules apply automatically.
+function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset }) {
+  if (!user) return null;
+  const subRoles = user.subRoles || [];
+  return (
+    <Modal title={`Edit — ${user.displayName || user.email}`} onClose={onClose}>
+      <p className="text-xs text-gray-500 -mt-2 mb-3 truncate">
+        {user.email}
+        {user.phone ? ` · ${user.phone}` : ''}
+      </p>
+      <div className="space-y-3">
+        <div className="grid grid-cols-3 gap-2">
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Role / Type</label>
+            <select
+              value={user.instructorType || 'Instructor'}
+              onChange={e => onUpdateField(user.uid, 'instructorType', e.target.value)}
+              className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
+            >
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Priority</label>
+            <select
+              value={user.priority || 2}
+              onChange={e => onUpdateField(user.uid, 'priority', Number(e.target.value))}
+              className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
+            >
+              <option value={1}>1 — High</option>
+              <option value={2}>2 — Medium</option>
+              <option value={3}>3 — Low</option>
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">Max Days/Week</label>
+            <input
+              type="number" min={1} max={6}
+              value={user.maxDaysPerWeek || 5}
+              onChange={e => onUpdateField(user.uid, 'maxDaysPerWeek', Number(e.target.value))}
+              className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
+          <div className="flex flex-wrap gap-2">
+            {SUB_ROLES.map(sr => {
+              const active = subRoles.includes(sr);
+              const style = SUB_ROLE_STYLES[sr];
+              return (
+                <button
+                  key={sr}
+                  type="button"
+                  onClick={() => {
+                    const updated = active
+                      ? subRoles.filter(r => r !== sr)
+                      : [...subRoles, sr];
+                    onUpdateField(user.uid, 'subRoles', updated);
+                  }}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
+                    active
+                      ? `${style.pillBg} ${style.pillText} border-transparent`
+                      : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
+                  }`}
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
+                  {sr}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex items-start justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="pr-3">
+            <p className="text-xs font-semibold text-gray-700">Guaranteed shift</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Always scheduled when they submit availability.
+              {user.instructorType === 'Host' && ' Hosts also auto-promote to Instructor on shortage days.'}
+            </p>
+          </div>
+          <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              checked={user.guaranteed === true}
+              onChange={e => onUpdateField(user.uid, 'guaranteed', e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+          </label>
+        </div>
+
+        <div className="flex items-start justify-between rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+          <div className="pr-3">
+            <p className="text-xs font-semibold text-gray-700">Volunteer</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Unpaid help. Excluded from payroll + Radius reports. Not auto-scheduled.
+            </p>
+          </div>
+          <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              checked={user.isVolunteer === true}
+              onChange={e => onUpdateField(user.uid, 'isVolunteer', e.target.checked)}
+              className="peer sr-only"
+            />
+            <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-2 border-t border-gray-100">
+          {user.email && (
+            <button
+              onClick={() => onSendReset(user)}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+            >
+              <Mail size={13} /> Send reset email
+            </button>
+          )}
+          <button
+            onClick={() => onDelete(user)}
+            className="ml-auto flex items-center gap-1.5 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+          >
+            <Trash2 size={13} /> Remove staff
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Add Open Shift Modal ───────────────────────────────────────────────────────
 function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   // Open shifts default to instructional hours for that day (it's the
@@ -635,6 +945,9 @@ export default function Admin() {
   const [editShiftModal, setEditShiftModal]     = useState(null); // shift object
   const [addOpenShiftModal, setAddOpenShiftModal] = useState(null); // { date }
   const [availabilityModalUser, setAvailabilityModalUser] = useState(null); // user object
+  const [addStaffOpen, setAddStaffOpen]     = useState(false);
+  const [editStaffUser, setEditStaffUser]   = useState(null);
+  const [userSearch, setUserSearch]         = useState('');
 
   // Auto-scheduler state
   const [schedMonth, setSchedMonth]   = useState(MONTHS[new Date().getMonth()]);
@@ -820,6 +1133,72 @@ export default function Admin() {
   // Without the server route, a "rejected" user could still authenticate
   // and just bounce on the pending screen — their credential would linger
   // on the platform indefinitely. The endpoint fully removes them.
+  // POST /api/users/create-staff — admin SDK creates the Auth account +
+  // Firestore profile in one round trip so the owner doesn't have to
+  // wait for the new hire to sign up. Optionally fires a password-reset
+  // email so the new user can set their own password immediately.
+  const handleCreateStaff = async (payload) => {
+    const idToken = await auth.currentUser?.getIdToken();
+    const r = await fetch('/api/users/create-staff', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        ...payload,
+        centerId: activeCenterId,
+        continueUrl: window.location.origin + '/login',
+      }),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      throw new Error(data?.error || `Request failed (${r.status})`);
+    }
+    const data = await r.json();
+    setAddStaffOpen(false);
+    if (data.resetEmailSent) {
+      toast.success(`Created ${data.displayName}. Reset email sent to ${data.email}.`);
+    } else if (data.resetEmailError) {
+      toast.error(`Created ${data.displayName}, but reset email failed: ${data.resetEmailError}`, 8000);
+    } else {
+      toast.success(`Created ${data.displayName}.`);
+    }
+  };
+
+  // Fire a password reset email to an existing staff member from the
+  // staff card. Uses the same /api/send-password-reset endpoint as the
+  // login page so there's one delivery path to maintain.
+  const handleSendStaffReset = async (target) => {
+    if (!target?.email) {
+      toast.error('No email on file for this staff member.');
+      return;
+    }
+    const ok = await confirmDialog({
+      title: 'Send password reset?',
+      message: `An email will be sent to ${target.email} with a link to reset their password.`,
+      confirmText: 'Send reset email',
+    });
+    if (!ok) return;
+    try {
+      const r = await fetch('/api/send-password-reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: target.email,
+          continueUrl: window.location.origin + '/login',
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `Request failed (${r.status})`);
+      }
+      toast.success(`Reset email sent to ${target.email}.`);
+    } catch (err) {
+      toast.error(err?.message || 'Failed to send reset email.');
+    }
+  };
+
   const handleReject = async (uid) => {
     const target = users.find(u => u.id === uid);
     const niceName = target?.displayName || target?.email || 'this user';
@@ -2433,179 +2812,175 @@ export default function Admin() {
 
       {/* ── MANAGE USERS ────────────────────────────────────────────────────── */}
       {tab === 'users' && (
-        <div className="space-y-6">
-          {/* Admins, owners, and super-admins can all approve new sign-ups —
-              Firestore rules let admins flip `approved` on non-elevated
-              users. (Owners and super-admin docs are protected from admin
-              edits at the rule level.) */}
-          {pendingUsers.length > 0 && canSeeAdminPanel && (
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <h3 className="mb-4 font-semibold text-yellow-700">⏳ Pending Approval ({pendingUsers.length})</h3>
-              <div className="space-y-3">
-                {pendingUsers.map(u => (
-                  <div key={u.id} className="flex items-center justify-between rounded-lg bg-yellow-50 px-4 py-3">
-                    <div>
-                      <p className="font-medium text-gray-900">{u.displayName}</p>
-                      <p className="text-sm text-gray-500">{u.email}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => handleApprove(u.uid)}
-                        className="flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-sm text-white hover:bg-green-700">
-                        <UserCheck size={14} /> Approve
-                      </button>
-                      <button onClick={() => handleReject(u.id)}
-                        className="flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1.5 text-sm text-white hover:bg-red-700">
-                        <UserX size={14} /> Reject
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-xl border bg-white p-5 shadow-sm">
-            <h3 className="mb-4 font-semibold text-gray-900">Approved Instructors ({approvedUsers.length})</h3>
-            {approvedUsers.length === 0 ? (
-              <p className="text-sm text-gray-400">No approved instructors yet.</p>
-            ) : (
-              <div className="space-y-3">
-                {approvedUsers.map(u => (
-                  <div key={u.id} className="rounded-lg border bg-gray-50 p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-100 text-sm font-bold text-red-700">
-                          {u.displayName?.charAt(0)?.toUpperCase()}
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900">{u.displayName}</p>
-                          <p className="text-xs text-gray-500">{u.email}</p>
-                        </div>
-                      </div>
-                      {/* Admins, owners, and super-admins can delete staff
-                          — Firestore rules block deleting owner / super_admin
-                          docs, so admins clicking on those would just bounce. */}
-                      {canSeeAdminPanel && (
-                        <button onClick={() => handleReject(u.id)} className="rounded p-1 text-gray-400 hover:text-red-500">
-                          <Trash2 size={15} />
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2 mb-3">
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">Role / Type</label>
-                        <select value={u.instructorType || 'Instructor'}
-                          onChange={e => handleUpdateUserField(u.uid, 'instructorType', e.target.value)}
-                          className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none">
-                          {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">Priority</label>
-                        <select value={u.priority || 2}
-                          onChange={e => handleUpdateUserField(u.uid, 'priority', Number(e.target.value))}
-                          className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none">
-                          <option value={1}>1 – High</option>
-                          <option value={2}>2 – Medium</option>
-                          <option value={3}>3 – Low</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs text-gray-500">Max Days/Week</label>
-                        <input type="number" min={1} max={6} value={u.maxDaysPerWeek || 5}
-                          onChange={e => handleUpdateUserField(u.uid, 'maxDaysPerWeek', Number(e.target.value))}
-                          className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none" />
-                      </div>
-                    </div>
-
-                    {/* Sub-roles / Teaching specializations.
-                        Online is its own platform for auto-scheduling, but
-                        an Online instructor can ALSO be tagged Elementary
-                        and/or Highschool so they're eligible to claim
-                        in-centre open shifts from the Shift Board. */}
-                    <div>
-                      <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
-                      <div className="flex flex-wrap gap-2">
-                        {SUB_ROLES.map(sr => {
-                          const current = u.subRoles || [];
-                          const active = current.includes(sr);
-                          const style = SUB_ROLE_STYLES[sr];
-                          return (
-                            <button
-                              key={sr}
-                              onClick={() => {
-                                const updated = active
-                                  ? current.filter(r => r !== sr)
-                                  : [...current, sr];
-                                handleUpdateUserField(u.uid, 'subRoles', updated);
-                              }}
-                              className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-semibold border-2 transition-all ${
-                                active
-                                  ? `${style.pillBg} ${style.pillText} border-transparent`
-                                  : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'
-                              }`}
-                            >
-                              <span className={`w-1.5 h-1.5 rounded-full ${active ? style.dot : 'bg-gray-300'}`} />
-                              {sr}
-                            </button>
-                          );
-                        })}
-                        {(u.subRoles || []).length === 0 && (
-                          <span className="text-xs text-gray-400 italic">No sub-roles assigned</span>
-                        )}
-                      </div>
-                      <p className="mt-1.5 text-xs text-gray-400">
-                        Online instructors auto-schedule on the online platform, but can also be tagged Elementary or Highschool to claim in-centre open shifts.
-                      </p>
-                    </div>
-
-                    {/* Guaranteed shift toggle — for Hosts and key staff who
-                        should always be scheduled when they submit availability. */}
-                    <div className="mt-3 flex items-start justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-                      <div className="pr-3">
-                        <p className="text-xs font-semibold text-gray-700">Guaranteed shift</p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          Always scheduled when they submit availability — overrides priority and fairness rules.
-                          {u.instructorType === 'Host' && ' Hosts also auto-promote to Instructor on shortage days (Elementary required).'}
-                        </p>
-                      </div>
-                      <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
-                        <input
-                          type="checkbox"
-                          checked={u.guaranteed === true}
-                          onChange={e => handleUpdateUserField(u.uid, 'guaranteed', e.target.checked)}
-                          className="peer sr-only"
-                        />
-                        <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-emerald-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
-                      </label>
-                    </div>
-
-                    {/* Volunteer toggle — flags this user as unpaid help.
-                        Excluded from hourly payroll + Radius compare; also
-                        skipped by the auto-scheduler (owner adds them to
-                        specific days manually in Edit Day mode). */}
-                    <div className="mt-2 flex items-start justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
-                      <div className="pr-3">
-                        <p className="text-xs font-semibold text-gray-700">Volunteer</p>
-                        <p className="text-xs text-gray-500 mt-0.5">
-                          Unpaid help. Their shifts never show up in payroll or Radius reports, and they aren&apos;t auto-scheduled — add them to specific days manually.
-                        </p>
-                      </div>
-                      <label className="relative inline-flex cursor-pointer items-center shrink-0 mt-0.5">
-                        <input
-                          type="checkbox"
-                          checked={u.isVolunteer === true}
-                          onChange={e => handleUpdateUserField(u.uid, 'isVolunteer', e.target.checked)}
-                          className="peer sr-only"
-                        />
-                        <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-600 peer-checked:after:translate-x-full peer-checked:after:border-white" />
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+        <div className="space-y-4">
+          {/* Search + Add Staff row — mirrors Manage Roles' clean header.
+              Add Staff opens the create-account modal; search filters both
+              the pending and approved lists below. */}
+          <div className="rounded-2xl border bg-white p-4 shadow-sm flex flex-wrap items-center gap-3">
+            <Users size={18} className="text-gray-500" />
+            <input
+              type="text"
+              value={userSearch}
+              onChange={e => setUserSearch(e.target.value)}
+              placeholder="Search by name or email…"
+              className="flex-1 min-w-[180px] rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-red-500 focus:outline-none"
+            />
+            <button
+              onClick={() => setAddStaffOpen(true)}
+              className="ml-auto flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700"
+              title="Manually add a new staff member without making them sign up"
+            >
+              <UserPlus size={15} /> Add Staff
+            </button>
           </div>
+
+          {/* Pending Approval — compact list. Anyone with admin-panel
+              access can approve / reject pending users (Firestore rules
+              prevent admins from touching elevated accounts). */}
+          {(() => {
+            const filtered = pendingUsers.filter(u => {
+              if (!userSearch.trim()) return true;
+              const q = userSearch.toLowerCase();
+              return (u.displayName || '').toLowerCase().includes(q)
+                  || (u.email || '').toLowerCase().includes(q);
+            });
+            if (filtered.length === 0) return null;
+            return (
+              <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b bg-yellow-50/60 flex items-center gap-2">
+                  <Clock size={14} className="text-yellow-700" />
+                  <h3 className="text-sm font-semibold text-yellow-800">
+                    Pending Approval ({filtered.length})
+                  </h3>
+                </div>
+                <ul className="divide-y divide-gray-100">
+                  {filtered.map(u => (
+                    <li key={u.id} className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-gray-50">
+                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-yellow-100 text-xs font-bold text-yellow-700 shrink-0">
+                        {u.displayName?.charAt(0)?.toUpperCase() || '?'}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-medium text-gray-900 truncate">{u.displayName || u.email}</p>
+                        <p className="text-xs text-gray-500 truncate">{u.email}</p>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => handleApprove(u.uid)}
+                          className="flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700">
+                          <UserCheck size={13} /> Approve
+                        </button>
+                        <button onClick={() => handleReject(u.id)}
+                          className="flex items-center gap-1 rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50">
+                          <UserX size={13} /> Reject
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })()}
+
+          {/* Approved staff — compact list mirroring Manage Roles' layout.
+              Click anywhere on the row to open the Edit modal for that
+              person; all the per-user toggles (role, priority, sub-roles,
+              guaranteed, volunteer) live in there. Keeps this list
+              scannable when the centre has 30+ staff. */}
+          {(() => {
+            const filtered = approvedUsers.filter(u => {
+              if (!userSearch.trim()) return true;
+              const q = userSearch.toLowerCase();
+              return (u.displayName || '').toLowerCase().includes(q)
+                  || (u.email || '').toLowerCase().includes(q);
+            });
+            return (
+              <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b bg-gray-50 flex items-center gap-2">
+                  <UserCheck size={14} className="text-gray-600" />
+                  <h3 className="text-sm font-semibold text-gray-800">
+                    Approved Staff ({filtered.length}{filtered.length !== approvedUsers.length ? ` of ${approvedUsers.length}` : ''})
+                  </h3>
+                </div>
+                {filtered.length === 0 ? (
+                  <div className="py-12 text-center">
+                    <Users size={28} className="mx-auto text-gray-300 mb-2" />
+                    <p className="text-sm text-gray-400 italic">
+                      {approvedUsers.length === 0
+                        ? 'No approved staff yet. Click Add Staff to create the first account.'
+                        : 'No staff match your search.'}
+                    </p>
+                  </div>
+                ) : (
+                  <ul className="divide-y divide-gray-100">
+                    {filtered.map(u => {
+                      const subs = u.subRoles || [];
+                      const typeColours = {
+                        Instructor:           'bg-blue-100 text-blue-700 border-blue-200',
+                        Lead:                 'bg-purple-100 text-purple-700 border-purple-200',
+                        Host:                 'bg-amber-100 text-amber-700 border-amber-200',
+                        Admin:                'bg-emerald-100 text-emerald-700 border-emerald-200',
+                        Manager:              'bg-orange-100 text-orange-700 border-orange-200',
+                        'Center Director':    'bg-pink-100 text-pink-700 border-pink-200',
+                        'Dir. of Education':  'bg-pink-100 text-pink-700 border-pink-200',
+                        Volunteer:            'bg-teal-100 text-teal-700 border-teal-200',
+                      };
+                      const typeCls = typeColours[u.instructorType || 'Instructor'] || typeColours.Instructor;
+                      return (
+                        <li
+                          key={u.id}
+                          onClick={() => setEditStaffUser(u)}
+                          className="flex flex-wrap items-center gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer transition-colors"
+                        >
+                          <div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-100 text-sm font-bold text-red-700 shrink-0">
+                            {u.displayName?.charAt(0)?.toUpperCase() || '?'}
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-medium text-gray-900 truncate">{u.displayName || u.email}</p>
+                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeCls}`}>
+                                {u.instructorType || 'Instructor'}
+                              </span>
+                              {u.isVolunteer && (
+                                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                                  Volunteer
+                                </span>
+                              )}
+                              {u.guaranteed && (
+                                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                                  Guaranteed
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                              <span className="truncate">{u.email}</span>
+                              {subs.length > 0 && (
+                                <span className="flex items-center gap-1">
+                                  {subs.map(sr => {
+                                    const st = SUB_ROLE_STYLES[sr];
+                                    return (
+                                      <span key={sr} className={`inline-flex items-center gap-1 rounded-full ${st?.pillBg || 'bg-gray-100'} ${st?.pillText || 'text-gray-600'} px-1.5 py-px text-[10px] font-semibold`}>
+                                        {sr.charAt(0)}
+                                      </span>
+                                    );
+                                  })}
+                                </span>
+                              )}
+                              <span className="text-gray-400">· P{u.priority || 2}</span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setEditStaffUser(u); }}
+                            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                          >
+                            Edit
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            );
+          })()}
 
           {/* ── Multi-Center Setup (Phase 1 groundwork) ─────────────────────── */}
           <div className="rounded-xl border bg-white p-5 shadow-sm">
@@ -3594,6 +3969,26 @@ export default function Admin() {
           /center-analytics and /center-settings respectively. */}
 
       {/* ── MODALS ──────────────────────────────────────────────────────────── */}
+      {addStaffOpen && (
+        <AddStaffModal
+          onClose={() => setAddStaffOpen(false)}
+          onSubmit={handleCreateStaff}
+        />
+      )}
+
+      {editStaffUser && (
+        <EditStaffModal
+          user={usersForCentre.find(u => u.uid === editStaffUser.uid) || editStaffUser}
+          onClose={() => setEditStaffUser(null)}
+          onUpdateField={handleUpdateUserField}
+          onDelete={async (target) => {
+            await handleReject(target.id);
+            setEditStaffUser(null);
+          }}
+          onSendReset={handleSendStaffReset}
+        />
+      )}
+
       {availabilityModalUser && (
         <UserAvailabilityModal
           user={availabilityModalUser}
