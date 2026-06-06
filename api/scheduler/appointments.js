@@ -158,10 +158,46 @@ function categorizeAll(appts, students, aliases) {
 }
 
 // ───── Grouping into half-hour rows ─────────────────────────────────────
+//
+// CRITICAL: This function runs on Vercel servers, which are in UTC. We
+// need every "hour of day", "what day is this" decision to be made in the
+// centre's local timezone, not UTC. Otherwise a Saturday 8pm Pacific
+// appointment becomes Sunday 3am UTC and either gets excluded from
+// Saturday's view or labelled as "3:00am" on the schedule.
+//
+// TODO: read this from each centre's settings doc. Hardcoded to Vancouver
+//       for now since Langley is the only live centre.
+const CENTER_TZ = 'America/Vancouver';
+
+// Decompose a UTC Date into its wall-clock parts in the centre's TZ.
+function tzParts(utcDate, tz = CENTER_TZ) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(utcDate);
+  const get = (t) => +parts.find(p => p.type === t).value;
+  return {
+    year: get('year'), month: get('month'), day: get('day'),
+    hour: get('hour') % 24,                     // Intl can emit "24" for midnight
+    minute: get('minute'), second: get('second'),
+  };
+}
+function tzYMD(utcDate) {
+  const p = tzParts(utcDate);
+  return `${p.year}-${String(p.month).padStart(2,'0')}-${String(p.day).padStart(2,'0')}`;
+}
+function tzSlotKey(utcDate) {
+  // Floor to half-hour.
+  const p = tzParts(utcDate);
+  const m = p.minute - (p.minute % 30);
+  return `${String(p.hour).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+}
+function tzStartsOnHour(utcDate) {
+  return tzParts(utcDate).minute === 0;
+}
+
 const SLOT_MIN = 30;
-function floorToSlot(d) { const x = new Date(d); x.setSeconds(0,0); x.setMinutes(x.getMinutes() - (x.getMinutes() % SLOT_MIN)); return x; }
 function addMin(d, n) { return new Date(d.getTime() + n*60000); }
-function slotKey(d) { return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
 function nextSlot(k) { let [h,m] = k.split(':').map(Number); m += SLOT_MIN; if (m >= 60) { m -= 60; h++; } return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; }
 function formatHM(k) { let [h,m] = k.split(':').map(Number); const ampm = h>=12?'pm':'am'; const h12 = ((h+11)%12)+1; return m===0?`${h12}:00${ampm}`:`${h12}:${String(m).padStart(2,'0')}${ampm}`; }
 
@@ -181,41 +217,74 @@ function toCard(a) {
 }
 
 function groupSchedule(appts, day) {
-  const todays = appts.filter(a => !a.canceled).filter(a => {
-    const d = new Date(a.datetime);
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` === day;
-  });
+  // Filter to the centre's local calendar day, not the server's UTC day.
+  const todays = appts.filter(a => !a.canceled).filter(a => tzYMD(new Date(a.datetime)) === day);
   if (todays.length === 0) return { day, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [] };
+
+  // Range bounds: earliest start, latest end — all in UTC milliseconds.
   let minStart = null, maxEnd = null;
   for (const a of todays) {
     const s = new Date(a.datetime); const e = addMin(s, a.duration);
     if (!minStart || s < minStart) minStart = s;
     if (!maxEnd || e > maxEnd) maxEnd = e;
   }
-  const slotStart = floorToSlot(minStart);
+
+  // Round the start down to the half-hour boundary in the centre's TZ.
+  // We do this by walking forward from a safe earlier point in 30-min steps
+  // until tzSlotKey changes — keeps the math TZ-correct without manual
+  // offset calculation.
+  const slotStart = (() => {
+    // Subtract up to 30 min and find the boundary
+    const startKey = tzSlotKey(minStart);
+    let cur = new Date(minStart.getTime());
+    // Step back in 1-min increments until the slot key would change going backward
+    for (let i = 0; i < 30; i++) {
+      const probe = new Date(cur.getTime() - 60 * 1000);
+      if (tzSlotKey(probe) !== startKey) break;
+      cur = probe;
+    }
+    cur.setSeconds(0, 0);
+    return cur;
+  })();
+
   const empty = () => ({ HS:{onHour:[],halfHour:[]}, EM:{onHour:[],halfHour:[]}, Online:{onHour:[],halfHour:[]}, Unknown:{onHour:[],halfHour:[]} });
+
+  // Build rows by walking forward 30-min steps and reading the TZ-local key
+  // at each step. Stops when we pass the last appointment's end.
   const rows = [];
+  const seenKeys = new Set();
   for (let t = slotStart; t < maxEnd; t = addMin(t, SLOT_MIN)) {
-    const k = slotKey(t);
-    rows.push({ slot: k, label: `${formatHM(k)}–${formatHM(nextSlot(k))}`,
-      students: empty(), counts: { HS:0,EM:0,Online:0,Unknown:0 } });
+    const k = tzSlotKey(t);
+    if (seenKeys.has(k)) continue; // safety against DST repeats
+    seenKeys.add(k);
+    rows.push({
+      slot: k,
+      label: `${formatHM(k)}–${formatHM(nextSlot(k))}`,
+      students: empty(),
+      counts: { HS:0, EM:0, Online:0, Unknown:0 },
+      _t: t.getTime(),                       // for stable sort
+    });
   }
+  rows.sort((a, b) => a._t - b._t);
+  rows.forEach(r => delete r._t);
+
+  // Walk every appointment and stamp it into each half-hour it occupies.
   const byKey = new Map(rows.map((r, i) => [r.slot, i]));
   for (const a of todays) {
     const start = new Date(a.datetime);
-    const onHour = start.getMinutes() === 0;
+    const onHour = tzStartsOnHour(start);
     const cat = a.category || 'Unknown';
-    const first = floorToSlot(start);
     const end = addMin(start, a.duration);
-    for (let t = first; t < end; t = addMin(t, SLOT_MIN)) {
-      const idx = byKey.get(slotKey(t)); if (idx == null) continue;
+    for (let t = start; t < end; t = addMin(t, SLOT_MIN)) {
+      const idx = byKey.get(tzSlotKey(t)); if (idx == null) continue;
       const row = rows[idx];
       (onHour ? row.students[cat].onHour : row.students[cat].halfHour).push(toCard(a));
       row.counts[cat]++;
     }
   }
+
   return {
-    day, slots: rows,
+    day, slots: rows, timezone: CENTER_TZ,
     totals: {
       HS: todays.filter(a => a.category==='HS').length,
       EM: todays.filter(a => a.category==='EM').length,
@@ -273,13 +342,13 @@ export default async function handler(req, res) {
     return r.text();
   }));
 
+  // Don't filter to `day` here — let groupSchedule handle the filtering in
+  // the centre's timezone. Filtering in UTC would drop e.g. a Saturday
+  // evening appointment that's already Sunday in UTC.
   const allAppts = [];
   for (const body of feeds) {
     for (const ev of parseEvents(body)) {
-      const a = toAppointment(ev); if (!a) continue;
-      const d = new Date(a.datetime);
-      const ld = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-      if (ld === day) allAppts.push(a);
+      const a = toAppointment(ev); if (a) allAppts.push(a);
     }
   }
 
