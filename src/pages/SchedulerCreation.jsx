@@ -98,7 +98,7 @@ export default function SchedulerCreation() {
 
   return (
     <div className="mx-auto max-w-7xl">
-      <header className="mb-4 flex items-center gap-3">
+      <header className="mb-4 flex items-center gap-3 print:hidden">
         <ClipboardList className="text-red-600" size={28} />
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Scheduler Creation</h1>
@@ -106,7 +106,7 @@ export default function SchedulerCreation() {
         </div>
       </header>
 
-      <div className="mb-4 flex gap-1 border-b border-gray-200">
+      <div className="mb-4 flex gap-1 border-b border-gray-200 print:hidden">
         <TabButton active={tab==='today'}    onClick={() => setTab('today')}    icon={CalendarCheck} label="Today" />
         <TabButton active={tab==='forecast'} onClick={() => setTab('forecast')} icon={BarChart3}     label="Forecast" />
         <TabButton active={tab==='setup'}    onClick={() => setTab('setup')}    icon={Settings}      label="Setup" />
@@ -214,17 +214,45 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          <SideTable side="HS" data={data} centerId={centerId} date={date}
-            checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
-          <SideTable side="EM" data={data} centerId={centerId} date={date}
-            checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print-stack">
+          <div className="print-section">
+            <SideTable side="HS" data={data} centerId={centerId} date={date}
+              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+          </div>
+          <div className="print-section print-page-break">
+            <SideTable side="EM" data={data} centerId={centerId} date={date}
+              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+          </div>
         </div>
       )}
 
       {data && data.totals.Online > 0 && (
         <OnlineStrip data={data} />
       )}
+
+      {/* Print rules for the daily ops view.
+          - Stack HS / EM vertically (one per page)
+          - Hide all the chrome (tabs, header, sidebar, floating widgets)
+          - Tighten margins so the table fits the page */}
+      <style>{`
+        @media print {
+          @page { size: letter portrait; margin: 0.4in; }
+          body { background: white; }
+          aside, header, .print\\:hidden,
+          [data-print-hide], .lucide-x-circle { display: none !important; }
+          /* Stack the two sides instead of side-by-side */
+          .print-stack { display: block !important; }
+          .print-section { width: 100% !important; max-width: 100% !important; }
+          /* New page for EM so it doesn't get cut off mid-row */
+          .print-page-break { page-break-before: always; break-before: page; }
+          /* Keep rows together so a half-hour row isn't split across pages */
+          table tr { page-break-inside: avoid; break-inside: avoid; }
+          /* Strip background colors that waste ink */
+          .print-section section { border: 1px solid #000 !important; }
+          /* Bigger text */
+          table.sched { font-size: 12px !important; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -232,10 +260,20 @@ function TodayTab({ centerId }) {
 function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
+  const dayLabel = (() => {
+    try {
+      return new Date(date + 'T12:00').toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+    } catch { return date; }
+  })();
 
   return (
     <section className="rounded-lg border border-gray-200 bg-white overflow-hidden">
-      <div className={`flex justify-between items-center px-4 py-2 text-white ${color}`}>
+      {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
+      <div className="hidden print:block px-3 pt-2 pb-1 border-b border-black">
+        <div className="text-base font-bold">{dayLabel} · {title}</div>
+        <div className="text-xs text-gray-700">{data.totals[side]} total students · ratio 1:{ratio}</div>
+      </div>
+      <div className={`flex justify-between items-center px-4 py-2 text-white ${color} print:hidden`}>
         <span className="font-semibold">{title}</span>
         <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
       </div>
@@ -568,21 +606,28 @@ function SetupTab({ centerId }) {
     if (rows.length < 2) { toast.error('CSV is empty'); return; }
     // Column layout matches the Student Assessment Tracker:
     //   A=name, B=grade, C=status, ... I=assigned instructor
+    // ANY cell on the row containing the word "binder" (case-insensitive)
+    // means the student is flagged for an upcoming assessment. The (A)
+    // marker on the daily dashboard reads off this flag.
     const out = [];
+    let assessmentCount = 0;
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i]; const name = (r[0] || '').trim();
       if (!name) continue;
       const grade = (r[1] || '').trim();
       const status = (r[2] || '').trim();
+      const hasAssessment = r.some(cell => /binder/i.test(cell || ''));
+      if (hasAssessment) assessmentCount++;
       out.push({
         name, grade, status,
         category: categoryFor(grade, status),
         assignedInstructor: (r[8] || '').trim(),
+        hasAssessment,
       });
     }
     try {
       await bulkImportStudents(centerId, out);
-      toast.success(`Imported ${out.length} students`);
+      toast.success(`Imported ${out.length} students (${assessmentCount} flagged for assessment)`);
     } catch (e) { toast.error(e.message); }
   };
 

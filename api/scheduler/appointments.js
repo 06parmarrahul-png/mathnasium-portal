@@ -175,7 +175,11 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
     appt.aliasedFrom = fullName;
     if (uncertain) appt.uncertainAlias = true;
     const s = studentsByKey.get(nameKey(studentName));
-    if (s) { appt.grade = s.grade; appt.matchedStudent = s.name; return s.category; }
+    if (s) {
+      appt.grade = s.grade; appt.matchedStudent = s.name;
+      if (s.hasAssessment) appt.hasAssessment = true;
+      return s.category;
+    }
     return 'Unknown';
   }
 
@@ -183,6 +187,7 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
   const s = studentsByKey.get(nameKey(fullName));
   if (s) {
     appt.matchedStudent = s.name; appt.grade = s.grade; appt.displayName = fullName;
+    if (s.hasAssessment) appt.hasAssessment = true;
     return s.category;
   }
 
@@ -266,7 +271,9 @@ function toCard(a) {
     type: a.type || '',
     duration: a.duration,
     start: a.datetime,
-    isAssessment: /assess/i.test(a.type || ''),
+    // Assessment = either Acuity says so (appointment type contains "assess")
+    // OR the student's tracker row has "binder" in it (set by CSV import).
+    isAssessment: !!a.hasAssessment || /assess/i.test(a.type || ''),
     isPowerplay: !!a.isPowerplay,
   };
 }
