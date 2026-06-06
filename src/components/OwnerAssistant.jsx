@@ -121,7 +121,7 @@ export default function OwnerAssistant() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[60] flex flex-col items-end pointer-events-none">
+    <div className="fixed bottom-5 right-5 z-[60] flex flex-col items-end pointer-events-none print:hidden">
       {open && (
         <div
           className="pointer-events-auto mb-3 flex flex-col overflow-hidden rounded-2xl border border-gray-200 bg-white shadow-2xl"

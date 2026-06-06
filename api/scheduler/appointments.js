@@ -67,16 +67,37 @@ function parseEvents(text) {
   return events;
 }
 
-const TYPE_KEYWORDS = /\b(tutoring|assessment|session|lesson|coaching|class|consult(ation)?|trial|sit[\s-]?in|workout|appointment|test|review|prep|sat|act|math|reading)\b/i;
+const TYPE_KEYWORDS = /\b(tutoring|assessment|session|lesson|coaching|class|consult(ation)?|trial|sit[\s-]?in|workout|appointment|test|review|prep|sat|act|math|reading|grades?|only|group|block|powerplay|in[\s-]?centre|in[\s-]?center|@home|virtual|langley|mathnasium)\b/i;
+
+// Phrases that are definitely NOT a student's name — Acuity sometimes
+// surfaces these as the SUMMARY (e.g. group blocks with no client info).
+const NON_NAME_PHRASES = /(grades\s+only|in[\s-]?centre|in[\s-]?center|group\s+session|group\s+block|@home)/i;
+
+// "60 min", "90 minute", "1 hour", "1.5 hr" — duration tokens that some
+// Acuity SUMMARYs include between dashes. Never a person's name.
+const DURATION_RE = /^\d+(\.\d+)?\s*(min|minute|hr|hour)s?$/i;
+const NUMERIC_ONLY = /^[\d\s.()-]+$/;
+
+function isNonName(s) {
+  return TYPE_KEYWORDS.test(s) || NON_NAME_PHRASES.test(s) || DURATION_RE.test(s) || NUMERIC_ONLY.test(s);
+}
+
 function splitNameFromSummary(summary) {
   if (!summary) return { type: '', firstName: '', lastName: '' };
   const chunks = summary.split(/\s+[-–—]\s+|\s*:\s+/).map(s => s.trim()).filter(Boolean);
+
+  // If every chunk is a type / block / duration / numeric, no real client
+  // name is present — caller skips the event.
+  if (chunks.every(isNonName)) {
+    return { type: summary, firstName: '', lastName: '' };
+  }
+
   let nameStr, typeStr;
   if (chunks.length === 1) { nameStr = chunks[0]; typeStr = ''; }
   else {
     const score = (s) => {
       let n = 0;
-      if (TYPE_KEYWORDS.test(s)) n += 10;
+      if (isNonName(s)) n += 10;
       if (/\d/.test(s)) n += 5;
       const caps = s.match(/\b[A-Z][a-zA-Z'-]+/g) || [];
       n -= caps.length;
@@ -86,6 +107,11 @@ function splitNameFromSummary(summary) {
     nameStr = ranked[0].s;
     typeStr = ranked.slice(1).map(x => x.s).join(' - ');
   }
+
+  if (isNonName(nameStr)) {
+    return { type: summary, firstName: '', lastName: '' };
+  }
+
   const tokens = nameStr.split(/\s+/);
   return { type: typeStr, firstName: tokens.shift() || '', lastName: tokens.join(' ') };
 }
@@ -418,7 +444,12 @@ export default async function handler(req, res) {
   const allAppts = [];
   for (const body of feeds) {
     for (const ev of parseEvents(body)) {
-      const a = toAppointment(ev); if (a) allAppts.push(a);
+      const a = toAppointment(ev); if (!a) continue;
+      // Skip group-block events with no real client name (e.g. Acuity
+      // appointment-type rows like "High School Grades Only" that surface
+      // as standalone iCal events with no associated student).
+      if (!a.firstName && !a.lastName) continue;
+      allAppts.push(a);
     }
   }
 
