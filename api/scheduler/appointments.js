@@ -323,17 +323,25 @@ function groupSchedule(appts, day) {
   rows.sort((a, b) => a._t - b._t);
   rows.forEach(r => delete r._t);
 
-  // Walk every appointment and stamp it into each half-hour it occupies.
+  // Walk every appointment. The NAME is added to the student's start slot
+  // only (so a 90-min student starting at 10:00 isn't duplicated at 10:30
+  // and 11:00). The COUNT for each occupied slot still increments — that's
+  // what the staffing-needed calculation reads, and a student mid-lesson
+  // still needs an instructor.
   const byKey = new Map(rows.map((r, i) => [r.slot, i]));
   for (const a of todays) {
     const start = new Date(a.datetime);
     const onHour = tzStartsOnHour(start);
     const cat = a.category || 'Unknown';
     const end = addMin(start, a.duration);
+    let nameAdded = false;
     for (let t = start; t < end; t = addMin(t, SLOT_MIN)) {
       const idx = byKey.get(tzSlotKey(t)); if (idx == null) continue;
       const row = rows[idx];
-      (onHour ? row.students[cat].onHour : row.students[cat].halfHour).push(toCard(a));
+      if (!nameAdded) {
+        (onHour ? row.students[cat].onHour : row.students[cat].halfHour).push(toCard(a));
+        nameAdded = true;
+      }
       row.counts[cat]++;
     }
   }
