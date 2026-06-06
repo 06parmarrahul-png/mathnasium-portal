@@ -100,18 +100,52 @@ export async function deleteAlias(centerId, id) {
   await deleteDoc(doc(db, 'centers', centerId, 'schedulerAliases', id));
 }
 
-// ───── Check-ins (per day) ───────────────────────────────────────────────
+// ───── Check-ins + per-day student metadata ──────────────────────────────
+//
+// Doc shape: { [studentId]: { status?, tag?, desk? } | <legacy string status> }
+//
+// Legacy entries (where the value is a plain string like 'in') predate the
+// tag/desk feature — the watch + helpers normalise them transparently so
+// nothing breaks if you upgrade an old day's doc.
+
+function normalizeEntries(raw) {
+  const out = {};
+  for (const [id, v] of Object.entries(raw || {})) {
+    if (typeof v === 'string') out[id] = { status: v };
+    else out[id] = v || {};
+  }
+  return out;
+}
+
 export function watchCheckIns(centerId, dateStr, cb) {
   const ref = doc(db, 'centers', centerId, 'schedulerCheckIns', dateStr);
-  return onSnapshot(ref, snap => cb(snap.exists() ? snap.data() : {}));
+  return onSnapshot(ref, snap => cb(normalizeEntries(snap.exists() ? snap.data() : {})));
+}
+
+async function patchEntry(centerId, dateStr, studentId, patch) {
+  const ref = doc(db, 'centers', centerId, 'schedulerCheckIns', dateStr);
+  const snap = await getDoc(ref);
+  const current = normalizeEntries(snap.exists() ? snap.data() : {});
+  const next = { ...(current[studentId] || {}), ...patch };
+  // Strip empty fields so deletes work cleanly.
+  for (const k of Object.keys(next)) {
+    if (next[k] === '' || next[k] == null) delete next[k];
+  }
+  if (Object.keys(next).length === 0) delete current[studentId];
+  else current[studentId] = next;
+  await setDoc(ref, current);
 }
 
 export async function setCheckIn(centerId, dateStr, studentId, status) {
-  const ref = doc(db, 'centers', centerId, 'schedulerCheckIns', dateStr);
-  const snap = await getDoc(ref);
-  const current = snap.exists() ? snap.data() : {};
-  if (status) current[studentId] = status; else delete current[studentId];
-  await setDoc(ref, current);
+  await patchEntry(centerId, dateStr, studentId, { status: status || '' });
+}
+
+export async function setStudentTag(centerId, dateStr, studentId, tag) {
+  await patchEntry(centerId, dateStr, studentId, { tag: tag || '' });
+}
+
+export async function setStudentDesk(centerId, dateStr, studentId, desk) {
+  await patchEntry(centerId, dateStr, studentId, { desk: desk || '' });
 }
 
 // ───── Instructor assignments (per day) ──────────────────────────────────

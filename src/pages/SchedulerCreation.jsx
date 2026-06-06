@@ -22,9 +22,28 @@ import {
   getSettings, saveSettings,
   watchStudents, upsertStudent, deleteStudent, bulkImportStudents,
   watchAliases, upsertAlias, deleteAlias,
-  watchCheckIns, setCheckIn,
+  watchCheckIns, setCheckIn, setStudentTag, setStudentDesk,
   watchInstructorAssignments, setInstructorAssignment,
 } from '../lib/scheduler-data';
+
+// Standard parent-name aliases — one click in Setup loads all of them
+// into Firestore so staff don't have to type them in one by one.
+// Edit / extend at any time; the Setup button just upserts these.
+const STANDARD_ALIASES = [
+  { parentName: 'Aiden Thomas',         replacements: ['Aiden Aby Thomas'] },
+  { parentName: 'Kelly Nelson',         replacements: ['Aria Nelson', 'Oliver Nelson'] },
+  { parentName: 'Heather Booth',        replacements: ['Kaitlyn Booth'] },
+  { parentName: 'Zhirong Zhu',          replacements: ['Zhirong Zhu'] },
+  { parentName: 'JackHarry Thorne',     replacements: ['Jackson Thorne', 'Harrison Thorne'] },
+  { parentName: 'Michelle Gu',          replacements: ['Joseph Gu'] },
+  { parentName: 'Khalee Thai',          replacements: ['Jaide Thai'] },
+  { parentName: 'Nassereddine Sabeur',  replacements: ['Zakaria Sabeur'] },
+  { parentName: 'Alejandra Gonzalez',   replacements: ['Joanna Barreto-gonzalez'] },
+  { parentName: 'Madhvi Rogers',        replacements: ['Neha Rogers'] },
+  { parentName: 'Neeharika Yeshala',    replacements: ['Kritin Hanumanla'] },
+  { parentName: 'Daryl Rasmussen',      replacements: ['James Rasmussen'] },
+  { parentName: 'Nadim Al-barqhouty',   replacements: ['Talia Al-barqhouty'] },
+];
 import { toast } from '../lib/notify';
 
 // ───── Helpers ──────────────────────────────────────────────────────────
@@ -221,12 +240,13 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
         <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
       </div>
       <table className="w-full text-sm">
-        <thead className="bg-gray-100 text-xs uppercase text-gray-500">
+        <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
-            <th className="px-2 py-1 text-left w-20">Time</th>
-            <th className="px-2 py-1 text-left">Students</th>
-            <th className="px-2 py-1 text-center w-10">#</th>
-            <th className="px-2 py-1 text-left w-40">Instructors</th>
+            <th className="px-2 py-1 text-left w-16">Time</th>
+            <th className="px-2 py-1 text-left">On the hour</th>
+            <th className="px-2 py-1 text-left border-l border-gray-200">On the half hour</th>
+            <th className="px-2 py-1 text-center w-9">#</th>
+            <th className="px-2 py-1 text-left w-32">Instructors</th>
           </tr>
         </thead>
         <tbody>
@@ -250,14 +270,14 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const understaffed = instructors.length < need;
 
   const handleStatus = async (sid) => {
-    const cur = checkIns[sid] || '';
+    const cur = checkIns[sid]?.status || '';
     const next = cur === 'in' ? '' : 'in';
     try { await setCheckIn(centerId, date, sid, next); }
     catch (e) { toast.error(e.message); }
   };
   const handleStatusMenu = async (e, sid) => {
     e.preventDefault();
-    const cur = checkIns[sid] || '';
+    const cur = checkIns[sid]?.status || '';
     const next = prompt(`Status (in / late / noshow / cancel / blank to clear). Current: "${cur}"`, cur);
     if (next === null) return;
     try { await setCheckIn(centerId, date, sid, next.trim() || ''); }
@@ -284,11 +304,18 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         {row.label.split('–')[0]}<br/>
         <span className="font-normal text-gray-400">{row.label.split('–')[1]}</span>
       </td>
+      {/* On the hour column */}
       <td className="px-2 py-1 align-top">
-        <StudentGroup label="On the hour" students={onHour} checkIns={checkIns}
-          onClick={handleStatus} onContextMenu={handleStatusMenu} />
-        <StudentGroup label="On the half hour" students={halfHour} checkIns={checkIns}
-          onClick={handleStatus} onContextMenu={handleStatusMenu} />
+        <StudentList students={onHour} checkIns={checkIns}
+          centerId={centerId} date={date}
+          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
+      </td>
+      {/* Half-hour column, visually offset down a touch so on-shift staff
+          can see at a glance that these arrive 30 min after the hour. */}
+      <td className="px-2 py-1 align-top border-l border-gray-100 pt-4">
+        <StudentList students={halfHour} checkIns={checkIns}
+          centerId={centerId} date={date}
+          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
       <td className={`px-2 py-2 align-top text-center text-lg font-bold ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
@@ -314,41 +341,69 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentGroup({ label, students, checkIns, onClick, onContextMenu }) {
-  if (students.length === 0) return null;
+function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
+  if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
   return (
-    <div className="py-1">
-      <div className="text-[9px] uppercase tracking-wide text-gray-400">{label}</div>
-      <ul className="mt-0.5">
-        {students.map(s => {
-          const st = checkIns[s.id] || '';
-          const cls = {
-            in:      'text-emerald-700',
-            late:    'text-amber-600',
-            noshow:  'text-red-600 line-through',
-            cancel:  'text-gray-400 line-through',
-          }[st] || '';
-          return (
-            <li key={s.id + label} className={`flex items-center gap-1.5 leading-tight ${cls}`}>
-              <span className="cursor-pointer w-3 text-center" onClick={() => onClick(s.id)}>
-                {st === 'in' ? '✓' : '☐'}
-              </span>
-              <span className="cursor-pointer hover:underline"
-                onClick={() => onClick(s.id)}
-                onContextMenu={e => onContextMenu(e, s.id)}>
-                {s.name}{s.isAssessment && <span className="ml-1 text-[9px] text-gray-400">(A)</span>}
-              </span>
-              {s.aliasedFrom && !s.uncertainAlias && (
-                <span className="text-[9px] text-gray-400" title={`Booked under: ${s.aliasedFrom}`}>•</span>
-              )}
-              {s.uncertainAlias && (
-                <span className="text-[10px] text-amber-600 font-semibold" title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
-    </div>
+    <ul className="space-y-0.5">
+      {students.map(s => (
+        <StudentRow key={s.id} s={s} entry={checkIns[s.id] || {}}
+          centerId={centerId} date={date}
+          onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
+      ))}
+    </ul>
+  );
+}
+
+function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
+  const status = entry.status || '';
+  const cls = {
+    in:      'text-emerald-700',
+    late:    'text-amber-600',
+    noshow:  'text-red-600 line-through',
+    cancel:  'text-gray-400 line-through',
+  }[status] || '';
+
+  // Uncontrolled inputs: typing only touches the DOM; saves fire on blur.
+  // `key={...}` forces remount when another staff member updates the value
+  // on a different device, so the input always shows the latest Firestore
+  // value without a controlled-component sync loop.
+  const saveTag = (v) => setStudentTag(centerId, date, s.id, v).catch(e => toast.error(e.message));
+  const saveDesk = (v) => setStudentDesk(centerId, date, s.id, v).catch(e => toast.error(e.message));
+
+  return (
+    <li className={`flex items-center gap-1 leading-tight ${cls}`}>
+      <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
+        {status === 'in' ? '✓' : '☐'}
+      </span>
+      <span className="cursor-pointer hover:underline truncate"
+        onClick={() => onStatusClick(s.id)}
+        onContextMenu={e => onStatusMenu(e, s.id)}
+        title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
+        {s.name}
+      </span>
+      {s.isAssessment && <span className="text-[9px] text-gray-400 shrink-0">(A)</span>}
+      {s.uncertainAlias && (
+        <span className="text-[10px] text-amber-600 font-semibold shrink-0"
+          title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
+      )}
+      {/* Tag input — A / FT / N / HM / etc. */}
+      <input
+        key={`tag-${entry.tag || ''}`}
+        type="text" defaultValue={entry.tag || ''} maxLength={3}
+        onBlur={e => saveTag(e.target.value.toUpperCase())}
+        placeholder="–"
+        title="A=Assessment · FT=Free Trial · N=New · HM=High Maintenance"
+        className="ml-auto w-8 shrink-0 rounded border border-gray-200 px-1 text-[10px] uppercase text-center text-gray-700 print:border-0"
+      />
+      {/* Desk column */}
+      <input
+        key={`desk-${entry.desk || ''}`}
+        type="text" defaultValue={entry.desk || ''} maxLength={4}
+        onBlur={e => saveDesk(e.target.value)}
+        placeholder="desk"
+        className="w-10 shrink-0 rounded border border-gray-200 px-1 text-[10px] text-center text-gray-700 print:border-0"
+      />
+    </li>
   );
 }
 
@@ -626,15 +681,26 @@ function SetupTab({ centerId }) {
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="font-semibold">Parent-name aliases <span className="text-xs text-gray-500">({aliases.length})</span></h2>
-          <button onClick={async () => {
-            const parent = prompt('Parent name (as it appears in Acuity)'); if (!parent) return;
-            const reps = prompt('Replacement student name(s), comma-separated', '') || '';
-            const replacements = reps.split(',').map(s => s.trim()).filter(Boolean);
-            if (!replacements.length) return;
-            await upsertAlias(centerId, { parentName: parent, replacements });
-          }} className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
-            <Plus size={14} /> Add alias
-          </button>
+          <div className="flex gap-2">
+            <button onClick={async () => {
+              try {
+                for (const a of STANDARD_ALIASES) await upsertAlias(centerId, a);
+                toast.success(`Imported ${STANDARD_ALIASES.length} standard aliases`);
+              } catch (e) { toast.error(e.message); }
+            }} className="flex items-center gap-1 rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
+              title="Bulk-import the 13 known parent-name mappings (Kelly Nelson, JackHarry Thorne, etc.)">
+              <Upload size={14} /> Import 13 standard
+            </button>
+            <button onClick={async () => {
+              const parent = prompt('Parent name (as it appears in Acuity)'); if (!parent) return;
+              const reps = prompt('Replacement student name(s), comma-separated', '') || '';
+              const replacements = reps.split(',').map(s => s.trim()).filter(Boolean);
+              if (!replacements.length) return;
+              await upsertAlias(centerId, { parentName: parent, replacements });
+            }} className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
+              <Plus size={14} /> Add alias
+            </button>
+          </div>
         </div>
         <p className="mb-2 text-xs text-gray-500">When Acuity shows the parent's name, the 1st appearance becomes the 1st student, 2nd → 2nd, etc.</p>
         <table className="w-full text-sm">
