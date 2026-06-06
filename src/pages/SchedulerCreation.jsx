@@ -338,7 +338,12 @@ function StudentGroup({ label, students, checkIns, onClick, onContextMenu }) {
                 onContextMenu={e => onContextMenu(e, s.id)}>
                 {s.name}{s.isAssessment && <span className="ml-1 text-[9px] text-gray-400">(A)</span>}
               </span>
-              {s.aliasedFrom && <span className="text-[9px] text-gray-400" title={`Booked under: ${s.aliasedFrom}`}>•</span>}
+              {s.aliasedFrom && !s.uncertainAlias && (
+                <span className="text-[9px] text-gray-400" title={`Booked under: ${s.aliasedFrom}`}>•</span>
+              )}
+              {s.uncertainAlias && (
+                <span className="text-[10px] text-amber-600 font-semibold" title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
+              )}
             </li>
           );
         })}

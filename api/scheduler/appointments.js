@@ -114,33 +114,78 @@ const ONLINE_RE = /\b(online|@?home|virtual)\b/i;
 
 function nameKey(s) { return (s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
 
-function categorizeOne(appt, studentsByKey, aliasesByKey, aliasCounts) {
+// Resolve a multi-replacement alias to a specific student.
+//
+// Each replacement student is "consumable" — once we've assigned Jackson
+// to a booking today, we don't assign Jackson to a second booking unless
+// every replacement is already used. This handles the common cases:
+//
+//   - Only one kid in today: smart match by HS/EM hint picks the right one
+//   - Both kids in today: 1st booking takes one, 2nd takes the other
+//   - Third+ booking same parent: cycles + flags `uncertainAlias: true`
+function resolveAliasReplacement(appt, alias, studentsByKey, dayState) {
+  const reps = alias.replacements;
+  const k = nameKey(`${appt.firstName} ${appt.lastName}`);
+  let state = dayState.get(k);
+  if (!state) { state = { used: new Set(), cycled: 0 }; dayState.set(k, state); }
+
+  const hay = (appt.type || '').toLowerCase();
+  const hint =
+    ONLINE_RE.test(hay) ? 'Online' :
+    HS_RE.test(hay)     ? 'HS' :
+    EM_RE.test(hay)     ? 'EM' : null;
+
+  // 1. Smart match: pick an UNUSED replacement whose category matches the hint.
+  if (hint) {
+    const match = reps.find(r => !state.used.has(r) && studentsByKey.get(nameKey(r))?.category === hint);
+    if (match) { state.used.add(match); return { studentName: match, uncertain: false }; }
+  }
+
+  // 2. First unused replacement. If more than one unused candidate exists
+  //    AND we have no hint, the pick is a guess — flag uncertain so the
+  //    UI can show a "?" badge.
+  const remaining = reps.filter(r => !state.used.has(r));
+  if (remaining.length > 0) {
+    const chosen = remaining[0];
+    state.used.add(chosen);
+    return { studentName: chosen, uncertain: remaining.length > 1 };
+  }
+
+  // 3. All replacements already used — extra booking. Cycle through and
+  //    flag uncertain so the orange banner asks staff to verify.
+  const i = state.cycled++;
+  return { studentName: reps[i % reps.length], uncertain: true };
+}
+
+function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
   const fullName = `${appt.firstName} ${appt.lastName}`.trim();
   const haystack = `${appt.type || ''}`;
+
   // 0. Powerplay always = HS
   if (POWERPLAY_RE.test(haystack)) {
     appt.isPowerplay = true; appt.displayName = fullName;
     return 'HS';
   }
+
   // 1. Alias (multi-student supported)
   const alias = aliasesByKey.get(nameKey(fullName));
   if (alias && Array.isArray(alias.replacements) && alias.replacements.length) {
-    const k = nameKey(fullName);
-    const i = aliasCounts.get(k) || 0;
-    const studentName = alias.replacements[i % alias.replacements.length];
-    aliasCounts.set(k, i + 1);
+    const { studentName, uncertain } = resolveAliasReplacement(appt, alias, studentsByKey, dayState);
     appt.displayName = studentName;
     appt.aliasedFrom = fullName;
+    if (uncertain) appt.uncertainAlias = true;
     const s = studentsByKey.get(nameKey(studentName));
     if (s) { appt.grade = s.grade; appt.matchedStudent = s.name; return s.category; }
     return 'Unknown';
   }
+
   // 2. Student tracker
   const s = studentsByKey.get(nameKey(fullName));
   if (s) {
     appt.matchedStudent = s.name; appt.grade = s.grade; appt.displayName = fullName;
     return s.category;
   }
+
   // 3. Keyword fallback
   if (ONLINE_RE.test(haystack)) return 'Online';
   if (HS_RE.test(haystack)) return 'HS';
@@ -148,12 +193,21 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, aliasCounts) {
   return 'Unknown';
 }
 
+// Categorize every appointment. CRITICAL: the alias counter is scoped to
+// the centre-local calendar day so cross-day appearances don't shift the
+// assignments inside any one day's view.
 function categorizeAll(appts, students, aliases) {
   const studentsByKey = new Map(students.map(s => [nameKey(s.name), s]));
   const aliasesByKey = new Map(aliases.map(a => [nameKey(a.parentName), a]));
-  const aliasCounts = new Map();
+
+  // Group by centre-TZ day → chronological → per-day alias state map.
   appts.sort((a, b) => a.datetime.localeCompare(b.datetime));
-  for (const a of appts) a.category = categorizeOne(a, studentsByKey, aliasesByKey, aliasCounts);
+  const stateByDay = new Map();
+  for (const a of appts) {
+    const day = tzYMD(new Date(a.datetime));
+    if (!stateByDay.has(day)) stateByDay.set(day, new Map());
+    a.category = categorizeOne(a, studentsByKey, aliasesByKey, stateByDay.get(day));
+  }
   return appts;
 }
 
@@ -208,6 +262,7 @@ function toCard(a) {
     id: `${a.datetime}|${display}`.replace(/\s+/g, '_'),
     name: display,
     aliasedFrom: a.aliasedFrom || null,
+    uncertainAlias: !!a.uncertainAlias,
     type: a.type || '',
     duration: a.duration,
     start: a.datetime,
