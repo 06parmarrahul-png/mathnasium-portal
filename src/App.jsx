@@ -22,6 +22,7 @@ import CenterAnalytics from './pages/CenterAnalytics';
 import CenterSettings from './pages/CenterSettings';
 import AuditLogs from './pages/AuditLogs';
 import AccountDetails from './pages/AccountDetails';
+import SchedulerCreation from './pages/SchedulerCreation';
 
 function NotFound() {
   return (
@@ -58,6 +59,7 @@ function AppRoutes() {
       <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
       <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
+      <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

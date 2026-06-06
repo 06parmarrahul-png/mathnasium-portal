@@ -10,7 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
-  CalendarRange, Users, Wallet,
+  CalendarRange, Users, Wallet, ClipboardList,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -165,7 +165,16 @@ export default function Layout({ children }) {
   // ENTERPRISE — platform-operator only. Sits between COMMUNICATE and
   // SETTINGS so super-admin tools are grouped together but don't crowd
   // the per-centre nav above.
+  //
+  // Exception: "Scheduler Creation" is also surfaced to Owners and
+  // Admin Assistants since they're the ones running the daily ops view
+  // at their centre, even though the configuration story lives here.
   const enterprise = [];
+  if (isSuperAdmin || isOwner || isAdminAssistant) {
+    enterprise.push(
+      { to: '/scheduler-creation', label: 'Scheduler Creation', icon: ClipboardList },
+    );
+  }
   if (isSuperAdmin) {
     enterprise.push(
       { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
