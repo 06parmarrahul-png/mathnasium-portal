@@ -204,6 +204,7 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
     if (s) {
       appt.grade = s.grade; appt.matchedStudent = s.name;
       if (s.hasAssessment) appt.hasAssessment = true;
+      if (s.isHybrid) appt.isHybrid = true;
       return s.category;
     }
     return 'Unknown';
@@ -214,6 +215,7 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
   if (s) {
     appt.matchedStudent = s.name; appt.grade = s.grade; appt.displayName = fullName;
     if (s.hasAssessment) appt.hasAssessment = true;
+    if (s.isHybrid) appt.isHybrid = true;
     return s.category;
   }
 
@@ -301,6 +303,7 @@ function toCard(a) {
     // OR the student's tracker row has "binder" in it (set by CSV import).
     isAssessment: !!a.hasAssessment || /assess/i.test(a.type || ''),
     isPowerplay: !!a.isPowerplay,
+    isHybrid: !!a.isHybrid,
   };
 }
 

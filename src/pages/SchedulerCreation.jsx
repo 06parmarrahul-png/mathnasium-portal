@@ -51,9 +51,10 @@ function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-function categoryFor(grade, status) {
-  const s = (status || '').trim().toLowerCase();
-  if (s === '@home') return 'Online';
+// Map a hybrid student to the side they should appear on. The dashboard
+// only has HS and EM columns, so grade 8+ hybrids go to HS, everyone
+// else goes to EM. They're still tagged isHybrid for the UI's (H) badge.
+function hybridDisplaySide(grade) {
   const g = (grade || '').trim().toUpperCase();
   return /^(8|9|10|11|12)$/.test(g) ? 'HS' : 'EM';
 }
@@ -446,7 +447,8 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
         {s.name}
       </span>
-      {s.isAssessment && <span className="text-[9px] text-gray-400 shrink-0">(A)</span>}
+      {s.isAssessment && <span className="text-[9px] text-amber-700 shrink-0" title="Assessment">(A)</span>}
+      {s.isHybrid && <span className="text-[9px] text-purple-700 shrink-0" title="Hybrid student">(H)</span>}
       {s.uncertainAlias && (
         <span className="text-[10px] text-amber-600 font-semibold shrink-0"
           title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
@@ -610,35 +612,71 @@ function SetupTab({ centerId }) {
     catch (e) { toast.error(e.message); }
   };
 
-  // CSV import handler
+  // CSV import handler.
+  //
+  // The Student Assessment Tracker uses SECTION HEADERS in column A
+  // ("High School", "Online", with Elementary implicit at the top) to
+  // separate students into categories. We walk the rows in order,
+  // tracking the current section, so a grade-9 student living in the
+  // Elementary section correctly ends up on the EM side.
+  //
+  // Inside the "Online" section, students with status "hybrid" come to
+  // the centre too — they're routed to HS or EM by grade and tagged
+  // isHybrid. Status "@home" stays as Online (not shown on the daily
+  // ops dashboard since they're remote).
   const importCsv = async (file) => {
     const text = await file.text();
     const rows = parseCsv(text);
     if (rows.length < 2) { toast.error('CSV is empty'); return; }
-    // Column layout matches the Student Assessment Tracker:
-    //   A=name, B=grade, C=status, ... I=assigned instructor
-    // ANY cell on the row containing the word "binder" (case-insensitive)
-    // means the student is flagged for an upcoming assessment. The (A)
-    // marker on the daily dashboard reads off this flag.
+
     const out = [];
-    let assessmentCount = 0;
+    let assessmentCount = 0, hybridCount = 0;
+    let section = 'EM';   // implicit start: Elementary
+
     for (let i = 1; i < rows.length; i++) {
-      const r = rows[i]; const name = (r[0] || '').trim();
-      if (!name) continue;
+      const r = rows[i];
+      const name = (r[0] || '').trim();
       const grade = (r[1] || '').trim();
       const status = (r[2] || '').trim();
+
+      // Section header row: column A is set, B and C are empty.
+      if (name && !grade && !status) {
+        const h = name.toLowerCase();
+        if (/high\s*school/.test(h)) section = 'HS';
+        else if (/elementary/.test(h)) section = 'EM';
+        else if (/online/.test(h)) section = 'ONLINE_SECTION';
+        // Unknown header → leave section as-is; skip the row either way.
+        continue;
+      }
+      if (!name) continue;
+
+      // Resolve display category and hybrid flag.
+      let category, isHybrid = false;
+      if (section === 'ONLINE_SECTION') {
+        if (/hybrid|hyrid/i.test(status)) {
+          isHybrid = true;
+          category = hybridDisplaySide(grade);
+          hybridCount++;
+        } else {
+          category = 'Online';
+        }
+      } else {
+        category = section;   // 'EM' or 'HS'
+      }
+
       const hasAssessment = r.some(cell => /binder/i.test(cell || ''));
       if (hasAssessment) assessmentCount++;
+
       out.push({
         name, grade, status,
-        category: categoryFor(grade, status),
+        category, isHybrid,
         assignedInstructor: (r[8] || '').trim(),
         hasAssessment,
       });
     }
     try {
       await bulkImportStudents(centerId, out);
-      toast.success(`Imported ${out.length} students (${assessmentCount} flagged for assessment)`);
+      toast.success(`Imported ${out.length} students (${assessmentCount} assessment, ${hybridCount} hybrid)`);
     } catch (e) { toast.error(e.message); }
   };
 
@@ -686,7 +724,8 @@ function SetupTab({ centerId }) {
           <h2 className="font-semibold">
             Student roster
             <span className="ml-2 text-xs text-gray-500">({students.length} total</span>
-            <span className="ml-1 text-xs text-amber-700">· {students.filter(s => s.hasAssessment).length} flagged for assessment)</span>
+            <span className="ml-1 text-xs text-amber-700">· {students.filter(s => s.hasAssessment).length} (A)</span>
+            <span className="ml-1 text-xs text-purple-700">· {students.filter(s => s.isHybrid).length} (H))</span>
           </h2>
           <div className="flex gap-2">
             <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
@@ -698,8 +737,19 @@ function SetupTab({ centerId }) {
             <button onClick={async () => {
               const name = prompt('Student name'); if (!name) return;
               const grade = prompt('Grade (K, 1–12)') || '';
-              const status = prompt('Status (centre, hybrid, @home)') || 'centre';
-              await upsertStudent(centerId, { name, grade, status, category: categoryFor(grade, status) });
+              const status = (prompt('Status (centre, hybrid, @home)') || 'centre').toLowerCase();
+              // Manual adds skip the section-header logic, so we pick the
+              // category here: @home → Online; hybrid → side by grade
+              // (with isHybrid flagged); otherwise grade decides HS vs EM.
+              let category, isHybrid = false;
+              if (status === '@home') category = 'Online';
+              else if (/hybrid|hyrid/.test(status)) {
+                isHybrid = true;
+                category = hybridDisplaySide(grade);
+              } else {
+                category = /^(8|9|10|11|12)$/.test(grade.toUpperCase()) ? 'HS' : 'EM';
+              }
+              await upsertStudent(centerId, { name, grade, status, category, isHybrid });
             }} className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
               <Plus size={14} /> Add
             </button>
