@@ -304,14 +304,14 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
         <span className="font-semibold">{title}</span>
         <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
       </div>
-      <table className="w-full text-sm">
+      <table className="w-full text-sm table-fixed">
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
-            <th className="px-2 py-1 text-left w-16">Time</th>
-            <th className="px-2 py-1 text-left">On the hour</th>
-            <th className="px-2 py-1 text-left border-l border-gray-200">On the half hour</th>
-            <th className="px-2 py-1 text-center w-9">#</th>
-            <th className="px-2 py-1 text-left w-32">Instructors</th>
+            <th className="px-1 py-1 text-left w-14">Time</th>
+            <th className="px-1 py-1 text-left">On the hour</th>
+            <th className="px-1 py-1 text-left border-l border-gray-200">On the half hour</th>
+            <th className="px-1 py-1 text-center w-8">#</th>
+            <th className="px-1 py-1 text-left w-28">Instructors</th>
           </tr>
         </thead>
         <tbody>
@@ -365,40 +365,40 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
 
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
-      <td className="px-2 py-2 align-top text-xs font-semibold text-gray-700 whitespace-nowrap">
+      <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap">
         {row.label.split('–')[0]}<br/>
-        <span className="font-normal text-gray-400">{row.label.split('–')[1]}</span>
+        <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
       </td>
       {/* On the hour column */}
-      <td className="px-2 py-1 align-top">
+      <td className="px-1 py-1 align-top">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
       {/* Half-hour column, visually offset down a touch so on-shift staff
           can see at a glance that these arrive 30 min after the hour. */}
-      <td className="px-2 py-1 align-top border-l border-gray-100 pt-4">
+      <td className="px-1 py-1 align-top border-l border-gray-100 pt-3">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
-      <td className={`px-2 py-2 align-top text-center text-lg font-bold ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
+      <td className={`px-1 py-1 align-top text-center text-base font-bold ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
       </td>
-      <td className="px-2 py-2 align-top">
-        <div className="flex flex-wrap gap-1">
+      <td className="px-1 py-1 align-top">
+        <div className="flex flex-wrap gap-0.5">
           {instructors.map(n => (
-            <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-2 py-0.5 text-xs hover:bg-red-100"
+            <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-1.5 py-0 text-[10px] hover:bg-red-100"
               onClick={() => handleRemoveInstructor(n)} title="Click to remove">
               {n} <span className="text-red-600">×</span>
             </span>
           ))}
           <button onClick={handleAddInstructor}
-            className="rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-xs text-gray-500 hover:border-red-400 hover:text-red-600 print:hidden">
+            className="rounded-full border border-dashed border-gray-300 px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600 print:hidden">
             + add
           </button>
         </div>
-        <div className={`mt-1 text-[10px] ${understaffed ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
+        <div className={`mt-0.5 text-[9px] ${understaffed ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
           need {need} · have {instructors.length}
         </div>
       </td>
@@ -451,22 +451,23 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         <span className="text-[10px] text-amber-600 font-semibold shrink-0"
           title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
       )}
-      {/* Tag input — A / FT / N / HM / etc. */}
+      {/* Tag input — A / FT / N / HM / etc.
+          Borderless when empty so the row stays compact. Light gray hover
+          band hints it's editable; full input style appears on focus. */}
       <input
         key={`tag-${entry.tag || ''}`}
         type="text" defaultValue={entry.tag || ''} maxLength={3}
         onBlur={e => saveTag(e.target.value.toUpperCase())}
-        placeholder="–"
         title="A=Assessment · FT=Free Trial · N=New · HM=High Maintenance"
-        className="ml-auto w-8 shrink-0 rounded border border-gray-200 px-1 text-[10px] uppercase text-center text-gray-700 print:border-0"
+        className="ml-auto w-6 shrink-0 border-0 bg-transparent px-0 text-[10px] uppercase text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-8"
       />
-      {/* Desk column */}
+      {/* Desk input — same compact treatment. */}
       <input
         key={`desk-${entry.desk || ''}`}
         type="text" defaultValue={entry.desk || ''} maxLength={4}
         onBlur={e => saveDesk(e.target.value)}
-        placeholder="desk"
-        className="w-10 shrink-0 rounded border border-gray-200 px-1 text-[10px] text-center text-gray-700 print:border-0"
+        title="Desk number"
+        className="w-8 shrink-0 border-0 bg-transparent px-0 text-[10px] text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-10"
       />
     </li>
   );
