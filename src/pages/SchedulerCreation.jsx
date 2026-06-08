@@ -260,21 +260,29 @@ function TodayTab({ centerId }) {
         </div>
       )}
 
-      {/* Print rules — designed to FIT THE WHOLE SIDE ON ONE PAGE no matter
-          how busy the day is.
+      {/* Print rules — FIT THE WHOLE SIDE ON ONE PAGE regardless of how
+          busy the day is.
           Strategy:
-            1. Hide chrome + every overflow / height limit on ancestors
-               (otherwise a scrollable container truncates the printout).
-            2. Shrink fonts and padding hard.
-            3. Hide the tag/desk inputs (interactive only — not useful on
-               paper, and they steal a lot of horizontal width).
-            4. Apply transform: scale(0.78) as a final shrink-to-fit so a
-               very long roster still lands on a single sheet.
-            5. Force everything inside the printable region to stay on
-               one page (page-break-inside: avoid on the section). */}
+            1. Hide chrome + every overflow / height limit on ancestors.
+            2. Shrink fonts and padding to bare minimum.
+            3. Hide tag/desk inputs + +add buttons — they're for the live
+               app, not for paper, and they steal lots of width.
+            4. Use CSS `zoom` (Chrome/Safari, which staff uses) to actually
+               reflow the layout at a smaller scale. Unlike transform: scale
+               (which only resizes visually and leaves Chrome calculating
+               page breaks from the ORIGINAL height — that was what split
+               the EM into 3 pages), zoom shrinks the real box model so
+               page-break math is recomputed and the content lands on a
+               single sheet.
+            5. Discourage page breaks inside the section so Chrome doesn't
+               opportunistically split a row that almost-but-not-quite fits. */}
       <style>{`
         @media print {
-          @page { size: letter portrait; margin: 0.25in; }
+          /* size: auto respects whichever paper the user picks in the
+             print dialog (Letter, A4, Legal, …). A4 is taller than Letter
+             so anything that fits on Letter fits on A4 too — the zoom
+             below adapts either way. */
+          @page { size: auto; margin: 0.25in; }
           html, body { background: white !important; height: auto !important; overflow: visible !important; }
           aside, .print\\:hidden, [data-print-hide], header.lg\\:hidden { display: none !important; }
           main, .flex, .grid, body > div, #root, #root > div, [class*="overflow-"], [class*="h-screen"] {
@@ -283,28 +291,20 @@ function TodayTab({ centerId }) {
             max-height: none !important;
             overflow: visible !important;
           }
-          /* Compact typography */
-          table.sched { font-size: 9px !important; line-height: 1.15 !important; }
-          table.sched th, table.sched td { padding: 1px 3px !important; }
-          /* Hide the tag/desk inputs on paper — they're for the live app,
-             and ditching them frees up width so names don't wrap. */
+          /* Hide interactive UI that isn't useful on paper. */
           table.sched input { display: none !important; }
-          /* No shadows or rounded corners. */
-          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1px solid #000 !important; }
-          /* Force the whole side onto one page — disable any internal page
-             breaks, then scale the printable region to fit. */
-          section, table, table * { page-break-inside: avoid !important; break-inside: avoid !important; }
-          /* Shrink-to-fit: 0.78 reliably lands a 60-student EM day on one
-             letter sheet. Origin top-left so it fills from the corner. */
-          main > div, main {
-            transform-origin: top left;
-            transform: scale(0.78);
-            width: 128% !important;   /* 1 / 0.78 ≈ 1.28 so the scaled width hits page edge */
-          }
-          /* Smaller "need X / have Y" line. */
-          .ratio-status { font-size: 7px !important; }
-          /* Hide the "+ add" instructor button on paper. */
           button { display: none !important; }
+          /* Compact typography. */
+          table.sched { font-size: 9px !important; line-height: 1.1 !important; }
+          table.sched th, table.sched td { padding: 1px 3px !important; }
+          /* Plain section, no shadows / rounded corners. */
+          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1px solid #000 !important; }
+          /* Actually shrink the printable region — CSS zoom reflows the
+             box model so Chrome's page-break logic sees the smaller height. */
+          main { zoom: 0.6; }
+          /* Belt-and-suspenders: in browsers that ignore zoom, we still
+             want the content to flow without ugly breaks. */
+          table tr { page-break-inside: avoid; break-inside: avoid; }
         }
       `}</style>
     </div>
