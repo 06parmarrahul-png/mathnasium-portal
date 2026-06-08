@@ -261,24 +261,34 @@ function TodayTab({ centerId }) {
       )}
 
       {/* Print rules. The "Print HS" / "Print EM" buttons handle the
-          single-side rendering in React state, so we no longer need
-          page-break logic here — just hide chrome and bump readability. */}
+          single-side rendering in React state. The main job of this CSS
+          is to (a) hide chrome, (b) tear down every overflow constraint
+          on parent elements so a long EM table can flow naturally onto
+          page 2 / 3 / N instead of being truncated. */}
       <style>{`
         @media print {
           @page { size: letter portrait; margin: 0.4in; }
-          body { background: white; }
-          /* Hide sidebar + every element flagged print:hidden. */
-          aside, header.lg\\:hidden,
-          .print\\:hidden, [data-print-hide] { display: none !important; }
+          html, body { background: white !important; height: auto !important; overflow: visible !important; }
+          /* Every ancestor of the schedule has overflow / height limits on
+             screen — those are what cause the printout to clip at one page.
+             Force-clear all of them. */
+          aside, .print\\:hidden, [data-print-hide], header.lg\\:hidden { display: none !important; }
+          main, .flex, .grid, body > div, #root, #root > div, [class*="overflow-"], [class*="h-screen"] {
+            height: auto !important;
+            min-height: 0 !important;
+            max-height: none !important;
+            overflow: visible !important;
+          }
           /* Keep half-hour rows intact across pages. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
           /* Bigger text so the printout reads cleanly across the room. */
           table.sched { font-size: 12px !important; }
-          /* No shadows or rounded corners on paper. */
-          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; }
-          /* Repeat table headers on every printed page so half-hour rows
+          /* No shadows or rounded corners on paper; show all content. */
+          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; }
+          /* Repeat the table header on every printed page so half-hour rows
              that flow to page 2 of EM still show the column labels. */
           table.sched thead { display: table-header-group; }
+          table.sched tfoot { display: table-footer-group; }
         }
       `}</style>
     </div>
