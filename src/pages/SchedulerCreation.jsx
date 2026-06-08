@@ -682,7 +682,11 @@ function SetupTab({ centerId }) {
       {/* Roster card */}
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="font-semibold">Student roster <span className="text-xs text-gray-500">({students.length})</span></h2>
+          <h2 className="font-semibold">
+            Student roster
+            <span className="ml-2 text-xs text-gray-500">({students.length} total</span>
+            <span className="ml-1 text-xs text-amber-700">· {students.filter(s => s.hasAssessment).length} flagged for assessment)</span>
+          </h2>
           <div className="flex gap-2">
             <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
               onChange={e => { const f = e.target.files?.[0]; if (f) importCsv(f); e.target.value = ''; }} />
@@ -704,7 +708,14 @@ function SetupTab({ centerId }) {
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-100 text-xs uppercase text-gray-500">
-              <tr><th className="text-left px-2 py-1">Name</th><th className="text-left">Grade</th><th className="text-left">Status</th><th className="text-left">Category</th><th></th></tr>
+              <tr>
+                <th className="text-left px-2 py-1">Name</th>
+                <th className="text-left">Grade</th>
+                <th className="text-left">Status</th>
+                <th className="text-left">Category</th>
+                <th className="text-left">Assessment</th>
+                <th></th>
+              </tr>
             </thead>
             <tbody>
               {students.slice(0, 500).map(s => (
@@ -717,6 +728,11 @@ function SetupTab({ centerId }) {
                     s.category === 'EM' ? 'bg-emerald-100 text-emerald-700' :
                     'bg-purple-100 text-purple-700'
                   }`}>{s.category}</span></td>
+                  <td>
+                    {s.hasAssessment
+                      ? <span className="rounded px-2 py-0.5 text-xs bg-amber-100 text-amber-800">(A)</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
                   <td className="text-right pr-2">
                     <button onClick={() => deleteStudent(centerId, s.id)} className="text-gray-400 hover:text-red-600" title="Delete">
                       <Trash2 size={12} />
