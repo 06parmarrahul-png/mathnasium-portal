@@ -12,8 +12,9 @@
 // shipping private feed URLs to the browser.
 
 import { useEffect, useRef, useState } from 'react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
-import { auth } from '../firebase';
+import { auth, db } from '../firebase';
 import {
   ClipboardList, Settings, CalendarCheck, BarChart3, Printer,
   Upload, Plus, Trash2, AlertTriangle, RefreshCw,
@@ -147,6 +148,33 @@ function TodayTab({ centerId }) {
   // split print buttons so the printer never sees the other side and
   // we don't have to fight Chrome's page-break rules.
   const [printOnly, setPrintOnly] = useState(null);
+  // Live list of instructor users at the active centre. Used to populate
+  // the per-slot "+ add" dropdown so staff doesn't have to maintain a
+  // separate text list.
+  const [staffUsers, setStaffUsers] = useState([]);
+
+  // Subscribe to the centre's user roster. We include instructors and
+  // admin assistants since both get scheduled to slots in practice.
+  useEffect(() => {
+    if (!centerId) return;
+    const q = query(
+      collection(db, 'users'),
+      where('centerIds', 'array-contains', centerId),
+    );
+    return onSnapshot(q, snap => {
+      const list = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(u =>
+          u.approved !== false &&
+          (u.role === 'instructor' || u.role === 'admin_assistant')
+        )
+        // Use first name where possible — matches the paper schedule.
+        .map(u => (u.firstName || u.displayName || '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b));
+      setStaffUsers([...new Set(list)]);
+    });
+  }, [centerId]);
 
   // Trigger a print run for the named side. We render exclusively that
   // side, calculate a per-day zoom level so the content fills (but doesn't
@@ -207,7 +235,10 @@ function TodayTab({ centerId }) {
   useEffect(() => { loadSchedule(); }, [centerId, date]);
 
   const ratio = settings?.studentsPerInstructor || 4;
-  const pool = settings?.instructorPool || [];
+  // Pool = live Firestore staff list, plus any custom names from Setup
+  // (so one-off helpers can still be added without being approved users).
+  const pool = [...staffUsers, ...((settings?.instructorPool) || [])]
+    .filter((n, i, a) => a.indexOf(n) === i);
 
   return (
     <div>
@@ -778,11 +809,18 @@ function SetupTab({ centerId }) {
             </label>
           </div>
           <div>
-            <label className="block text-xs text-gray-500 mb-1">Default instructor pool (comma-separated)</label>
+            <label className="block text-xs text-gray-500 mb-1">
+              Extra instructors (optional, comma-separated)
+            </label>
             <input type="text" value={(settings.instructorPool || []).join(', ')}
               onChange={e => updateSetting({ instructorPool: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
               className="w-full rounded border border-gray-300 px-2 py-1"
-              placeholder="Joanne, Pavit, DevP, Arham, Bri, Luke, Homer, Sabrina" />
+              placeholder="e.g. a one-off substitute who isn't in your staff list" />
+            <p className="mt-1 text-xs text-gray-500">
+              The instructor dropdown on the Today tab is automatically populated from
+              your approved staff in <b>Manage Staff</b> (instructors + admin assistants).
+              Names typed here are added on top — useful for substitutes who aren't formal staff yet.
+            </p>
           </div>
         </div>
       </section>
