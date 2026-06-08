@@ -214,15 +214,19 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        // Screen: 2-col grid. Print: flex column, single-file, with a
-        // hard page break AFTER High School so Elementary starts on
-        // page 2. Tailwind's print: utilities live in the compiled
-        // bundle, which lets them beat the grid utilities at print time.
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print:flex print:flex-col print:gap-0">
-          <div className="print:break-after-page print:w-full">
+        // Screen: 2-col grid.
+        // Print: switch the grid to block layout (block-children honour
+        // page-break much more reliably than flex/grid children in Chrome),
+        // then insert an explicit page-break divider element between
+        // the two sides — that always works.
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print:block print:gap-0">
+          <div className="print:w-full">
             <SideTable side="HS" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
           </div>
+          {/* Hard page break — shows only on print, always forces EM to
+              start on a new page regardless of how short HS is. */}
+          <div className="hidden print:block scheduler-pagebreak" aria-hidden="true" />
           <div className="print:w-full">
             <SideTable side="EM" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
@@ -246,17 +250,21 @@ function TodayTab({ centerId }) {
           aside, header.lg\\:hidden,
           .print\\:hidden, [data-print-hide] { display: none !important; }
           /* Force the HS|EM grid to stack vertically on paper. */
-          .print\\:flex { display: flex !important; }
-          .print\\:flex-col { flex-direction: column !important; }
+          .print\\:block { display: block !important; }
           .print\\:gap-0 { gap: 0 !important; }
           .print\\:w-full { width: 100% !important; max-width: 100% !important; }
-          /* Hard page break after High School so Elementary starts on page 2. */
-          .print\\:break-after-page {
-            break-after: page !important;
-            page-break-after: always !important;
+          /* Dedicated page-break element between HS and EM. Sits as
+             display: block with zero height. Chrome / Firefox / Safari
+             all honour break-before on a block-level element regardless
+             of the parent's layout context. */
+          .scheduler-pagebreak {
+            break-before: page !important;
+            page-break-before: always !important;
+            display: block !important;
+            height: 0 !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
-          /* Show the per-page header. */
-          .print\\:block { display: block !important; }
           /* Keep half-hour rows intact across pages. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
           /* Bigger text so the printout reads cleanly across the room. */
