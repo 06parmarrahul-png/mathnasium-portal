@@ -138,7 +138,18 @@ const HS_RE = /\b(hs|high\s*school|grade\s*(8|9|10|11|12))\b/i;
 const EM_RE = /\b(em|elementary|grade\s*[1-7])\b/i;
 const ONLINE_RE = /\b(online|@?home|virtual)\b/i;
 
-function nameKey(s) { return (s || '').trim().toLowerCase().replace(/\s+/g, ' '); }
+// Must match src/lib/scheduler-data.js nameKey character-for-character so
+// the in-memory lookup Maps line up with the Firestore doc IDs the
+// website wrote with.
+function nameKey(s) {
+  return (s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[/\\]/g, '_')
+    .replace(/^\.+$/, '_')
+    .replace(/^__(.*)__$/, '_$1_');
+}
 
 // Resolve a multi-replacement alias to a specific student.
 //

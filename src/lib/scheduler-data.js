@@ -18,8 +18,19 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 
+// Used as the Firestore document ID for students and aliases. Firestore
+// rejects forward slashes and a few other special tokens — sanitize here
+// so names like "Phillip / Tricia Mak" don't crash the import. The
+// original (unsanitized) name is still kept on the document body under
+// `name` / `parentName`, so what staff sees is unaffected.
 export function nameKey(s) {
-  return (s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  return (s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[/\\]/g, '_')          // / and \ are illegal in Firestore IDs
+    .replace(/^\.+$/, '_')           // bare "." or ".." also illegal
+    .replace(/^__(.*)__$/, '_$1_');  // reserved __anything__ pattern
 }
 
 // ───── Settings ──────────────────────────────────────────────────────────
