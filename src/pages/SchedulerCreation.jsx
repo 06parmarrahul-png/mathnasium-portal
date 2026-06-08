@@ -214,12 +214,16 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print-stack">
-          <div className="print-section">
+        // Screen: 2-col grid. Print: flex column, single-file, with a
+        // hard page break AFTER High School so Elementary starts on
+        // page 2. Tailwind's print: utilities live in the compiled
+        // bundle, which lets them beat the grid utilities at print time.
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print:flex print:flex-col print:gap-0">
+          <div className="print:break-after-page print:w-full">
             <SideTable side="HS" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
           </div>
-          <div className="print-section print-page-break">
+          <div className="print:w-full">
             <SideTable side="EM" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
           </div>
@@ -230,27 +234,35 @@ function TodayTab({ centerId }) {
         <OnlineStrip data={data} />
       )}
 
-      {/* Print rules for the daily ops view.
-          - Stack HS / EM vertically (one per page)
-          - Hide all the chrome (tabs, header, sidebar, floating widgets)
-          - Tighten margins so the table fits the page */}
+      {/* Print rules. Belt-and-suspenders: every Tailwind print: utility I
+          use in JSX is also written here as plain CSS targeting the
+          escaped class name, so the print layout works even if the
+          Tailwind v4 compiler misses one. */}
       <style>{`
         @media print {
           @page { size: letter portrait; margin: 0.4in; }
           body { background: white; }
-          aside, header, .print\\:hidden,
-          [data-print-hide], .lucide-x-circle { display: none !important; }
-          /* Stack the two sides instead of side-by-side */
-          .print-stack { display: block !important; }
-          .print-section { width: 100% !important; max-width: 100% !important; }
-          /* New page for EM so it doesn't get cut off mid-row */
-          .print-page-break { page-break-before: always; break-before: page; }
-          /* Keep rows together so a half-hour row isn't split across pages */
+          /* Hide sidebar + every element flagged print:hidden. */
+          aside, header.lg\\:hidden,
+          .print\\:hidden, [data-print-hide] { display: none !important; }
+          /* Force the HS|EM grid to stack vertically on paper. */
+          .print\\:flex { display: flex !important; }
+          .print\\:flex-col { flex-direction: column !important; }
+          .print\\:gap-0 { gap: 0 !important; }
+          .print\\:w-full { width: 100% !important; max-width: 100% !important; }
+          /* Hard page break after High School so Elementary starts on page 2. */
+          .print\\:break-after-page {
+            break-after: page !important;
+            page-break-after: always !important;
+          }
+          /* Show the per-page header. */
+          .print\\:block { display: block !important; }
+          /* Keep half-hour rows intact across pages. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
-          /* Strip background colors that waste ink */
-          .print-section section { border: 1px solid #000 !important; }
-          /* Bigger text */
+          /* Bigger text so the printout reads cleanly across the room. */
           table.sched { font-size: 12px !important; }
+          /* No shadows or rounded corners on paper. */
+          section { box-shadow: none !important; border-radius: 0 !important; }
         }
       `}</style>
     </div>
