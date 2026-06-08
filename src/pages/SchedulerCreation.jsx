@@ -214,20 +214,16 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        // Screen: 2-col grid.
-        // Print: switch the grid to block layout (block-children honour
-        // page-break much more reliably than flex/grid children in Chrome),
-        // then insert an explicit page-break divider element between
-        // the two sides — that always works.
+        // Screen: 2-col grid. Print: stack as block, with break-before
+        // applied DIRECTLY to the Elementary wrapper. Block elements with
+        // visible content honour page-break-before reliably; zero-height
+        // divider elements get collapsed and ignored by Chrome.
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print:block print:gap-0">
-          <div className="print:w-full">
+          <div className="print:w-full em-or-hs-wrap">
             <SideTable side="HS" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
           </div>
-          {/* Hard page break — shows only on print, always forces EM to
-              start on a new page regardless of how short HS is. */}
-          <div className="hidden print:block scheduler-pagebreak" aria-hidden="true" />
-          <div className="print:w-full">
+          <div className="print:w-full em-print-section">
             <SideTable side="EM" data={data} centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
           </div>
@@ -253,17 +249,15 @@ function TodayTab({ centerId }) {
           .print\\:block { display: block !important; }
           .print\\:gap-0 { gap: 0 !important; }
           .print\\:w-full { width: 100% !important; max-width: 100% !important; }
-          /* Dedicated page-break element between HS and EM. Sits as
-             display: block with zero height. Chrome / Firefox / Safari
-             all honour break-before on a block-level element regardless
-             of the parent's layout context. */
-          .scheduler-pagebreak {
+          /* Force Elementary to start on its own page. Putting the
+             page-break-before on the visible EM wrapper (instead of a
+             separate zero-height divider) is the most reliable approach
+             in Chrome — empty divider elements get collapsed and the
+             break never fires. */
+          .em-print-section {
             break-before: page !important;
             page-break-before: always !important;
             display: block !important;
-            height: 0 !important;
-            margin: 0 !important;
-            padding: 0 !important;
           }
           /* Keep half-hour rows intact across pages. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
