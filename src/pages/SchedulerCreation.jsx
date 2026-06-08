@@ -149,16 +149,36 @@ function TodayTab({ centerId }) {
   const [printOnly, setPrintOnly] = useState(null);
 
   // Trigger a print run for the named side. We render exclusively that
-  // side, wait one paint, fire window.print(), then put both sides back
+  // side, calculate a per-day zoom level so the content fills (but doesn't
+  // overflow) one page, fire window.print(), then put both sides back
   // after the print dialog closes.
+  //
+  // The auto-zoom matters because a quiet HS day with 40 students should
+  // not be shrunk as hard as a packed EM day with 64 — we want the busy
+  // case to barely fit and the quiet case to fill comfortably.
   const printSide = (side) => {
     setPrintOnly(side);
-    // Two RAFs is a reliable "wait until React has committed + painted".
     requestAnimationFrame(() => requestAnimationFrame(() => {
+      // Measure the visible section that's about to be printed, then pick
+      // a zoom factor so its content height lands inside one letter page
+      // worth of usable vertical space (~9.5 inches × 96dpi ≈ 912 px).
+      // Capped between 0.5 and 1.0 — at 1.0 a quiet day prints actual size.
+      const section = document.querySelector('main section');
+      const usablePageHeight = 912;
+      let zoom = 1.0;
+      if (section) {
+        const contentHeight = section.scrollHeight || section.offsetHeight;
+        if (contentHeight > 0) {
+          zoom = Math.min(1.0, Math.max(0.5, usablePageHeight / contentHeight));
+        }
+      }
+      document.documentElement.style.setProperty('--print-zoom', zoom.toFixed(3));
+
       window.print();
-      // Give the print dialog a moment to register the layout before
-      // restoring the on-screen view.
-      setTimeout(() => setPrintOnly(null), 500);
+      setTimeout(() => {
+        document.documentElement.style.removeProperty('--print-zoom');
+        setPrintOnly(null);
+      }, 500);
     }));
   };
 
@@ -295,13 +315,22 @@ function TodayTab({ centerId }) {
           table.sched input { display: none !important; }
           button { display: none !important; }
           /* Compact typography. */
-          table.sched { font-size: 9px !important; line-height: 1.1 !important; }
+          table.sched { font-size: 9px !important; line-height: 1.1 !important;
+                        border-collapse: collapse !important; }
           table.sched th, table.sched td { padding: 1px 3px !important; }
           /* Plain section, no shadows / rounded corners. */
-          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1px solid #000 !important; }
-          /* Actually shrink the printable region — CSS zoom reflows the
-             box model so Chrome's page-break logic sees the smaller height. */
-          main { zoom: 0.6; }
+          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1.5px solid #000 !important; }
+          /* Stronger black borders on every cell so the grid reads clearly
+             on paper, and an extra-thick divider down the middle between
+             "On the hour" and "On the half hour". */
+          table.sched th, table.sched td { border: 0.5px solid #555 !important; }
+          table.sched th:nth-child(3), table.sched td:nth-child(3) {
+            border-left: 1.5px solid #000 !important;
+          }
+          /* Dynamic shrink-to-fit. JS sets --print-zoom right before
+             window.print() based on the section's actual height, so a
+             64-student EM day prints smaller than a 40-student HS day. */
+          main { zoom: var(--print-zoom, 0.6); }
           /* Belt-and-suspenders: in browsers that ignore zoom, we still
              want the content to flow without ugly breaks. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
