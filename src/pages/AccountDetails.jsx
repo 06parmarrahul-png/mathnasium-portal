@@ -8,9 +8,10 @@ import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'fi
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
+import { Link } from 'react-router-dom';
 import {
   UserCog, Mail, Lock, Image as ImageIcon, Trash2, Save, AlertTriangle,
-  CheckCircle2, ShieldAlert,
+  CheckCircle2, ShieldAlert, MessageSquare, Headphones, Bell, ArrowRight,
 } from 'lucide-react';
 
 /**
@@ -120,6 +121,12 @@ export default function AccountDetails() {
         </div>
       </div>
 
+      {/* Quick links — surfaced here so the main sidebar can stay compact
+          for owners. Each card is a one-click jump to the corresponding
+          full page. Leadership Chat only renders for roles that can use
+          it; instructors don't see it. */}
+      <QuickLinksCard profile={profile} />
+
       {/* Profile picture */}
       <ProfilePictureCard profile={profile} />
 
@@ -190,6 +197,67 @@ export default function AccountDetails() {
 
       {/* Password */}
       <PasswordCard profile={profile} user={user} />
+    </div>
+  );
+}
+
+// ─── Quick links card ──────────────────────────────────────────────────
+// Sits at the top of Account Details so the items that used to crowd the
+// sidebar (Chat, Leadership Chat, Notifications) are now one click away
+// without forcing the user to scroll the nav rail every shift.
+function QuickLinksCard({ profile }) {
+  const role = profile?.role;
+  const isInstructor = role === 'instructor';
+  const isLeadership = role === 'owner' || role === 'admin' || role === 'admin_assistant';
+  const items = [];
+
+  // Chat — available to everyone except super_admin (Enterprise role
+  // doesn't claim shifts at someone else's centre).
+  if (role !== 'super_admin') {
+    items.push({
+      to: '/chat', icon: MessageSquare, color: 'bg-blue-100 text-blue-700',
+      title: 'Chat', desc: 'Talk to your team and pick up shift swaps.',
+    });
+  }
+  // Leadership Chat — cross-centre conversation for owners + their admins.
+  if (isLeadership) {
+    items.push({
+      to: '/platform-chat', icon: Headphones, color: 'bg-purple-100 text-purple-700',
+      title: 'Leadership Chat', desc: 'Cross-centre conversation with other owners.',
+    });
+  }
+  // Notifications — personal preferences (email, push, etc.).
+  items.push({
+    to: '/notifications', icon: Bell, color: 'bg-amber-100 text-amber-700',
+    title: 'Notification Preferences', desc: 'Control which emails and alerts you get.',
+  });
+
+  if (items.length === 0) return null;
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-3 flex items-center gap-2">
+        <ArrowRight size={16} className="text-purple-600" />
+        <h2 className="text-sm font-semibold text-gray-900">Quick links</h2>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {items.map(it => (
+          <Link key={it.to} to={it.to}
+            className="flex items-start gap-3 rounded-xl border border-gray-200 p-3 hover:border-purple-300 hover:bg-purple-50 transition-colors">
+            <div className={`rounded-lg p-2 shrink-0 ${it.color}`}>
+              <it.icon size={16} />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-900">{it.title}</div>
+              <div className="text-xs text-gray-500 truncate">{it.desc}</div>
+            </div>
+          </Link>
+        ))}
+      </div>
+      {isInstructor && (
+        <p className="mt-3 text-xs text-gray-400">
+          Tip: you can also reach Chat from the sidebar.
+        </p>
+      )}
     </div>
   );
 }

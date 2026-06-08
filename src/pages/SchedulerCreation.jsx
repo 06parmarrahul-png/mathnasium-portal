@@ -259,10 +259,6 @@ function TodayTab({ centerId }) {
         </div>
       )}
 
-      {data && data.totals.Online > 0 && (
-        <OnlineStrip data={data} />
-      )}
-
       {/* Print rules. The "Print HS" / "Print EM" buttons handle the
           single-side rendering in React state, so we no longer need
           page-break logic here — just hide chrome and bump readability. */}
@@ -278,7 +274,10 @@ function TodayTab({ centerId }) {
           /* Bigger text so the printout reads cleanly across the room. */
           table.sched { font-size: 12px !important; }
           /* No shadows or rounded corners on paper. */
-          section { box-shadow: none !important; border-radius: 0 !important; }
+          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; }
+          /* Repeat table headers on every printed page so half-hour rows
+             that flow to page 2 of EM still show the column labels. */
+          table.sched thead { display: table-header-group; }
         }
       `}</style>
     </div>
@@ -295,7 +294,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   })();
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+    <section className="rounded-lg border border-gray-200 bg-white overflow-hidden print:overflow-visible">
       {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
       <div className="hidden print:block px-3 pt-2 pb-1 border-b border-black">
         <div className="text-base font-bold">{dayLabel} · {title}</div>
@@ -470,23 +469,6 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         className="w-10 shrink-0 rounded border border-gray-200 px-1 text-[10px] text-center text-gray-700 print:border-0"
       />
     </li>
-  );
-}
-
-function OnlineStrip({ data }) {
-  const rows = data.slots
-    .map(r => ({ slot: r.label, count: r.counts.Online }))
-    .filter(r => r.count > 0);
-  if (!rows.length) return null;
-  return (
-    <div className="mt-3 rounded-lg border border-purple-200 bg-purple-50 p-3">
-      <div className="mb-1 text-sm font-semibold text-purple-700">Online ({data.totals.Online})</div>
-      <div className="flex flex-wrap gap-1 text-xs">
-        {rows.map((r, i) => (
-          <span key={i} className="rounded bg-white px-2 py-0.5">{r.slot}: <b>{r.count}</b></span>
-        ))}
-      </div>
-    </div>
   );
 }
 

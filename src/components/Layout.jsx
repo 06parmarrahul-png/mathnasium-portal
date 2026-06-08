@@ -128,16 +128,27 @@ export default function Layout({ children }) {
     general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
   }
 
-  // MANAGE — verb-named top-level destinations for the three things an
-  // owner does every day. Each links to a focused view of what used to
-  // be a tab inside the old Admin Panel. Internal Admin component reads
+  // MANAGE — verb-named top-level destinations for the things an owner
+  // does every day. Each links to a focused view of what used to be a
+  // tab inside the old Admin Panel. Internal Admin component reads
   // ?tab= from the URL so the existing tab system keeps working.
+  //
+  // Scheduler Creation lives here too (rather than under Enterprise) so
+  // owners don't have to scroll the sidebar past Insights / Communicate
+  // every shift. Available to anyone with daily-ops responsibility:
+  // super_admin, owner, admin_assistant. Plain admin doesn't get it
+  // (they're not configuring the scheduler).
   const manage = [];
   if (canSeeAdminPanel) {
+    manage.push({ to: '/admin?tab=spreadsheet', label: 'Manage Schedule', icon: CalendarRange });
+  }
+  if (isSuperAdmin || isOwner || isAdminAssistant) {
+    manage.push({ to: '/scheduler-creation', label: 'Scheduler Creation', icon: ClipboardList });
+  }
+  if (canSeeAdminPanel) {
     manage.push(
-      { to: '/admin?tab=spreadsheet', label: 'Manage Schedule', icon: CalendarRange },
-      { to: '/admin?tab=users',       label: 'Manage Staff',    icon: Users },
-      { to: '/admin?tab=payroll',     label: 'Manage Payroll',  icon: Wallet },
+      { to: '/admin?tab=users',   label: 'Manage Staff',   icon: Users },
+      { to: '/admin?tab=payroll', label: 'Manage Payroll', icon: Wallet },
     );
   }
 
@@ -149,32 +160,27 @@ export default function Layout({ children }) {
   }
 
   // COMMUNICATE — chat, announcements, personal notification prefs.
-  // Everyone sees these (instructors all the way up to Enterprise).
+  // For Owners we trim this section hard: Chat, Leadership Chat, and
+  // Notification Preferences all live one click away on the Account page
+  // (clicking the user card at the bottom of the sidebar). Keeps the
+  // sidebar short enough that an owner mid-shift never has to scroll.
   const communicate = [];
-  if (!isSuperAdmin) {
+  if (!isSuperAdmin && !isOwner) {
     communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
   }
-  if ((isAdmin || isOwner || isAdminAssistant) && !isSuperAdmin) {
+  if ((isAdmin || isAdminAssistant) && !isSuperAdmin) {
     communicate.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
   }
-  communicate.push(
-    { to: '/announcements', label: 'Announcements', icon: Megaphone },
-    { to: '/notifications', label: 'Notifications', icon: Bell },
-  );
+  communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
+  if (!isOwner) {
+    communicate.push({ to: '/notifications', label: 'Notifications', icon: Bell });
+  }
 
   // ENTERPRISE — platform-operator only. Sits between COMMUNICATE and
   // SETTINGS so super-admin tools are grouped together but don't crowd
-  // the per-centre nav above.
-  //
-  // Exception: "Scheduler Creation" is also surfaced to Owners and
-  // Admin Assistants since they're the ones running the daily ops view
-  // at their centre, even though the configuration story lives here.
+  // the per-centre nav above. (Scheduler Creation used to live here too
+  // but moved under Manage so owners reach it without scrolling.)
   const enterprise = [];
-  if (isSuperAdmin || isOwner || isAdminAssistant) {
-    enterprise.push(
-      { to: '/scheduler-creation', label: 'Scheduler Creation', icon: ClipboardList },
-    );
-  }
   if (isSuperAdmin) {
     enterprise.push(
       { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
