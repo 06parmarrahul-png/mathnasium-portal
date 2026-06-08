@@ -404,15 +404,15 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
     try { await setCheckIn(centerId, date, sid, next.trim() || ''); }
     catch (e) { toast.error(e.message); }
   };
-  const handleAddInstructor = async () => {
-    const choices = pool.filter(n => !instructors.includes(n));
-    const pick = prompt(
-      `Add instructor to ${side} ${row.label}.\nPool: ${pool.join(', ') || '(set the pool in Setup)'}\nName:`,
-      choices[0] || ''
-    );
-    if (!pick) return;
-    try { await setInstructorAssignment(centerId, date, side, row.slot, [...instructors, pick.trim()]); }
-    catch (e) { toast.error(e.message); }
+  // Replaces the old prompt() dialog. We render an invisible <select>
+  // and trigger it via the + add button — that gives a native dropdown
+  // of the daily pool, one tap to add, no typing.
+  const handlePickInstructor = async (e) => {
+    const name = e.target.value;
+    if (!name) return;
+    e.target.value = '';
+    try { await setInstructorAssignment(centerId, date, side, row.slot, [...instructors, name]); }
+    catch (err) { toast.error(err.message); }
   };
   const handleRemoveInstructor = async (name) => {
     try { await setInstructorAssignment(centerId, date, side, row.slot, instructors.filter(n => n !== name)); }
@@ -449,10 +449,19 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
               {n} <span className="text-red-600">×</span>
             </span>
           ))}
-          <button onClick={handleAddInstructor}
-            className="rounded-full border border-dashed border-gray-300 px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600 print:hidden">
-            + add
-          </button>
+          {/* Native select used as a quick instructor picker. Empty default
+              option acts as the "+ add" affordance; picking a name from the
+              dropdown adds it instantly with no prompt. */}
+          <select
+            onChange={handlePickInstructor}
+            defaultValue=""
+            className="rounded-full border border-dashed border-gray-300 bg-white px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600 print:hidden">
+            <option value="">+ add</option>
+            {pool.filter(n => !instructors.includes(n)).map(n => (
+              <option key={n} value={n}>{n}</option>
+            ))}
+            {pool.length === 0 && <option value="" disabled>Set pool in Setup</option>}
+          </select>
         </div>
         <div className={`mt-0.5 text-[9px] ${understaffed ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
           need {need} · have {instructors.length}
@@ -503,7 +512,6 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         {s.name}
       </span>
       {s.isAssessment && <span className="text-[9px] text-amber-700 shrink-0" title="Assessment">(A)</span>}
-      {s.isHybrid && <span className="text-[9px] text-purple-700 shrink-0" title="Hybrid student">(H)</span>}
       {s.uncertainAlias && (
         <span className="text-[10px] text-amber-600 font-semibold shrink-0"
           title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
