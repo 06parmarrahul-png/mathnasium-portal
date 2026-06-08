@@ -142,6 +142,24 @@ function TodayTab({ centerId }) {
   const [checkIns, setCheckIns] = useState({});
   const [assignments, setAssignments] = useState({});
   const [settings, setSettings] = useState(null);
+  // When set to 'HS' or 'EM', only that side is rendered — used by the
+  // split print buttons so the printer never sees the other side and
+  // we don't have to fight Chrome's page-break rules.
+  const [printOnly, setPrintOnly] = useState(null);
+
+  // Trigger a print run for the named side. We render exclusively that
+  // side, wait one paint, fire window.print(), then put both sides back
+  // after the print dialog closes.
+  const printSide = (side) => {
+    setPrintOnly(side);
+    // Two RAFs is a reliable "wait until React has committed + painted".
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      window.print();
+      // Give the print dialog a moment to register the layout before
+      // restoring the on-screen view.
+      setTimeout(() => setPrintOnly(null), 500);
+    }));
+  };
 
   // Load settings (for the instructor pool + ratio).
   useEffect(() => { getSettings(centerId).then(setSettings); }, [centerId]);
@@ -181,9 +199,16 @@ function TodayTab({ centerId }) {
           className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
           <RefreshCw size={14} /> Refresh
         </button>
-        <button onClick={() => window.print()}
-          className="flex items-center gap-1 rounded bg-gray-900 px-3 py-1 text-sm text-white hover:bg-gray-700">
-          <Printer size={14} /> Print
+        {/* Two print buttons — one per side. Each conditionally renders only
+            its own section, so the resulting print output is single-side
+            and the page break is implicit. */}
+        <button onClick={() => printSide('HS')}
+          className="flex items-center gap-1 rounded bg-blue-900 px-3 py-1 text-sm text-white hover:bg-blue-800">
+          <Printer size={14} /> Print HS
+        </button>
+        <button onClick={() => printSide('EM')}
+          className="flex items-center gap-1 rounded bg-emerald-800 px-3 py-1 text-sm text-white hover:bg-emerald-700">
+          <Printer size={14} /> Print EM
         </button>
         <span className="text-xs text-gray-500">Ratio 1:{ratio} · click name to check in</span>
       </div>
@@ -214,19 +239,23 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        // Screen: 2-col grid. Print: stack as block, with break-before
-        // applied DIRECTLY to the Elementary wrapper. Block elements with
-        // visible content honour page-break-before reliably; zero-height
-        // divider elements get collapsed and ignored by Chrome.
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 print:block print:gap-0">
-          <div className="print:w-full em-or-hs-wrap">
-            <SideTable side="HS" data={data} centerId={centerId} date={date}
-              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
-          </div>
-          <div className="print:w-full em-print-section">
-            <SideTable side="EM" data={data} centerId={centerId} date={date}
-              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
-          </div>
+        // On-screen view: 2-col grid.
+        // While `printOnly` is set (during a Print HS / Print EM click),
+        // only that side is rendered so the printer sees a clean
+        // single-side page.
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+          {(!printOnly || printOnly === 'HS') && (
+            <div>
+              <SideTable side="HS" data={data} centerId={centerId} date={date}
+                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+            </div>
+          )}
+          {(!printOnly || printOnly === 'EM') && (
+            <div>
+              <SideTable side="EM" data={data} centerId={centerId} date={date}
+                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+            </div>
+          )}
         </div>
       )}
 
@@ -234,10 +263,9 @@ function TodayTab({ centerId }) {
         <OnlineStrip data={data} />
       )}
 
-      {/* Print rules. Belt-and-suspenders: every Tailwind print: utility I
-          use in JSX is also written here as plain CSS targeting the
-          escaped class name, so the print layout works even if the
-          Tailwind v4 compiler misses one. */}
+      {/* Print rules. The "Print HS" / "Print EM" buttons handle the
+          single-side rendering in React state, so we no longer need
+          page-break logic here — just hide chrome and bump readability. */}
       <style>{`
         @media print {
           @page { size: letter portrait; margin: 0.4in; }
@@ -245,20 +273,6 @@ function TodayTab({ centerId }) {
           /* Hide sidebar + every element flagged print:hidden. */
           aside, header.lg\\:hidden,
           .print\\:hidden, [data-print-hide] { display: none !important; }
-          /* Force the HS|EM grid to stack vertically on paper. */
-          .print\\:block { display: block !important; }
-          .print\\:gap-0 { gap: 0 !important; }
-          .print\\:w-full { width: 100% !important; max-width: 100% !important; }
-          /* Force Elementary to start on its own page. Putting the
-             page-break-before on the visible EM wrapper (instead of a
-             separate zero-height divider) is the most reliable approach
-             in Chrome — empty divider elements get collapsed and the
-             break never fires. */
-          .em-print-section {
-            break-before: page !important;
-            page-break-before: always !important;
-            display: block !important;
-          }
           /* Keep half-hour rows intact across pages. */
           table tr { page-break-inside: avoid; break-inside: avoid; }
           /* Bigger text so the printout reads cleanly across the room. */
