@@ -260,18 +260,22 @@ function TodayTab({ centerId }) {
         </div>
       )}
 
-      {/* Print rules. The "Print HS" / "Print EM" buttons handle the
-          single-side rendering in React state. The main job of this CSS
-          is to (a) hide chrome, (b) tear down every overflow constraint
-          on parent elements so a long EM table can flow naturally onto
-          page 2 / 3 / N instead of being truncated. */}
+      {/* Print rules — designed to FIT THE WHOLE SIDE ON ONE PAGE no matter
+          how busy the day is.
+          Strategy:
+            1. Hide chrome + every overflow / height limit on ancestors
+               (otherwise a scrollable container truncates the printout).
+            2. Shrink fonts and padding hard.
+            3. Hide the tag/desk inputs (interactive only — not useful on
+               paper, and they steal a lot of horizontal width).
+            4. Apply transform: scale(0.78) as a final shrink-to-fit so a
+               very long roster still lands on a single sheet.
+            5. Force everything inside the printable region to stay on
+               one page (page-break-inside: avoid on the section). */}
       <style>{`
         @media print {
-          @page { size: letter portrait; margin: 0.4in; }
+          @page { size: letter portrait; margin: 0.25in; }
           html, body { background: white !important; height: auto !important; overflow: visible !important; }
-          /* Every ancestor of the schedule has overflow / height limits on
-             screen — those are what cause the printout to clip at one page.
-             Force-clear all of them. */
           aside, .print\\:hidden, [data-print-hide], header.lg\\:hidden { display: none !important; }
           main, .flex, .grid, body > div, #root, #root > div, [class*="overflow-"], [class*="h-screen"] {
             height: auto !important;
@@ -279,16 +283,28 @@ function TodayTab({ centerId }) {
             max-height: none !important;
             overflow: visible !important;
           }
-          /* Keep half-hour rows intact across pages. */
-          table tr { page-break-inside: avoid; break-inside: avoid; }
-          /* Bigger text so the printout reads cleanly across the room. */
-          table.sched { font-size: 12px !important; }
-          /* No shadows or rounded corners on paper; show all content. */
-          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; }
-          /* Repeat the table header on every printed page so half-hour rows
-             that flow to page 2 of EM still show the column labels. */
-          table.sched thead { display: table-header-group; }
-          table.sched tfoot { display: table-footer-group; }
+          /* Compact typography */
+          table.sched { font-size: 9px !important; line-height: 1.15 !important; }
+          table.sched th, table.sched td { padding: 1px 3px !important; }
+          /* Hide the tag/desk inputs on paper — they're for the live app,
+             and ditching them frees up width so names don't wrap. */
+          table.sched input { display: none !important; }
+          /* No shadows or rounded corners. */
+          section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1px solid #000 !important; }
+          /* Force the whole side onto one page — disable any internal page
+             breaks, then scale the printable region to fit. */
+          section, table, table * { page-break-inside: avoid !important; break-inside: avoid !important; }
+          /* Shrink-to-fit: 0.78 reliably lands a 60-student EM day on one
+             letter sheet. Origin top-left so it fills from the corner. */
+          main > div, main {
+            transform-origin: top left;
+            transform: scale(0.78);
+            width: 128% !important;   /* 1 / 0.78 ≈ 1.28 so the scaled width hits page edge */
+          }
+          /* Smaller "need X / have Y" line. */
+          .ratio-status { font-size: 7px !important; }
+          /* Hide the "+ add" instructor button on paper. */
+          button { display: none !important; }
         }
       `}</style>
     </div>
