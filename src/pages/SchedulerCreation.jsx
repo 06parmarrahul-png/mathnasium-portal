@@ -652,7 +652,13 @@ function SetupTab({ centerId }) {
   const [settings, setSettings] = useState(null);
   const [students, setStudents] = useState([]);
   const [aliases, setAliases] = useState([]);
+  const [rosterSearch, setRosterSearch] = useState('');
   const fileRef = useRef(null);
+
+  // Filter for the search box. Empty query = show everything.
+  const visibleStudents = rosterSearch.trim()
+    ? students.filter(s => s.name?.toLowerCase().includes(rosterSearch.trim().toLowerCase()))
+    : students;
 
   useEffect(() => { getSettings(centerId).then(setSettings); }, [centerId]);
   useEffect(() => watchStudents(centerId, setStudents), [centerId]);
@@ -811,6 +817,13 @@ function SetupTab({ centerId }) {
           </div>
         </div>
         <p className="mb-2 text-xs text-gray-500">CSV layout matches your Student Assessment Tracker: column A name, B grade, C status. Re-import any time to refresh.</p>
+        <input
+          type="text"
+          value={rosterSearch}
+          onChange={e => setRosterSearch(e.target.value)}
+          placeholder="Search a student by name…"
+          className="mb-2 w-full rounded border border-gray-300 px-2 py-1 text-sm"
+        />
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-gray-100 text-xs uppercase text-gray-500">
@@ -824,7 +837,7 @@ function SetupTab({ centerId }) {
               </tr>
             </thead>
             <tbody>
-              {students.slice(0, 500).map(s => (
+              {visibleStudents.slice(0, 500).map(s => (
                 <tr key={s.id} className="border-t border-gray-100">
                   <td className="px-2 py-1">{s.name}</td>
                   <td>{s.grade}</td>
@@ -848,8 +861,14 @@ function SetupTab({ centerId }) {
               ))}
             </tbody>
           </table>
-          {students.length > 500 && (
-            <p className="mt-1 text-center text-xs text-gray-400">{students.length - 500} more rows — use search later</p>
+          {visibleStudents.length > 500 && (
+            <p className="mt-1 text-center text-xs text-gray-400">{visibleStudents.length - 500} more rows — refine your search</p>
+          )}
+          {rosterSearch && visibleStudents.length === 0 && (
+            <p className="mt-2 text-center text-xs text-amber-600">
+              No students match "{rosterSearch}".
+              They might be missing from your tracker — add them to the CSV and re-import.
+            </p>
           )}
         </div>
       </section>

@@ -183,6 +183,13 @@ function resolveAliasReplacement(appt, alias, studentsByKey, dayState) {
   return { studentName: reps[i % reps.length], uncertain: true };
 }
 
+// Appointment type strings that mean the student is doing the session
+// remotely, regardless of how they're classified in the tracker. Must
+// match BEFORE the student lookup so a hybrid student who's in-centre
+// most days but @home today doesn't accidentally appear on the centre
+// dashboard.
+const REMOTE_TYPE_RE = /@?home|online|virtual|remote/i;
+
 function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
   const fullName = `${appt.firstName} ${appt.lastName}`.trim();
   const haystack = `${appt.type || ''}`;
@@ -191,6 +198,14 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
   if (POWERPLAY_RE.test(haystack)) {
     appt.isPowerplay = true; appt.displayName = fullName;
     return 'HS';
+  }
+
+  // 0.5. Remote / @home appointment type → Online. This overrides the
+  //      student's tracker section because the appointment itself is
+  //      the source of truth for whether they're physically present.
+  if (REMOTE_TYPE_RE.test(haystack)) {
+    appt.displayName = fullName;
+    return 'Online';
   }
 
   // 1. Alias (multi-student supported)
