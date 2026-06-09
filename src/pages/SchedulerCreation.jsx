@@ -44,6 +44,7 @@ const STANDARD_ALIASES = [
   { parentName: 'Neeharika Yeshala',    replacements: ['Kritin Hanumanla'] },
   { parentName: 'Daryl Rasmussen',      replacements: ['James Rasmussen'] },
   { parentName: 'Nadim Al-barqhouty',   replacements: ['Talia Al-barqhouty'] },
+  { parentName: 'Claire and Julia Eddy', replacements: ['Claire Eddy', 'Julia Eddy'] },
 ];
 import { toast } from '../lib/notify';
 
@@ -570,14 +571,39 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
 }
 
 function UnknownBanner({ data, centerId, onFix }) {
-  const fix = async (name) => {
+  // Group the unknown list by parent name so siblings booked under the
+  // same Acuity account get treated as one alias problem. For each group
+  // we show every booking time in order, then a single "Map siblings"
+  // button that asks for all the student names at once and stores them
+  // as a multi-replacement alias.
+  const groups = new Map();
+  for (const s of data.unknownList) {
+    const key = (s.name || '').toLowerCase();
+    if (!groups.has(key)) groups.set(key, { name: s.name, bookings: [] });
+    groups.get(key).bookings.push(s);
+  }
+
+  function fmtTime(iso) {
     try {
-      const real = prompt(`What's the real student's name for "${name}"? (Used for the dashboard label + category lookup.)`, '');
-      if (real && real.trim()) {
-        await upsertAlias(centerId, { parentName: name, replacements: [real.trim()] });
-        toast.success('Alias saved. Refreshing…');
-        onFix();
-      }
+      return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    } catch { return ''; }
+  }
+
+  const fix = async (group) => {
+    const n = group.bookings.length;
+    const prompt_msg = n === 1
+      ? `Map "${group.name}" to which student?\nEnter the real student's name as it appears in your tracker.`
+      : `"${group.name}" has ${n} bookings today:\n` +
+        group.bookings.map((b, i) => `   ${i + 1}. ${fmtTime(b.start)} – ${b.type || ''}`).join('\n') +
+        `\n\nEnter the ${n} student names, comma-separated, in BOOKING ORDER (earliest first).\nExample: "Claire Eddy, Julia Eddy"`;
+    try {
+      const real = prompt(prompt_msg, '');
+      if (!real) return;
+      const replacements = real.split(',').map(s => s.trim()).filter(Boolean);
+      if (replacements.length === 0) return;
+      await upsertAlias(centerId, { parentName: group.name, replacements });
+      toast.success(`Saved ${replacements.length}-student alias for "${group.name}"`);
+      onFix();
     } catch (e) { toast.error(e.message); }
   };
 
@@ -586,14 +612,25 @@ function UnknownBanner({ data, centerId, onFix }) {
       <div className="mb-1 flex items-center gap-1 text-sm font-semibold text-amber-800">
         <AlertTriangle size={14} /> Uncategorized: {data.unknownList.length}
       </div>
-      <ul className="space-y-1 text-sm">
-        {data.unknownList.map(s => (
-          <li key={s.id} className="flex flex-wrap items-center gap-2">
-            <span>{s.name}</span>
-            <span className="text-xs text-gray-500">({s.type})</span>
-            <button onClick={() => fix(s.name)}
-              className="rounded bg-white border border-amber-300 px-2 py-0.5 text-xs hover:bg-amber-100">
-              → Map to student…
+      <ul className="space-y-2 text-sm">
+        {[...groups.values()].map(g => (
+          <li key={g.name} className="flex flex-wrap items-start gap-2">
+            <div className="flex-1 min-w-0">
+              <span className="font-medium">{g.name}</span>
+              {g.bookings.length > 1 && (
+                <span className="ml-1 text-xs text-amber-700 font-semibold">× {g.bookings.length}</span>
+              )}
+              <ul className="text-xs text-gray-600 ml-3 mt-0.5">
+                {g.bookings.map((b, i) => (
+                  <li key={b.id}>
+                    <span className="font-mono">{i + 1}.</span> <span className="font-semibold">{fmtTime(b.start)}</span> · {b.type || '(no type)'}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <button onClick={() => fix(g)}
+              className="rounded bg-white border border-amber-300 px-2 py-0.5 text-xs hover:bg-amber-100 whitespace-nowrap">
+              {g.bookings.length > 1 ? `→ Map ${g.bookings.length} siblings…` : '→ Map to student…'}
             </button>
           </li>
         ))}
@@ -930,8 +967,8 @@ function SetupTab({ centerId }) {
                 toast.success(`Imported ${STANDARD_ALIASES.length} standard aliases`);
               } catch (e) { toast.error(e.message); }
             }} className="flex items-center gap-1 rounded bg-red-600 px-3 py-1 text-sm text-white hover:bg-red-700"
-              title="Bulk-import the 13 known parent-name mappings (Kelly Nelson, JackHarry Thorne, etc.)">
-              <Upload size={14} /> Import 13 standard
+              title="Bulk-import the known parent-name mappings (Kelly Nelson, JackHarry Thorne, Claire and Julia Eddy, etc.)">
+              <Upload size={14} /> Import standard ({STANDARD_ALIASES.length})
             </button>
             <button onClick={async () => {
               const parent = prompt('Parent name (as it appears in Acuity)'); if (!parent) return;
