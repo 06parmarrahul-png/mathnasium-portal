@@ -390,7 +390,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   })();
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white overflow-hidden print:overflow-visible">
+    <section className="rounded-lg border border-gray-200 bg-white overflow-x-auto overflow-y-hidden print:overflow-visible">
       {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
       <div className="hidden print:block px-3 pt-2 pb-1 border-b border-black">
         <div className="text-base font-bold">{dayLabel} · {title}</div>
@@ -400,7 +400,12 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
         <span className="font-semibold">{title}</span>
         <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
       </div>
-      <table className="w-full text-sm table-fixed">
+      {/* HS has 6 columns; switching to table-auto lets each one size to
+          its widest name (no letter-by-letter wrap). min-w ensures the
+          full table renders, and the section's overflow-x-auto means a
+          too-narrow viewport gets a horizontal scrollbar instead of
+          mangled text. EM stays table-fixed since 5 columns fit fine. */}
+      <table className={`w-full text-sm ${side === 'HS' ? 'table-auto min-w-[760px]' : 'table-fixed'}`}>
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
             <th className="px-1 py-1 text-left w-14 border-b border-gray-300">Time</th>
@@ -576,12 +581,10 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
-      {/* `whitespace-normal` lets the name wrap at spaces; we deliberately
-          don't use break-words/break-all because those split inside a
-          word ("Raph/ael" effect) when the column is narrow. With the
-          stacked-on-narrow-screens layout, columns are wide enough that
-          names rarely need to wrap at all. */}
-      <span className="flex-1 min-w-0 cursor-pointer hover:underline whitespace-normal leading-tight"
+      {/* whitespace-nowrap keeps each name on a single line. If the cell
+          is too narrow, the section's overflow-x: auto kicks in instead
+          of mangling the text. */}
+      <span className="flex-1 min-w-0 cursor-pointer hover:underline whitespace-nowrap leading-tight"
         onClick={() => onStatusClick(s.id)}
         onContextMenu={e => onStatusMenu(e, s.id)}
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
