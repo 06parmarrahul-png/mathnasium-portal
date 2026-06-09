@@ -188,19 +188,16 @@ function TodayTab({ centerId }) {
   const printSide = (side) => {
     setPrintOnly(side);
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      // Measure the visible section that's about to be printed, then pick
-      // a zoom factor so its content height lands inside one letter page
-      // worth of usable vertical space (~9.5 inches × 96dpi ≈ 912 px).
-      // Capped between 0.5 and 1.0 — at 1.0 a quiet day prints actual size.
-      const section = document.querySelector('main section');
-      const usablePageHeight = 912;
-      let zoom = 1.0;
-      if (section) {
-        const contentHeight = section.scrollHeight || section.offsetHeight;
-        if (contentHeight > 0) {
-          zoom = Math.min(1.0, Math.max(0.5, usablePageHeight / contentHeight));
-        }
-      }
+      // Pick a zoom factor for this side based on row count, not measured
+      // pixel height. Measuring scrollHeight gave terrible results because
+      // the digital column widths sometimes make names wrap letter-by-
+      // letter, blowing up the measurement and shrinking the printout.
+      //
+      // A row is one half-hour slot. ~10 rows comfortably fills a letter
+      // page at zoom 1.0; each row beyond that shrinks ~3%, capped at
+      // zoom 0.6 so a 25-row day still fits one sheet.
+      const rowCount = data?.slots?.length || 0;
+      const zoom = Math.max(0.6, Math.min(1.0, 1.0 - Math.max(0, rowCount - 10) * 0.03));
       document.documentElement.style.setProperty('--print-zoom', zoom.toFixed(3));
 
       window.print();
@@ -292,19 +289,23 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        // On-screen view: 2-col grid.
-        // While `printOnly` is set (during a Print HS / Print EM click),
-        // only that side is rendered so the printer sees a clean
-        // single-side page.
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        // On-screen layout:
+        //   - Below 2xl (1536px): stack HS on top, EM below. Each side gets
+        //     full screen width so 6 columns on HS can render without
+        //     letter-by-letter wrapping.
+        //   - 2xl+ : side-by-side, with HS spanning 3/5 of the row (it has
+        //     an extra 1.5hr column) and EM 2/5.
+        // While printOnly is set (Print HS / Print EM click), only that
+        // side renders so the printer never sees the other.
+        <div className="grid grid-cols-1 2xl:grid-cols-5 gap-3">
           {(!printOnly || printOnly === 'HS') && (
-            <div>
+            <div className="2xl:col-span-3">
               <SideTable side="HS" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
             </div>
           )}
           {(!printOnly || printOnly === 'EM') && (
-            <div>
+            <div className="2xl:col-span-2">
               <SideTable side="EM" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
             </div>
@@ -568,7 +569,12 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
-      <span className="flex-1 min-w-0 cursor-pointer hover:underline break-words leading-tight"
+      {/* `whitespace-normal` lets the name wrap at spaces; we deliberately
+          don't use break-words/break-all because those split inside a
+          word ("Raph/ael" effect) when the column is narrow. With the
+          stacked-on-narrow-screens layout, columns are wide enough that
+          names rarely need to wrap at all. */}
+      <span className="flex-1 min-w-0 cursor-pointer hover:underline whitespace-normal leading-tight"
         onClick={() => onStatusClick(s.id)}
         onContextMenu={e => onStatusMenu(e, s.id)}
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
