@@ -564,11 +564,11 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
   const saveDesk = (v) => setStudentDesk(centerId, date, s.id, v).catch(e => toast.error(e.message));
 
   return (
-    <li className={`flex items-center gap-1 leading-tight ${cls}`}>
+    <li className={`flex items-start gap-1 leading-tight ${cls}`}>
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
-      <span className="cursor-pointer hover:underline truncate"
+      <span className="flex-1 min-w-0 cursor-pointer hover:underline break-words leading-tight"
         onClick={() => onStatusClick(s.id)}
         onContextMenu={e => onStatusMenu(e, s.id)}
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
