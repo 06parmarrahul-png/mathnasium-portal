@@ -462,7 +462,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       {/* On the hour column */}
       <td className="px-1 py-1 align-top border-b border-gray-300">
         <StudentList students={onHour} checkIns={checkIns}
-          centerId={centerId} date={date}
+          centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
       {/* Half-hour column with thicker divider on the left — matches the
@@ -470,7 +470,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           padding so half-hour rows visually offset down. */}
       <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 pt-3">
         <StudentList students={halfHour} checkIns={checkIns}
-          centerId={centerId} date={date}
+          centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
       <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-300 border-b border-gray-300 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
@@ -506,8 +506,32 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
+function StudentList({ students, checkIns, centerId, date, side, onStatusClick, onStatusMenu }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
+
+  // High School: split into 1-hour and 1.5-hour sub-groups so staff can
+  // see at a glance which students stay 30 min longer. (Elementary doesn't
+  // need this — almost everyone is 1 hour.)
+  if (side === 'HS') {
+    const hour = students.filter(s => s.duration === 60);
+    const longer = students.filter(s => s.duration !== 60);
+    return (
+      <div className="space-y-1">
+        {hour.length > 0 && (
+          <DurationGroup label="1 hr" students={hour} checkIns={checkIns}
+            centerId={centerId} date={date}
+            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
+        )}
+        {longer.length > 0 && (
+          <DurationGroup label="1.5 hr" students={longer} checkIns={checkIns}
+            centerId={centerId} date={date}
+            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
+        )}
+      </div>
+    );
+  }
+
+  // Elementary: flat list, no sub-grouping.
   return (
     <ul className="space-y-0.5">
       {students.map(s => (
@@ -516,6 +540,21 @@ function StudentList({ students, checkIns, centerId, date, onStatusClick, onStat
           onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
       ))}
     </ul>
+  );
+}
+
+function DurationGroup({ label, students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
+  return (
+    <div>
+      <div className="text-[9px] uppercase tracking-wide text-gray-400 border-b border-dashed border-gray-200 pb-0.5 mb-0.5">{label}</div>
+      <ul className="space-y-0.5">
+        {students.map(s => (
+          <StudentRow key={s.id} s={s} entry={checkIns[s.id] || {}}
+            centerId={centerId} date={date}
+            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
+        ))}
+      </ul>
+    </div>
   );
 }
 
