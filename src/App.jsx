@@ -23,6 +23,20 @@ import CenterSettings from './pages/CenterSettings';
 import AuditLogs from './pages/AuditLogs';
 import AccountDetails from './pages/AccountDetails';
 import SchedulerCreation from './pages/SchedulerCreation';
+import Landing from './pages/Landing';
+import { useAuth } from './contexts/AuthContext';
+
+// Root URL ("/") is dual-purpose:
+//   - Unauthenticated visitor → public marketing Landing page
+//   - Signed-in user → their centre's Home dashboard (existing behaviour)
+// This keeps the existing app surface unchanged for current owners while
+// the same URL doubles as the front door for prospective franchisees.
+function RootGate() {
+  const { user, loading } = useAuth();
+  if (loading) return null;
+  if (!user) return <Landing />;
+  return <ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>;
+}
 
 function NotFound() {
   return (
@@ -44,7 +58,7 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/signup" element={<Signup />} />
-      <Route path="/" element={<ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>} />
+      <Route path="/" element={<RootGate />} />
       <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
       <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
       <Route path="/shift-board" element={<ProtectedRoute><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
