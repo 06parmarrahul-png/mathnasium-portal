@@ -1,5 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Placeholder Ratio "R" mark. The active favicons referenced in
+       index.html are favicon-32.png and favicon-192.png, both generated
+       from public/ratio-logo.png. This SVG is here as a fallback so any
+       browser preferring SVG doesn't accidentally pull a Mathnasium A+. -->
   <circle cx="50" cy="50" r="48" fill="#CE1126"/>
-  <text x="50" y="62" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="42" fill="white">A</text>
-  <text x="75" y="42" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="22" fill="white">+</text>
+  <text x="50" y="68" text-anchor="middle" font-family="Arial Black, Arial, sans-serif" font-weight="900" font-size="56" fill="white">R</text>
 </svg>
