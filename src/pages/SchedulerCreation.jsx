@@ -348,9 +348,16 @@ function TodayTab({ centerId }) {
           table.sched input { display: none !important; }
           button { display: none !important; }
           /* Compact typography. */
-          table.sched { font-size: 9px !important; line-height: 1.1 !important;
-                        border-collapse: collapse !important; }
-          table.sched th, table.sched td { padding: 1px 3px !important; }
+          table.sched { font-size: 9px !important; line-height: 1.2 !important;
+                        border-collapse: collapse !important;
+                        /* Auto layout lets columns size to fit the widest
+                           student name, so we can keep every name on one
+                           line without truncating or stretching the wider
+                           columns. */
+                        table-layout: auto !important; }
+          table.sched th, table.sched td { padding: 2px 4px !important; }
+          /* Single-line names, full visibility, no truncation. */
+          table.sched td, table.sched td span { white-space: nowrap !important; }
           /* Plain section, no shadows / rounded corners. */
           section { box-shadow: none !important; border-radius: 0 !important; overflow: visible !important; height: auto !important; border: 1.5px solid #000 !important; }
           /* Stronger black borders on every cell so the grid reads clearly
