@@ -395,11 +395,13 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
       <table className="w-full text-sm table-fixed">
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
-            <th className="px-1 py-1 text-left w-14">Time</th>
-            <th className="px-1 py-1 text-left">On the hour</th>
-            <th className="px-1 py-1 text-left border-l border-gray-200">On the half hour</th>
-            <th className="px-1 py-1 text-center w-8">#</th>
-            <th className="px-1 py-1 text-left w-28">Instructors</th>
+            <th className="px-1 py-1 text-left w-14 border-b border-gray-300">Time</th>
+            <th className="px-1 py-1 text-left border-b border-gray-300">On the hour</th>
+            {/* Stronger divider down the middle so the two columns read
+                as clearly separate, matching the paper layout. */}
+            <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">On the half hour</th>
+            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">#</th>
+            <th className="px-1 py-1 text-left w-28 border-l border-gray-300 border-b border-gray-300">Instructors</th>
           </tr>
         </thead>
         <tbody>
@@ -453,27 +455,28 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
 
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
-      <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap">
+      <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap border-b border-gray-300">
         {row.label.split('–')[0]}<br/>
         <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
       </td>
       {/* On the hour column */}
-      <td className="px-1 py-1 align-top">
+      <td className="px-1 py-1 align-top border-b border-gray-300">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
-      {/* Half-hour column, visually offset down a touch so on-shift staff
-          can see at a glance that these arrive 30 min after the hour. */}
-      <td className="px-1 py-1 align-top border-l border-gray-100 pt-3">
+      {/* Half-hour column with thicker divider on the left — matches the
+          header divider and gives clear column separation. Slight top
+          padding so half-hour rows visually offset down. */}
+      <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 pt-3">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
-      <td className={`px-1 py-1 align-top text-center text-base font-bold ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
+      <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-300 border-b border-gray-300 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
       </td>
-      <td className="px-1 py-1 align-top">
+      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
         <div className="flex flex-wrap gap-0.5">
           {instructors.map(n => (
             <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-1.5 py-0 text-[10px] hover:bg-red-100"
