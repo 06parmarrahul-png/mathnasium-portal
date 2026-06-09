@@ -396,10 +396,21 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
             <th className="px-1 py-1 text-left w-14 border-b border-gray-300">Time</th>
-            <th className="px-1 py-1 text-left border-b border-gray-300">On the hour</th>
+            <th className="px-1 py-1 text-left border-b border-gray-300">
+              On the hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
+            </th>
             {/* Stronger divider down the middle so the two columns read
                 as clearly separate, matching the paper layout. */}
-            <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">On the half hour</th>
+            <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
+              On the half hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
+            </th>
+            {/* HS-only: dedicated column for 1.5 hr session students,
+                regardless of whether they start on the hour or half hour. */}
+            {side === 'HS' && (
+              <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
+                1.5 hr
+              </th>
+            )}
             <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">#</th>
             <th className="px-1 py-1 text-left w-28 border-l border-gray-300 border-b border-gray-300">Instructors</th>
           </tr>
@@ -417,8 +428,15 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
 }
 
 function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool }) {
-  const onHour = row.students[side].onHour;
-  const halfHour = row.students[side].halfHour;
+  const rawOnHour = row.students[side].onHour;
+  const rawHalfHour = row.students[side].halfHour;
+  // HS only: 1-hour students stay in their start-time column; everyone
+  // else (1.5 hr, etc.) is pulled into the dedicated long-session column.
+  const onHour    = side === 'HS' ? rawOnHour.filter(s => s.duration === 60) : rawOnHour;
+  const halfHour  = side === 'HS' ? rawHalfHour.filter(s => s.duration === 60) : rawHalfHour;
+  const longHour  = side === 'HS'
+    ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
+    : [];
   const count = row.counts[side];
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
@@ -473,6 +491,16 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
       </td>
+      {/* HS only: dedicated 1.5-hour student column to the right of the
+          half-hour column. Holds anyone in this row's slot whose session
+          is longer than 60 min, regardless of start time. */}
+      {side === 'HS' && (
+        <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300">
+          <StudentList students={longHour} checkIns={checkIns}
+            centerId={centerId} date={date} side={side}
+            onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
+        </td>
+      )}
       <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-300 border-b border-gray-300 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
       </td>
@@ -506,32 +534,8 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentList({ students, checkIns, centerId, date, side, onStatusClick, onStatusMenu }) {
+function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
-
-  // High School: split into 1-hour and 1.5-hour sub-groups so staff can
-  // see at a glance which students stay 30 min longer. (Elementary doesn't
-  // need this — almost everyone is 1 hour.)
-  if (side === 'HS') {
-    const hour = students.filter(s => s.duration === 60);
-    const longer = students.filter(s => s.duration !== 60);
-    return (
-      <div className="space-y-1">
-        {hour.length > 0 && (
-          <DurationGroup label="1 hr" students={hour} checkIns={checkIns}
-            centerId={centerId} date={date}
-            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
-        )}
-        {longer.length > 0 && (
-          <DurationGroup label="1.5 hr" students={longer} checkIns={checkIns}
-            centerId={centerId} date={date}
-            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
-        )}
-      </div>
-    );
-  }
-
-  // Elementary: flat list, no sub-grouping.
   return (
     <ul className="space-y-0.5">
       {students.map(s => (
@@ -540,21 +544,6 @@ function StudentList({ students, checkIns, centerId, date, side, onStatusClick, 
           onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
       ))}
     </ul>
-  );
-}
-
-function DurationGroup({ label, students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
-  return (
-    <div>
-      <div className="text-[9px] uppercase tracking-wide text-gray-400 border-b border-dashed border-gray-200 pb-0.5 mb-0.5">{label}</div>
-      <ul className="space-y-0.5">
-        {students.map(s => (
-          <StudentRow key={s.id} s={s} entry={checkIns[s.id] || {}}
-            centerId={centerId} date={date}
-            onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
-        ))}
-      </ul>
-    </div>
   );
 }
 
