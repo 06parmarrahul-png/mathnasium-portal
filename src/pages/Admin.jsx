@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc,
@@ -12,7 +12,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
-  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX,
+  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX, Upload,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -911,44 +911,299 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   );
 }
 
-// ── Bulk delete shifts by date ─────────────────────────────────────────
-// Small dropdown widget on the Manage Payroll header. Owner picks a
-// single date; we confirm with a count + names list, then batch-delete.
-// Used on stat-holiday days so payroll's stat-pay logic kicks in
-// instead of paying the regular shift hours.
+// ── Bulk delete shifts (single day or range) ───────────────────────────
+// Dropdown widget on Manage Payroll. Single date deletes that day (e.g.
+// stat holiday); two dates deletes everything in between (e.g. clean a
+// whole month before importing from another tool).
 function BulkDeleteShiftsByDate({ onConfirm }) {
   const [open, setOpen] = useState(false);
-  const [date, setDate] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
   return (
     <div className="relative">
       <button onClick={() => setOpen(o => !o)}
         className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 transition-colors"
-        title="Bulk-delete every shift on a specific date (e.g. a stat holiday)">
-        <Trash2 size={14} /> Stat day
+        title="Bulk-delete shifts on a date or in a date range">
+        <Trash2 size={14} /> Delete shifts
       </button>
       {open && (
-        <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-gray-200 bg-white p-4 shadow-lg">
-          <h4 className="font-bold text-gray-900 text-sm mb-1">Delete shifts on stat holiday</h4>
+        <div className="absolute right-0 z-20 mt-2 w-96 rounded-xl border border-gray-200 bg-white p-4 shadow-lg">
+          <h4 className="font-bold text-gray-900 text-sm mb-1">Delete shifts in date range</h4>
           <p className="text-xs text-gray-500 mb-3">
-            Removes every shift on this date so payroll computes BC ESA stat pay (average day × qualifying staff) instead.
+            Set <b>From</b> only (leave To blank) to delete one day — e.g. a stat holiday.
+            Set both to wipe a full range before importing payroll from another tool.
           </p>
-          <input type="date" value={date} onChange={e => setDate(e.target.value)}
-            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="block text-xs text-gray-500 mb-0.5">From</span>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+            </label>
+            <label className="block">
+              <span className="block text-xs text-gray-500 mb-0.5">To (optional)</span>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+            </label>
+          </div>
           <div className="mt-3 flex gap-2 justify-end">
-            <button onClick={() => { setOpen(false); setDate(''); }}
+            <button onClick={() => { setOpen(false); setFrom(''); setTo(''); }}
               className="rounded px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100">
               Cancel
             </button>
             <button
-              disabled={!date}
+              disabled={!from}
               onClick={async () => {
-                await onConfirm(date);
+                await onConfirm(from, to || from);
                 setOpen(false);
-                setDate('');
+                setFrom(''); setTo('');
               }}
               className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
               Delete shifts
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Import shifts from When I Work CSV ─────────────────────────────────
+// Parses the WIW export format we already know:
+//   col 2 = Employee Name, col 4 = date dd/mm/yyyy,
+//   col 5 = Time In, col 6 = Time Out, col 8 = Duration (Hours)
+// Preview lets the owner remap any unmatched employee name to a Ratio
+// user (uses the radiusName alias same as payroll), then batch-imports.
+function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
+  const [open, setOpen] = useState(false);
+  const [parsed, setParsed] = useState(null);
+  const [importing, setImporting] = useState(false);
+  const [wipeFirst, setWipeFirst] = useState(false);
+  const fileRef = useRef(null);
+
+  // Tokenise + fuzzy compare (same logic as payroll matcher).
+  const nameTokens = (raw) => String(raw || '').toLowerCase()
+    .replace(/[.'`]/g, '').split(/[\s-]+/).filter(Boolean);
+  const namesMatch = (a, b) => {
+    const ta = nameTokens(a), tb = nameTokens(b);
+    if (ta.length === 0 || tb.length === 0) return false;
+    if (ta.length === 1 || tb.length === 1) return ta[0] === tb[0];
+    return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
+  };
+  const findUser = (wiwName) =>
+    approvedUsers.find(u =>
+      namesMatch(u.displayName, wiwName) ||
+      (u.radiusName && namesMatch(u.radiusName, wiwName))
+    );
+
+  // dd/mm/yyyy → YYYY-MM-DD
+  const isoDate = (d) => {
+    const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return null;
+    return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+  };
+  // "3:26 PM" → "15:26"
+  const toHHMM = (t) => {
+    const m = (t || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    if (!m) return null;
+    let h = parseInt(m[1], 10);
+    const mm = m[2];
+    const ampm = (m[3] || '').toUpperCase();
+    if (ampm === 'PM' && h !== 12) h += 12;
+    if (ampm === 'AM' && h === 12) h = 0;
+    return `${String(h).padStart(2,'0')}:${mm}`;
+  };
+
+  const handleFile = async (file) => {
+    if (!file) return;
+    const text = await file.text();
+    const rows = text.split(/\r?\n/).map(line => {
+      // Tiny CSV split — WIW exports don't use embedded commas, so this is safe.
+      return line.split(',');
+    });
+    const entries = [];
+    const nameToUid = new Map();
+    for (const row of rows) {
+      if (row.length < 9) continue;
+      const date = isoDate((row[4] || '').trim());
+      if (!date) continue;
+      const name = (row[2] || '').trim();
+      if (!name) continue;
+      const startTime = toHHMM(row[5]);
+      const endTime   = toHHMM(row[6]);
+      if (!startTime || !endTime) continue;
+      const hours = parseFloat(row[8]);
+      // First time we see this name, try to auto-match.
+      if (!nameToUid.has(name)) {
+        const u = findUser(name);
+        nameToUid.set(name, u ? u.uid : '');
+      }
+      const uid = nameToUid.get(name);
+      const user = uid ? approvedUsers.find(u => u.uid === uid) : null;
+      entries.push({
+        wiwName: name,
+        userId:  uid,
+        userName: user?.displayName || name,
+        role:    user?.instructorType || 'Instructor',
+        subRole: (user?.subRoles || []).includes('Online') ? 'Online'
+              : (user?.subRoles || []).includes('Highschool') ? 'Highschool'
+              : 'Elementary',
+        date, startTime, endTime, hours,
+      });
+    }
+    setParsed({ entries, nameToUid });
+  };
+
+  // Remap one of the wiwName → uid choices and re-resolve all rows.
+  const remap = (wiwName, uid) => {
+    const next = new Map(parsed.nameToUid);
+    next.set(wiwName, uid);
+    const user = uid ? approvedUsers.find(u => u.uid === uid) : null;
+    const entries = parsed.entries.map(e => e.wiwName === wiwName ? ({
+      ...e,
+      userId: uid,
+      userName: user?.displayName || wiwName,
+      role: user?.instructorType || e.role,
+      subRole: (user?.subRoles || []).includes('Online') ? 'Online'
+            : (user?.subRoles || []).includes('Highschool') ? 'Highschool'
+            : 'Elementary',
+    }) : e);
+    setParsed({ entries, nameToUid: next });
+  };
+
+  // Per-name summary for the preview list.
+  const summary = parsed
+    ? [...new Set(parsed.entries.map(e => e.wiwName))].map(n => {
+        const rows = parsed.entries.filter(e => e.wiwName === n);
+        const totalHrs = rows.reduce((s, r) => s + (r.hours || 0), 0);
+        const uid = parsed.nameToUid.get(n);
+        return { wiwName: n, uid, rowCount: rows.length, totalHrs, dates: rows.map(r => r.date) };
+      })
+    : [];
+
+  const minDate = parsed ? summary.flatMap(s => s.dates).sort()[0] : null;
+  const maxDate = parsed ? summary.flatMap(s => s.dates).sort().pop() : null;
+
+  const doImport = async () => {
+    if (!parsed) return;
+    setImporting(true);
+    try {
+      if (wipeFirst && minDate && maxDate) {
+        await onDeleteRange(minDate, maxDate);
+      }
+      await onImport(parsed.entries);
+      setOpen(false);
+      setParsed(null);
+      setWipeFirst(false);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 transition-colors"
+        title="Import shifts from a When I Work CSV export">
+        <Upload size={14} /> Import from WIW
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-30 bg-black/40 flex items-center justify-center p-4" onClick={() => !importing && setOpen(false)}>
+          <div className="relative w-full max-w-3xl rounded-xl bg-white shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-gray-900">Import shifts from When I Work</h3>
+                <p className="text-xs text-gray-500">
+                  Drop your WIW CSV export — works with any date range. Each row becomes a shift in Ratio.
+                </p>
+              </div>
+              <button onClick={() => !importing && setOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6">
+              {!parsed && (
+                <div>
+                  <button onClick={() => fileRef.current?.click()}
+                    className="w-full rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 py-12 text-center hover:bg-gray-100 transition-colors">
+                    <Upload className="mx-auto text-gray-400 mb-2" size={32} />
+                    <div className="text-sm font-semibold text-gray-700">Click to upload WIW CSV</div>
+                    <div className="text-xs text-gray-500 mt-1">Expects the standard When I Work payroll export format</div>
+                  </button>
+                  <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
+                </div>
+              )}
+
+              {parsed && (
+                <div className="space-y-4">
+                  <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
+                    Parsed <b>{parsed.entries.length}</b> shifts across <b>{summary.length}</b> employees
+                    {minDate && maxDate && <> from <b>{minDate}</b> to <b>{maxDate}</b></>}.
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm text-gray-900 mb-2">Employee matching</h4>
+                    <div className="rounded-lg border border-gray-200 overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-gray-50 text-xs text-gray-500">
+                          <tr>
+                            <th className="px-3 py-2 text-left">WIW name</th>
+                            <th className="px-3 py-2 text-left">Maps to Ratio user</th>
+                            <th className="px-3 py-2 text-right">Shifts</th>
+                            <th className="px-3 py-2 text-right">Hours</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {summary.map(s => (
+                            <tr key={s.wiwName} className={`border-t border-gray-100 ${s.uid ? '' : 'bg-amber-50'}`}>
+                              <td className="px-3 py-2 font-medium text-gray-900">{s.wiwName}</td>
+                              <td className="px-3 py-2">
+                                <select value={s.uid || ''} onChange={e => remap(s.wiwName, e.target.value)}
+                                  className={`w-full rounded border px-2 py-1 text-xs ${s.uid ? 'border-gray-300' : 'border-amber-300 bg-white'}`}>
+                                  <option value="">— skip this person —</option>
+                                  {approvedUsers.map(u => (
+                                    <option key={u.uid} value={u.uid}>{u.displayName}</option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-2 text-right text-gray-700">{s.rowCount}</td>
+                              <td className="px-3 py-2 text-right text-gray-700">{s.totalHrs.toFixed(2)}h</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {summary.some(s => !s.uid) && (
+                      <p className="mt-2 text-xs text-amber-700">
+                        Rows in amber will be SKIPPED on import. Map them to a Ratio user above or accept the skip.
+                      </p>
+                    )}
+                  </div>
+                  <label className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 cursor-pointer">
+                    <input type="checkbox" checked={wipeFirst} onChange={e => setWipeFirst(e.target.checked)}
+                      className="mt-0.5" />
+                    <span className="text-sm">
+                      <b className="text-red-800">Delete existing shifts from {minDate} to {maxDate} first</b>
+                      <span className="block text-xs text-red-700 mt-0.5">
+                        Use this when migrating from WIW so the imported numbers are clean.
+                        Existing Ratio shifts in that range will be permanently removed.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
+            </div>
+
+            {parsed && (
+              <div className="border-t bg-gray-50 px-6 py-3 flex items-center justify-between">
+                <button onClick={() => setParsed(null)} disabled={importing}
+                  className="text-sm text-gray-600 hover:text-gray-900">
+                  ← Upload a different file
+                </button>
+                <button onClick={doImport} disabled={importing}
+                  className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700 disabled:bg-gray-300">
+                  {importing ? 'Importing…' : `Import ${parsed.entries.filter(e => e.userId).length} shifts`}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1374,28 +1629,66 @@ export default function Admin() {
     await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
   };
 
-  // Bulk-delete every shift on a specific date for the active centre.
-  // Used on stat-holiday days so the payroll stat-pay logic kicks in
-  // instead of paying the regular shift hours.
-  const handleBulkDeleteShiftsForDate = async (dateStr) => {
-    if (!dateStr) return;
-    const matching = shifts.filter(s => s.date === dateStr);
+  // Bulk-delete shifts in a date range (single day if from === to).
+  // Used both for stat-holiday days AND for cleaning out a whole period
+  // before importing from When I Work.
+  const handleBulkDeleteShiftsForDate = async (from, to) => {
+    if (!from) return;
+    const end = to || from;
+    const matching = shifts.filter(s => s.date >= from && s.date <= end);
     if (matching.length === 0) {
-      toast.info(`No shifts found on ${dateStr}.`);
+      toast.info(`No shifts found between ${from} and ${end}.`);
       return;
     }
-    const names = matching.map(s => s.userName).filter(Boolean);
+    const names = [...new Set(matching.map(s => s.userName).filter(Boolean))];
+    const isRange = from !== end;
     const ok = await confirmDialog({
-      title: `Delete ${matching.length} shift${matching.length === 1 ? '' : 's'} on ${dateStr}?`,
-      body: `This will permanently remove every Ratio shift dated ${dateStr} at this centre.\n\nStaff affected:\n• ${[...new Set(names)].join('\n• ')}\n\nUse this for stat-holiday days so payroll computes stat-pay (BC ESA average-day) instead of regular hours. Make sure ${dateStr} is in Centre Settings → Holidays first.`,
+      title: `Delete ${matching.length} shift${matching.length === 1 ? '' : 's'} ${isRange ? `from ${from} to ${end}` : `on ${from}`}?`,
+      body: `This will permanently remove every Ratio shift in that ${isRange ? 'date range' : 'date'} at this centre.\n\nStaff affected (${names.length}):\n• ${names.slice(0, 12).join('\n• ')}${names.length > 12 ? `\n• …and ${names.length - 12} more` : ''}`,
       confirmLabel: `Delete ${matching.length} shift${matching.length === 1 ? '' : 's'}`,
       destructive: true,
     });
     if (!ok) return;
-    const batch = writeBatch(db);
-    for (const s of matching) batch.delete(doc(db, 'shifts', s.id));
-    await batch.commit();
-    toast.success(`Deleted ${matching.length} shift${matching.length === 1 ? '' : 's'} on ${dateStr}.`);
+    // Firestore batches max out at 500 writes — chunk.
+    for (let i = 0; i < matching.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const s of matching.slice(i, i + 400)) batch.delete(doc(db, 'shifts', s.id));
+      await batch.commit();
+    }
+    toast.success(`Deleted ${matching.length} shift${matching.length === 1 ? '' : 's'}.`);
+  };
+
+  // Bulk-import shifts from a parsed When I Work CSV. Each entry has been
+  // pre-matched in the modal to either a Ratio user (by uid) or marked
+  // "skip" by the owner. We just batch-write the chosen ones.
+  const handleImportWiwShifts = async (entries) => {
+    const valid = entries.filter(e => e.userId && e.date && e.startTime && e.endTime);
+    if (valid.length === 0) {
+      toast.info('No valid shifts to import.');
+      return 0;
+    }
+    for (let i = 0; i < valid.length; i += 400) {
+      const batch = writeBatch(db);
+      for (const e of valid.slice(i, i + 400)) {
+        const ref = doc(collection(db, 'shifts'));
+        batch.set(ref, {
+          userId: e.userId,
+          userName: e.userName,
+          date: e.date,
+          startTime: e.startTime,
+          endTime: e.endTime,
+          role: e.role || 'Instructor',
+          subRole: e.subRole || 'Elementary',
+          shiftType: 'In-Centre',
+          status: 'published',
+          source: 'wiw-import',
+          centerId: activeCenterId,
+        });
+      }
+      await batch.commit();
+    }
+    toast.success(`Imported ${valid.length} shift${valid.length === 1 ? '' : 's'} from When I Work.`);
+    return valid.length;
   };
 
   // One-click "Schedule shift" from a Radius CSV row.
@@ -3815,6 +4108,11 @@ export default function Admin() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  <ImportFromWiwButton
+                    approvedUsers={approvedUsers}
+                    onImport={handleImportWiwShifts}
+                    onDeleteRange={handleBulkDeleteShiftsForDate}
+                  />
                   <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
                   <button onClick={handleExportPayroll}
                     className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
