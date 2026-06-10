@@ -13,6 +13,7 @@ import {
   Check, ArrowRight, Building2,
 } from 'lucide-react';
 import RatioLogo from '../components/RatioLogo';
+import { VENDOR_CATEGORIES, VENDOR_STATUS, vendorCounts } from '../lib/vendors';
 
 const TAGLINE = 'More time with students. More time with family. Less time on everything else.';
 
@@ -133,7 +134,15 @@ export default function Landing() {
               for Mathnasium
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <a href="#integrations"
+              className="hidden md:inline-block rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900">
+              Integrations
+            </a>
+            <a href="#pricing"
+              className="hidden md:inline-block rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900">
+              Pricing
+            </a>
             <Link to="/login"
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:text-gray-900">
               Sign in
@@ -239,6 +248,47 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ───── Integrations / approved vendor catalog ───── */}
+      <section id="integrations" className="bg-gray-50 border-y border-gray-100">
+        <div className="mx-auto max-w-6xl px-4 py-16 md:py-24">
+          <div className="text-center">
+            <span className="inline-block rounded-full bg-red-50 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-red-700">
+              Plug into Mathnasium's preferred vendors
+            </span>
+            <h2 className="mt-4 text-3xl md:text-4xl font-bold tracking-tight text-gray-900">
+              Ratio sits at the centre of your existing stack.
+            </h2>
+            <p className="mt-4 text-lg text-gray-600 max-w-2xl mx-auto">
+              Every vendor on Mathnasium's official approved list — scheduling, hiring,
+              background checks, payroll, reviews, supplies. Ratio is the one operational
+              dashboard that ties them all together.
+            </p>
+            <IntegrationCounts />
+          </div>
+
+          <div className="mt-10 space-y-10">
+            {VENDOR_CATEGORIES.map(cat => (
+              <div key={cat.id}>
+                <div className="mb-3">
+                  <h3 className="text-lg font-bold text-gray-900">{cat.title}</h3>
+                  <p className="text-sm text-gray-600">{cat.blurb}</p>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {cat.vendors.map(v => (
+                    <VendorCard key={v.name} vendor={v} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <p className="mt-10 text-center text-xs text-gray-500 max-w-2xl mx-auto">
+            Pro plan customers can request a custom integration with any tool not on this list.
+            Founder-plan owners get a direct line to suggest what to build next.
+          </p>
+        </div>
+      </section>
+
       {/* ───── Pricing ───── */}
       <section id="pricing" className="bg-gray-50">
         <div className="mx-auto max-w-6xl px-4 py-16 md:py-24">
@@ -333,9 +383,50 @@ export default function Landing() {
             <Link to="/login">Sign in</Link>
             <a href="#pricing">Pricing</a>
             <a href="#features">Features</a>
+            <a href="#integrations">Integrations</a>
           </div>
         </div>
       </footer>
+    </div>
+  );
+}
+
+// ─── Small support components for the integrations section ──────────────
+
+function IntegrationCounts() {
+  const c = vendorCounts();
+  return (
+    <div className="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+      <CountPill n={c.live}    label="Live now"     color="text-emerald-700 bg-emerald-50 border-emerald-200" />
+      <CountPill n={c.soon}    label="Coming soon"  color="text-amber-700 bg-amber-50 border-amber-200" />
+      <CountPill n={c.planned} label="On roadmap"   color="text-gray-700 bg-gray-100 border-gray-200" />
+      <CountPill n={c.total}   label="Total"        color="text-red-700 bg-red-50 border-red-200" bold />
+    </div>
+  );
+}
+
+function CountPill({ n, label, color, bold }) {
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 ${color}`}>
+      <b className={bold ? 'font-bold' : 'font-semibold'}>{n}</b>
+      <span className="opacity-80">{label}</span>
+    </span>
+  );
+}
+
+function VendorCard({ vendor }) {
+  const s = VENDOR_STATUS[vendor.status] || VENDOR_STATUS.planned;
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-3 flex items-start gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-gray-900 text-sm truncate">{vendor.name}</div>
+        {vendor.note && (
+          <div className="text-xs text-gray-500 mt-0.5 leading-snug">{vendor.note}</div>
+        )}
+      </div>
+      <span className={`shrink-0 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded border ${s.color}`}>
+        {s.label}
+      </span>
     </div>
   );
 }

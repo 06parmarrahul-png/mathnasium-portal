@@ -10,7 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
-  CalendarRange, Users, Wallet, ClipboardList,
+  CalendarRange, Users, Wallet, ClipboardList, Plug,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -150,6 +150,13 @@ export default function Layout({ children }) {
       { to: '/admin?tab=users',   label: 'Manage Staff',   icon: Users },
       { to: '/admin?tab=payroll', label: 'Manage Payroll', icon: Wallet },
     );
+  }
+  // Connectors — Mathnasium-approved vendor integrations dashboard.
+  // Surfaced for the same audience as Scheduler Creation (owners + AA +
+  // Enterprise) so the people who actually decide which tools the centre
+  // uses can mark them connected.
+  if (isSuperAdmin || isOwner || isAdminAssistant) {
+    manage.push({ to: '/connectors', label: 'Connectors', icon: Plug });
   }
 
   // INSIGHTS — strategy / metrics surface. Owners + AA + Enterprise.

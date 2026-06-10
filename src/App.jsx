@@ -24,6 +24,7 @@ import AuditLogs from './pages/AuditLogs';
 import AccountDetails from './pages/AccountDetails';
 import SchedulerCreation from './pages/SchedulerCreation';
 import Landing from './pages/Landing';
+import Connectors from './pages/Connectors';
 import { useAuth } from './contexts/AuthContext';
 
 // Root URL ("/") is dual-purpose:
@@ -74,6 +75,7 @@ function AppRoutes() {
       <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
       <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
       <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
+      <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
