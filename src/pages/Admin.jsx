@@ -1329,6 +1329,50 @@ export default function Admin() {
     await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
   };
 
+  // One-click "Schedule shift" from a Radius CSV row.
+  //
+  // Use case: a staff member clocked into Radius but doesn't have a
+  // Ratio-side shift for that day, so the Payroll tab flags them
+  // "Not scheduled". Instead of forcing the owner to open Add Shift and
+  // re-type the times, this turns the actual clock-in/out into a real
+  // shift in one click.
+  //
+  // Behaviour: try to match the Radius row's staff name to an approved
+  // user by displayName; if no match, fall back to opening the existing
+  // AddShiftModal so the owner can pick the right person manually.
+  const handleScheduleFromRadius = async (personName, radiusEntry) => {
+    const user = approvedUsers.find(
+      u => (u.displayName || '').toLowerCase() === (personName || '').toLowerCase()
+    );
+    if (!user) {
+      // Can't match by name — open Add Shift modal pre-filled with the date.
+      setAddShiftModal({ date: radiusEntry.date, user: null });
+      return;
+    }
+    const subs = user.subRoles || [];
+    const subRole = subs.includes('Online')     ? 'Online'
+                  : subs.includes('Highschool') ? 'Highschool'
+                  : 'Elementary';
+    await handleAddShift({
+      userId: user.uid,
+      userName: user.displayName,
+      date: radiusEntry.date,
+      startTime: normalizeTimeToHHMM(radiusEntry.timeIn),
+      endTime:   normalizeTimeToHHMM(radiusEntry.timeOut),
+      role: user.instructorType || '',
+      shiftType: 'In-Centre',
+      subRole,
+      // Created from Radius — mark the source so we can audit later
+      // and so the existing payroll-compare logic treats it as confirmed.
+      source: 'radius-import',
+      status: 'published',
+    });
+    try {
+      const { toast } = await import('../lib/notify');
+      toast.success(`Shift created for ${user.displayName} on ${radiusEntry.date}`);
+    } catch { /* notify optional */ }
+  };
+
   const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay }) => {
     await updateDoc(doc(db, 'shifts', editShiftModal.id), {
       startTime, endTime, role, shiftType, subRole,
@@ -3869,7 +3913,19 @@ export default function Admin() {
                             </td>
                             <td className="px-5 py-2.5 text-right text-gray-400">–</td>
                             <td className="px-5 py-2.5 text-right font-semibold text-blue-700">{r.actualHours.toFixed(2)}h</td>
-                            <td className="px-5 py-2.5 text-right text-xs font-bold text-amber-600">⚠ unscheduled</td>
+                            <td className="px-5 py-2.5 text-right">
+                              <div className="inline-flex items-center gap-2 justify-end">
+                                <span className="text-xs font-bold text-amber-600 whitespace-nowrap">⚠ unscheduled</span>
+                                {/* One-click: turn this Radius clock-in into a real
+                                    Ratio shift so it stops flagging on payroll. */}
+                                <button
+                                  onClick={() => handleScheduleFromRadius(person.name, r)}
+                                  className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 transition-colors whitespace-nowrap"
+                                  title="Create a Ratio shift from this Radius entry">
+                                  Schedule shift
+                                </button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
