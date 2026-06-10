@@ -590,10 +590,18 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
         {s.name}
       </span>
-      {s.isAssessment && <span className="text-[9px] text-amber-700 shrink-0" title="Assessment">(A)</span>}
+      {/* Badges sit inline at the same baseline as the name so they read
+          as "Sara Kbeili (A)" rather than as a tiny superscript. */}
+      {s.isAssessment && (
+        <span className="text-xs font-semibold text-amber-700 shrink-0" title="Assessment">
+          (A)
+        </span>
+      )}
       {s.uncertainAlias && (
-        <span className="text-[10px] text-amber-600 font-semibold shrink-0"
-          title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>?</span>
+        <span className="text-xs font-bold text-amber-600 shrink-0"
+          title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>
+          (?)
+        </span>
       )}
       {/* Tag input — A / FT / N / HM / etc.
           Borderless when empty so the row stays compact. Light gray hover
