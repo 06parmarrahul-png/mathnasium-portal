@@ -1015,11 +1015,27 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
 
   const handleFile = async (file) => {
     if (!file) return;
-    const text = await file.text();
-    const rows = text.split(/\r?\n/).map(line => {
-      // Tiny CSV split — WIW exports don't use embedded commas, so this is safe.
-      return line.split(',');
-    });
+    // Accept both CSV and XLSX. WIW exports natively as XLSX, but in case
+    // someone re-saves it as CSV that path still works. For XLSX we use
+    // SheetJS to flatten the first sheet to a 2D string array — same
+    // shape as the CSV split, so the rest of the parsing is identical.
+    let rows;
+    const isXlsx = /\.xlsx?$/i.test(file.name) ||
+      file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+      file.type === 'application/vnd.ms-excel';
+    if (isXlsx) {
+      const XLSX = await import('xlsx');
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      // raw:false → numbers/dates stringify with the workbook's display
+      // format, so 15/05/2026 stays "15/05/2026" and "3:26 PM" stays
+      // "3:26 PM" rather than coming back as Excel serial numbers.
+      rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
+    } else {
+      const text = await file.text();
+      rows = text.split(/\r?\n/).map(line => line.split(','));
+    }
     const entries = [];
     const nameToUid = new Map();
     for (const row of rows) {
@@ -1125,10 +1141,12 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
                   <button onClick={() => fileRef.current?.click()}
                     className="w-full rounded-lg border-2 border-dashed border-gray-300 bg-gray-50 py-12 text-center hover:bg-gray-100 transition-colors">
                     <Upload className="mx-auto text-gray-400 mb-2" size={32} />
-                    <div className="text-sm font-semibold text-gray-700">Click to upload WIW CSV</div>
-                    <div className="text-xs text-gray-500 mt-1">Expects the standard When I Work payroll export format</div>
+                    <div className="text-sm font-semibold text-gray-700">Click to upload WIW payroll export</div>
+                    <div className="text-xs text-gray-500 mt-1">Accepts .xlsx (native WIW export) and .csv</div>
                   </button>
-                  <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+                  <input ref={fileRef} type="file"
+                    accept=".csv,.xlsx,.xls,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+                    className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); e.target.value = ''; }} />
                 </div>
               )}
