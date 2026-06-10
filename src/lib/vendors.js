@@ -28,7 +28,6 @@ export const VENDOR_CATEGORIES = [
     vendors: [
       { name: 'Acuity Scheduling', status: 'live',    note: 'iCal feed; appointment auto-categorization' },
       { name: 'Radius / Guardian Portal', status: 'soon', note: 'Direct integration with Mathnasium\'s new platform' },
-      { name: 'When I Work', status: 'planned', note: 'Staff schedule sync' },
       { name: 'Appointy',    status: 'planned' },
       { name: 'Apptoto',     status: 'planned', note: 'Appointment reminders for parents' },
     ],
