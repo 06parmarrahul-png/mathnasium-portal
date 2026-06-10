@@ -16,58 +16,72 @@ import RatioLogo from '../components/RatioLogo';
 
 const TAGLINE = 'More time with students. More time with family. Less time on everything else.';
 
+// Pricing model — the differentiators are STAFF USER COUNT (instructors,
+// admins, owners — not students) plus a couple of premium add-ons:
+//   - Starter: everything except the AI Assistant
+//   - Growth: Starter + AI Owner Assistant
+//   - Pro:    Growth + priority support + custom integrations
+//   - Founder: same as Pro, but locked at $12/mo + $50/yr, first 15 centres only.
 const PLANS = [
   {
     name: 'Founder',
     price: '$12',
     period: '/month',
-    extra: '+ $50/year',
-    tag: 'LIMITED · LOCKED FOREVER',
+    extra: '+ $50/year · locked forever',
+    tag: 'LIMITED · FIRST 15 CENTRES',
     highlight: true,
     cta: 'Claim founder pricing',
     features: [
-      'Everything in Pro',
-      'Locked at $12/mo as long as you stay',
+      'Everything in Pro, forever',
+      'Price locked at $12/mo as long as you stay',
       'Direct line to the founder',
-      'First 50 centres only',
+      'Roadmap input on new features',
+      'First 15 centres only — then it\'s gone',
     ],
   },
   {
     name: 'Starter',
     price: '$29',
     period: '/month',
+    extra: 'Up to 12 staff users',
     cta: 'Start free trial',
     features: [
       'Daily schedule dashboard',
       'Staff check-ins & roles',
-      'Acuity / Radius iCal import',
-      'Up to 200 students',
+      'Acuity / Radius / Guardian iCal import',
+      'Student tracker auto-categorization',
+      'Staffing forecast (1:4 ratio math)',
+      'Centre Analytics',
+      'Print-ready daily sheets',
+      'Everything Pro owners get — without the AI Assistant',
     ],
   },
   {
     name: 'Growth',
     price: '$59',
     period: '/month',
+    extra: '13–20 staff users',
     cta: 'Start free trial',
     features: [
       'Everything in Starter',
-      'Centre Analytics',
-      'Staffing forecast (1:4 ratio math)',
-      'Up to 500 students',
-      'Print-ready daily sheets',
+      'AI Owner Assistant',
+      'Auto-drafted parent emails',
+      '"Am I understaffed Thursday?" answers in chat',
+      'For mid-sized centres scaling up',
     ],
   },
   {
     name: 'Pro',
     price: '$79',
     period: '/month',
+    extra: '21+ staff users',
     cta: 'Start free trial',
     features: [
-      'Everything in Growth',
-      'Unlimited students',
-      'AI Owner Assistant',
-      'Custom integrations',
-      'Priority support',
+      'Everything in Growth (incl. AI Assistant)',
+      'Priority support — direct Slack channel',
+      'Custom integrations built for you',
+      'Multi-centre / franchise rollups',
+      'For large or multi-location operators',
     ],
   },
 ];
@@ -253,7 +267,11 @@ export default function Landing() {
                   <span className="text-4xl font-bold tracking-tight">{p.price}</span>
                   <span className="text-sm text-gray-500">{p.period}</span>
                 </div>
-                {p.extra && <p className="text-xs text-gray-500 mt-1">{p.extra}</p>}
+                {p.extra && (
+                  <p className={`text-xs mt-1 ${p.highlight ? 'text-red-700 font-semibold' : 'text-gray-600 font-medium'}`}>
+                    {p.extra}
+                  </p>
+                )}
                 <ul className="mt-6 space-y-2 text-sm flex-1">
                   {p.features.map(f => (
                     <li key={f} className="flex items-start gap-2">
@@ -275,7 +293,8 @@ export default function Landing() {
           </div>
 
           <p className="mt-8 text-center text-xs text-gray-500">
-            Founder plan available to the first 50 centres only. Pricing is per centre — multi-centre operators contact for volume discount.
+            "Staff users" means anyone signed into your centre — instructors, admin assistants, admins, owners. Students don't count.
+            Founder plan is limited to the first 15 centres. Multi-centre operators contact for volume pricing.
           </p>
         </div>
       </section>
