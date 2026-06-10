@@ -2435,14 +2435,55 @@ export default function Admin() {
         unmatchedRadius,
       };
     });
-    // Radius rows that didn't attribute to any user — needs a manual
-    // name-alias mapping (e.g. "Jieun Lee" in Radius is actually "Joanne
-    // Lee" in Ratio). Surfaced as the orphan list below the payroll grid.
+    // Unattributed Radius rows so far. Some of these are actually approved
+    // users who didn't have a single Ratio shift in the pay period (so
+    // they never appeared in payrollSummary). We promote them to synthetic
+    // payroll rows here — same matcher (displayName + radiusName fuzzy) —
+    // so Stella / Amarnoor / Rishi / etc. show on payroll WITH a
+    // "Schedule shift" button instead of being orphaned.
+    const leftover = radiusData
+      .map((r, idx) => ({ ...r, _idx: idx }))
+      .filter(r => !attributedIdxs.has(r._idx));
+
+    const synthByUserId = new Map();
+    for (const r of leftover) {
+      const user = approvedUsers.find(u =>
+        namesMatch(u.displayName, r.name) ||
+        (u.radiusName && namesMatch(u.radiusName, r.name))
+      );
+      if (!user) continue;
+      attributedIdxs.add(r._idx);
+      let synth = synthByUserId.get(user.uid);
+      if (!synth) {
+        synth = {
+          name: user.displayName,
+          role: user.instructorType || 'Instructor',
+          shifts: [],
+          totalHours: 0,
+          sickHours: 0,
+          sickCount: 0,
+          actualHours: 0,
+          scheduledHours: 0,
+          diff: 0,
+          hasDiscrepancy: true,        // by definition — they have hours but no schedule
+          shiftComparisons: [],
+          unmatchedRadius: [],
+        };
+        synthByUserId.set(user.uid, synth);
+      }
+      synth.unmatchedRadius.push(r);
+      synth.actualHours = Math.round((synth.actualHours + r.actualHours) * 100) / 100;
+      synth.diff        = Math.round((synth.actualHours - synth.scheduledHours) * 100) / 100;
+    }
+    for (const synth of synthByUserId.values()) perPerson.push(synth);
+
+    // True orphans: still no user matched after both passes. These need a
+    // manual alias — e.g. "Jieun Lee" → save radiusName on "Joanne Lee".
     const orphans = radiusData
       .map((r, idx) => ({ ...r, _idx: idx }))
       .filter(r => !attributedIdxs.has(r._idx));
     return { perPerson, orphans };
-  }, [payrollSummary, radiusData, usersForCentre]);
+  }, [payrollSummary, radiusData, usersForCentre, approvedUsers]);
 
   // Save a Radius-name alias on a staff user. Used by the orphan-mapping
   // dropdown — after this, the matcher attributes that Radius row (and

@@ -82,8 +82,10 @@ function parseCsv(text) {
 
 // ───── Page ─────────────────────────────────────────────────────────────
 export default function SchedulerCreation() {
-  const { activeCenterId, isSuperAdmin, isOwner, isAdminAssistant } = useAuth();
-  const allowed = isSuperAdmin || isOwner || isAdminAssistant;
+  // Scheduler Creation is part of daily ops, so anyone running a shift
+  // can use it — super_admin, owner, admin_assistant, AND plain admin.
+  const { activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin } = useAuth();
+  const allowed = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
   const [tab, setTab] = useState('today');
 
   if (!allowed) {
@@ -91,7 +93,7 @@ export default function SchedulerCreation() {
       <div className="mx-auto max-w-md rounded-xl bg-white p-8 shadow-sm text-center">
         <p className="text-3xl mb-2">🔒</p>
         <h1 className="text-xl font-bold text-gray-900 mb-2">Not available</h1>
-        <p className="text-sm text-gray-500">Scheduler Creation is open to Owners, Admin Assistants, and Enterprise only.</p>
+        <p className="text-sm text-gray-500">Scheduler Creation is open to Admins, Owners, Admin Assistants, and Enterprise.</p>
       </div>
     );
   }

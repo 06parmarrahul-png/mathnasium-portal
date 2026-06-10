@@ -142,7 +142,11 @@ export default function Layout({ children }) {
   if (canSeeAdminPanel) {
     manage.push({ to: '/admin?tab=spreadsheet', label: 'Manage Schedule', icon: CalendarRange });
   }
-  if (isSuperAdmin || isOwner || isAdminAssistant) {
+  // Scheduler Creation is the daily ops tool — anyone who runs a shift
+  // (super_admin, owner, admin_assistant, AND plain admin) gets access.
+  // Same audience as canSeeAdminPanel so admins running the front desk
+  // can check students in without needing owner-level rights.
+  if (canSeeAdminPanel) {
     manage.push({ to: '/scheduler-creation', label: 'Scheduler Creation', icon: ClipboardList });
   }
   if (canSeeAdminPanel) {
