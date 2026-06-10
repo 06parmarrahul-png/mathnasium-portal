@@ -911,6 +911,51 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   );
 }
 
+// ── Bulk delete shifts by date ─────────────────────────────────────────
+// Small dropdown widget on the Manage Payroll header. Owner picks a
+// single date; we confirm with a count + names list, then batch-delete.
+// Used on stat-holiday days so payroll's stat-pay logic kicks in
+// instead of paying the regular shift hours.
+function BulkDeleteShiftsByDate({ onConfirm }) {
+  const [open, setOpen] = useState(false);
+  const [date, setDate] = useState('');
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-700 hover:bg-red-50 transition-colors"
+        title="Bulk-delete every shift on a specific date (e.g. a stat holiday)">
+        <Trash2 size={14} /> Stat day
+      </button>
+      {open && (
+        <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-gray-200 bg-white p-4 shadow-lg">
+          <h4 className="font-bold text-gray-900 text-sm mb-1">Delete shifts on stat holiday</h4>
+          <p className="text-xs text-gray-500 mb-3">
+            Removes every shift on this date so payroll computes BC ESA stat pay (average day × qualifying staff) instead.
+          </p>
+          <input type="date" value={date} onChange={e => setDate(e.target.value)}
+            className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+          <div className="mt-3 flex gap-2 justify-end">
+            <button onClick={() => { setOpen(false); setDate(''); }}
+              className="rounded px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100">
+              Cancel
+            </button>
+            <button
+              disabled={!date}
+              onClick={async () => {
+                await onConfirm(date);
+                setOpen(false);
+                setDate('');
+              }}
+              className="rounded bg-red-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-red-700 disabled:bg-gray-300 disabled:cursor-not-allowed">
+              Delete shifts
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
@@ -1327,6 +1372,30 @@ export default function Admin() {
   // Shift CRUD
   const handleAddShift = async (shiftData) => {
     await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
+  };
+
+  // Bulk-delete every shift on a specific date for the active centre.
+  // Used on stat-holiday days so the payroll stat-pay logic kicks in
+  // instead of paying the regular shift hours.
+  const handleBulkDeleteShiftsForDate = async (dateStr) => {
+    if (!dateStr) return;
+    const matching = shifts.filter(s => s.date === dateStr);
+    if (matching.length === 0) {
+      toast.info(`No shifts found on ${dateStr}.`);
+      return;
+    }
+    const names = matching.map(s => s.userName).filter(Boolean);
+    const ok = await confirmDialog({
+      title: `Delete ${matching.length} shift${matching.length === 1 ? '' : 's'} on ${dateStr}?`,
+      body: `This will permanently remove every Ratio shift dated ${dateStr} at this centre.\n\nStaff affected:\n• ${[...new Set(names)].join('\n• ')}\n\nUse this for stat-holiday days so payroll computes stat-pay (BC ESA average-day) instead of regular hours. Make sure ${dateStr} is in Centre Settings → Holidays first.`,
+      confirmLabel: `Delete ${matching.length} shift${matching.length === 1 ? '' : 's'}`,
+      destructive: true,
+    });
+    if (!ok) return;
+    const batch = writeBatch(db);
+    for (const s of matching) batch.delete(doc(db, 'shifts', s.id));
+    await batch.commit();
+    toast.success(`Deleted ${matching.length} shift${matching.length === 1 ? '' : 's'} on ${dateStr}.`);
   };
 
   // One-click "Schedule shift" from a Radius CSV row.
@@ -3745,10 +3814,13 @@ export default function Admin() {
                     <span className="font-bold text-green-700">{Math.round(totalPayrollHours * 100) / 100}h</span>
                   </div>
                 </div>
-                <button onClick={handleExportPayroll}
-                  className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
-                  <Download size={15} /> Export CSV
-                </button>
+                <div className="flex items-center gap-2">
+                  <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
+                  <button onClick={handleExportPayroll}
+                    className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
+                    <Download size={15} /> Export CSV
+                  </button>
+                </div>
               </div>
             )}
           </div>
