@@ -581,10 +581,10 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
-      {/* whitespace-nowrap keeps each name on a single line. If the cell
-          is too narrow, the section's overflow-x: auto kicks in instead
-          of mangling the text. */}
-      <span className="flex-1 min-w-0 cursor-pointer hover:underline whitespace-nowrap leading-tight"
+      {/* No flex-1 — the name should only take its natural width so the
+          (A) / (?) badges sit right next to it, not at the far right edge.
+          The tag/desk inputs keep their ml-auto to stay pinned right. */}
+      <span className="cursor-pointer hover:underline whitespace-nowrap leading-tight"
         onClick={() => onStatusClick(s.id)}
         onContextMenu={e => onStatusMenu(e, s.id)}
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
