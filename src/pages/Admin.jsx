@@ -4047,6 +4047,26 @@ export default function Admin() {
       {tab === 'payroll' && (
         <div className="space-y-6">
 
+          {/* Always-visible toolbar — sits above the pay-period selector so
+              the WIW import + bulk delete buttons are reachable even when
+              the centre has zero shifts in the selected period yet (the
+              chicken-and-egg case during initial migration from WIW). */}
+          <div className="rounded-xl border bg-white p-3 shadow-sm flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-2 mr-auto pl-1">
+              <Briefcase size={16} className="text-gray-500" />
+              <span className="text-sm font-semibold text-gray-700">Payroll tools</span>
+              <span className="text-xs text-gray-500 hidden sm:inline">
+                — migration, bulk delete, export
+              </span>
+            </div>
+            <ImportFromWiwButton
+              approvedUsers={approvedUsers}
+              onImport={handleImportWiwShifts}
+              onDeleteRange={handleBulkDeleteShiftsForDate}
+            />
+            <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
+          </div>
+
           {/* Pay period selector */}
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
@@ -4107,18 +4127,10 @@ export default function Admin() {
                     <span className="font-bold text-green-700">{Math.round(totalPayrollHours * 100) / 100}h</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <ImportFromWiwButton
-                    approvedUsers={approvedUsers}
-                    onImport={handleImportWiwShifts}
-                    onDeleteRange={handleBulkDeleteShiftsForDate}
-                  />
-                  <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
-                  <button onClick={handleExportPayroll}
-                    className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
-                    <Download size={15} /> Export CSV
-                  </button>
-                </div>
+                <button onClick={handleExportPayroll}
+                  className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
+                  <Download size={15} /> Export CSV
+                </button>
               </div>
             )}
           </div>
