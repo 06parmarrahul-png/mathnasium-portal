@@ -995,15 +995,18 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
       (u.radiusName && namesMatch(u.radiusName, wiwName))
     );
 
-  // dd/mm/yyyy → YYYY-MM-DD
+  // dd/mm/yyyy OR yyyy-mm-dd → YYYY-MM-DD
   const isoDate = (d) => {
-    const m = (d || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (!m) return null;
-    return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    const v = String(d || '').trim();
+    let m = v.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+    if (m) return `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}`;
+    m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) return `${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`;
+    return null;
   };
-  // "3:26 PM" → "15:26"
+  // "3:26 PM" / "10:30 am" / "15:30" → "15:26"
   const toHHMM = (t) => {
-    const m = (t || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM)?$/i);
+    const m = String(t || '').trim().match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/i);
     if (!m) return null;
     let h = parseInt(m[1], 10);
     const mm = m[2];
@@ -1012,13 +1015,49 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
     if (ampm === 'AM' && h === 12) h = 0;
     return `${String(h).padStart(2,'0')}:${mm}`;
   };
+  // Hours between two HH:MM strings (positive even if end < start by 1 min
+  // due to rounding — we cap at 24).
+  const hoursBetween = (start, end) => {
+    if (!start || !end) return 0;
+    const [sh, sm] = start.split(':').map(Number);
+    const [eh, em] = end.split(':').map(Number);
+    const mins = (eh * 60 + em) - (sh * 60 + sm);
+    return Math.max(0, Math.min(24, mins / 60));
+  };
+  // Map WIW position → Ratio role/subRole.
+  const positionToRoleSub = (pos) => {
+    const p = String(pos || '').toLowerCase();
+    if (p.includes('high school')) return { role: 'Instructor', subRole: 'Highschool' };
+    if (p.includes('elementary'))  return { role: 'Instructor', subRole: 'Elementary' };
+    if (p.includes('@home') || p.includes('m@home') || p.includes('online'))
+                                   return { role: 'Instructor', subRole: 'Online' };
+    if (p.includes('training'))    return { role: 'Instructor', subRole: 'Elementary' };
+    if (p.includes('lead'))        return { role: 'Lead Instructor', subRole: 'Highschool' };
+    if (p.includes('admin'))       return { role: 'Host',  subRole: 'Elementary' };
+    if (p.includes('manager') || p.includes('director'))
+                                   return { role: 'Host',  subRole: 'Elementary' };
+    if (p.includes('sick'))        return { role: 'Instructor', subRole: 'Elementary', sickPay: true };
+    return { role: 'Instructor', subRole: 'Elementary' };
+  };
+
+  // Find column indexes by header label so we don't rely on fixed offsets
+  // — WIW changes column order between Payroll and Schedule exports.
+  const indexOfHeader = (headerRow, ...candidates) => {
+    const lc = headerRow.map(h => String(h || '').trim().toLowerCase());
+    for (const c of candidates) {
+      const i = lc.indexOf(c.toLowerCase());
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
 
   const handleFile = async (file) => {
     if (!file) return;
-    // Accept both CSV and XLSX. WIW exports natively as XLSX, but in case
-    // someone re-saves it as CSV that path still works. For XLSX we use
-    // SheetJS to flatten the first sheet to a 2D string array — same
-    // shape as the CSV split, so the rest of the parsing is identical.
+    // Accept both CSV and XLSX. WIW's native export is .xlsx with multiple
+    // sheets; the Schedule export's per-shift rows live on the
+    // "Schedules Summary" sheet. We pick that sheet by name when present,
+    // otherwise fall back to the first sheet (which covers the legacy
+    // Payroll CSV format).
     let rows;
     const isXlsx = /\.xlsx?$/i.test(file.name) ||
       file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
@@ -1027,15 +1066,88 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
       const XLSX = await import('xlsx');
       const buf = await file.arrayBuffer();
       const wb = XLSX.read(buf, { type: 'array' });
-      const sheet = wb.Sheets[wb.SheetNames[0]];
-      // raw:false → numbers/dates stringify with the workbook's display
-      // format, so 15/05/2026 stays "15/05/2026" and "3:26 PM" stays
-      // "3:26 PM" rather than coming back as Excel serial numbers.
+      // Prefer "Schedules Summary" or anything that contains "schedule";
+      // otherwise first sheet.
+      const preferred = wb.SheetNames.find(n => /schedules?\s*summary/i.test(n))
+        || wb.SheetNames.find(n => /schedule/i.test(n))
+        || wb.SheetNames[0];
+      const sheet = wb.Sheets[preferred];
       rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: false, defval: '' });
     } else {
       const text = await file.text();
       rows = text.split(/\r?\n/).map(line => line.split(','));
     }
+
+    // Find the header row — the first row that contains a recognisable
+    // shift-date label. Then look up the columns we need by name.
+    let headerIdx = -1, header = null;
+    for (let i = 0; i < Math.min(rows.length, 20); i++) {
+      const cells = rows[i].map(c => String(c || '').toLowerCase());
+      if (cells.some(c => /shift start date|date/.test(c)) &&
+          cells.some(c => /first name|employee name/.test(c) || c === 'name') ) {
+        headerIdx = i; header = rows[i]; break;
+      }
+    }
+    if (headerIdx < 0) {
+      // Legacy Payroll CSV had no recognisable header on row 1 — fall back
+      // to the original fixed-column path (col 2 name, col 4 dd/mm/yyyy,
+      // col 5 in, col 6 out).
+      const entries = parseLegacyFixedCols(rows);
+      setParsed(entries);
+      return;
+    }
+
+    const colDate    = indexOfHeader(header, 'Shift Start Date', 'Date');
+    const colStart   = indexOfHeader(header, 'Shift Start Time', 'Time In', 'Start');
+    const colEnd     = indexOfHeader(header, 'Shift End Time',   'Time Out', 'End');
+    const colFirst   = indexOfHeader(header, 'First Name');
+    const colLast    = indexOfHeader(header, 'Last Name');
+    const colName    = indexOfHeader(header, 'Employee Name', 'Name');
+    const colPos     = indexOfHeader(header, 'Position', 'Role');
+    const colBreak   = indexOfHeader(header, 'Unpaid Break');
+
+    const entries = [];
+    const nameToUid = new Map();
+    for (let i = headerIdx + 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (!r || r.length === 0) continue;
+      const date = isoDate(r[colDate]);
+      if (!date) continue;
+      // Build name from either First + Last or single Name column.
+      const name = colFirst >= 0 && colLast >= 0
+        ? `${(r[colFirst] || '').trim()} ${(r[colLast] || '').trim()}`.trim()
+        : (r[colName] || '').trim();
+      if (!name) continue;
+      const startTime = toHHMM(r[colStart]);
+      const endTime   = toHHMM(r[colEnd]);
+      if (!startTime || !endTime) continue;
+      const breakMin = colBreak >= 0 ? (parseFloat(r[colBreak]) || 0) : 0;
+      const hours = Math.max(0, hoursBetween(startTime, endTime) - breakMin / 60);
+      const rs = positionToRoleSub(r[colPos]);
+
+      if (!nameToUid.has(name)) {
+        const u = findUser(name);
+        nameToUid.set(name, u ? u.uid : '');
+      }
+      const uid = nameToUid.get(name);
+      const user = uid ? approvedUsers.find(u => u.uid === uid) : null;
+      entries.push({
+        wiwName: name,
+        userId: uid,
+        userName: user?.displayName || name,
+        role:    user?.instructorType || rs.role,
+        subRole: rs.subRole,
+        sickPay: !!rs.sickPay,
+        date, startTime, endTime,
+        hours: Math.round(hours * 100) / 100,
+      });
+    }
+    setParsed({ entries, nameToUid });
+  };
+
+  // Old Payroll CSV path — col 2 = name, col 4 = dd/mm/yyyy, col 5 = in,
+  // col 6 = out, col 8 = hours. Kept so the old format still works.
+  const parseLegacyFixedCols = (rows) => {
     const entries = [];
     const nameToUid = new Map();
     for (const row of rows) {
@@ -1048,7 +1160,6 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
       const endTime   = toHHMM(row[6]);
       if (!startTime || !endTime) continue;
       const hours = parseFloat(row[8]);
-      // First time we see this name, try to auto-match.
       if (!nameToUid.has(name)) {
         const u = findUser(name);
         nameToUid.set(name, u ? u.uid : '');
@@ -1057,16 +1168,17 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
       const user = uid ? approvedUsers.find(u => u.uid === uid) : null;
       entries.push({
         wiwName: name,
-        userId:  uid,
+        userId: uid,
         userName: user?.displayName || name,
         role:    user?.instructorType || 'Instructor',
         subRole: (user?.subRoles || []).includes('Online') ? 'Online'
               : (user?.subRoles || []).includes('Highschool') ? 'Highschool'
               : 'Elementary',
-        date, startTime, endTime, hours,
+        date, startTime, endTime,
+        hours: isNaN(hours) ? 0 : hours,
       });
     }
-    setParsed({ entries, nameToUid });
+    return { entries, nameToUid };
   };
 
   // Remap one of the wiwName → uid choices and re-resolve all rows.
