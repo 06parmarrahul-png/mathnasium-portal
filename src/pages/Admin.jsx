@@ -2363,6 +2363,11 @@ export default function Admin() {
   // on whitespace AND hyphens, drop dots and apostrophes, and consider
   // two names a match if their first token matches AND their last token
   // matches. Single-word names fall back to exact-token equality.
+  //
+  // For staff whose Radius name doesn't share a first OR last token with
+  // their Ratio displayName (legal first names, married names, etc., e.g.
+  // "Jieun (Joanne) Lee"), the owner saves a `radiusName` alias on the
+  // user profile and the matcher tries it as a second name too.
   const comparisonSummary = useMemo(() => {
     if (radiusData.length === 0) return null;
     const nameTokens = (raw) => String(raw || '')
@@ -2377,10 +2382,26 @@ export default function Admin() {
       if (ta.length === 1 || tb.length === 1) return ta[0] === tb[0];
       return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
     };
-    return payrollSummary.map(person => {
+    // Pull the user's radiusName from the canonical user list so the
+    // matcher can recognise both "Joanne Lee" and "Jieun Lee".
+    const userByPersonName = new Map(
+      usersForCentre.map(u => [(u.displayName || '').toLowerCase(), u])
+    );
+    const personMatchesRadius = (personName, radiusName) => {
+      if (namesMatch(personName, radiusName)) return true;
+      const u = userByPersonName.get((personName || '').toLowerCase());
+      if (u?.radiusName && namesMatch(u.radiusName, radiusName)) return true;
+      return false;
+    };
+    // Track which Radius rows got attributed to ANY person so we can
+    // surface the leftovers (rows whose name doesn't match any user) and
+    // let the owner map them by clicking — saving the alias on the user.
+    const attributedIdxs = new Set();
+    const perPerson = payrollSummary.map(person => {
       const radiusRows = radiusData
         .map((r, idx) => ({ ...r, _idx: idx }))
-        .filter(r => namesMatch(r.name, person.name));
+        .filter(r => personMatchesRadius(person.name, r.name));
+      for (const r of radiusRows) attributedIdxs.add(r._idx);
       const actualHours = radiusRows.reduce((s, r) => s + r.actualHours, 0);
       const scheduledHours = person.totalHours;
       const diff = Math.round((actualHours - scheduledHours) * 100) / 100;
@@ -2414,7 +2435,26 @@ export default function Admin() {
         unmatchedRadius,
       };
     });
-  }, [payrollSummary, radiusData]);
+    // Radius rows that didn't attribute to any user — needs a manual
+    // name-alias mapping (e.g. "Jieun Lee" in Radius is actually "Joanne
+    // Lee" in Ratio). Surfaced as the orphan list below the payroll grid.
+    const orphans = radiusData
+      .map((r, idx) => ({ ...r, _idx: idx }))
+      .filter(r => !attributedIdxs.has(r._idx));
+    return { perPerson, orphans };
+  }, [payrollSummary, radiusData, usersForCentre]);
+
+  // Save a Radius-name alias on a staff user. Used by the orphan-mapping
+  // dropdown — after this, the matcher attributes that Radius row (and
+  // any future ones with the same name) to the chosen user.
+  const setUserRadiusName = async (userId, radiusName) => {
+    if (!userId) return;
+    await updateDoc(doc(db, 'users', userId), { radiusName: radiusName || null });
+    try {
+      const { toast } = await import('../lib/notify');
+      toast.success('Radius name saved');
+    } catch { /* notify optional */ }
+  };
 
   // Admin Panel is open to admins, owners, and super-admins. Plain
   // instructors get bounced (the route guard also enforces this).
@@ -3741,7 +3781,7 @@ export default function Admin() {
             </div>
           ) : (
             <div className="space-y-4">
-              {(comparisonSummary || payrollSummary).map(person => {
+              {((comparisonSummary?.perPerson) || payrollSummary).map(person => {
                 const bg = assignmentColorHex(assignmentFor(person), centerConfig);
                 const hasRadius = !!comparisonSummary;
                 const isDiscrepant = hasRadius && person.hasDiscrepancy;
@@ -3953,6 +3993,55 @@ export default function Admin() {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── ORPHAN RADIUS ROWS ─────────────────────────────────────────
+              Radius entries whose name didn't match ANY user (e.g. "Jieun
+              Lee" in Radius vs "Joanne Lee" in Ratio). Owner picks the
+              real staff person from a dropdown; we save the Radius name
+              as that user's `radiusName` alias, so this row — AND every
+              future row with that name — auto-attribute correctly. */}
+          {comparisonSummary?.orphans?.length > 0 && (
+            <div className="mt-6 rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <AlertTriangle size={16} className="text-amber-700" />
+                <h3 className="font-bold text-amber-900">
+                  Unmatched Radius entries
+                  <span className="ml-2 text-xs font-normal text-amber-700">
+                    ({comparisonSummary.orphans.length} {comparisonSummary.orphans.length === 1 ? 'entry' : 'entries'} couldn't be linked to a staff member)
+                  </span>
+                </h3>
+              </div>
+              <p className="text-xs text-amber-800 mb-3">
+                Pick the right staff person and we'll remember the Radius name on their profile permanently.
+                Used when Radius shows a legal name like "Jieun Lee" but Ratio has "Joanne Lee".
+              </p>
+              <div className="space-y-2">
+                {comparisonSummary.orphans.map(r => (
+                  <div key={r._idx} className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-white px-3 py-2">
+                    <span className="font-semibold text-gray-900">{r.name}</span>
+                    <span className="text-xs text-gray-500">{r.date} · {normalizeTimeToHHMM(r.timeIn)}–{normalizeTimeToHHMM(r.timeOut)} ({r.actualHours.toFixed(2)}h)</span>
+                    <span className="ml-auto inline-flex items-center gap-2">
+                      <span className="text-xs text-gray-600">This is →</span>
+                      <select
+                        defaultValue=""
+                        onChange={(e) => {
+                          const uid = e.target.value;
+                          if (!uid) return;
+                          setUserRadiusName(uid, r.name);
+                          e.target.value = '';
+                        }}
+                        className="rounded border border-amber-300 bg-white px-2 py-1 text-xs">
+                        <option value="">Pick staff…</option>
+                        {approvedUsers.map(u => (
+                          <option key={u.uid} value={u.uid}>{u.displayName}</option>
+                        ))}
+                      </select>
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
