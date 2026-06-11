@@ -2772,6 +2772,40 @@ export default function Admin() {
   // Sub-tab inside Manage Payroll: "This period" or "Sick days".
   const [payrollSubtab, setPayrollSubtab] = useState('period');
 
+  // Diagnostic for stat pay — flags WHY a person did or didn't qualify
+  // for stat pay on each holiday in the pay period. Used by the small
+  // info panel on the payroll tab when stat pay isn't showing up.
+  const statDiagnostic = useMemo(() => {
+    if (!payStart || !payEnd) return null;
+    const holidaysList = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+    const inPeriod = holidaysList.filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
+
+    const minusDays = (dateStr, n) => {
+      const d = new Date(dateStr + 'T00:00:00');
+      d.setDate(d.getDate() - n);
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    };
+    const byName = {};
+    for (const s of shifts) {
+      if (!s.userName || !s.date) continue;
+      if (!byName[s.userName]) byName[s.userName] = [];
+      byName[s.userName].push(s);
+    }
+    const detail = inPeriod.map(h => {
+      const windowStart = minusDays(h.date, 30);
+      const perPerson = Object.entries(byName).map(([name, ss]) => {
+        const relevant = ss.filter(s => s.date >= windowStart && s.date < h.date);
+        return { name, count: relevant.length, qualifies: relevant.length >= 15 };
+      }).sort((a, b) => b.count - a.count);
+      return { holiday: h, windowStart, perPerson };
+    });
+    return {
+      holidaysConfigured: holidaysList.length,
+      inPeriod,
+      detail,
+    };
+  }, [shifts, centerConfig?.holidays, payStart, payEnd]);
+
   // Update a user's hire date (used by the Sick days tab so the owner
   // can correct probation dates without going to Manage Staff).
   const handleSetHireDate = async (userId, dateStr) => {
@@ -4464,6 +4498,66 @@ export default function Admin() {
 
           {/* ── "This Period" sub-tab — wraps the original payroll UI ── */}
           {payrollSubtab === 'period' && (<>
+
+          {/* Stat-pay diagnostic — only renders if there's a holiday in
+              this pay period. Shows per-person shift count in the pre-30
+              window so we can see exactly why someone qualifies or not. */}
+          {statDiagnostic && statDiagnostic.inPeriod.length > 0 && (
+            <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-4">
+              <div className="flex items-center gap-2 mb-2">
+                <Activity size={16} className="text-purple-700" />
+                <h4 className="font-bold text-purple-900 text-sm">
+                  Stat-pay diagnostic ({statDiagnostic.inPeriod.length} holiday{statDiagnostic.inPeriod.length === 1 ? '' : 's'} in this period)
+                </h4>
+              </div>
+              {statDiagnostic.detail.map(d => {
+                const qualifiers = d.perPerson.filter(p => p.qualifies);
+                return (
+                  <div key={d.holiday.date} className="mt-2 rounded-lg bg-white border border-purple-100 p-3">
+                    <div className="text-sm font-semibold text-purple-900">
+                      {d.holiday.name || 'Holiday'} · {d.holiday.date}
+                      <span className="ml-2 text-xs font-normal text-gray-500">
+                        Pre-30-day window: {d.windowStart} → {d.holiday.date}
+                      </span>
+                    </div>
+                    {qualifiers.length === 0 ? (
+                      <p className="mt-2 text-xs text-red-700">
+                        Nobody qualifies. <b>No person has 15+ shifts in the window above.</b>
+                        Most likely cause: April shifts aren't loaded yet (or weren't tagged with the right userName so they don't aggregate).
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-xs text-emerald-700">
+                        <b>{qualifiers.length} qualifier{qualifiers.length === 1 ? '' : 's'}.</b> They should be getting stat pay — if not, hover the purple Stat badge on their row to see the breakdown.
+                      </p>
+                    )}
+                    <details className="mt-2">
+                      <summary className="text-xs text-purple-700 cursor-pointer">
+                        Show per-person shift counts ({d.perPerson.length} people)
+                      </summary>
+                      <table className="w-full text-xs mt-2">
+                        <thead>
+                          <tr className="text-gray-500">
+                            <th className="text-left px-2 py-1">Name</th>
+                            <th className="text-right px-2 py-1">Shifts in window</th>
+                            <th className="text-center px-2 py-1">15+ ?</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {d.perPerson.map(p => (
+                            <tr key={p.name} className={p.qualifies ? 'text-emerald-700' : 'text-gray-500'}>
+                              <td className="px-2 py-0.5">{p.name}</td>
+                              <td className="px-2 py-0.5 text-right font-mono">{p.count}</td>
+                              <td className="px-2 py-0.5 text-center">{p.qualifies ? '✓' : '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </details>
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           {/* Pay period selector */}
           <div className="rounded-xl border bg-white p-5 shadow-sm">
