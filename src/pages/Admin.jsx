@@ -5193,6 +5193,33 @@ function DeltaBadge({ delta, pct, isUp }) {
 // manual entry on this page (Phase 2 will add automated enrollment import).
 
 export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
+  // Live counts that power the extra metric cards (open shifts, pending
+  // time-off, etc). Pulled here rather than threaded through props
+  // because the rest of Admin.jsx already subscribes to these elsewhere
+  // — small duplication, but keeps the Analytics tab self-contained.
+  const [openShiftsList, setOpenShiftsList] = useState([]);
+  const [timeOffPending, setTimeOffPending] = useState(0);
+  useEffect(() => {
+    if (!activeCenterId) return;
+    const u1 = onSnapshot(
+      query(
+        collection(db, 'openShifts'),
+        where('centerId', '==', activeCenterId),
+      ),
+      snap => setOpenShiftsList(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => {},
+    );
+    const u2 = onSnapshot(
+      query(
+        collection(db, 'timeOffRequests'),
+        where('centerId', '==', activeCenterId),
+        where('status', '==', 'pending'),
+      ),
+      snap => setTimeOffPending(snap.size),
+      () => {},
+    );
+    return () => { u1(); u2(); };
+  }, [activeCenterId]);
   const now = new Date();
   const todayStr      = format(now, 'yyyy-MM-dd');
   const weekStartStr  = format(startOfWeek(now), 'yyyy-MM-dd');
@@ -5236,6 +5263,56 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   };
   const weekDelta  = deltaFor(hoursWeek,  hoursLastWeek);
   const monthDelta = deltaFor(hoursMonth, hoursLastMonth);
+
+  // ── Open shifts (future-dated, still unfilled) ──
+  const openShiftsCount = openShiftsList.filter(s => s.status === 'open' && s.date >= todayStr).length;
+
+  // ── Sick days used this month — count distinct dates with sickPay ──
+  const sickDatesByName = new Map();
+  for (const s of monthShifts) {
+    if (!s.sickPay || !s.userName || !s.date) continue;
+    if (!sickDatesByName.has(s.userName)) sickDatesByName.set(s.userName, new Set());
+    sickDatesByName.get(s.userName).add(s.date);
+  }
+  const sickDaysThisMonth = [...sickDatesByName.values()].reduce((sum, set) => sum + set.size, 0);
+
+  // ── Days till next stat holiday ──
+  const holidaysList = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+  const upcomingHolidays = holidaysList
+    .filter(h => h?.date && h.date >= todayStr)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const nextHoliday = upcomingHolidays[0] || null;
+  const daysTillNext = nextHoliday
+    ? Math.round((new Date(nextHoliday.date + 'T00:00:00') - new Date(todayStr + 'T00:00:00')) / (24 * 3600 * 1000))
+    : null;
+
+  // ── Stat pay hours YTD (BC ESA "average day" rule) ──
+  // For each holiday in the calendar year so far that's already passed,
+  // sum the average-day hours for each person who had 15+ shifts in the
+  // 30 days before that holiday. Gives the owner a single rolled-up
+  // figure of stat-pay liability for the year.
+  const allShiftsByName = {};
+  for (const s of posted) {
+    if (!s.userName || !s.date) continue;
+    if (!allShiftsByName[s.userName]) allShiftsByName[s.userName] = [];
+    allShiftsByName[s.userName].push(s);
+  }
+  const minusDaysStr = (dateStr, n) => {
+    const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - n);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  const ytdHolidays = holidaysList.filter(h => h?.date && h.date >= yearStartStr && h.date <= todayStr);
+  let statHoursYTD = 0;
+  for (const h of ytdHolidays) {
+    const windowStart = minusDaysStr(h.date, 30);
+    for (const name of Object.keys(allShiftsByName)) {
+      const relevant = allShiftsByName[name].filter(s => s.date >= windowStart && s.date < h.date);
+      if (relevant.length < 15) continue;
+      const total = relevant.reduce((sum, s) => sum + shiftHours(s), 0);
+      statHoursYTD += total / relevant.length;
+    }
+  }
+  statHoursYTD = Math.round(statHoursYTD * 10) / 10;
 
   // Active employees: approved staff at this centre, excluding super-admins.
   const activeEmployees = users.filter(u => u.approved && u.role !== 'super_admin').length;
@@ -5614,6 +5691,59 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Students / Employee</p>
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{studentsPerEmployee || '–'}</p>
           <p className="mt-1 text-xs text-gray-400">workload ratio</p>
+        </div>
+
+        {/* ── Operations cards — actionable signals for the owner ── */}
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-orange-100 text-orange-700"><Briefcase size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Open Shifts</p>
+          <p className={`mt-0.5 text-2xl font-bold ${openShiftsCount > 0 ? 'text-orange-700' : 'text-gray-900'}`}>
+            {openShiftsCount}
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            {openShiftsCount === 0 ? 'all upcoming shifts filled' : 'unfilled — need pickup'}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-yellow-100 text-yellow-700"><Mail size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Pending Time-Off</p>
+          <p className={`mt-0.5 text-2xl font-bold ${timeOffPending > 0 ? 'text-yellow-700' : 'text-gray-900'}`}>
+            {timeOffPending}
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            {timeOffPending === 0 ? 'inbox clear' : `request${timeOffPending === 1 ? '' : 's'} waiting on you`}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><DollarSign size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Stat Pay YTD</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{statHoursYTD}h</p>
+          <p className="mt-1 text-xs text-gray-400">{ytdHolidays.length} stat holiday{ytdHolidays.length === 1 ? '' : 's'} paid out</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-amber-100 text-amber-700"><Activity size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Sick Days This Month</p>
+          <p className={`mt-0.5 text-2xl font-bold ${sickDaysThisMonth >= 5 ? 'text-amber-700' : 'text-gray-900'}`}>
+            {sickDaysThisMonth}
+          </p>
+          <p className="mt-1 text-xs text-gray-400">{sickDatesByName.size} staff affected</p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-pink-100 text-pink-700"><CalendarX size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Next Stat Holiday</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">
+            {daysTillNext == null ? '—' : daysTillNext === 0 ? 'Today' : `${daysTillNext}d`}
+          </p>
+          <p className="mt-1 text-xs text-gray-400 truncate">
+            {nextHoliday
+              ? `${nextHoliday.name || 'Holiday'} · ${format(new Date(nextHoliday.date + 'T00:00:00'), 'MMM d')}`
+              : 'none in your holidays list'}
+          </p>
         </div>
       </div>
 
