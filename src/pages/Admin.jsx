@@ -5270,7 +5270,15 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   // Goal: a day×hour grid showing average distinct-instructor count covering
   // each hour. "Covering hour H" means the shift's startTime <= H:00 and
   // endTime is strictly after H:00 (so 15:00–19:00 covers 15, 16, 17, 18).
-  const opHoursMap = centerConfig?.operatingHours || DEFAULT_CENTER_CONFIG.operatingHours;
+  //
+  // We use INSTRUCTIONAL hours (teaching window, e.g. 3pm-7pm), not
+  // OPERATING hours (full open window, e.g. 10am-8pm). Owners only care
+  // about coverage during teaching hours — showing 10am as "red" is
+  // misleading because the centre isn't even running classes then.
+  // Each centre's instructional hours are configured in Centre Settings,
+  // so this auto-tailors per centre (Mathnasium Langley's 3-7p, a centre
+  // with longer hours, etc.).
+  const opHoursMap = centerConfig?.instructionalHours || DEFAULT_CENTER_CONFIG.instructionalHours;
   let earliestHour = 24;
   let latestHour = 0;
   for (const day of operatingDaysList) {
@@ -5760,9 +5768,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-baseline justify-between">
           <div>
-            <h3 className="text-sm font-semibold text-gray-900">Average Hourly Coverage By Day</h3>
+            <h3 className="text-sm font-semibold text-gray-900">Average Instructional Hour Coverage</h3>
             <p className="mt-0.5 text-xs text-gray-500">
-              Hour-by-hour coverage over the last {COVERAGE_WEEKS} weeks vs your daily target of {coverageTarget}. Off-peak hours will naturally read red — focus on whether peak slots (3 PM onwards) are amber or green.
+              Hour-by-hour coverage over the last {COVERAGE_WEEKS} weeks vs your daily target of {coverageTarget} instructors.
+              Only your centre's <b>instructional hours</b> are shown — set them under <b>Centre Settings → Hours</b>.
             </p>
           </div>
         </div>
