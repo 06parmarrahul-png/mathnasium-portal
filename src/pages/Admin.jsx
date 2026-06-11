@@ -2899,9 +2899,54 @@ export default function Admin() {
       const diff = Math.round((actualHours - scheduledHours) * 100) / 100;
       const hasDiscrepancy = Math.abs(diff) > 0.25; // >15 min difference flags it
 
-      // Per-shift comparison
-      const shiftComparisons = person.shifts.map(s => {
-        const match = radiusRows.find(r => r.date === s.date);
+      // Per-shift comparison.
+      //
+      // CRITICAL: when an instructor has multiple shifts on the same date
+      // (e.g. Homer's in-centre 3-5pm + online 6-8pm), each scheduled
+      // shift needs its OWN Radius row, not the first one on that date.
+      // Previously a .find() by date returned the same Radius row for
+      // every shift that day, so editing one row edited both — bug.
+      //
+      // Fix: per date, sort both shifts and Radius entries by start time
+      // and greedily match nearest pairs. Each Radius _idx is consumed
+      // once so it can't double-attribute.
+      const toMinutes = (t) => {
+        const v = String(t || '').trim();
+        // Accept "HH:MM" or "h:mm AM/PM"
+        let m = v.match(/^(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?$/);
+        if (!m) return null;
+        let h = parseInt(m[1], 10);
+        const mins = parseInt(m[2], 10);
+        const ampm = (m[3] || '').toUpperCase();
+        if (ampm === 'PM' && h !== 12) h += 12;
+        if (ampm === 'AM' && h === 12) h = 0;
+        return h * 60 + mins;
+      };
+
+      const usedRadiusIdx = new Set();
+      const shiftComparisons = person.shifts.map((s, sIdx) => {
+        // Candidate Radius rows: same date, not already consumed.
+        const candidates = radiusRows.filter(r => r.date === s.date && !usedRadiusIdx.has(r._idx));
+        let match = null;
+        if (candidates.length === 1) {
+          match = candidates[0];
+        } else if (candidates.length > 1) {
+          // Pick the candidate whose timeIn is nearest the shift's startTime.
+          const targetMin = toMinutes(s.startTime);
+          if (targetMin == null) {
+            match = candidates[0];
+          } else {
+            let best = null, bestDelta = Infinity;
+            for (const c of candidates) {
+              const cm = toMinutes(c.timeIn);
+              if (cm == null) continue;
+              const d = Math.abs(cm - targetMin);
+              if (d < bestDelta) { bestDelta = d; best = c; }
+            }
+            match = best || candidates[0];
+          }
+        }
+        if (match) usedRadiusIdx.add(match._idx);
         const shiftDiff = match ? Math.round((match.actualHours - s.hours) * 100) / 100 : null;
         return {
           ...s,
@@ -2909,13 +2954,16 @@ export default function Admin() {
           shiftDiff,
           shiftDiscrepancy: match ? Math.abs(shiftDiff) > 0.25 : false,
           missingFromRadius: !match,
+          _shiftIdx: sIdx,
         };
       });
 
-      // Radius entries with no matching scheduled shift
-      const unmatchedRadius = radiusRows.filter(r =>
-        !person.shifts.find(s => s.date === r.date)
-      );
+      // Any Radius row not consumed by a shift above is genuinely unmatched
+      // — these can be either an extra clock-in on a day that had a shift
+      // already (e.g. came back after dinner) or a shift that never made
+      // it into Ratio at all. Either way, surface them with the "Schedule
+      // shift" button so the owner can fix them.
+      const unmatchedRadius = radiusRows.filter(r => !usedRadiusIdx.has(r._idx));
 
       return {
         ...person,
