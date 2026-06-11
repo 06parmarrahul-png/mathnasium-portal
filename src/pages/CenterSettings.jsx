@@ -4,7 +4,8 @@ import { useAuth } from '../contexts/AuthContext';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import AppearanceEditor from '../components/AppearanceEditor';
 import HolidaysEditor from '../components/HolidaysEditor';
-import { ShieldAlert, Settings, CalendarX, Palette } from 'lucide-react';
+import Connectors from './Connectors';
+import { ShieldAlert, Settings, CalendarX, Palette, Plug } from 'lucide-react';
 
 /**
  * Standalone Centre Settings page with tabs.
@@ -25,9 +26,10 @@ import { ShieldAlert, Settings, CalendarX, Palette } from 'lucide-react';
  */
 
 const TABS = [
-  { key: 'general',  label: 'General',  icon: Settings },
-  { key: 'holidays', label: 'Holidays', icon: CalendarX },
-  { key: 'colours',  label: 'Colours',  icon: Palette  },
+  { key: 'general',     label: 'General',     icon: Settings },
+  { key: 'holidays',    label: 'Holidays',    icon: CalendarX },
+  { key: 'colours',     label: 'Colours',     icon: Palette  },
+  { key: 'connections', label: 'Connections', icon: Plug     },
 ];
 
 export default function CenterSettings() {
@@ -111,6 +113,10 @@ export default function CenterSettings() {
           centerConfig={centerConfig}
           activeCenterName={centerConfig?.name || activeCenterId}
         />
+      )}
+
+      {tab === 'connections' && (
+        <Connectors />
       )}
     </div>
   );

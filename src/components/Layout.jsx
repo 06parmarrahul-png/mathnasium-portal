@@ -10,7 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
-  CalendarRange, Users, Wallet, ClipboardList, Plug,
+  CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -113,6 +113,12 @@ export default function Layout({ children }) {
   const general = [
     { to: '/', label: 'Home', icon: House },
   ];
+  // Owners get a single "Chats" entry in General that goes to a hub
+  // page (/chats) collecting Centre Chat, Online Chat, Leadership Chat,
+  // and Owner Chat in one place. Cuts the sidebar down significantly.
+  if (isOwner) {
+    general.push({ to: '/chats', label: 'Chats', icon: MessagesSquare });
+  }
   // Personal scheduling surfaces. Enterprise users skip these entirely —
   // they're the platform operator and shouldn't be claiming shifts at
   // someone else's centre. Owners skip Schedule (the personal-availability
@@ -140,7 +146,7 @@ export default function Layout({ children }) {
   // (they're not configuring the scheduler).
   const manage = [];
   if (canSeeAdminPanel) {
-    manage.push({ to: '/admin?tab=spreadsheet', label: 'Manage Schedule', icon: CalendarRange });
+    manage.push({ to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange });
   }
   // Scheduler Creation is the daily ops tool — anyone who runs a shift
   // (super_admin, owner, admin_assistant, AND plain admin) gets access.
@@ -155,13 +161,8 @@ export default function Layout({ children }) {
       { to: '/admin?tab=payroll', label: 'Manage Payroll', icon: Wallet },
     );
   }
-  // Connectors — Mathnasium-approved vendor integrations dashboard.
-  // Surfaced for the same audience as Scheduler Creation (owners + AA +
-  // Enterprise) so the people who actually decide which tools the centre
-  // uses can mark them connected.
-  if (isSuperAdmin || isOwner || isAdminAssistant) {
-    manage.push({ to: '/connectors', label: 'Connectors', icon: Plug });
-  }
+  // (Connectors moved to Centre Settings → Connections tab so it lives
+  // alongside Holidays/Hours/Appearance and doesn't crowd the sidebar.)
 
   // INSIGHTS — strategy / metrics surface. Owners + AA + Enterprise.
   // Plain admins run day-to-day ops but don't see strategic metrics.
@@ -171,10 +172,14 @@ export default function Layout({ children }) {
   }
 
   // COMMUNICATE — chat, announcements, personal notification prefs.
-  // For Owners we trim this section hard: Chat, Leadership Chat, and
-  // Notification Preferences all live one click away on the Account page
-  // (clicking the user card at the bottom of the sidebar). Keeps the
-  // sidebar short enough that an owner mid-shift never has to scroll.
+  //
+  // OWNERS see no Communicate section at all: everything chat lives
+  // behind the single "Chats" entry in General (one hub for centre/
+  // online/leadership/owner). Notification prefs live on Account.
+  // Announcements moves under that same hub for owners.
+  //
+  // INSTRUCTORS / ADMINS / AA still get individual Chat & Leadership
+  // links since they aren't getting the consolidated hub.
   const communicate = [];
   if (!isSuperAdmin && !isOwner) {
     communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
@@ -182,7 +187,9 @@ export default function Layout({ children }) {
   if ((isAdmin || isAdminAssistant) && !isSuperAdmin) {
     communicate.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
   }
-  communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
+  if (!isOwner) {
+    communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
+  }
   if (!isOwner) {
     communicate.push({ to: '/notifications', label: 'Notifications', icon: Bell });
   }
