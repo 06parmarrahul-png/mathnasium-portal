@@ -12,7 +12,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
-  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX, Upload,
+  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX, Upload, Search,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -1341,6 +1341,112 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
   );
 }
 
+// ── Sick Days roster (year-to-date) ────────────────────────────────────
+// Per-employee tally of sick days used vs remaining for the current
+// calendar year, with probation status. Policy: 5 sick days per year,
+// available once the 3-month probation is over. "Used" counts distinct
+// calendar dates where a sickPay-tagged shift exists for that person.
+function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate }) {
+  const [query, setQuery] = useState('');
+  const filtered = query
+    ? rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()))
+    : rows;
+
+  // Roll-up tallies for the header summary.
+  const eligibleCount = rows.filter(r => r.eligible).length;
+  const onProbationCount = rows.length - eligibleCount;
+  const totalUsed = rows.reduce((s, r) => s + r.used, 0);
+  const totalRemaining = rows.reduce((s, r) => s + r.remaining, 0);
+
+  return (
+    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b bg-amber-50/40">
+        <div className="flex flex-wrap items-center gap-3">
+          <Activity size={18} className="text-amber-700 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900">
+              Sick Days · {year}
+            </h3>
+            <p className="text-xs text-gray-600">
+              Policy: {maxPerYear} paid sick days per calendar year, available after the {probationDays}-day probation period (BC ESA minimum).
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 font-semibold">{eligibleCount} eligible</span>
+            <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-1 font-semibold">{onProbationCount} on probation</span>
+            <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-1 font-semibold">{totalUsed} used</span>
+            <span className="rounded-full bg-blue-100 text-blue-800 px-2 py-1 font-semibold">{totalRemaining} remaining</span>
+          </div>
+        </div>
+        <div className="mt-3 relative">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search staff…"
+            className="w-full rounded-md border border-gray-300 pl-8 pr-3 py-1.5 text-sm" />
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+            <tr>
+              <th className="px-4 py-2 text-left">Staff</th>
+              <th className="px-4 py-2 text-left">Role</th>
+              <th className="px-4 py-2 text-left">Hire date</th>
+              <th className="px-4 py-2 text-left">Status</th>
+              <th className="px-4 py-2 text-center">Used</th>
+              <th className="px-4 py-2 text-center">Remaining</th>
+              <th className="px-4 py-2 text-left">Sick dates this year</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(r => (
+              <tr key={r.uid} className="border-t border-gray-100 hover:bg-gray-50">
+                <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
+                <td className="px-4 py-2 text-xs text-gray-600">{r.role}</td>
+                <td className="px-4 py-2">
+                  <input type="date" defaultValue={r.hireDate || ''}
+                    onBlur={e => onSetHireDate(r.uid, e.target.value)}
+                    className="rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-700" />
+                  {r.hireDate && (
+                    <div className="text-[10px] text-gray-400 mt-0.5">{r.daysIn} day{r.daysIn === 1 ? '' : 's'} in</div>
+                  )}
+                </td>
+                <td className="px-4 py-2">
+                  {r.onProbation
+                    ? <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-xs font-semibold">On probation</span>
+                    : <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs font-semibold">Eligible</span>}
+                </td>
+                <td className={`px-4 py-2 text-center font-bold ${r.used > 0 ? 'text-amber-700' : 'text-gray-400'}`}>
+                  {r.used}
+                </td>
+                <td className={`px-4 py-2 text-center font-bold ${r.remaining === 0 && r.eligible ? 'text-red-600' : 'text-blue-700'}`}>
+                  {r.eligible ? r.remaining : '—'}
+                </td>
+                <td className="px-4 py-2 text-xs text-gray-600">
+                  {r.sickDates.length === 0
+                    ? <span className="text-gray-300">— none —</span>
+                    : r.sickDates.map(d => (
+                        <span key={d} className="inline-block rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 mr-1 mb-1">{d}</span>
+                      ))}
+                </td>
+              </tr>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-500 text-sm">
+                {query ? `No staff match "${query}".` : 'No active staff at this centre yet.'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-5 py-3 text-[11px] text-gray-500 border-t bg-gray-50/50">
+        Tip: a shift becomes "sick" when you toggle the Sick Pay flag while editing it. Sick shifts are paid out under the sick budget line and don't count toward regular payroll hours.
+      </p>
+    </div>
+  );
+}
+
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
@@ -2598,6 +2704,81 @@ export default function Admin() {
       return lastA.localeCompare(lastB);
     });
   }, [shifts, usersForCentre, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, centerConfig]);
+
+  // Sick days tracker — per-user counts for the current calendar year.
+  //
+  // Policy: every employee who has completed 3-month probation is eligible
+  // for 5 sick days per calendar year (BC ESA minimum). We count any
+  // shifts with sickPay === true in the current year, regardless of pay
+  // period. Probation start date is taken from the user's hireDate field
+  // if set; otherwise falls back to the Firestore createdAt timestamp.
+  const SICK_DAYS_PER_YEAR = 5;
+  const PROBATION_DAYS = 90;
+  const sickDaysSummary = useMemo(() => {
+    const now = new Date();
+    const yearStart = `${now.getFullYear()}-01-01`;
+    const yearEnd   = `${now.getFullYear()}-12-31`;
+    const today     = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
+
+    // Used = count of distinct dates with sick shifts in the current year.
+    // (If they took half a day sick, we count it as 1 — same as employers
+    // typically do.)
+    const sickDatesByName = new Map();
+    for (const s of shifts) {
+      if (!s.sickPay || !s.userName || !s.date) continue;
+      if (s.date < yearStart || s.date > yearEnd) continue;
+      if (!sickDatesByName.has(s.userName)) sickDatesByName.set(s.userName, new Set());
+      sickDatesByName.get(s.userName).add(s.date);
+    }
+
+    const out = [];
+    for (const u of approvedUsers) {
+      if (!u.displayName) continue;
+      // Skip people we already exclude from payroll (volunteers, hidden).
+      if (volunteerNames.has(u.displayName) || hiddenFromOps.has(u.displayName)) continue;
+
+      // Probation calculation
+      const hire = u.hireDate
+        || (u.approvedAt?.toDate ? u.approvedAt.toDate().toISOString().slice(0,10) : null)
+        || (u.createdAt?.toDate  ? u.createdAt.toDate().toISOString().slice(0,10)  : null);
+      let onProbation = true, daysIn = 0;
+      if (hire) {
+        const d1 = new Date(hire + 'T00:00:00');
+        const d2 = new Date(today + 'T00:00:00');
+        daysIn = Math.floor((d2 - d1) / (24 * 3600 * 1000));
+        onProbation = daysIn < PROBATION_DAYS;
+      }
+
+      const used = (sickDatesByName.get(u.displayName) || new Set()).size;
+      const remaining = onProbation ? 0 : Math.max(0, SICK_DAYS_PER_YEAR - used);
+
+      out.push({
+        uid: u.uid,
+        name: u.displayName,
+        role: u.instructorType || 'Instructor',
+        hireDate: hire,
+        daysIn,
+        onProbation,
+        used,
+        remaining,
+        eligible: !onProbation,
+        // Per-date list for the expandable tooltip
+        sickDates: [...(sickDatesByName.get(u.displayName) || new Set())].sort(),
+      });
+    }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  }, [shifts, approvedUsers, volunteerNames, hiddenFromOps]);
+
+  // Sub-tab inside Manage Payroll: "This period" or "Sick days".
+  const [payrollSubtab, setPayrollSubtab] = useState('period');
+
+  // Update a user's hire date (used by the Sick days tab so the owner
+  // can correct probation dates without going to Manage Staff).
+  const handleSetHireDate = async (userId, dateStr) => {
+    if (!userId) return;
+    await updateDoc(doc(db, 'users', userId), { hireDate: dateStr || null });
+    try { toast.success('Hire date saved'); } catch { /* ignore */ }
+  };
 
   // Pay period helpers
   const payPeriodLabel = payStart && payEnd
@@ -4245,6 +4426,45 @@ export default function Admin() {
             <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
           </div>
 
+          {/* Sub-tabs inside Payroll. Default lands on the pay-period view
+              (the existing screen). Sick Days flips to a roster view of
+              year-to-date sick usage per employee, with probation status. */}
+          <div className="flex gap-1 border-b border-gray-200">
+            <button onClick={() => setPayrollSubtab('period')}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                payrollSubtab === 'period'
+                  ? 'border-b-2 border-green-600 text-green-700 bg-white'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}>
+              <CalendarRange size={16} /> This Period
+            </button>
+            <button onClick={() => setPayrollSubtab('sick')}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                payrollSubtab === 'sick'
+                  ? 'border-b-2 border-amber-600 text-amber-700 bg-white'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}>
+              <Activity size={16} /> Sick Days
+              <span className="rounded-full bg-amber-100 text-amber-700 text-[10px] px-1.5 py-0.5 font-bold">
+                {sickDaysSummary.reduce((s, p) => s + p.used, 0)}/{sickDaysSummary.length * SICK_DAYS_PER_YEAR}
+              </span>
+            </button>
+          </div>
+
+          {/* ── Sick Days sub-tab ─────────────────────────────────────── */}
+          {payrollSubtab === 'sick' && (
+            <SickDaysTab
+              rows={sickDaysSummary}
+              year={new Date().getFullYear()}
+              maxPerYear={SICK_DAYS_PER_YEAR}
+              probationDays={PROBATION_DAYS}
+              onSetHireDate={handleSetHireDate}
+            />
+          )}
+
+          {/* ── "This Period" sub-tab — wraps the original payroll UI ── */}
+          {payrollSubtab === 'period' && (<>
+
           {/* Pay period selector */}
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
@@ -4645,6 +4865,7 @@ export default function Admin() {
               </div>
             </div>
           )}
+          </>)}{/* ─── end of "This Period" sub-tab ─── */}
         </div>
       )}
 
