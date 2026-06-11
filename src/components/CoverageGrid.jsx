@@ -87,9 +87,12 @@ function parseShift(str) {
 //   1 = Online instructors — bars only, don't count toward teaching ratio.
 //   2 = In-centre instructors (Instructor + Lead) — the teaching workforce.
 // Bold dividers separate the three groups in the rendered table.
-const rolePriority = (r) => {
-  if (r === 'Online Instructor')          return 1;
-  if (r === 'Instructor' || r === 'Lead') return 2;
+//
+// Checks BOTH role and subRole because most centres tag online staff as
+// role:'Instructor' + subRole:'Online' rather than role:'Online Instructor'.
+const rolePriority = (role, subRole) => {
+  if (role === 'Online Instructor' || subRole === 'Online') return 1;
+  if (role === 'Instructor' || role === 'Lead')             return 2;
   // Everything else (Host, Manager, Director, Admin, Director of Education,
   // Centre Director, …) is "important staff".
   return 0;
@@ -102,11 +105,13 @@ export default function CoverageGrid({ day, centerConfig }) {
     return [...(day.assignedEmployees || [])].sort((a, b) => {
       const ra = day.roles?.[a] || 'Instructor';
       const rb = day.roles?.[b] || 'Instructor';
-      const dp = rolePriority(ra) - rolePriority(rb);
+      const sa = day.subRoles?.[a];
+      const sb = day.subRoles?.[b];
+      const dp = rolePriority(ra, sa) - rolePriority(rb, sb);
       if (dp !== 0) return dp;
       return a.localeCompare(b);
     });
-  }, [day.assignedEmployees, day.roles]);
+  }, [day.assignedEmployees, day.roles, day.subRoles]);
 
   // Pre-parse each person's shift once
   const shiftByName = useMemo(() => {
@@ -198,8 +203,10 @@ export default function CoverageGrid({ day, centerConfig }) {
               // reads "important staff → online → in-centre instructors"
               // at a glance. Insert a section header before the FIRST
               // row of each tier whose priority is new.
-              const myPriority = rolePriority(role);
-              const prevPriority = idx === 0 ? -1 : rolePriority(day.roles?.[sortedNames[idx - 1]]);
+              const myPriority = rolePriority(role, day.subRoles?.[name]);
+              const prevPriority = idx === 0
+                ? -1
+                : rolePriority(day.roles?.[sortedNames[idx - 1]], day.subRoles?.[sortedNames[idx - 1]]);
               const isFirstOfTier = myPriority !== prevPriority;
               const tierLabel = myPriority === 0 ? 'Hosts & Management'
                               : myPriority === 1 ? 'Online Instructors'
