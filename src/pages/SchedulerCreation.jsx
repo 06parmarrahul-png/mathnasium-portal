@@ -189,17 +189,36 @@ function TodayTab({ centerId }) {
   // case to barely fit and the quiet case to fill comfortably.
   const printSide = (side) => {
     setPrintOnly(side);
+    // Two RAFs to let React commit + layout the single-side render
+    // (without the other side's column-width competition) before we
+    // measure. This is important: at small viewports the side could be
+    // wrapping differently on-screen than when it's full-width on paper.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      // Pick a zoom factor for this side based on row count, not measured
-      // pixel height. Measuring scrollHeight gave terrible results because
-      // the digital column widths sometimes make names wrap letter-by-
-      // letter, blowing up the measurement and shrinking the printout.
-      //
-      // A row is one half-hour slot. ~10 rows comfortably fills a letter
-      // page at zoom 1.0; each row beyond that shrinks ~3%, capped at
-      // zoom 0.6 so a 25-row day still fits one sheet.
+      // Strategy: measure the actual rendered height of the schedule
+      // section, then pick a zoom so it lands inside one letter page's
+      // usable vertical space (~9.5 inches of writable area × 96 dpi =
+      // ~912 px). We hedge by trying multiple measurements and picking
+      // the largest — handles cases where the on-screen layout is more
+      // compressed (e.g. half-screen during the split view) than what
+      // the printer will see.
+      const sections = document.querySelectorAll('main section');
+      let maxHeight = 0;
+      for (const s of sections) {
+        const h = Math.max(s.scrollHeight || 0, s.offsetHeight || 0);
+        if (h > maxHeight) maxHeight = h;
+      }
+      const usablePageHeight = 912;
+      // Also feed the row count in as a secondary signal — if both agree
+      // (busy day = tall + many rows), we shrink harder. If they
+      // disagree, the larger shrink wins.
       const rowCount = data?.slots?.length || 0;
-      const zoom = Math.max(0.6, Math.min(1.0, 1.0 - Math.max(0, rowCount - 10) * 0.03));
+      const heightZoom = maxHeight > 0
+        ? Math.min(1.0, usablePageHeight / maxHeight)
+        : 1.0;
+      const rowZoom = Math.min(1.0, 1.0 - Math.max(0, rowCount - 10) * 0.03);
+      // Pick the more aggressive shrink, floor at 0.45 so we never go
+      // unreadably small. 0.45 still fits a ~85-student EM day.
+      const zoom = Math.max(0.45, Math.min(heightZoom, rowZoom));
       document.documentElement.style.setProperty('--print-zoom', zoom.toFixed(3));
 
       window.print();
