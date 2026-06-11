@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { Fragment, useMemo } from 'react';
 import { assignmentFor, assignmentShort, assignmentColorHex, contrastText } from '../lib/centerConfig';
 
 /**
@@ -81,11 +81,18 @@ function parseShift(str) {
   return { startMins: norm(parts[0]), endMins: norm(parts[1]) };
 }
 
+// 3-tier ordering for Today's Snapshot:
+//   0 = Important staff (Hosts + Management — Manager, Director, Admin, etc.)
+//       These run the centre; they should sit at the top of the grid.
+//   1 = Online instructors — bars only, don't count toward teaching ratio.
+//   2 = In-centre instructors (Instructor + Lead) — the teaching workforce.
+// Bold dividers separate the three groups in the rendered table.
 const rolePriority = (r) => {
-  if (r === 'Instructor' || r === 'Lead') return 0;
-  if (r === 'Host')                       return 1;
-  if (r === 'Online Instructor')          return 2;
-  return 3;
+  if (r === 'Online Instructor')          return 1;
+  if (r === 'Instructor' || r === 'Lead') return 2;
+  // Everything else (Host, Manager, Director, Admin, Director of Education,
+  // Centre Director, …) is "important staff".
+  return 0;
 };
 
 export default function CoverageGrid({ day, centerConfig }) {
@@ -183,10 +190,21 @@ export default function CoverageGrid({ day, centerConfig }) {
             </tr>
           </thead>
           <tbody>
-            {sortedNames.map(name => {
+            {sortedNames.map((name, idx) => {
               const role = day.roles?.[name];
               const shift = shiftByName[name];
               const isSick = !!day.sickPay?.[name];
+              // Bold dividers between the three tiers so the staff list
+              // reads "important staff → online → in-centre instructors"
+              // at a glance. Insert a section header before the FIRST
+              // row of each tier whose priority is new.
+              const myPriority = rolePriority(role);
+              const prevPriority = idx === 0 ? -1 : rolePriority(day.roles?.[sortedNames[idx - 1]]);
+              const isFirstOfTier = myPriority !== prevPriority;
+              const tierLabel = myPriority === 0 ? 'Hosts & Management'
+                              : myPriority === 1 ? 'Online Instructors'
+                              : 'In-Centre Instructors';
+              const colspan = 1 + slots.length;
               // Derive a single clean assignment label per person ("Manager",
               // "Highschool Instructor", "Host", "Online Instructor", etc.)
               // and use the centre's assignment-colour palette so BOTH the
@@ -198,7 +216,16 @@ export default function CoverageGrid({ day, centerConfig }) {
               const badgeLabel = isSick ? 'SICK' : assignmentShort(assignment);
               const badgeTooltip = isSick ? `${assignment} · Sick Pay` : assignment;
               return (
-                <tr key={name} className="border-t border-gray-100 hover:bg-gray-50/40">
+                <Fragment key={name}>
+                  {isFirstOfTier && (
+                    <tr className="bg-gray-50 border-y-2 border-gray-300">
+                      <td colSpan={colspan}
+                        className="sticky left-0 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-600 bg-gray-50">
+                        {tierLabel}
+                      </td>
+                    </tr>
+                  )}
+                <tr className="border-t border-gray-100 hover:bg-gray-50/40">
                   <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-2 py-1 font-medium text-gray-800 truncate min-w-[180px]">
                     <div className="flex items-center gap-1.5">
                       <span
@@ -231,6 +258,7 @@ export default function CoverageGrid({ day, centerConfig }) {
                     );
                   })}
                 </tr>
+                </Fragment>
               );
             })}
 
