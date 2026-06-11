@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
-  startOfMonth, endOfMonth,
+  startOfMonth, endOfMonth, subMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
@@ -2819,6 +2819,18 @@ export default function Admin() {
     ? `${new Date(payStart + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })} – ${new Date(payEnd + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
     : '';
 
+  // Payout date label — for centres on the 11th–25th / 26th–10th schedule
+  // the pattern is: period ending on the 25th → paid on the 30th; period
+  // ending on the 10th → paid on the 15th. Both fall 5 days after the
+  // period close. If the centre's period ends on a different day, we
+  // still show end+5 (e.g. ending 31st → paid 5 days later) which matches
+  // the same "5-day arrears" cadence.
+  const payoutLabel = payEnd ? (() => {
+    const end = new Date(payEnd + 'T00:00:00');
+    end.setDate(end.getDate() + 5);
+    return end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+  })() : '';
+
   const totalPayrollHours = payrollSummary.reduce((s, p) => s + p.totalHours, 0);
 
   // Add / remove a staff member from the salaryStaff list (which the payroll
@@ -4605,6 +4617,11 @@ export default function Admin() {
                   <div>
                     <span className="text-gray-500">Pay period: </span>
                     <span className="font-semibold text-gray-800">{payPeriodLabel}</span>
+                    {payoutLabel && (
+                      <span className="ml-2 rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-[11px] font-semibold">
+                        Paid {payoutLabel}
+                      </span>
+                    )}
                   </div>
                   <div>
                     <span className="text-gray-500">Staff: </span>
@@ -5150,6 +5167,26 @@ export default function Admin() {
   );
 }
 
+// ─── Small inline delta badge for week/month-over-week comparison ──────
+function DeltaBadge({ delta, pct, isUp }) {
+  if (delta === 0) {
+    return (
+      <span className="rounded-full bg-gray-100 text-gray-600 px-2 py-0.5 text-[10px] font-semibold">
+        flat
+      </span>
+    );
+  }
+  const positive = isUp;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+      positive ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'
+    }`}>
+      {positive ? '▲' : '▼'} {Math.abs(Math.round(delta * 10) / 10)}h
+      {Math.abs(pct) < 999 && ` · ${Math.abs(Math.round(pct))}%`}
+    </span>
+  );
+}
+
 // ─── Sub-component: Analytics tab ────────────────────────────────────────
 // Owner-only dashboard. Pulls from the existing shifts + users + center
 // config — no new data plumbing for Phase 1. Active student count is a
@@ -5175,6 +5212,30 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const monthShifts = posted.filter(s => s.date >= monthStartStr && s.date <= monthEndStr);
   const hoursMonth  = sumHrs(monthShifts);
   const hoursYear   = sumHrs(posted.filter(s => s.date >= yearStartStr && s.date <= yearEndStr));
+
+  // Prior-period totals for the comparison badges.
+  // "Last week" is the 7-day Sun–Sat window before this one. "Last month"
+  // is the prior calendar month. Used to show + / − deltas on the Hours
+  // This Week / Hours This Month cards so the owner can see momentum.
+  const lastWeekStartStr = format(addDays(startOfWeek(now), -7), 'yyyy-MM-dd');
+  const lastWeekEndStr   = format(addDays(startOfWeek(now), -1), 'yyyy-MM-dd');
+  const hoursLastWeek    = sumHrs(posted.filter(s => s.date >= lastWeekStartStr && s.date <= lastWeekEndStr));
+
+  const lastMonthDate     = subMonths(now, 1);
+  const lastMonthStartStr = format(startOfMonth(lastMonthDate), 'yyyy-MM-dd');
+  const lastMonthEndStr   = format(endOfMonth(lastMonthDate),   'yyyy-MM-dd');
+  const hoursLastMonth    = sumHrs(posted.filter(s => s.date >= lastMonthStartStr && s.date <= lastMonthEndStr));
+
+  // Return { delta, pct, isUp } for a current/previous pair. Returns null
+  // when there's no previous data so the UI can hide the badge.
+  const deltaFor = (current, prev) => {
+    if (!prev) return null;
+    const delta = current - prev;
+    const pct = Math.abs(prev) > 0 ? (delta / prev) * 100 : 0;
+    return { delta, pct, isUp: delta >= 0 };
+  };
+  const weekDelta  = deltaFor(hoursWeek,  hoursLastWeek);
+  const monthDelta = deltaFor(hoursMonth, hoursLastMonth);
 
   // Active employees: approved staff at this centre, excluding super-admins.
   const activeEmployees = users.filter(u => u.approved && u.role !== 'super_admin').length;
@@ -5511,17 +5572,27 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-indigo-100 text-indigo-700"><CalendarRange size={16}/></div>
+          <div className="flex items-start justify-between">
+            <div className="w-fit rounded-lg p-1.5 bg-indigo-100 text-indigo-700"><CalendarRange size={16}/></div>
+            {weekDelta && <DeltaBadge {...weekDelta} />}
+          </div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Week</p>
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursWeek)}h</p>
-          <p className="mt-1 text-xs text-gray-400">Sun–Sat scheduled</p>
+          <p className="mt-1 text-xs text-gray-400">
+            Sun–Sat scheduled · last week {round1(hoursLastWeek)}h
+          </p>
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-amber-100 text-amber-700"><CalendarRange size={16}/></div>
+          <div className="flex items-start justify-between">
+            <div className="w-fit rounded-lg p-1.5 bg-amber-100 text-amber-700"><CalendarRange size={16}/></div>
+            {monthDelta && <DeltaBadge {...monthDelta} />}
+          </div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Month</p>
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursMonth)}h</p>
-          <p className="mt-1 text-xs text-gray-400">{format(now, 'MMMM yyyy')}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {format(now, 'MMMM yyyy')} · {format(lastMonthDate, 'MMM')} {round1(hoursLastMonth)}h
+          </p>
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
