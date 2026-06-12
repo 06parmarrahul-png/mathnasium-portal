@@ -3402,7 +3402,11 @@ export default function Admin() {
                 scroll pane (max-height) so the day-header row can stay pinned
                 via position:sticky while you scroll through instructors. */}
             <div className="overflow-auto max-h-[70vh]">
-              <table className="w-full text-xs border-collapse table-fixed min-w-[680px]">
+              {/* `[&_td]:border [&_th]:border [&_td]:border-gray-300 [&_th]:border-gray-300`
+                  draws a clean 1px box around EVERY cell in the table so
+                  the day-by-instructor grid reads as a real spreadsheet
+                  rather than relying on stripes for separation. */}
+              <table className="w-full text-xs border-collapse table-fixed min-w-[680px] [&_td]:border [&_th]:border [&_td]:border-gray-300 [&_th]:border-gray-300">
                 <thead>
                   <tr className="bg-gray-50">
                     <th className="sticky top-0 z-30 bg-gray-50 text-left px-4 py-2 font-semibold text-gray-600 w-32 border-r shadow-[inset_0_-1px_0_#e5e7eb]">INSTRUCTOR</th>
@@ -4127,11 +4131,21 @@ export default function Admin() {
                 </div>
               )}
 
+              {/* Weekly grid view of the entire draft — same look as Manage
+                  Staff Schedule. Lets the owner SEE the whole month at a
+                  glance. The detailed day-by-day card list below is still
+                  available for inline edits (Expand all / Collapse all). */}
+              <DraftWeeklyGrid
+                draftSchedule={draftSchedule}
+                centerConfig={centerConfig}
+                schedConfig={schedConfig}
+              />
+
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
                 <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
                   <div>
-                    <h4 className="font-semibold text-gray-900">Day-by-Day Schedule</h4>
-                    <p className="text-xs text-gray-500">Edit any day's roster, times, or sub-roles — changes save to the draft, not posted yet.</p>
+                    <h4 className="font-semibold text-gray-900">Day-by-Day Editor</h4>
+                    <p className="text-xs text-gray-500">Expand a day to edit its roster, times, or sub-roles — changes save to the draft, not posted yet.</p>
                   </div>
                   <div className="flex gap-1.5">
                     <button
@@ -5132,6 +5146,137 @@ export default function Admin() {
           onSave={handleAddOpenShift}
         />
       )}
+    </div>
+  );
+}
+
+// ─── Draft Weekly Grid ─────────────────────────────────────────────────
+// Renders the auto-scheduler's monthly draft as a person×day grid,
+// chunked into weeks. Same visual grammar as the Manage Staff Schedule
+// table — sticky instructor column on the left, one column per date,
+// shift blocks coloured by assignment, and clear cell borders. Read-only
+// here (changes are still made through the day-by-day editor below) but
+// gives the owner a one-glance look at the whole month.
+function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
+  if (!draftSchedule?.days?.length) return null;
+
+  // Union of every employee scheduled at any point in the month, sorted
+  // for stable row ordering. We keep them in tier order so the grid
+  // matches Today's Snapshot conventions (Hosts/Mgmt → Online → In-Centre).
+  const rolePri = (role, subRole) => {
+    if (role === 'Online Instructor' || subRole === 'Online') return 1;
+    if (role === 'Instructor' || role === 'Lead')             return 2;
+    return 0;
+  };
+  const everyone = new Map();   // name → { role, subRole } first sighting
+  for (const day of draftSchedule.days) {
+    for (const name of day.assignedEmployees || []) {
+      if (!everyone.has(name)) {
+        everyone.set(name, { role: day.roles?.[name], subRole: day.subRoles?.[name] });
+      }
+    }
+  }
+  const names = [...everyone.entries()].sort(([na, ia], [nb, ib]) => {
+    const dp = rolePri(ia.role, ia.subRole) - rolePri(ib.role, ib.subRole);
+    if (dp !== 0) return dp;
+    return na.localeCompare(nb);
+  }).map(([n]) => n);
+
+  // Chunk days into Monday-anchored weeks for the table rows. Each chunk
+  // becomes its own small table beneath a header showing the week range
+  // plus low-staff indicators per day.
+  const weeks = [];
+  let current = [];
+  for (const day of draftSchedule.days) {
+    const d = new Date(day.date + 'T00:00:00');
+    const dow = d.getDay();   // 0 = Sun
+    // Start a new week on Monday (or the very first day if we haven't started one yet).
+    if (current.length === 0 || dow === 1) {
+      if (current.length > 0) weeks.push(current);
+      current = [day];
+    } else {
+      current.push(day);
+    }
+  }
+  if (current.length > 0) weeks.push(current);
+
+  const fmtDate = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    return { dow: d.toLocaleDateString(undefined, { weekday: 'short' }),
+             dn:  d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) };
+  };
+
+  return (
+    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+      <div className="border-b bg-gray-50 px-5 py-3">
+        <h4 className="font-semibold text-gray-900">Weekly Grid View</h4>
+        <p className="text-xs text-gray-500">
+          Whole-month look — same layout as Manage Staff Schedule. Use the day-by-day editor below to change anything.
+        </p>
+      </div>
+
+      <div className="space-y-4 p-4">
+        {weeks.map((week, wi) => (
+          <div key={wi} className="overflow-x-auto">
+            <table className="w-full text-xs border-collapse table-fixed min-w-[680px] [&_td]:border [&_th]:border [&_td]:border-gray-300 [&_th]:border-gray-300">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="text-left px-3 py-2 font-semibold text-gray-600 w-32">INSTRUCTOR</th>
+                  {week.map(day => {
+                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
+                    const dl = fmtDate(day.date);
+                    return (
+                      <th key={day.date}
+                        className={`text-center px-2 py-2 font-semibold ${isLow ? 'bg-red-50' : ''}`}>
+                        <div className={`text-[10px] uppercase tracking-wide ${isLow ? 'text-red-700' : 'text-gray-500'}`}>{dl.dow}</div>
+                        <div className={`${isLow ? 'text-red-800' : 'text-gray-800'} text-xs`}>{dl.dn}</div>
+                        <div className={`text-[10px] ${isLow ? 'text-red-700 font-bold' : 'text-gray-500'} mt-0.5`}>
+                          {day.countingStaffCount}/{schedConfig.minPerDay}{isLow ? ' ⚠' : ''}
+                        </div>
+                      </th>
+                    );
+                  })}
+                </tr>
+              </thead>
+              <tbody>
+                {names.map(name => (
+                  <tr key={name}>
+                    <td className="px-3 py-1.5 font-medium text-gray-800 bg-white">
+                      {name}
+                    </td>
+                    {week.map(day => {
+                      const isScheduled = day.assignedEmployees?.includes(name);
+                      if (!isScheduled) {
+                        return <td key={day.date} className="bg-gray-50/40 px-1 py-1" />;
+                      }
+                      const isSick = !!day.sickPay?.[name];
+                      const assignment = assignmentFor({
+                        role: day.roles?.[name],
+                        subRole: day.subRoles?.[name],
+                      });
+                      const bg = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
+                      const text = contrastText(bg);
+                      return (
+                        <td key={day.date} className="p-0 align-top">
+                          <div
+                            className="rounded m-0.5 px-1.5 py-1 text-[10px] leading-tight"
+                            style={{ backgroundColor: bg, color: text }}
+                            title={`${name} · ${day.shiftTimes?.[name] || ''} · ${assignment}`}
+                          >
+                            <div className="font-bold truncate">{day.shiftTimes?.[name] || ''}</div>
+                            <div className="opacity-90 truncate">{assignmentShort(assignment)}</div>
+                            {isSick && <div className="font-bold opacity-90">SICK</div>}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
