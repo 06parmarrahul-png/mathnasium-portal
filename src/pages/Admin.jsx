@@ -2281,36 +2281,10 @@ export default function Admin() {
     await insertBatch.commit();
   };
 
-  // Clear ALL fixed staff shifts for a week, then reseed properly
-  const handleSeedFixedStaffWeek = async () => {
-    const dates = weekDays.map(d => format(d, 'yyyy-MM-dd'));
-    await seedFixedShiftsForDates(dates);
-    toast.success('Fixed staff shifts synced for this week with correct times.');
-  };
-
-  // One-time cleanup: delete ALL fixed staff shifts across all dates, then reseed the current week
-  const handlePurgeAndReseed = async () => {
-    const ok = await confirmDialog({
-      title: 'Purge & reseed fixed staff shifts?',
-      message: 'This will delete ALL fixed staff shifts from Firestore and reseed the current week fresh.',
-      confirmText: 'Purge & reseed',
-      danger: true,
-    });
-    if (!ok) return;
-    const fixedNames = Object.keys(FIXED_SCHEDULES).map(n => n.toLowerCase());
-    // Delete in chunks of 500 (Firestore batch limit)
-    const toDelete = shifts.filter(s => fixedNames.includes(s.userName?.toLowerCase()));
-    const CHUNK = 490;
-    for (let i = 0; i < toDelete.length; i += CHUNK) {
-      const b = writeBatch(db);
-      toDelete.slice(i, i + CHUNK).forEach(s => b.delete(doc(db, 'shifts', s.id)));
-      await b.commit();
-    }
-    // Reseed current week
-    const dates = weekDays.map(d => format(d, 'yyyy-MM-dd'));
-    await seedFixedShiftsForDates(dates);
-    toast.success(`Purged ${toDelete.length} old fixed staff shifts and reseeded this week.`);
-  };
+  // (Removed: handleSeedFixedStaffWeek + handlePurgeAndReseed — the
+  // associated "Sync Fixed Staff This Week" and "Fix Duplicates" buttons
+  // are gone. If a one-time cleanup is ever needed again, check git
+  // history for the previous implementations.)
 
   // Reset ALL shifts in Firestore — complete clean slate. Gated by a
   // type-to-confirm input so an accidental click can't wipe everything.
@@ -3381,15 +3355,10 @@ export default function Admin() {
               <span className="text-xs text-gray-500">
                 Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
               </span>
-              <button onClick={handleSeedFixedStaffWeek}
-                className="flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 transition-colors">
-                <Plus size={12} /> Sync Fixed Staff This Week
-              </button>
-              <button onClick={handlePurgeAndReseed}
-                title="Delete all fixed staff shifts and reseed this week — use once to fix duplicates"
-                className="flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 transition-colors">
-                <RotateCcw size={12} /> Fix Duplicates
-              </button>
+              {/* "Sync Fixed Staff This Week" and "Fix Duplicates" buttons
+                  removed — no longer needed. The handlers (handleSeedFixedStaffWeek
+                  and handlePurgeAndReseed) remain in scope in case any other
+                  surface wants to call them; only the UI affordances are gone. */}
             </div>
 
             {/* Publish bar — surfaces draft counts and one-click bulk actions.
