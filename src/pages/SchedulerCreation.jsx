@@ -433,19 +433,21 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
             <th className="px-1 py-1 text-left border-b border-gray-300">
               On the hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
             </th>
-            {/* Stronger divider down the middle so the two columns read
-                as clearly separate, matching the paper layout. */}
             <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
               On the half hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
             </th>
-            {/* HS-only: dedicated column for 1.5 hr session students,
-                regardless of whether they start on the hour or half hour. */}
             {side === 'HS' && (
               <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
                 1.5 hr
               </th>
             )}
             <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">#</th>
+            {/* Cross-side count column — shows the OTHER side's concurrent
+                count per row so the front desk knows what's happening on
+                both sides at a glance even when reading just one sheet. */}
+            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">
+              {side === 'HS' ? 'EM' : 'HS'}
+            </th>
             <th className="px-1 py-1 text-left w-28 border-l border-gray-300 border-b border-gray-300">Instructors</th>
           </tr>
         </thead>
@@ -538,12 +540,16 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-300 border-b border-gray-300 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
       </td>
+      {/* Other-side count: small, gray — informational, not the decision number. */}
+      <td className="px-1 py-1 align-top text-center text-xs font-semibold text-gray-500 border-l border-gray-300 border-b border-gray-300">
+        {row.counts[side === 'HS' ? 'EM' : 'HS']}
+      </td>
       <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
         <div className="flex flex-wrap gap-0.5">
           {instructors.map(n => (
             <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-1.5 py-0 text-[10px] hover:bg-red-100"
               onClick={() => handleRemoveInstructor(n)} title="Click to remove">
-              {n} <span className="text-red-600">×</span>
+              {n} <span className="text-red-600 print:hidden">×</span>
             </span>
           ))}
           {/* Native select used as a quick instructor picker. Empty default
