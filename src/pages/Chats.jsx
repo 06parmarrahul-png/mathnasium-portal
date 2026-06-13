@@ -19,7 +19,7 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  MessagesSquare, MessageSquare, Headphones, Megaphone, Sparkles, Wifi, ArrowRight,
+  MessagesSquare, MessageSquare, Headphones, Megaphone, Sparkles, ArrowRight,
 } from 'lucide-react';
 
 export default function Chats() {
@@ -75,15 +75,6 @@ export default function Chats() {
       show:  true,
     },
     {
-      to:    '/chat?filter=online',
-      title: 'Online Chat',
-      body:  'Filtered view of the centre channel for online-instructor coordination.',
-      icon:  Wifi,
-      color: 'bg-indigo-100 text-indigo-700',
-      badge: 0,
-      show:  true,
-    },
-    {
       to:    '/platform-chat',
       title: 'Leadership Chat',
       body:  'Cross-centre conversation with every owner on the platform.',
@@ -101,15 +92,6 @@ export default function Chats() {
       badge: 0,
       show:  profile?.role === 'owner' || profile?.role === 'super_admin',
     },
-    {
-      to:    '/announcements',
-      title: 'Announcements',
-      body:  'Centre-wide posts staff see when they sign in. Pinned at the top of Home.',
-      icon:  Megaphone,
-      color: 'bg-emerald-100 text-emerald-700',
-      badge: recent.announcements,
-      show:  true,
-    },
   ].filter(c => c.show);
 
   return (
@@ -124,7 +106,34 @@ export default function Chats() {
         </div>
       </header>
 
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/* Announcements — full-width hero bubble at the top */}
+      <Link
+        to="/announcements"
+        className="group relative block overflow-hidden rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-emerald-50 p-5 hover:border-emerald-400 hover:shadow-md transition-all mb-4"
+      >
+        <div className="flex items-center gap-4">
+          <div className="rounded-xl bg-emerald-100 text-emerald-700 p-3 shrink-0">
+            <Megaphone size={24} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold text-gray-900">Announcements</h3>
+              {recent.announcements > 0 && (
+                <span className="rounded-full bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[20px] text-center">
+                  {recent.announcements}
+                </span>
+              )}
+            </div>
+            <p className="text-sm text-gray-600 mt-0.5 leading-snug">
+              Centre-wide posts staff see when they sign in. Pinned at the top of Home.
+            </p>
+          </div>
+          <ArrowRight size={18} className="text-emerald-400 group-hover:text-emerald-700 group-hover:translate-x-0.5 transition-all" />
+        </div>
+      </Link>
+
+      {/* Centre / Leadership / Owner stacked underneath */}
+      <div className="flex flex-col gap-3">
         {cards.map(c => (
           <Link key={c.to} to={c.to}
             className="group rounded-xl border border-gray-200 bg-white p-4 hover:border-blue-300 hover:shadow-sm transition-all flex gap-3">
