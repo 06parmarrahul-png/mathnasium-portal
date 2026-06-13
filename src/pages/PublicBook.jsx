@@ -62,6 +62,10 @@ export default function PublicBook() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // Set true once we've auto-skipped past empty current week(s) — drives
+  // a tiny banner so the parent isn't confused why the visible week
+  // doesn't match "this week".
+  const [autoAdvanced, setAutoAdvanced] = useState(false);
 
   const [selectedSlot, setSelectedSlot] = useState(null); // ISO string
   const [confirmed, setConfirmed] = useState(null);       // { slot, durationMin, name }
@@ -75,6 +79,19 @@ export default function PublicBook() {
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
         if (!cancelled) setData(body);
+
+        // Auto-advance past empty weeks so the parent lands on the first
+        // bookable week instead of staring at a dimmed grid. Hard cap of
+        // 8 weeks so we don't loop forever if the centre has no slots
+        // configured at all.
+        if (!cancelled && body?.settings?.enabled) {
+          const anyAvailable = (body.days || []).some(d => d.slots.some(s => s.available));
+          const weeksAhead = Math.round((weekStart - sundayOf(new Date())) / (7 * 24 * 3600 * 1000));
+          if (!anyAvailable && weeksAhead < 8) {
+            setAutoAdvanced(true);
+            setWeekStart(prev => addDays(prev, 7));
+          }
+        }
       } catch (e) {
         if (!cancelled) setError(e.message);
       } finally {
@@ -149,11 +166,16 @@ export default function PublicBook() {
 
         {data && data.settings.enabled && (
           <>
+            {autoAdvanced && (
+              <p className="mb-2 text-center text-xs text-white/85">
+                Showing the earliest week with available times.
+              </p>
+            )}
             <SlotGrid
               data={data}
               timeRows={timeRows}
               weekStart={weekStart}
-              onWeekStart={setWeekStart}
+              onWeekStart={(d) => { setAutoAdvanced(false); setWeekStart(d); }}
               selectedSlot={selectedSlot}
               onSelectSlot={setSelectedSlot}
             />
