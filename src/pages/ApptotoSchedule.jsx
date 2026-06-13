@@ -91,9 +91,10 @@ export default function ApptotoSchedule() {
     );
   }, [activeCenterId]);
 
+  const [upstreamMeta, setUpstreamMeta] = useState(null);
   const load = async () => {
     if (!activeCenterId || !connected) return;
-    setError(''); setEvents(null);
+    setError(''); setEvents(null); setUpstreamMeta(null);
     try {
       const start = new Date(Date.now() + offsetDays * 24 * 3600 * 1000);
       start.setHours(0, 0, 0, 0);
@@ -102,6 +103,7 @@ export default function ApptotoSchedule() {
         start: start.toISOString(), end: end.toISOString(),
       });
       setEvents(r.events || []);
+      setUpstreamMeta({ upstreamCount: r.upstreamCount, count: r.count });
     } catch (e) {
       setError(e.message); setEvents([]);
     }
@@ -251,8 +253,14 @@ export default function ApptotoSchedule() {
               <Loader2 size={14} className="animate-spin" /> Loading appointments…
             </div>
           ) : groups.length === 0 ? (
-            <div className="rounded-2xl border border-gray-200 bg-white py-16 text-center text-sm text-gray-500">
-              No appointments in this window.
+            <div className="rounded-2xl border border-gray-200 bg-white py-12 text-center text-sm text-gray-500">
+              <p>No appointments in this window.</p>
+              {upstreamMeta && upstreamMeta.upstreamCount > 0 && (
+                <p className="mt-2 text-xs text-gray-400">
+                  Apptoto returned {upstreamMeta.upstreamCount} event{upstreamMeta.upstreamCount === 1 ? '' : 's'},
+                  but none fell inside this 14-day window. Page back to find them.
+                </p>
+              )}
             </div>
           ) : (
             <>
