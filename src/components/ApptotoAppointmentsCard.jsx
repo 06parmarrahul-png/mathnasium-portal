@@ -19,19 +19,47 @@ import {
   CalendarCheck, Plug, Loader2, AlertTriangle, ExternalLink,
 } from 'lucide-react';
 
-// Apptoto's /events response field names aren't 100% uniform — older
-// integrations have surfaced { start_time, title } while newer payloads
-// use { datetime, calendar_event_name }. Read whichever's there.
+// Apptoto's /events response uses different field names across endpoints
+// and account versions. Try every common shape so the dashboard isn't
+// silently empty when one of them differs.
+const START_KEYS = [
+  'start_time', 'start_date', 'start', 'startTime', 'starts_at', 'startsAt',
+  'dt_start', 'dtstart', 'event_start', 'calendar_event_start', 'time_start',
+  'datetime', 'at', 'when',
+];
+const TITLE_KEYS = [
+  'title', 'calendar_event_name', 'name', 'summary', 'subject',
+  'event_title', 'appointment_type',
+];
+const pickFromKeys = (obj, keys) => {
+  if (!obj || typeof obj !== 'object') return null;
+  for (const k of keys) if (obj[k]) return obj[k];
+  return null;
+};
 const pickStart = (e) =>
-  e?.start_time || e?.datetime || e?.start || e?.startTime || null;
+  pickFromKeys(e, START_KEYS)
+  || pickFromKeys(e?.calendar_event, START_KEYS)
+  || pickFromKeys(e?.time, START_KEYS)
+  || null;
 const pickTitle = (e) =>
-  e?.title || e?.calendar_event_name || e?.name || e?.summary || '(untitled)';
-const pickContact = (e) =>
-  e?.contact_name
-  || (e?.contact && (e.contact.name || `${e.contact.first_name || ''} ${e.contact.last_name || ''}`.trim()))
-  || e?.attendee_name || '';
+  pickFromKeys(e, TITLE_KEYS)
+  || pickFromKeys(e?.calendar_event, TITLE_KEYS)
+  || '(untitled)';
+const pickContact = (e) => {
+  if (!e) return '';
+  const direct = e.contact_name || e.attendee_name || e.client_name;
+  if (direct) return direct;
+  const c = e.contact || e.address_book_contact || (Array.isArray(e.participants) && e.participants[0]);
+  if (!c) return '';
+  return c.name
+    || `${c.first_name || ''} ${c.last_name || ''}`.trim()
+    || c.email || c.phone || '';
+};
 
-const ASSESSMENT_RE = /\b(assess|intake|consult|trial|new\s*student|tour)\b/i;
+// "Appointment Booked" is Apptoto's default subject when something gets
+// booked via the calendar — treat that as an intake too. Also keep the
+// generic keywords so we still catch consults, trials, etc.
+const ASSESSMENT_RE = /\b(assess|intake|consult|trial|new\s*student|tour|appointment\s*booked|booked)\b/i;
 
 function startOfWeek(d) {
   const x = new Date(d);
@@ -91,16 +119,19 @@ export default function ApptotoAppointmentsCard() {
   }, [activeCenterId, connected]);
 
   const counts = useMemo(() => {
-    if (!Array.isArray(events)) return { today: 0, week: 0, assessments: 0, upcoming: [] };
+    if (!Array.isArray(events)) {
+      return { today: 0, week: 0, assessments: 0, upcoming: [], parsedAny: true };
+    }
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const weekStart = startOfWeek(now);
     const weekEnd   = endOfWeek(now);
-    let today = 0, week = 0, assessments = 0;
+    let today = 0, week = 0, assessments = 0, parsedCount = 0;
     const upcoming = [];
     for (const ev of events) {
       const startISO = pickStart(ev);
       if (!startISO) continue;
+      parsedCount++;
       const d = new Date(startISO);
       const isToday = d.toISOString().slice(0, 10) === todayStr;
       if (isToday) today++;
@@ -109,8 +140,14 @@ export default function ApptotoAppointmentsCard() {
       if (d >= now) upcoming.push({ when: startISO, title: pickTitle(ev), contact: pickContact(ev) });
     }
     upcoming.sort((a, b) => a.when.localeCompare(b.when));
-    return { today, week, assessments, upcoming: upcoming.slice(0, 5) };
+    // parsedAny = did we successfully read a start time from at least one
+    // event? If false but `events.length > 0`, Apptoto returned a shape
+    // our pickStart fallbacks don't recognise — surface a debug expander
+    // so we can capture the field names and fix the mapping.
+    const parsedAny = parsedCount > 0;
+    return { today, week, assessments, upcoming: upcoming.slice(0, 5), parsedAny };
   }, [events]);
+  const [showDebug, setShowDebug] = useState(false);
 
   // ── States ──────────────────────────────────────────────────────────
   if (connected === null) {
@@ -185,6 +222,36 @@ export default function ApptotoAppointmentsCard() {
           </ul>
         )}
       </div>
+
+      {/* Debug expander — shows when Apptoto returned events but our
+          field-name fallbacks couldn't read a start time out of any of
+          them. Lets the owner share the raw shape so we can fix the
+          mapping without round-tripping through logs. */}
+      {Array.isArray(events) && events.length > 0 && !counts.parsedAny && (
+        <div className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-3">
+          <div className="flex items-start gap-2 text-xs text-amber-900">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <p className="font-semibold">Got {events.length} events but couldn&apos;t read their start times.</p>
+              <p className="mt-0.5 text-amber-800/80">
+                Apptoto&apos;s field names differ from our defaults. Click below and share the JSON keys with the dev so we can map them.
+              </p>
+              <button
+                type="button"
+                onClick={() => setShowDebug(s => !s)}
+                className="mt-2 rounded bg-white border border-amber-300 px-2 py-0.5 text-[11px] font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                {showDebug ? 'Hide' : 'Show'} raw event
+              </button>
+            </div>
+          </div>
+          {showDebug && (
+            <pre className="mt-2 max-h-64 overflow-auto rounded bg-white border border-amber-200 p-2 text-[10px] text-gray-800">
+              {JSON.stringify(events[0], null, 2)}
+            </pre>
+          )}
+        </div>
+      )}
     </Frame>
   );
 }
