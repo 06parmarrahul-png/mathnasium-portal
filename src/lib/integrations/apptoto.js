@@ -53,13 +53,13 @@ export async function clearApptotoCredentials(centerId) {
 export async function testApptotoConnection({ centerId, email, apiKey }) {
   const token = await auth.currentUser?.getIdToken();
   if (!token) return { ok: false, error: 'Not signed in.' };
-  const r = await fetch('/api/apptoto/test-connection', {
+  const r = await fetch('/api/apptoto', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ centerId, email, apiKey }),
+    body: JSON.stringify({ action: 'test-connection', centerId, email, apiKey }),
   });
   try {
     return await r.json();
@@ -73,7 +73,7 @@ export async function testApptotoConnection({ centerId, email, apiKey }) {
 export async function fetchApptotoEvents(centerId, { start, end } = {}) {
   const token = await auth.currentUser?.getIdToken();
   if (!token) throw new Error('Not signed in.');
-  const url = new URL('/api/apptoto/events', window.location.origin);
+  const url = new URL('/api/apptoto', window.location.origin);
   url.searchParams.set('centerId', centerId);
   if (start) url.searchParams.set('start', start);
   if (end)   url.searchParams.set('end',   end);
