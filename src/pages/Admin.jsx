@@ -28,6 +28,7 @@ import {
   isOperatingDay, holidayFor, ALL_WEEKDAYS,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
+import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
 import {
@@ -6088,6 +6089,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
         </div>
       </div>
+
+      {/* Apptoto appointments — live from the connected Apptoto account.
+          Self-contained component: handles "not connected" CTA, loading,
+          and error states internally. */}
+      <ApptotoAppointmentsCard />
 
       {/* Leaderboard */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
