@@ -16,7 +16,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchApptotoEvents } from '../lib/integrations/apptoto';
 import {
-  CalendarCheck, Plug, Loader2, AlertTriangle, ExternalLink,
+  CalendarCheck, Plug, Loader2, AlertTriangle, ExternalLink, ChevronRight,
 } from 'lucide-react';
 
 // Apptoto's /events response uses different field names across endpoints
@@ -256,15 +256,23 @@ export default function ApptotoAppointmentsCard() {
   );
 }
 
-function Frame({ children }) {
+function Frame({ children, showView = true }) {
   return (
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="mb-3 flex items-center gap-2">
         <div className="rounded-lg bg-purple-100 p-1.5 text-purple-700"><CalendarCheck size={14} /></div>
-        <div>
+        <div className="flex-1 min-w-0">
           <h3 className="text-sm font-semibold text-gray-900">Apptoto Appointments</h3>
           <p className="text-[11px] text-gray-500">Intake meetings & assessments — live from Apptoto.</p>
         </div>
+        {showView && (
+          <Link
+            to="/apptoto"
+            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 hover:border-purple-300 hover:text-purple-700 transition-colors"
+          >
+            View all <ChevronRight size={12} />
+          </Link>
+        )}
       </div>
       {children}
     </div>

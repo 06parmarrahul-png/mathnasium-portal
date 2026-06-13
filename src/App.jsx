@@ -26,6 +26,7 @@ import SchedulerCreation from './pages/SchedulerCreation';
 import Landing from './pages/Landing';
 import Connectors from './pages/Connectors';
 import ChatsHub from './pages/Chats';
+import ApptotoSchedule from './pages/ApptotoSchedule';
 import { useAuth } from './contexts/AuthContext';
 
 // Root URL ("/") is dual-purpose:
@@ -78,6 +79,7 @@ function AppRoutes() {
       <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
       <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
       <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
+      <Route path="/apptoto" element={<ProtectedRoute><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );
