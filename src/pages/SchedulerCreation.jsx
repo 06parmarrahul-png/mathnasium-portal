@@ -441,10 +441,13 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
                 1.5 hr
               </th>
             )}
-            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">#</th>
-            {/* Cross-side count column — shows the OTHER side's concurrent
-                count per row so the front desk knows what's happening on
-                both sides at a glance even when reading just one sheet. */}
+            {/* Own-side count: labeled with the side name so a printout
+                read out of context is unambiguous (HS sheet says "HS",
+                EM sheet says "EM"). Cross-side count follows for
+                at-a-glance awareness of what the other room is doing. */}
+            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">
+              {side === 'HS' ? 'HS' : 'EM'}
+            </th>
             <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">
               {side === 'HS' ? 'EM' : 'HS'}
             </th>
