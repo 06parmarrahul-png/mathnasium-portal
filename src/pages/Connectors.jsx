@@ -14,9 +14,14 @@ import {
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  Plug, Search, CheckCircle2, Clock, TrendingUp, Sparkles,
+  Plug, Search, CheckCircle2, Clock, TrendingUp, Sparkles, Settings as Cog,
 } from 'lucide-react';
 import { VENDOR_CATEGORIES, VENDOR_STATUS } from '../lib/vendors';
+import ApptotoSetupModal from '../components/ApptotoSetupModal';
+
+// Vendors that have a dedicated setup modal (collect credentials, test
+// the connection) instead of the simple "Mark connected" toggle.
+const VENDORS_WITH_SETUP = new Set(['apptoto']);
 
 function vendorId(name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -28,6 +33,9 @@ export default function Connectors() {
   const [connections, setConnections] = useState({});
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  // Vendor currently being configured via its dedicated setup modal
+  // (currently only Apptoto). null = no modal open.
+  const [setupVendor, setSetupVendor] = useState(null);
 
   useEffect(() => {
     if (!activeCenterId) return;
@@ -138,6 +146,12 @@ export default function Connectors() {
         <FilterPill label="My requests"  active={filter === 'requested'} onClick={() => setFilter('requested')} />
       </div>
 
+      <ApptotoSetupModal
+        open={setupVendor === 'apptoto'}
+        onClose={() => setSetupVendor(null)}
+        onSaved={() => { /* connectors snapshot will refresh on its own */ }}
+      />
+
       {filtered.length === 0 ? (
         <div className="rounded-xl bg-white border border-gray-200 p-8 text-center text-gray-500">
           No vendors match your filter.
@@ -157,6 +171,11 @@ export default function Connectors() {
                     connection={connections[vendorId(v.name)]}
                     onConnectToggle={() => toggleConnected(v.name)}
                     onRequestToggle={() => toggleRequested(v.name)}
+                    onConfigure={
+                      VENDORS_WITH_SETUP.has(vendorId(v.name))
+                        ? () => setSetupVendor(vendorId(v.name))
+                        : null
+                    }
                   />
                 ))}
               </div>
@@ -179,21 +198,25 @@ function FilterPill({ label, active, onClick }) {
   );
 }
 
-function ConnectorCard({ vendor, connection, onConnectToggle, onRequestToggle }) {
+function ConnectorCard({ vendor, connection, onConnectToggle, onRequestToggle, onConfigure }) {
   const s = VENDOR_STATUS[vendor.status] || VENDOR_STATUS.planned;
   const connected = !!connection?.connected;
   const requested = !!connection?.requested;
   const isLive = vendor.status === 'live' || vendor.status === 'beta';
+  const hasSetup = typeof onConfigure === 'function';
 
-  // For live vendors, the button toggles "connected" (we actually use it).
-  // For not-yet-live vendors, the button toggles "requested" — purely a
-  // demand signal that aggregates into the Enterprise leaderboard.
-  const onClick = isLive ? onConnectToggle : onRequestToggle;
+  // For vendors with a dedicated setup flow (Apptoto, etc.) the button
+  // opens that modal — connection state is driven by what the modal
+  // saves. For live-but-no-setup vendors it's just a manual "we use this"
+  // toggle. For not-yet-live vendors it's a demand-signal toggle.
+  const onClick = hasSetup ? onConfigure : (isLive ? onConnectToggle : onRequestToggle);
   const isOn = isLive ? connected : requested;
 
   let label;
-  if (isLive)        label = connected ? 'Connected' : 'Mark connected';
-  else               label = requested ? 'You want this' : 'I want this';
+  if (hasSetup && connected)  label = 'Configure';
+  else if (hasSetup)          label = 'Connect';
+  else if (isLive)            label = connected ? 'Connected' : 'Mark connected';
+  else                        label = requested ? 'You want this' : 'I want this';
 
   return (
     <div className={`rounded-lg border bg-white p-3 flex items-start gap-3 ${
@@ -233,7 +256,7 @@ function ConnectorCard({ vendor, connection, onConnectToggle, onRequestToggle })
         )}
       </div>
       <button onClick={onClick}
-        className={`shrink-0 rounded px-2.5 py-1 text-xs font-semibold border transition-colors whitespace-nowrap ${
+        className={`shrink-0 inline-flex items-center gap-1 rounded px-2.5 py-1 text-xs font-semibold border transition-colors whitespace-nowrap ${
           isOn
             ? (isLive
                 ? 'border-emerald-300 bg-emerald-100 text-emerald-800 hover:bg-emerald-200'
@@ -242,6 +265,7 @@ function ConnectorCard({ vendor, connection, onConnectToggle, onRequestToggle })
                 ? 'border-red-300 bg-white text-red-700 hover:bg-red-50'
                 : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50')
         }`}>
+        {hasSetup && <Cog size={11} />}
         {label}
       </button>
     </div>

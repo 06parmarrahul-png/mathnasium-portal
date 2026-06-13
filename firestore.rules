@@ -94,6 +94,22 @@ service cloud.firestore {
       }
     }
 
+    // ─── Centre integrations (secrets) ─────────────────────────────────
+    // Top-level collection deliberately OUTSIDE /centers/{centerId}/* so
+    // it isn't caught by the recursive {document=**} grant above, which
+    // would let any signed-in user read the API keys.
+    //
+    // Doc ID convention: `${centerId}__${vendorId}` — e.g.
+    //   centerIntegrations/langley__apptoto
+    //
+    // The Apptoto / Acuity / future-vendor API keys live here. Server
+    // routes (firebase-admin) bypass these rules entirely; the client only
+    // needs to write + read the "metadata" fields (email, configuredAt) to
+    // know whether the integration is configured.
+    match /centerIntegrations/{integrationKey} {
+      allow read, write: if isOwnerLike() || isSuperAdmin();
+    }
+
     // ─── Users ─────────────────────────────────────────────────────────
     match /users/{userId} {
       // Read: any signed-in user can read any user doc.
