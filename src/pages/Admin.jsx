@@ -12,7 +12,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
-  Users, TrendingUp, Activity, Briefcase, Copy, CalendarX, Upload, Search,
+  Users, Activity, Briefcase, Copy, CalendarX, Upload, Search,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -5301,6 +5301,26 @@ function DeltaBadge({ delta, pct, isUp }) {
   );
 }
 
+// Single row inside the Operations Snapshot — label on the left, the
+// number on the right with an optional tone colour (good / warn / bad)
+// and a hint underneath for context.
+function SnapshotRow({ label, value, hint, tone }) {
+  const toneCls =
+    tone === 'good' ? 'text-emerald-700'
+    : tone === 'warn' ? 'text-amber-700'
+    : tone === 'bad'  ? 'text-rose-700'
+    : 'text-gray-900';
+  return (
+    <div className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
+      <div className="min-w-0">
+        <p className="text-sm font-medium text-gray-700">{label}</p>
+        {hint && <p className="text-xs text-gray-400 mt-0.5">{hint}</p>}
+      </div>
+      <p className={`text-base font-bold tabular-nums ${toneCls}`}>{value}</p>
+    </div>
+  );
+}
+
 // ─── Sub-component: Analytics tab ────────────────────────────────────────
 // Owner-only dashboard. Pulls from the existing shifts + users + center
 // config — no new data plumbing for Phase 1. Active student count is a
@@ -5446,16 +5466,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
     .filter(r => r.hours > 0)
     .sort((a, b) => b.hours - a.hours);
   const maxAssign = Math.max(1, ...assignmentRows.map(r => r.hours));
-
-  // Last 30 days trend.
-  const last30 = [];
-  for (let i = 29; i >= 0; i--) {
-    const d = new Date(now);
-    d.setDate(d.getDate() - i);
-    const ds = format(d, 'yyyy-MM-dd');
-    last30.push({ date: ds, hours: sumHrs(posted.filter(s => s.date === ds)) });
-  }
-  const max30 = Math.max(1, ...last30.map(d => d.hours));
 
   // Top instructors leaderboard (this month).
   const byInstructor = {};
@@ -5610,10 +5620,22 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const [savingStudents,  setSavingStudents]  = useState(false);
   const [studentSaveError,setStudentSaveError]= useState('');
 
+  // Manual "emails needing response" count + edit modal. Placeholder
+  // until we wire up Gmail / Outlook — same edit pattern as studentCount.
+  const emailsCount     = Number(centerConfig?.emailsPendingCount ?? 0) || 0;
+  const emailsUpdatedAt = centerConfig?.emailsCountUpdatedAt;
+  const [editingEmails, setEditingEmails] = useState(false);
+  const [emailsInput,   setEmailsInput]   = useState(emailsCount);
+  const [savingEmails,  setSavingEmails]  = useState(false);
+  const [emailsSaveError,setEmailsSaveError] = useState('');
+
   // Re-sync input when the saved value changes (e.g. someone else updated it).
   useEffect(() => {
     if (!editingStudents) setStudentInput(studentCount);
   }, [studentCount, editingStudents]);
+  useEffect(() => {
+    if (!editingEmails) setEmailsInput(emailsCount);
+  }, [emailsCount, editingEmails]);
 
   const saveStudentCount = async () => {
     const n = Math.max(0, parseInt(studentInput, 10) || 0);
@@ -5633,12 +5655,80 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
     }
   };
 
+  const saveEmailsCount = async () => {
+    const n = Math.max(0, parseInt(emailsInput, 10) || 0);
+    setSavingEmails(true);
+    setEmailsSaveError('');
+    try {
+      await setDoc(
+        doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { emailsPendingCount: n, emailsCountUpdatedAt: serverTimestamp() },
+        { merge: true },
+      );
+      setEditingEmails(false);
+    } catch (err) {
+      setEmailsSaveError(err?.message || 'Failed to save.');
+    } finally {
+      setSavingEmails(false);
+    }
+  };
+
   const studentsPerEmployee = activeEmployees > 0
     ? Math.round((studentCount / activeEmployees) * 10) / 10
     : 0;
   const updatedAtLabel = studentUpdatedAt?.seconds
     ? format(new Date(studentUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
     : null;
+  const emailsUpdatedAtLabel = emailsUpdatedAt?.seconds
+    ? format(new Date(emailsUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
+    : null;
+
+  // ─── Operations Snapshot stats (replaces the old Hours-per-Day bar
+  // chart with denser, more decision-useful numbers) ──────────────────
+  // Avg hours per day this month — only count days that actually had
+  // shifts so a fresh month doesn't drag the average to zero.
+  const monthDatesWithShifts = new Set(monthShifts.map(s => s.date).filter(Boolean));
+  const avgHoursPerDay = monthDatesWithShifts.size > 0
+    ? hoursMonth / monthDatesWithShifts.size : 0;
+  const avgHoursPerShift = monthShifts.length > 0
+    ? hoursMonth / monthShifts.length : 0;
+
+  // Busiest / quietest weekday by avg hours (this month).
+  const dowHours = {}; // dayName -> { hours, dates: Set }
+  for (const s of monthShifts) {
+    if (!s.date) continue;
+    const d = new Date(s.date + 'T12:00:00');
+    const dayName = ALL_WEEKDAYS[d.getDay()];
+    if (!dowHours[dayName]) dowHours[dayName] = { hours: 0, dates: new Set() };
+    dowHours[dayName].hours += shiftHours(s);
+    dowHours[dayName].dates.add(s.date);
+  }
+  const dowRows = Object.entries(dowHours).map(([day, v]) => ({
+    day, avg: v.dates.size > 0 ? v.hours / v.dates.size : 0,
+  })).sort((a, b) => b.avg - a.avg);
+  const busiestDay = dowRows[0] || null;
+  const quietestDay = dowRows.length > 0 ? dowRows[dowRows.length - 1] : null;
+
+  // Open shift fill rate (this month) — filled vs total slots posted.
+  const monthShiftCount = monthShifts.length;
+  const openShiftsMonth = openShiftsList.filter(s =>
+    s.date >= monthStartStr && s.date <= monthEndStr).length;
+  const fillRate = (monthShiftCount + openShiftsMonth) > 0
+    ? (monthShiftCount / (monthShiftCount + openShiftsMonth)) * 100 : 0;
+
+  // Sick day rate this month — sick days as % of all scheduled person-days.
+  const personDaysThisMonth = new Set(
+    monthShifts.map(s => `${s.userName}|${s.date}`),
+  ).size;
+  const sickRate = personDaysThisMonth > 0
+    ? (sickDaysThisMonth / personDaysThisMonth) * 100 : 0;
+
+  // Average distinct-instructor coverage across operating days (last 8 weeks).
+  const coverageAvgAll = coverageRows.filter(r => r.samples > 0);
+  const coverageAvg = coverageAvgAll.length > 0
+    ? coverageAvgAll.reduce((sum, r) => sum + r.avg, 0) / coverageAvgAll.length : 0;
+  const coverageVsTarget = coverageTarget > 0
+    ? (coverageAvg / coverageTarget) * 100 : 0;
 
   // ─── Hiring forecast (Phase 2) ─────────────────────────────────────────
   // Roll up staff `careerPlan` fields into a projected headcount for each of
@@ -5728,7 +5818,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         <p className="text-sm text-gray-500">Headcount, hours, and what your team's been working on at a glance.</p>
       </div>
 
-      {/* Metric cards — eight tiles in a 1/2/4-column grid. */}
+      {/* Row 1 — People & inbox */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><Users size={16}/></div>
@@ -5751,10 +5841,44 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Students</p>
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{studentCount}</p>
           <p className="mt-1 text-xs text-gray-400">
-            {updatedAtLabel ? `Updated ${updatedAtLabel}` : 'Click Edit to set a starting value'}
+            {updatedAtLabel ? `Updated ${updatedAtLabel}` : 'Radius sync coming soon'}
           </p>
         </div>
 
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-yellow-100 text-yellow-700"><CalendarX size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Pending Time-Off</p>
+          <p className={`mt-0.5 text-2xl font-bold ${timeOffPending > 0 ? 'text-yellow-700' : 'text-gray-900'}`}>
+            {timeOffPending}
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            {timeOffPending === 0 ? 'inbox clear' : `request${timeOffPending === 1 ? '' : 's'} waiting on you`}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between">
+            <div className="w-fit rounded-lg p-1.5 bg-sky-100 text-sky-700"><Mail size={16}/></div>
+            <button
+              type="button"
+              onClick={() => { setEmailsInput(emailsCount); setEditingEmails(true); }}
+              className="flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline"
+            >
+              <Edit3 size={11}/> Edit
+            </button>
+          </div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Emails to Reply</p>
+          <p className={`mt-0.5 text-2xl font-bold ${emailsCount > 0 ? 'text-sky-700' : 'text-gray-900'}`}>
+            {emailsCount}
+          </p>
+          <p className="mt-1 text-xs text-gray-400">
+            {emailsUpdatedAtLabel ? `Updated ${emailsUpdatedAtLabel}` : 'Inbox sync coming soon'}
+          </p>
+        </div>
+      </div>
+
+      {/* Row 2 — Hours */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-blue-100 text-blue-700"><Clock size={16}/></div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours Today</p>
@@ -5769,9 +5893,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Hours This Week</p>
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursWeek)}h</p>
-          <p className="mt-1 text-xs text-gray-400">
-            Sun–Sat scheduled · last week {round1(hoursLastWeek)}h
-          </p>
+          <p className="mt-1 text-xs text-gray-400">Sun–Sat · last week {round1(hoursLastWeek)}h</p>
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -5792,23 +5914,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(hoursYear)}h</p>
           <p className="mt-1 text-xs text-gray-400">{now.getFullYear()} so far</p>
         </div>
+      </div>
 
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-teal-100 text-teal-700"><TrendingUp size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Avg / Instructor</p>
-          <p className="mt-0.5 text-2xl font-bold text-gray-900">{round1(avgPerInstructor)}h</p>
-          <p className="mt-1 text-xs text-gray-400">{monthInstructors.size} working this month</p>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-lime-100 text-lime-700"><UserCheck size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Students / Employee</p>
-          <p className="mt-0.5 text-2xl font-bold text-gray-900">{studentsPerEmployee || '–'}</p>
-          <p className="mt-1 text-xs text-gray-400">workload ratio</p>
-        </div>
-
-        {/* ── Operations cards — actionable signals for the owner ── */}
-
+      {/* Row 3 — Operations */}
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-orange-100 text-orange-700"><Briefcase size={16}/></div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Open Shifts</p>
@@ -5818,24 +5927,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           <p className="mt-1 text-xs text-gray-400">
             {openShiftsCount === 0 ? 'all upcoming shifts filled' : 'unfilled — need pickup'}
           </p>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-yellow-100 text-yellow-700"><Mail size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Pending Time-Off</p>
-          <p className={`mt-0.5 text-2xl font-bold ${timeOffPending > 0 ? 'text-yellow-700' : 'text-gray-900'}`}>
-            {timeOffPending}
-          </p>
-          <p className="mt-1 text-xs text-gray-400">
-            {timeOffPending === 0 ? 'inbox clear' : `request${timeOffPending === 1 ? '' : 's'} waiting on you`}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><DollarSign size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Stat Pay YTD</p>
-          <p className="mt-0.5 text-2xl font-bold text-gray-900">{statHoursYTD}h</p>
-          <p className="mt-1 text-xs text-gray-400">{ytdHolidays.length} stat holiday{ytdHolidays.length === 1 ? '' : 's'} paid out</p>
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -5858,6 +5949,13 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
               ? `${nextHoliday.name || 'Holiday'} · ${format(new Date(nextHoliday.date + 'T00:00:00'), 'MMM d')}`
               : 'none in your holidays list'}
           </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><DollarSign size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Stat Pay YTD</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{statHoursYTD}h</p>
+          <p className="mt-1 text-xs text-gray-400">{ytdHolidays.length} stat holiday{ytdHolidays.length === 1 ? '' : 's'} paid out</p>
         </div>
       </div>
 
@@ -5899,6 +5997,44 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         </div>
       )}
 
+      {/* Emails-to-reply edit modal */}
+      {editingEmails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          onClick={() => !savingEmails && setEditingEmails(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
+            <h3 className="text-base font-bold text-gray-900 mb-1">Emails to Reply</h3>
+            <p className="text-xs text-gray-500 mb-3">Manually log the number of emails awaiting a response. We&apos;ll wire this up to your inbox later.</p>
+            <input
+              type="number"
+              min={0}
+              value={emailsInput}
+              onChange={e => setEmailsInput(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none mb-3"
+              autoFocus
+            />
+            {emailsSaveError && <p className="text-xs text-red-600 mb-2">{emailsSaveError}</p>}
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setEditingEmails(false)}
+                disabled={savingEmails}
+                className="text-sm text-gray-500 hover:text-gray-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={saveEmailsCount}
+                disabled={savingEmails}
+                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
+              >
+                {savingEmails ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Charts row */}
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Hours by assignment */}
@@ -5932,34 +6068,23 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           )}
         </div>
 
-        {/* Last-30-day trend */}
+        {/* Operations Snapshot — dense, decision-useful numbers replacing
+            the old 30-day bar chart. Each row is a single KPI that maps to
+            a real operating question (Are shifts getting filled? Are we
+            short-staffed? Which day is our peak?). */}
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Hours per Day</h3>
-          <p className="text-xs text-gray-500 mb-4">Last 30 days · peak {round1(max30)}h</p>
-          <div className="flex items-end gap-px h-32">
-            {last30.map(d => {
-              const isToday = d.date === todayStr;
-              const h = d.hours > 0 ? Math.max(2, (d.hours / max30) * 100) : 2;
-              const dateLabel = format(new Date(d.date + 'T12:00:00'), 'EEE MMM d');
-              return (
-                <div
-                  key={d.date}
-                  title={`${dateLabel}: ${round1(d.hours)}h`}
-                  className={`flex-1 rounded-sm transition-colors ${
-                    d.hours === 0
-                      ? 'bg-gray-100'
-                      : isToday
-                        ? 'bg-red-500 hover:bg-red-600'
-                        : 'bg-purple-500 hover:bg-purple-600'
-                  }`}
-                  style={{ height: `${h}%` }}
-                />
-              );
-            })}
-          </div>
-          <div className="flex justify-between text-xs text-gray-400 mt-1.5">
-            <span>{format(new Date(last30[0].date + 'T12:00:00'), 'MMM d')}</span>
-            <span>{format(now, 'MMM d')}</span>
+          <h3 className="text-sm font-semibold text-gray-900 mb-1">Operations Snapshot</h3>
+          <p className="text-xs text-gray-500 mb-4">{format(now, 'MMMM yyyy')} · live numbers</p>
+          <div className="divide-y divide-gray-100">
+            <SnapshotRow label="Avg hours / day"        value={`${round1(avgHoursPerDay)}h`}  hint={`${monthDatesWithShifts.size} day${monthDatesWithShifts.size === 1 ? '' : 's'} scheduled`} />
+            <SnapshotRow label="Avg hours / instructor" value={`${round1(avgPerInstructor)}h`} hint={`${monthInstructors.size} working this month`} />
+            <SnapshotRow label="Avg hours / shift"      value={`${round1(avgHoursPerShift)}h`} hint={`${monthShiftCount} shift${monthShiftCount === 1 ? '' : 's'} posted`} />
+            <SnapshotRow label="Open-shift fill rate"   value={`${Math.round(fillRate)}%`}     hint={`${openShiftsMonth} still open`} tone={fillRate >= 90 ? 'good' : fillRate >= 75 ? 'warn' : 'bad'} />
+            <SnapshotRow label="Students per employee"  value={studentsPerEmployee || '—'}     hint="workload ratio" />
+            <SnapshotRow label="Busiest day"  value={busiestDay ? busiestDay.day : '—'}  hint={busiestDay ? `${round1(busiestDay.avg)}h avg` : ''} />
+            <SnapshotRow label="Quietest day" value={quietestDay ? quietestDay.day : '—'} hint={quietestDay ? `${round1(quietestDay.avg)}h avg` : ''} />
+            <SnapshotRow label="Sick day rate"         value={`${Math.round(sickRate * 10) / 10}%`} hint={`${sickDaysThisMonth} of ${personDaysThisMonth} scheduled days`} tone={sickRate >= 8 ? 'bad' : sickRate >= 4 ? 'warn' : 'good'} />
+            <SnapshotRow label="Coverage vs target"    value={`${Math.round(coverageVsTarget)}%`}   hint={`${round1(coverageAvg)} of ${coverageTarget} target instructors / day`} tone={coverageVsTarget >= 95 ? 'good' : coverageVsTarget >= 80 ? 'warn' : 'bad'} />
           </div>
         </div>
       </div>
