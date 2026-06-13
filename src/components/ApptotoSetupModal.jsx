@@ -23,7 +23,10 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
   const [ok,     setOk]     = useState(null); // null | success-message string
 
   // Load current saved state when the modal opens so we can show
-  // "Connected as foo@bar.com" instead of an empty form.
+  // "Connected as foo@bar.com" instead of an empty form. A denied read
+  // (rules not deployed yet, doc missing) just means "not configured" —
+  // we don't surface it as a blocking error because the user can still
+  // try to save fresh credentials.
   useEffect(() => {
     if (!open || !activeCenterId) return;
     let cancelled = false;
@@ -33,8 +36,8 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
         if (cancelled) return;
         setStatus(s);
         if (s.configured) setEmail(s.email);
-      } catch (e) {
-        if (!cancelled) setError(e.message);
+      } catch {
+        if (!cancelled) setStatus({ configured: false });
       }
     })();
     return () => { cancelled = true; };
