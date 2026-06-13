@@ -10,7 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
-  CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare,
+  CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -109,13 +109,13 @@ export default function Layout({ children }) {
   //                 PLUS personal Scheduling (they take shifts).
   //   owner       → GENERAL + MANAGE + INSIGHTS + COMMUNICATE + SETTINGS.
   //   super_admin → above + ENTERPRISE: Manage Centres, Manage Roles,
-  //                 Platform Revenue, Leadership Chat, Audit Logs.
+  //                 Platform Revenue, Management Chat, Owner Chat, Audit Logs.
   const general = [
     { to: '/', label: 'Home', icon: House },
   ];
   // Owners get a single "Chats" entry in General that goes to a hub
-  // page (/chats) collecting Centre Chat, Online Chat, Leadership Chat,
-  // and Owner Chat in one place. Cuts the sidebar down significantly.
+  // page (/chats) collecting Centre Chat, Management Chat, and Owner
+  // Chat in one place. Cuts the sidebar down significantly.
   if (isOwner) {
     general.push({ to: '/chats', label: 'Chats', icon: MessagesSquare });
   }
@@ -174,18 +174,18 @@ export default function Layout({ children }) {
   // COMMUNICATE — chat, announcements, personal notification prefs.
   //
   // OWNERS see no Communicate section at all: everything chat lives
-  // behind the single "Chats" entry in General (one hub for centre/
-  // online/leadership/owner). Notification prefs live on Account.
-  // Announcements moves under that same hub for owners.
+  // behind the single "Chats" entry in General (centre / management /
+  // owner). Notification prefs live on Account. Announcements moves
+  // under that same hub for owners.
   //
-  // INSTRUCTORS / ADMINS / AA still get individual Chat & Leadership
+  // INSTRUCTORS / ADMINS / AA still get individual Chat & Management
   // links since they aren't getting the consolidated hub.
   const communicate = [];
   if (!isSuperAdmin && !isOwner) {
     communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
   }
   if ((isAdmin || isAdminAssistant) && !isSuperAdmin) {
-    communicate.push({ to: '/platform-chat', label: 'Leadership Chat', icon: Headphones });
+    communicate.push({ to: '/platform-chat', label: 'Management Chat', icon: Headphones });
   }
   if (!isOwner) {
     communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
@@ -204,8 +204,9 @@ export default function Layout({ children }) {
       { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
       { to: '/manage-roles',     label: 'Manage Roles',     icon: UserCog },
       { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
-      { to: '/platform-chat',    label: 'Leadership Chat',  icon: Headphones },
-      { to: '/audit-logs',       label: 'Audit Logs',       icon: FileClock },
+      { to: '/platform-chat',              label: 'Management Chat', icon: Headphones },
+      { to: '/platform-chat?view=owners',  label: 'Owner Chat',      icon: Sparkles },
+      { to: '/audit-logs',                 label: 'Audit Logs',      icon: FileClock },
     );
   }
 

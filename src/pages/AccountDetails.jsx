@@ -123,7 +123,7 @@ export default function AccountDetails() {
 
       {/* Quick links — surfaced here so the main sidebar can stay compact
           for owners. Each card is a one-click jump to the corresponding
-          full page. Leadership Chat only renders for roles that can use
+          full page. Management Chat only renders for roles that can use
           it; instructors don't see it. */}
       <QuickLinksCard profile={profile} />
 
@@ -203,7 +203,7 @@ export default function AccountDetails() {
 
 // ─── Quick links card ──────────────────────────────────────────────────
 // Sits at the top of Account Details so the items that used to crowd the
-// sidebar (Chat, Leadership Chat, Notifications) are now one click away
+// sidebar (Chat, Management Chat, Notifications) are now one click away
 // without forcing the user to scroll the nav rail every shift.
 function QuickLinksCard({ profile }) {
   const role = profile?.role;
@@ -219,11 +219,11 @@ function QuickLinksCard({ profile }) {
       title: 'Chat', desc: 'Talk to your team and pick up shift swaps.',
     });
   }
-  // Leadership Chat — cross-centre conversation for owners + their admins.
+  // Management Chat — per-centre conversation for owners + their admins + Enterprise.
   if (isLeadership) {
     items.push({
       to: '/platform-chat', icon: Headphones, color: 'bg-purple-100 text-purple-700',
-      title: 'Leadership Chat', desc: 'Cross-centre conversation with other owners.',
+      title: 'Management Chat', desc: 'Centre-level conversation with your admins and Enterprise.',
     });
   }
   // Notifications — personal preferences (email, push, etc.).

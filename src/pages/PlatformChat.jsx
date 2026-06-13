@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { collection, addDoc, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -12,40 +13,37 @@ import UserProfileModal from '../components/UserProfileModal';
 const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2 };
 
 /**
- * Leadership Chat — two scopes, one page.
+ * Two separate chat surfaces sharing one page, selected by URL:
  *
- *   • Centre Chat  — per-centre management space for admin + owner +
- *                    Enterprise. Each centre has its own thread.
- *                    Backed by the `centerLeadership` collection.
+ *   • /platform-chat              → Management Chat (per-centre)
+ *                                   `centerLeadership` collection.
+ *                                   Visible to admin + owner + AA +
+ *                                   Enterprise of the active centre.
  *
- *   • Owners Chat  — cross-centre peer space for owner + Enterprise
- *                    only. Backed by the existing `platformChat`
- *                    collection (semantically narrowed via Firestore
- *                    rules to drop admin access).
+ *   • /platform-chat?view=owners  → Owner Chat (cross-centre)
+ *                                   `platformChat` collection.
+ *                                   Visible to owners + Enterprise only.
  *
- * Visibility:
- *   admin               → only the Centre Chat tab (no toggle shown)
- *   owner / Enterprise  → both tabs, swap via the toggle at the top
- *
- * The route stays /platform-chat for back-compat; the page title and
- * sidebar label read "Leadership Chat".
+ * No tab switcher — each URL renders one chat. Navigate between them
+ * via the /chats hub. The route stays /platform-chat for back-compat.
  */
 
 export default function PlatformChat() {
   const { profile, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin } = useAuth();
-  // Centre Leadership chat — admin, owner, AA, Enterprise.
+  const [searchParams] = useSearchParams();
+  // Management chat — admin, owner, AA, Enterprise.
   const canSeeCentre = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
-  // Owners Chat — strictly owners + Enterprise. AA is intentionally
+  // Owner Chat — strictly owners + Enterprise. AA is intentionally
   // excluded here even though they have owner-level access elsewhere.
   const canSeeOwners = isSuperAdmin || isOwner;
 
-  // Default to Centre Chat. If a user somehow lands in 'owners' but
-  // shouldn't see it (their role changed mid-session), fall back.
-  const [activeTab, setActiveTab] = useState('centre');
-  useEffect(() => {
-    if (activeTab === 'owners' && !canSeeOwners) setActiveTab('centre');
-    if (activeTab === 'centre' && !canSeeCentre && canSeeOwners) setActiveTab('owners');
-  }, [activeTab, canSeeOwners, canSeeCentre]);
+  // URL drives the view. `?view=owners` → Owner Chat; otherwise →
+  // Management Chat. Fall back to whichever the user can actually see.
+  const urlView = searchParams.get('view');
+  const requestedOwners = urlView === 'owners';
+  const activeTab = (requestedOwners && canSeeOwners)
+    ? 'owners'
+    : (canSeeCentre ? 'centre' : (canSeeOwners ? 'owners' : 'centre'));
 
   const [centreMessages, setCentreMessages] = useState([]);
   const [ownersMessages, setOwnersMessages] = useState([]);
@@ -186,20 +184,18 @@ export default function PlatformChat() {
       <div className="mx-auto max-w-md text-center py-16">
         <ShieldAlert size={36} className="mx-auto text-gray-300 mb-3" />
         <h2 className="text-lg font-bold text-gray-800 mb-1">Not authorized</h2>
-        <p className="text-sm text-gray-500">Leadership Chat is for admins, owners, and Enterprise only.</p>
+        <p className="text-sm text-gray-500">This chat is for admins, owners, and Enterprise only.</p>
       </div>
     );
   }
 
-  // Tab visibility — admins only see Centre; owner/Enterprise see both.
-  const showTabs = canSeeOwners; // if you can see owners chat, you can swap
-
+  const pageTitle = activeTab === 'centre' ? 'Management Chat' : 'Owner Chat';
   const tabDescription = activeTab === 'centre'
     ? 'Centre-level conversation — admins, owners, and Enterprise for this centre.'
-    : 'Cross-centre peer space — owners and Enterprise across every centre.';
+    : 'Cross-centre channel for every centre owner and Enterprise across the platform.';
 
   const composerPlaceholder = activeTab === 'centre'
-    ? 'Message your centre leadership…'
+    ? 'Message your centre management…'
     : 'Talk to your fellow centre owners…';
 
   return (
@@ -208,36 +204,10 @@ export default function PlatformChat() {
         <div className="mb-4 flex items-center gap-3">
           <div className="rounded-lg bg-purple-100 p-2 text-purple-600"><MessageSquare size={22} /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Leadership Chat</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{pageTitle}</h1>
             <p className="text-sm text-gray-500">{tabDescription}</p>
           </div>
         </div>
-
-        {/* Tab switcher — only rendered for users who can see both. */}
-        {showTabs && (
-          <div className="mb-3 inline-flex rounded-xl bg-gray-100 p-1 self-start">
-            <button
-              onClick={() => setActiveTab('centre')}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                activeTab === 'centre'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Building2 size={14} /> Centre Chat
-            </button>
-            <button
-              onClick={() => setActiveTab('owners')}
-              className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${
-                activeTab === 'owners'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Globe size={14} /> Owners Chat
-            </button>
-          </div>
-        )}
 
         <div className="flex-1 overflow-y-auto rounded-xl border bg-white shadow-sm">
           <div className="p-4 space-y-4">
@@ -246,7 +216,7 @@ export default function PlatformChat() {
                 <MessageSquare size={40} className="mx-auto mb-3 text-gray-300" />
                 <p className="text-gray-500">
                   {activeTab === 'centre'
-                    ? 'No messages yet. Kick off the conversation with your centre leadership.'
+                    ? 'No messages yet. Kick off the conversation with your centre management.'
                     : 'No messages yet. Say hi to your fellow centre owners.'}
                 </p>
               </div>
