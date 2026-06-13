@@ -71,7 +71,7 @@ export default function PublicBook() {
     (async () => {
       setLoading(true); setError('');
       try {
-        const r = await fetch(`/api/intakes/availability?centerId=${encodeURIComponent(centerId)}&weekStart=${ymdLocal(weekStart)}`);
+        const r = await fetch(`/api/intakes?centerId=${encodeURIComponent(centerId)}&weekStart=${ymdLocal(weekStart)}`);
         const body = await r.json();
         if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`);
         if (!cancelled) setData(body);
@@ -277,7 +277,7 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
     e.preventDefault();
     setError(''); setSubmitting(true);
     try {
-      const r = await fetch('/api/intakes/create', {
+      const r = await fetch('/api/intakes', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
