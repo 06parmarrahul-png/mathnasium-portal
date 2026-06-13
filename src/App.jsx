@@ -27,6 +27,8 @@ import Landing from './pages/Landing';
 import Connectors from './pages/Connectors';
 import ChatsHub from './pages/Chats';
 import ApptotoSchedule from './pages/ApptotoSchedule';
+import PublicBook from './pages/PublicBook';
+import IntakeManagement from './pages/IntakeManagement';
 import { useAuth } from './contexts/AuthContext';
 
 // Root URL ("/") is dual-purpose:
@@ -80,6 +82,9 @@ function AppRoutes() {
       <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
       <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
       <Route path="/apptoto" element={<ProtectedRoute><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
+      {/* Public, NO auth — parents land here from marketing links. */}
+      <Route path="/book/:centerId" element={<PublicBook />} />
+      <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

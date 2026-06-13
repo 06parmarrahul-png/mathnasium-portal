@@ -81,6 +81,22 @@
         { "fieldPath": "centerIds", "arrayConfig": "CONTAINS" },
         { "fieldPath": "approved",  "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "centerIntakes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centerId", "order": "ASCENDING" },
+        { "fieldPath": "slot",     "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "centerIntakes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "centerId", "order": "ASCENDING" },
+        { "fieldPath": "slot",     "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

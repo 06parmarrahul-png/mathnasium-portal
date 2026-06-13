@@ -10,7 +10,7 @@ import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
-  CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles,
+  CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -169,6 +169,7 @@ export default function Layout({ children }) {
   const insights = [];
   if (isSuperAdmin || isOwner || isAdminAssistant) {
     insights.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
+    insights.push({ to: '/intakes',          label: 'Intakes',          icon: CalendarCheck });
   }
 
   // COMMUNICATE — chat, announcements, personal notification prefs.

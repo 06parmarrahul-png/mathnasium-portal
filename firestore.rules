@@ -94,6 +94,18 @@ service cloud.firestore {
       }
     }
 
+    // ─── Centre intakes (native booking flow) ──────────────────────────
+    // Parent-submitted intake bookings — contain PII (email, phone, child
+    // name, grade). Created server-side via /api/intakes/create with no
+    // auth (parents don't have accounts). Stored as a TOP-LEVEL collection
+    // (rather than under /centers/{id}/intakes) deliberately, so the
+    // recursive {document=**} grant for signed-in users doesn't expose
+    // parent contact info to every staff account. Each doc carries a
+    // `centerId` field for filtering.
+    match /centerIntakes/{intakeId} {
+      allow read, write: if isOwnerLike() || isSuperAdmin();
+    }
+
     // ─── Centre integrations (secrets) ─────────────────────────────────
     // Top-level collection deliberately OUTSIDE /centers/{centerId}/* so
     // it isn't caught by the recursive {document=**} grant above, which

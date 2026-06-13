@@ -1,0 +1,183 @@
+// Shared helpers for the native intake booking flow. Used by:
+//   - api/intakes/availability.js  (public slot grid)
+//   - api/intakes/create.js        (server-side double-check before save)
+//
+// Pure functions, no Firestore reads — caller passes settings + booked
+// intakes and we return a slot list.
+
+export const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+// Default availability that mirrors the Mathnasium Langley Apptoto setup
+// the user shared — owners can override per-centre via the booking
+// settings UI. Times are local to the centre's TZ.
+export const DEFAULT_INTAKE_SETTINGS = {
+  enabled: false,
+  slotDurationMin: 60,
+  slotIntervalMin: 30,
+  advanceNoticeHrs: 24,   // can't book < 24h out
+  maxAdvanceDays: 60,
+  timezone: 'America/Vancouver',
+  // Per-weekday windows. Empty array = closed that day.
+  availability: {
+    Sunday:    [],
+    Monday:    [{ start: '15:00', end: '17:30' }],
+    Tuesday:   [{ start: '15:00', end: '17:30' }],
+    Wednesday: [{ start: '15:00', end: '17:30' }],
+    Thursday:  [{ start: '15:00', end: '17:30' }],
+    Friday:    [{ start: '15:00', end: '17:30' }],
+    Saturday:  [{ start: '10:00', end: '12:30' }],
+  },
+  // Marketing copy on the public booking page. Centre-overridable.
+  headline:    'Book Your Free Math Skills Assessment Today!',
+  subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
+};
+
+// Convert "HH:MM" → minutes since midnight.
+const hmToMin = (hm) => {
+  const [h, m] = (hm || '0:0').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+};
+
+// YYYY-MM-DD → Date at midnight UTC (we treat ISO strings as wall-clock
+// for the centre's TZ; this is "good enough" for week-grid display —
+// we're not crossing DST boundaries within a single booking flow).
+const ymdToDate = (ymd) => {
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
+};
+
+// Format a Date as YYYY-MM-DD using UTC components.
+const dateToYmd = (d) => {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${dd}`;
+};
+
+// Build ISO datetime from YYYY-MM-DD + minutes-since-midnight. We emit
+// without a TZ suffix because the consumer (the front-end grid) only
+// uses the local wall-clock — the actual confirmed booking re-derives
+// a TZ-aware moment when it lands in Firestore.
+const buildISO = (ymd, minutes) => {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const m = String(minutes % 60).padStart(2, '0');
+  return `${ymd}T${h}:${m}:00`;
+};
+
+// Enumerate all candidate slot start times for one day given the centre's
+// windows. Returns minute-since-midnight integers.
+function slotStartsForDay(windows, slotDurationMin, slotIntervalMin) {
+  const starts = [];
+  for (const w of (windows || [])) {
+    const startMin = hmToMin(w.start);
+    const endMin   = hmToMin(w.end);
+    // Last allowed start time = window end - slot duration.
+    const last = endMin - slotDurationMin;
+    for (let t = startMin; t <= last; t += slotIntervalMin) starts.push(t);
+  }
+  return starts;
+}
+
+// Decide whether a candidate slot collides with any existing booked
+// intake. `bookedSlots` is an array of { startISO, durationMin }.
+function isSlotTaken(candidateISO, slotDurationMin, bookedSlots) {
+  const candStart = Date.parse(candidateISO);
+  const candEnd   = candStart + slotDurationMin * 60 * 1000;
+  for (const b of bookedSlots) {
+    const bStart = Date.parse(b.startISO);
+    const bEnd   = bStart + (b.durationMin || slotDurationMin) * 60 * 1000;
+    if (candStart < bEnd && bStart < candEnd) return true; // overlap
+  }
+  return false;
+}
+
+/**
+ * Compute the slot grid for a 7-day window starting at `weekStartYMD`.
+ *
+ * @param {string} weekStartYMD - YYYY-MM-DD (Sunday)
+ * @param {object} settings    - intake settings (see DEFAULT_INTAKE_SETTINGS)
+ * @param {Array}  bookedSlots - existing bookings: [{ startISO, durationMin, status }]
+ * @returns {Array} day rows: [{ date: 'YYYY-MM-DD', weekday, slots: [{ startISO, taken, label }] }]
+ */
+export function computeWeekSlots(weekStartYMD, settings, bookedSlots = []) {
+  const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}), availability: { ...DEFAULT_INTAKE_SETTINGS.availability, ...((settings || {}).availability || {}) } };
+  const slotDur  = s.slotDurationMin  || 60;
+  const slotInt  = s.slotIntervalMin  || 30;
+  const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
+  const maxFuture = Date.now() + (s.maxAdvanceDays || 60) * 24 * 3600 * 1000;
+  const nowMs    = Date.now() + noticeMs;
+
+  // Ignore cancelled bookings so the slot reopens.
+  const active = bookedSlots.filter(b => b.status !== 'cancelled');
+
+  const out = [];
+  const start = ymdToDate(weekStartYMD);
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setUTCDate(d.getUTCDate() + i);
+    const ymd = dateToYmd(d);
+    const weekday = WEEKDAYS[d.getUTCDay()];
+    const windows = s.availability[weekday] || [];
+    const slots = [];
+    for (const minutes of slotStartsForDay(windows, slotDur, slotInt)) {
+      const iso = buildISO(ymd, minutes);
+      const tMs = Date.parse(iso);
+      const inPast    = tMs < nowMs;
+      const tooFuture = tMs > maxFuture;
+      const taken     = isSlotTaken(iso, slotDur, active);
+      slots.push({
+        startISO: iso,
+        label:    formatTimeLabel(minutes),
+        taken,
+        inPast,
+        tooFuture,
+        available: !taken && !inPast && !tooFuture,
+      });
+    }
+    out.push({ date: ymd, weekday, slots });
+  }
+  return out;
+}
+
+function formatTimeLabel(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  const ampm = h >= 12 ? 'pm' : 'am';
+  const h12 = ((h + 11) % 12) + 1;
+  return m === 0 ? `${h12}:00${ampm}` : `${h12}:${String(m).padStart(2,'0')}${ampm}`;
+}
+
+// Validate that a candidate slot the parent picked is still bookable —
+// runs server-side before we insert the doc so a stale browser tab can't
+// race to double-book.
+export function validateSlot({ slotISO, settings, bookedSlots }) {
+  const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
+  const slotDur  = s.slotDurationMin  || 60;
+  const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
+  const maxFuture = Date.now() + (s.maxAdvanceDays || 60) * 24 * 3600 * 1000;
+
+  const tMs = Date.parse(slotISO);
+  if (isNaN(tMs))          return { ok: false, error: 'Invalid slot time.' };
+  if (tMs < Date.now() + noticeMs) return { ok: false, error: 'Slot is too close to now (less than the centre\'s advance-notice window).' };
+  if (tMs > maxFuture)     return { ok: false, error: 'Slot is too far in the future.' };
+
+  // Day-of-week window check.
+  const d = new Date(tMs);
+  const weekday = WEEKDAYS[d.getUTCDay()];
+  const windows = (s.availability || {})[weekday] || [];
+  if (windows.length === 0) return { ok: false, error: 'The centre is closed that day.' };
+  const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const inAnyWindow = windows.some(w => {
+    const ws = hmToMin(w.start); const we = hmToMin(w.end);
+    return minutes >= ws && minutes + slotDur <= we;
+  });
+  if (!inAnyWindow) return { ok: false, error: 'Slot is outside the centre\'s booking window.' };
+
+  // Collision check.
+  const active = (bookedSlots || []).filter(b => b.status !== 'cancelled');
+  if (isSlotTaken(slotISO, slotDur, active)) {
+    return { ok: false, error: 'That slot was just booked by someone else. Please pick another time.' };
+  }
+
+  return { ok: true };
+}

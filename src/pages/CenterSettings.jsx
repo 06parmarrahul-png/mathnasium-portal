@@ -5,7 +5,8 @@ import CenterSettingsTab from '../components/CenterSettingsTab';
 import AppearanceEditor from '../components/AppearanceEditor';
 import HolidaysEditor from '../components/HolidaysEditor';
 import Connectors from './Connectors';
-import { ShieldAlert, Settings, CalendarX, Palette, Plug } from 'lucide-react';
+import IntakeBookingSettings from '../components/IntakeBookingSettings';
+import { ShieldAlert, Settings, CalendarX, Palette, Plug, CalendarCheck } from 'lucide-react';
 
 /**
  * Standalone Centre Settings page with tabs.
@@ -27,6 +28,7 @@ import { ShieldAlert, Settings, CalendarX, Palette, Plug } from 'lucide-react';
 
 const TABS = [
   { key: 'general',     label: 'General',     icon: Settings },
+  { key: 'booking',     label: 'Booking',     icon: CalendarCheck },
   { key: 'holidays',    label: 'Holidays',    icon: CalendarX },
   { key: 'colours',     label: 'Colours',     icon: Palette  },
   { key: 'connections', label: 'Connections', icon: Plug     },
@@ -113,6 +115,10 @@ export default function CenterSettings() {
           centerConfig={centerConfig}
           activeCenterName={centerConfig?.name || activeCenterId}
         />
+      )}
+
+      {tab === 'booking' && (
+        <IntakeBookingSettings activeCenterId={activeCenterId} centerConfig={centerConfig} />
       )}
 
       {tab === 'connections' && (
