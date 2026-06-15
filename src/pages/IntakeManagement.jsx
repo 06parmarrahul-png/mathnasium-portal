@@ -208,6 +208,9 @@ function Row({ item, onSetStatus }) {
         <div className="flex items-center gap-2 flex-wrap">
           <p className="font-semibold text-gray-900 text-sm">{item.childName}</p>
           <span className="text-xs text-gray-500">· {item.childGrade}</span>
+          {item.childSchool && (
+            <span className="text-xs text-gray-500">· {item.childSchool}</span>
+          )}
           <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${s.cls}`}>
             {s.label}
           </span>

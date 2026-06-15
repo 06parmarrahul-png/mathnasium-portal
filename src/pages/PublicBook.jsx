@@ -288,6 +288,7 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
   const [guardianName, setGuardianName] = useState('');
   const [childName, setChildName] = useState('');
   const [childGrade, setChildGrade] = useState('');
+  const [childSchool, setChildSchool] = useState('');
   const [smsOptIn, setSmsOptIn] = useState(false);
   const [notes, setNotes] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -304,7 +305,7 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           centerId, slot, email, phone, guardianName, childName, childGrade,
-          smsOptIn, notes,
+          childSchool, smsOptIn, notes,
         }),
       });
       const body = await r.json();
@@ -356,6 +357,11 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
           <option value="">Select grade…</option>
           {GRADE_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
+      </Field>
+      <Field label="Child's School (optional)">
+        <input type="text" value={childSchool} onChange={e => setChildSchool(e.target.value)}
+          placeholder="e.g. Langley Fundamental Elementary"
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
       </Field>
       <Field label="Anything we should know? (optional)">
         <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={2}

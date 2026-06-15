@@ -108,7 +108,7 @@ async function handleAvailability(req, res) {
 async function handleCreate(req, res) {
   const {
     centerId, slot, email, phone, guardianName, childName, childGrade,
-    smsOptIn, notes,
+    childSchool, smsOptIn, notes,
   } = req.body || {};
 
   if (!centerId)              return res.status(400).json({ ok: false, error: 'centerId required' });
@@ -157,6 +157,7 @@ async function handleCreate(req, res) {
     guardianName: guardianName.trim(),
     childName:    childName.trim(),
     childGrade:   String(childGrade).trim(),
+    childSchool:  truthy(childSchool) ? childSchool.trim() : '',
     smsOptIn:     !!smsOptIn,
     notes:        truthy(notes) ? notes.trim() : '',
     status:       'scheduled',

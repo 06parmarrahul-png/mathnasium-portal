@@ -29,6 +29,7 @@ import {
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
+import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
 import {
@@ -6089,6 +6090,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
         </div>
       </div>
+
+      {/* Native intake analytics — reads centerIntakes. Shows grade +
+          school distribution so the owner can see who's coming through
+          the public booking page. */}
+      <IntakeAnalyticsCard />
 
       {/* Apptoto appointments — live from the connected Apptoto account.
           Self-contained component: handles "not connected" CTA, loading,
