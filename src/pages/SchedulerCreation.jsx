@@ -19,7 +19,7 @@ import { auth, db } from '../firebase';
 import {
   ClipboardList, Settings, CalendarCheck, BarChart3, Printer,
   Upload, Plus, Trash2, AlertTriangle, RefreshCw,
-  Sheet, Copy, CheckCircle2, Link2Off,
+  Sheet, Copy, CheckCircle2, Link2Off, Clipboard, ClipboardCheck, X,
 } from 'lucide-react';
 import {
   getSettings, saveSettings,
@@ -158,6 +158,12 @@ function TodayTab({ centerId }) {
   // the per-slot "+ add" dropdown so staff doesn't have to maintain a
   // separate text list.
   const [staffUsers, setStaffUsers] = useState([]);
+  // Instructor clipboard — when a row's "copy" button is hit, we stash
+  // { names: [...], from: 'HS|14:00' } here so any other row (either side)
+  // can paste it. Lives in component state only — clears on refresh / day
+  // change so a stale yesterday-clipboard can't surprise anyone tomorrow.
+  const [instructorClipboard, setInstructorClipboard] = useState(null);
+  useEffect(() => setInstructorClipboard(null), [date]);
 
   // Subscribe to the centre's user roster. We include instructors and
   // admin assistants since both get scheduled to slots in practice.
@@ -312,6 +318,26 @@ function TodayTab({ centerId }) {
         <UnknownBanner data={data} centerId={centerId} onFix={loadSchedule} />
       )}
 
+      {/* Floating clipboard chip — appears when something is copied. Lets
+          the user see at a glance what's pending and clear it without
+          having to find the source row. */}
+      {instructorClipboard && (
+        <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1 text-xs text-blue-800 border border-blue-200 print:hidden">
+          <ClipboardCheck size={12} />
+          <span>
+            Copied {instructorClipboard.names.length} instructor{instructorClipboard.names.length === 1 ? '' : 's'} from {instructorClipboard.from}
+            {instructorClipboard.names.length > 0 && (
+              <> · {instructorClipboard.names.join(', ')}</>
+            )}
+          </span>
+          <button onClick={() => setInstructorClipboard(null)}
+            className="ml-1 inline-flex items-center rounded-full hover:bg-blue-100 p-0.5"
+            title="Clear clipboard">
+            <X size={12} />
+          </button>
+        </div>
+      )}
+
       {data && data.totals.all > 0 && (
         // On-screen layout: always vertically stacked, Elementary on top,
         // High School below. Each side gets the full viewport width so the
@@ -324,13 +350,15 @@ function TodayTab({ centerId }) {
           {(!printOnly || printOnly === 'EM') && (
             <div>
               <SideTable side="EM" data={data} centerId={centerId} date={date}
-                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
+                clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS') && (
             <div>
               <SideTable side="HS" data={data} centerId={centerId} date={date}
-                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+                checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
+                clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
             </div>
           )}
         </div>
@@ -403,9 +431,11 @@ function TodayTab({ centerId }) {
   );
 }
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
+  const otherSide = side === 'HS' ? 'EM' : 'HS';
+  const otherTitle = otherSide === 'HS' ? 'HS staff' : 'EM staff';
   const dayLabel = (() => {
     try {
       return new Date(date + 'T12:00').toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
@@ -413,7 +443,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   })();
 
   return (
-    <section className="rounded-lg border border-gray-200 bg-white overflow-x-auto overflow-y-hidden print:overflow-visible">
+    <section className="rounded-lg border border-gray-200 bg-white overflow-hidden print:overflow-visible">
       {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
       <div className="hidden print:block px-3 pt-2 pb-1 border-b border-black">
         <div className="text-base font-bold">{dayLabel} · {title}</div>
@@ -423,15 +453,30 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
         <span className="font-semibold">{title}</span>
         <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
       </div>
-      {/* HS has 6 columns; switching to table-auto lets each one size to
-          its widest name (no letter-by-letter wrap). min-w ensures the
-          full table renders, and the section's overflow-x-auto means a
-          too-narrow viewport gets a horizontal scrollbar instead of
-          mangled text. EM stays table-fixed since 5 columns fit fine. */}
-      <table className={`w-full text-sm ${side === 'HS' ? 'table-auto min-w-[760px]' : 'table-fixed'}`}>
+      {/* Switched both sides to table-fixed + w-full so every column sizes
+          to a fraction of the section's width instead of growing to fit
+          its widest name. Combined with white-space:normal on student
+          names (long names wrap inside the cell), this guarantees zero
+          horizontal scroll on any viewport ≥ 1024 px. */}
+      <table className="w-full text-sm table-fixed">
+        <colgroup>
+          <col className="w-14" />
+          {/* Student columns expand to fill remaining space; widths are
+              relative thanks to table-fixed. HS gets 3 student columns,
+              EM gets 2. */}
+          <col />
+          <col />
+          {side === 'HS' && <col />}
+          <col className="w-8" />
+          <col className="w-8" />
+          <col className="w-32" />
+          {/* Cross-side instructor column — print:hidden because each
+              printed sheet covers one side only. */}
+          <col className="w-28 print:hidden" />
+        </colgroup>
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
-            <th className="px-1 py-1 text-left w-14 border-b border-gray-300">Time</th>
+            <th className="px-1 py-1 text-left border-b border-gray-300">Time</th>
             <th className="px-1 py-1 text-left border-b border-gray-300">
               On the hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
             </th>
@@ -444,23 +489,26 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               </th>
             )}
             {/* Own-side count: labeled with the side name so a printout
-                read out of context is unambiguous (HS sheet says "HS",
-                EM sheet says "EM"). Cross-side count follows for
-                at-a-glance awareness of what the other room is doing. */}
-            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">
+                read out of context is unambiguous. Cross-side count follows
+                for at-a-glance awareness of what the other room is doing. */}
+            <th className="px-1 py-1 text-center border-l border-gray-300 border-b border-gray-300">
               {side === 'HS' ? 'HS' : 'EM'}
             </th>
-            <th className="px-1 py-1 text-center w-8 border-l border-gray-300 border-b border-gray-300">
+            <th className="px-1 py-1 text-center border-l border-gray-300 border-b border-gray-300">
               {side === 'HS' ? 'EM' : 'HS'}
             </th>
-            <th className="px-1 py-1 text-left w-28 border-l border-gray-300 border-b border-gray-300">Instructors</th>
+            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300">Instructors</th>
+            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300 print:hidden">
+              {otherTitle}
+            </th>
           </tr>
         </thead>
         <tbody>
           {data.slots.map((row, i) => (
             <SlotRow key={row.slot} row={row} side={side} alt={i % 2 === 1}
               centerId={centerId} date={date}
-              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
+              checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
+              clipboard={clipboard} setClipboard={setClipboard} />
           ))}
         </tbody>
       </table>
@@ -468,7 +516,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard }) {
   const rawOnHour = row.students[side].onHour;
   const rawHalfHour = row.students[side].halfHour;
   // HS only: 1-hour students stay in their start-time column; everyone
@@ -481,7 +529,15 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const count = row.counts[side];
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
+  const otherSide = side === 'HS' ? 'EM' : 'HS';
+  // Read-only view of who the OTHER side has staffed at the same time
+  // slot. Lets a HS shift lead see at a glance that EM is covered (and
+  // vice versa) without flipping back and forth.
+  const otherInstructors = assignments[`${otherSide}|${row.slot}`] || [];
   const understaffed = instructors.length < need;
+  const slotLabel = `${side} ${row.label.split('–')[0]}`;
+  const isCopySource = clipboard && clipboard.from === slotLabel;
+  const canPaste = clipboard && clipboard.from !== slotLabel;
 
   const handleStatus = async (sid) => {
     const cur = checkIns[sid]?.status || '';
@@ -511,6 +567,22 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
     try { await setInstructorAssignment(centerId, date, side, row.slot, instructors.filter(n => n !== name)); }
     catch (e) { toast.error(e.message); }
   };
+  const handleCopy = () => {
+    if (instructors.length === 0) {
+      toast.error('Nothing to copy — this slot has no instructors yet.');
+      return;
+    }
+    setClipboard({ names: [...instructors], from: slotLabel });
+  };
+  // Paste REPLACES the row's instructors with the clipboard contents.
+  // Replace (not append) matches the mental model — "copy 3pm to 4pm"
+  // means "make 4pm look like 3pm", not "add 3pm's people to 4pm's".
+  const handlePaste = async () => {
+    if (!clipboard) return;
+    try {
+      await setInstructorAssignment(centerId, date, side, row.slot, [...clipboard.names]);
+    } catch (e) { toast.error(e.message); }
+  };
 
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
@@ -519,7 +591,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
       </td>
       {/* On the hour column */}
-      <td className="px-1 py-1 align-top border-b border-gray-300">
+      <td className="px-1 py-1 align-top border-b border-gray-300 break-words">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
@@ -527,7 +599,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       {/* Half-hour column with thicker divider on the left — matches the
           header divider and gives clear column separation. Slight top
           padding so half-hour rows visually offset down. */}
-      <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 pt-3">
+      <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 pt-3 break-words">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
@@ -536,7 +608,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           half-hour column. Holds anyone in this row's slot whose session
           is longer than 60 min, regardless of start time. */}
       {side === 'HS' && (
-        <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300">
+        <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 break-words">
           <StudentList students={longHour} checkIns={checkIns}
             centerId={centerId} date={date} side={side}
             onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
@@ -547,10 +619,10 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       </td>
       {/* Other-side count: small, gray — informational, not the decision number. */}
       <td className="px-1 py-1 align-top text-center text-xs font-semibold text-gray-500 border-l border-gray-300 border-b border-gray-300">
-        {row.counts[side === 'HS' ? 'EM' : 'HS']}
+        {row.counts[otherSide]}
       </td>
       <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
-        <div className="flex flex-wrap gap-0.5">
+        <div className="flex flex-wrap items-center gap-0.5">
           {instructors.map(n => (
             <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-1.5 py-0 text-[10px] hover:bg-red-100"
               onClick={() => handleRemoveInstructor(n)} title="Click to remove">
@@ -570,10 +642,45 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
             ))}
             {pool.length === 0 && <option value="" disabled>Set pool in Setup</option>}
           </select>
+          {/* Copy & paste buttons. Copy is always visible (no-op'd if the
+              row is empty). Paste shows only when something is on the
+              clipboard from a different row. Tiny, neutral styling so
+              they don't compete visually with the chips. */}
+          <button onClick={handleCopy}
+            title={isCopySource ? 'This row is on the clipboard' : 'Copy these instructors'}
+            className={`inline-flex items-center rounded-full border border-dashed px-1 py-0 text-[10px] print:hidden ${
+              isCopySource
+                ? 'border-blue-400 bg-blue-50 text-blue-700'
+                : 'border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600'
+            }`}>
+            {isCopySource ? <ClipboardCheck size={10} /> : <Copy size={10} />}
+          </button>
+          {canPaste && (
+            <button onClick={handlePaste}
+              title={`Paste ${clipboard.names.length} from ${clipboard.from}`}
+              className="inline-flex items-center rounded-full border border-dashed border-blue-300 bg-blue-50 px-1 py-0 text-[10px] text-blue-700 hover:bg-blue-100 print:hidden">
+              <Clipboard size={10} />
+            </button>
+          )}
         </div>
         <div className={`mt-0.5 text-[9px] ${understaffed ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
           need {need} · have {instructors.length}
         </div>
+      </td>
+      {/* Cross-side instructor column — read-only, intentionally low
+          contrast. Print-hidden because each printed sheet is one side. */}
+      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300 print:hidden">
+        {otherInstructors.length === 0 ? (
+          <span className="text-[10px] text-gray-300">—</span>
+        ) : (
+          <div className="flex flex-wrap gap-0.5">
+            {otherInstructors.map(n => (
+              <span key={n} className="rounded-full bg-gray-50 px-1.5 py-0 text-[10px] text-gray-500 border border-gray-200">
+                {n}
+              </span>
+            ))}
+          </div>
+        )}
       </td>
     </tr>
   );
@@ -613,10 +720,11 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
-      {/* No flex-1 — the name should only take its natural width so the
-          (A) / (?) badges sit right next to it, not at the far right edge.
-          The tag/desk inputs keep their ml-auto to stay pinned right. */}
-      <span className="cursor-pointer hover:underline whitespace-nowrap leading-tight"
+      {/* On screen: allow long names to wrap so a narrow column never
+          forces a horizontal scrollbar. On print: keep one-line names
+          (paper has more horizontal room thanks to the zoom shrink and
+          we want each row scannable at a glance). */}
+      <span className="cursor-pointer hover:underline leading-tight break-words print:whitespace-nowrap"
         onClick={() => onStatusClick(s.id)}
         onContextMenu={e => onStatusMenu(e, s.id)}
         title={s.aliasedFrom ? `Booked under: ${s.aliasedFrom}` : ''}>
