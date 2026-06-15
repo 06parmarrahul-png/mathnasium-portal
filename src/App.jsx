@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
@@ -5,31 +6,37 @@ import ErrorBoundary from './components/ErrorBoundary';
 import Layout from './components/Layout';
 import NotifyHost from './components/NotifyHost';
 import OwnerAssistant from './components/OwnerAssistant';
+// Entry-path routes stay eager — every first visit hits one of these and we
+// don't want a Suspense flash on the front door.
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Home from './pages/Home';
-import Announcements from './pages/Announcements';
-import Schedule from './pages/Schedule';
-import ShiftBoard from './pages/ShiftBoard';
-import Chat from './pages/Chat';
-import Admin from './pages/Admin';
-import SuperAdmin from './pages/SuperAdmin';
-import ManageRoles from './pages/ManageRoles';
-import NotificationPreferences from './pages/NotificationPreferences';
-import PlatformRevenue from './pages/PlatformRevenue';
-import PlatformChat from './pages/PlatformChat';
-import CenterAnalytics from './pages/CenterAnalytics';
-import CenterSettings from './pages/CenterSettings';
-import AuditLogs from './pages/AuditLogs';
-import AccountDetails from './pages/AccountDetails';
-import SchedulerCreation from './pages/SchedulerCreation';
 import Landing from './pages/Landing';
-import Connectors from './pages/Connectors';
-import ChatsHub from './pages/Chats';
-import ApptotoSchedule from './pages/ApptotoSchedule';
-import PublicBook from './pages/PublicBook';
-import IntakeManagement from './pages/IntakeManagement';
 import { useAuth } from './contexts/AuthContext';
+
+// All other routes are code-split. They're behind ProtectedRoute or only
+// reached after the user navigates, so paying their JS cost on first paint
+// is wasted bytes. Each lazy() call becomes its own chunk in the build.
+const Announcements             = lazy(() => import('./pages/Announcements'));
+const Schedule                  = lazy(() => import('./pages/Schedule'));
+const ShiftBoard                = lazy(() => import('./pages/ShiftBoard'));
+const Chat                      = lazy(() => import('./pages/Chat'));
+const Admin                     = lazy(() => import('./pages/Admin'));
+const SuperAdmin                = lazy(() => import('./pages/SuperAdmin'));
+const ManageRoles               = lazy(() => import('./pages/ManageRoles'));
+const NotificationPreferences   = lazy(() => import('./pages/NotificationPreferences'));
+const PlatformRevenue           = lazy(() => import('./pages/PlatformRevenue'));
+const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
+const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
+const CenterSettings            = lazy(() => import('./pages/CenterSettings'));
+const AuditLogs                 = lazy(() => import('./pages/AuditLogs'));
+const AccountDetails            = lazy(() => import('./pages/AccountDetails'));
+const SchedulerCreation         = lazy(() => import('./pages/SchedulerCreation'));
+const Connectors                = lazy(() => import('./pages/Connectors'));
+const ChatsHub                  = lazy(() => import('./pages/Chats'));
+const ApptotoSchedule           = lazy(() => import('./pages/ApptotoSchedule'));
+const PublicBook                = lazy(() => import('./pages/PublicBook'));
+const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -58,35 +65,52 @@ function NotFound() {
   );
 }
 
+// Fallback shown while a lazy-loaded route chunk is fetched. Intentionally
+// minimal — a brief, brand-coloured spinner is less jarring than a blank
+// flash, and most chunks load in under 200ms on a warm cache.
+function RouteFallback() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div
+        className="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-red-600"
+        role="status"
+        aria-label="Loading"
+      />
+    </div>
+  );
+}
+
 function AppRoutes() {
   return (
-    <Routes>
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
-      <Route path="/" element={<RootGate />} />
-      <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
-      <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
-      <Route path="/shift-board" element={<ProtectedRoute><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
-      <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
-      <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
-      <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
-      <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
-      <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
-      <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
-      <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
-      <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
-      <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
-      <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
-      <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
-      <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
-      <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
-      <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
-      <Route path="/apptoto" element={<ProtectedRoute><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
-      {/* Public, NO auth — parents land here from marketing links. */}
-      <Route path="/book/:centerId" element={<PublicBook />} />
-      <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
-      <Route path="*" element={<NotFound />} />
-    </Routes>
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/" element={<RootGate />} />
+        <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
+        <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
+        <Route path="/shift-board" element={<ProtectedRoute><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
+        <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
+        <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
+        <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
+        <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
+        <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
+        <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
+        <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
+        <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
+        <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
+        <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
+        <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
+        <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
+        <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
+        <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
+        <Route path="/apptoto" element={<ProtectedRoute><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
+        {/* Public, NO auth — parents land here from marketing links. */}
+        <Route path="/book/:centerId" element={<PublicBook />} />
+        <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
+        <Route path="*" element={<NotFound />} />
+      </Routes>
+    </Suspense>
   );
 }
 
