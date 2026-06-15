@@ -10,7 +10,7 @@
  *
  * Color choices (per Mathnasium Langley convention):
  *   Elementary — lime / yellow-green
- *   Highschool — teal
+ *   Highschool — cyan
  *   Online     — dark indigo (deep blue)
  */
 
@@ -34,15 +34,15 @@ export const SUB_ROLE_STYLES = {
   },
   Highschool: {
     label:        'Highschool',
-    pillBg:       'bg-teal-100',
-    pillText:     'text-teal-800',
-    pillBorder:   'border-teal-200',
-    dot:          'bg-teal-500',
-    blockBg:      'bg-teal-500',
+    pillBg:       'bg-cyan-100',
+    pillText:     'text-cyan-800',
+    pillBorder:   'border-cyan-200',
+    dot:          'bg-cyan-500',
+    blockBg:      'bg-cyan-500',
     blockText:    'text-white',
-    blockSubText: 'text-teal-100',
-    stripe:       'bg-teal-500',
-    hex:          '#14b8a6',
+    blockSubText: 'text-cyan-100',
+    stripe:       'bg-cyan-500',
+    hex:          '#06b6d4',
   },
   Online: {
     label:        'Online',

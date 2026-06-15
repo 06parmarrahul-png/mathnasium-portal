@@ -139,7 +139,7 @@ export const SHIFT_ASSIGNMENTS = [
 // Built-in assignment colors — the fallback when a center hasn't customized.
 export const DEFAULT_ASSIGNMENT_COLORS = {
   'Elementary Instructor': '#84cc16', // lime
-  'Highschool Instructor': '#14b8a6', // teal
+  'Highschool Instructor': '#06b6d4', // cyan
   'Online Instructor':     '#4338ca', // indigo
   'Lead Instructor':       '#9333ea', // purple
   'Host':                  '#2563eb', // blue

@@ -1299,7 +1299,7 @@ export default function Schedule() {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-5 py-2.5 border-b border-gray-100 bg-gray-50/50">
           {[
             { color: 'bg-lime-500',    label: 'Elementary' },
-            { color: 'bg-teal-500',    label: 'Highschool' },
+            { color: 'bg-cyan-500',    label: 'Highschool' },
             { color: 'bg-indigo-700',  label: 'Online Subject' },
             { color: 'bg-emerald-500', label: 'Available' },
             { color: 'bg-orange-400',  label: 'Open Shift' },
