@@ -4977,7 +4977,7 @@ export default function Admin() {
               <span className="rounded-full bg-yellow-100 px-2.5 py-1 font-medium text-yellow-700">
                 {timeOffRequests.filter(r => r.status === 'pending').length} pending
               </span>
-              <span className="rounded-full bg-green-100 px-2.5 py-1 font-medium text-green-700">
+              <span className="rounded-full bg-teal-100 px-2.5 py-1 font-medium text-teal-700">
                 {timeOffRequests.filter(r => r.status === 'approved').length} approved
               </span>
             </div>
@@ -4997,7 +4997,7 @@ export default function Admin() {
                 const sameDay    = req.startDate === req.endDate;
                 const statusColors = {
                   pending:  'bg-yellow-100 text-yellow-700',
-                  approved: 'bg-green-100 text-green-700',
+                  approved: 'bg-teal-100 text-teal-700',
                   denied:   'bg-red-100 text-red-600',
                 };
                 return (

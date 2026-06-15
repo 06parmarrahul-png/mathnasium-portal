@@ -283,9 +283,9 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
               {/* Time Off badge */}
               {hasTimeOff && (
                 timeOffStatus === 'approved' ? (
-                  <div className="rounded-xl bg-green-50 border border-green-200 p-3 flex items-center gap-2">
-                    <Check size={14} className="text-green-600 shrink-0" />
-                    <span className="text-xs font-semibold text-green-700">Time Off Approved ✓</span>
+                  <div className="rounded-xl bg-teal-50 border border-teal-200 p-3 flex items-center gap-2">
+                    <Check size={14} className="text-teal-600 shrink-0" />
+                    <span className="text-xs font-semibold text-teal-700">Time Off Approved ✓</span>
                   </div>
                 ) : (
                   <div className="rounded-xl bg-yellow-50 border border-yellow-200 p-3 flex items-center gap-2">
@@ -1304,7 +1304,7 @@ export default function Schedule() {
             { color: 'bg-emerald-500', label: 'Available' },
             { color: 'bg-orange-400',  label: 'Open Shift' },
             { color: 'bg-yellow-400',  label: 'Time Off (Pending)' },
-            { color: 'bg-green-500',   label: 'Time Off (Approved)' },
+            { color: 'bg-teal-500',    label: 'Time Off (Approved)' },
           ].map(item => (
             <span key={item.label} className="flex items-center gap-1.5 text-xs text-gray-500 font-medium">
               <span className={`w-2.5 h-2.5 rounded-sm inline-block ${item.color}`} />
@@ -1409,9 +1409,9 @@ export default function Schedule() {
                 </div>
               );
             } else if (state.type === 'timeoff') {
-              cellBg = state.approved ? 'bg-green-50/60 cursor-pointer' : 'bg-red-50/60 cursor-pointer';
+              cellBg = state.approved ? 'bg-teal-50/60 cursor-pointer' : 'bg-red-50/60 cursor-pointer';
               content = state.approved ? (
-                <div className="mt-1 rounded-lg bg-green-500 px-1.5 py-1 shadow-sm flex items-center gap-1">
+                <div className="mt-1 rounded-lg bg-teal-500 px-1.5 py-1 shadow-sm flex items-center gap-1">
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1.5 5l2.5 2.5 4.5-4.5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
                   <p className="text-white text-xs font-bold leading-tight">Approved</p>
                 </div>
@@ -1475,7 +1475,7 @@ export default function Schedule() {
 
         const statusConfig = {
           pending:  { label: 'Pending',  bg: 'bg-yellow-100', text: 'text-yellow-700', dot: 'bg-yellow-400' },
-          approved: { label: 'Approved', bg: 'bg-green-100',  text: 'text-green-700',  dot: 'bg-green-500' },
+          approved: { label: 'Approved', bg: 'bg-teal-100',   text: 'text-teal-700',   dot: 'bg-teal-500'  },
           denied:   { label: 'Denied',   bg: 'bg-red-100',    text: 'text-red-600',    dot: 'bg-red-400'   },
         };
 
