@@ -47,7 +47,10 @@ async function loadCentreContext(fs, centerId) {
       ...((config.intakeSettings || {}).availability || {}),
     },
   };
-  return { centre, settings };
+  // Surface instructional hours so the slot engine can default to them
+  // when the owner hasn't opted into a custom availability override.
+  const instructionalHours = config.instructionalHours || null;
+  return { centre, settings, instructionalHours };
 }
 
 // ── GET: availability grid ─────────────────────────────────────────────
@@ -59,7 +62,7 @@ async function handleAvailability(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ error: 'Centre not found' });
-  const { centre, settings } = ctx;
+  const { centre, settings, instructionalHours } = ctx;
 
   if (!settings.enabled) {
     return res.status(200).json({
@@ -91,7 +94,7 @@ async function handleAvailability(req, res) {
     };
   });
 
-  const days = computeWeekSlots(weekStart, settings, bookedSlots);
+  const days = computeWeekSlots(weekStart, settings, bookedSlots, instructionalHours);
   res.status(200).json({
     centre:   { name: centre.name || centerId, timezone: settings.timezone },
     settings: {
@@ -122,7 +125,7 @@ async function handleCreate(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ ok: false, error: 'Centre not found' });
-  const { centre, settings } = ctx;
+  const { centre, settings, instructionalHours } = ctx;
   if (!settings.enabled) {
     return res.status(403).json({ ok: false, error: 'Online booking is not enabled for this centre.' });
   }
@@ -145,7 +148,7 @@ async function handleCreate(req, res) {
     };
   });
 
-  const v = validateSlot({ slotISO: slot, settings, bookedSlots });
+  const v = validateSlot({ slotISO: slot, settings, bookedSlots, instructionalHours });
   if (!v.ok) return res.status(409).json({ ok: false, error: v.error });
 
   const cancelToken = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 24);

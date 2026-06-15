@@ -7,9 +7,10 @@
 
 export const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
-// Default availability that mirrors the Mathnasium Langley Apptoto setup
-// the user shared — owners can override per-centre via the booking
-// settings UI. Times are local to the centre's TZ.
+// Default settings. By default we DO NOT carry a per-day availability
+// map — we inherit from centerConfig.instructionalHours so the booking
+// hours stay in sync with the centre's teaching window. Owners can flip
+// useCustomAvailability=true and supply their own map to override.
 export const DEFAULT_INTAKE_SETTINGS = {
   enabled: false,
   slotDurationMin: 60,
@@ -17,20 +18,46 @@ export const DEFAULT_INTAKE_SETTINGS = {
   advanceNoticeHrs: 24,   // can't book < 24h out
   maxAdvanceDays: 60,
   timezone: 'America/Vancouver',
-  // Per-weekday windows. Empty array = closed that day.
+  // If false (default), booking hours follow centerConfig.instructionalHours.
+  // If true, `availability` below takes over. Lets centres with separate
+  // intake hours from teaching hours opt out.
+  useCustomAvailability: false,
   availability: {
-    Sunday:    [],
-    Monday:    [{ start: '15:00', end: '17:30' }],
-    Tuesday:   [{ start: '15:00', end: '17:30' }],
-    Wednesday: [{ start: '15:00', end: '17:30' }],
-    Thursday:  [{ start: '15:00', end: '17:30' }],
-    Friday:    [{ start: '15:00', end: '17:30' }],
-    Saturday:  [{ start: '10:00', end: '12:30' }],
+    Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
+    Thursday: [], Friday: [], Saturday: [],
   },
   // Marketing copy on the public booking page. Centre-overridable.
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
 };
+
+// Translate centerConfig.instructionalHours ({ Monday: { start, end }, ... })
+// into the per-day windows shape this module uses (each day → array of
+// { start, end } windows). One window per day = the instructional window.
+export function instructionalHoursToWindows(instructionalHours) {
+  const out = { Sunday: [], Monday: [], Tuesday: [], Wednesday: [], Thursday: [], Friday: [], Saturday: [] };
+  if (!instructionalHours || typeof instructionalHours !== 'object') return out;
+  for (const day of WEEKDAYS) {
+    const h = instructionalHours[day];
+    if (h && h.start && h.end) out[day] = [{ start: h.start, end: h.end }];
+  }
+  return out;
+}
+
+// Build the effective availability the slot engine should use, given
+// owner settings + centre instructional hours. Either inherits from
+// instructional hours (default) or uses the custom override.
+export function effectiveAvailability(settings, instructionalHours) {
+  const s = settings || {};
+  if (s.useCustomAvailability && s.availability) {
+    return {
+      Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
+      Thursday: [], Friday: [], Saturday: [],
+      ...s.availability,
+    };
+  }
+  return instructionalHoursToWindows(instructionalHours);
+}
 
 // Convert "HH:MM" → minutes since midnight.
 const hmToMin = (hm) => {
@@ -94,18 +121,23 @@ function isSlotTaken(candidateISO, slotDurationMin, bookedSlots) {
 /**
  * Compute the slot grid for a 7-day window starting at `weekStartYMD`.
  *
- * @param {string} weekStartYMD - YYYY-MM-DD (Sunday)
- * @param {object} settings    - intake settings (see DEFAULT_INTAKE_SETTINGS)
- * @param {Array}  bookedSlots - existing bookings: [{ startISO, durationMin, status }]
- * @returns {Array} day rows: [{ date: 'YYYY-MM-DD', weekday, slots: [{ startISO, taken, label }] }]
+ * @param {string} weekStartYMD          - YYYY-MM-DD (Sunday)
+ * @param {object} settings              - intake settings (see DEFAULT_INTAKE_SETTINGS)
+ * @param {Array}  bookedSlots           - [{ startISO, durationMin, status }]
+ * @param {object} instructionalHours    - centerConfig.instructionalHours (fallback source for availability)
+ * @returns {Array} day rows
  */
-export function computeWeekSlots(weekStartYMD, settings, bookedSlots = []) {
-  const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}), availability: { ...DEFAULT_INTAKE_SETTINGS.availability, ...((settings || {}).availability || {}) } };
+export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instructionalHours = null) {
+  const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const slotInt  = s.slotIntervalMin  || 30;
   const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
   const maxFuture = Date.now() + (s.maxAdvanceDays || 60) * 24 * 3600 * 1000;
   const nowMs    = Date.now() + noticeMs;
+
+  // Pick the effective day-window map: instructional hours by default,
+  // owner's custom override if they enabled that toggle.
+  const availability = effectiveAvailability(s, instructionalHours);
 
   // Ignore cancelled bookings so the slot reopens.
   const active = bookedSlots.filter(b => b.status !== 'cancelled');
@@ -117,7 +149,7 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = []) {
     d.setUTCDate(d.getUTCDate() + i);
     const ymd = dateToYmd(d);
     const weekday = WEEKDAYS[d.getUTCDay()];
-    const windows = s.availability[weekday] || [];
+    const windows = availability[weekday] || [];
     const slots = [];
     for (const minutes of slotStartsForDay(windows, slotDur, slotInt)) {
       const iso = buildISO(ymd, minutes);
@@ -150,7 +182,7 @@ function formatTimeLabel(minutes) {
 // Validate that a candidate slot the parent picked is still bookable —
 // runs server-side before we insert the doc so a stale browser tab can't
 // race to double-book.
-export function validateSlot({ slotISO, settings, bookedSlots }) {
+export function validateSlot({ slotISO, settings, bookedSlots, instructionalHours }) {
   const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
@@ -161,10 +193,12 @@ export function validateSlot({ slotISO, settings, bookedSlots }) {
   if (tMs < Date.now() + noticeMs) return { ok: false, error: 'Slot is too close to now (less than the centre\'s advance-notice window).' };
   if (tMs > maxFuture)     return { ok: false, error: 'Slot is too far in the future.' };
 
-  // Day-of-week window check.
+  // Day-of-week window check using the same effective availability the
+  // grid renders against.
   const d = new Date(tMs);
   const weekday = WEEKDAYS[d.getUTCDay()];
-  const windows = (s.availability || {})[weekday] || [];
+  const availability = effectiveAvailability(s, instructionalHours);
+  const windows = availability[weekday] || [];
   if (windows.length === 0) return { ok: false, error: 'The centre is closed that day.' };
   const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
   const inAnyWindow = windows.some(w => {

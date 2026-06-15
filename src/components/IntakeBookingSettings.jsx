@@ -18,14 +18,11 @@ const DEFAULTS = {
   advanceNoticeHrs: 24,
   maxAdvanceDays: 60,
   timezone: 'America/Vancouver',
+  // Off by default → booking hours follow centerConfig.instructionalHours.
+  useCustomAvailability: false,
   availability: {
-    Sunday:    [],
-    Monday:    [{ start: '15:00', end: '17:30' }],
-    Tuesday:   [{ start: '15:00', end: '17:30' }],
-    Wednesday: [{ start: '15:00', end: '17:30' }],
-    Thursday:  [{ start: '15:00', end: '17:30' }],
-    Friday:    [{ start: '15:00', end: '17:30' }],
-    Saturday:  [{ start: '10:00', end: '12:30' }],
+    Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
+    Thursday: [], Friday: [], Saturday: [],
   },
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
@@ -162,18 +159,55 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
         </div>
       </Card>
 
-      {/* Per-day availability */}
+      {/* Per-day availability — defaults to mirroring instructional hours
+          so booking hours stay in sync with the centre's teaching window.
+          Owner can flip the toggle to set custom intake-only hours. */}
       <Card title="Weekly availability">
-        <p className="text-xs text-gray-500 mb-2">
-          One or more time windows per day. Leave a day empty to close it.
-        </p>
-        <div className="space-y-2">
-          {WEEKDAYS.map(day => (
-            <DayRow key={day} day={day}
-              windows={s.availability[day] || []}
-              onChange={w => setDayWindows(day, w)} />
-          ))}
-        </div>
+        <label className="flex items-start gap-3 cursor-pointer mb-3">
+          <input type="checkbox" checked={!s.useCustomAvailability}
+            onChange={e => setField('useCustomAvailability', !e.target.checked)}
+            className="mt-1" />
+          <div>
+            <p className="text-sm font-semibold text-gray-900">Sync booking hours with my centre&apos;s instructional hours</p>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Recommended. Edit instructional hours under Centre Settings → General and the booking page follows automatically.
+            </p>
+          </div>
+        </label>
+
+        {s.useCustomAvailability && (
+          <>
+            <p className="text-xs text-gray-500 mb-2">
+              Custom override — one or more time windows per day. Leave a day empty to close it.
+            </p>
+            <div className="space-y-2">
+              {WEEKDAYS.map(day => (
+                <DayRow key={day} day={day}
+                  windows={s.availability[day] || []}
+                  onChange={w => setDayWindows(day, w)} />
+              ))}
+            </div>
+          </>
+        )}
+
+        {!s.useCustomAvailability && centerConfig?.instructionalHours && (
+          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
+            <p className="font-semibold text-gray-700 mb-1">Currently in effect (from instructional hours):</p>
+            <ul className="space-y-0.5">
+              {WEEKDAYS.map(day => {
+                const h = centerConfig.instructionalHours[day];
+                return (
+                  <li key={day} className="flex justify-between">
+                    <span className="text-gray-700">{day}</span>
+                    <span className="text-gray-500 tabular-nums">
+                      {h?.start && h?.end ? `${h.start} – ${h.end}` : 'Closed'}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
       </Card>
     </div>
   );
