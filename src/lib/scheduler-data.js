@@ -53,6 +53,57 @@ export async function saveSettings(centerId, partial) {
   await setDoc(ref, partial, { merge: true });
 }
 
+// ───── Google Sheets auto-sync ───────────────────────────────────────────
+// One token per centre. The token authenticates the Apps Script in the
+// owner's Student Assessment Tracker so it can POST roster updates to
+// /api/scheduler/appointments?action=sync-students without a Firebase
+// identity. We rotate via generateSyncToken() — old token instantly stops
+// working the moment we write the new one.
+//
+// Stored under: schedulerSettings/main.sheetSync = { token, lastSyncedAt, ... }
+
+export function generateSyncToken() {
+  // 32 bytes of crypto randomness → URL-safe base64-ish string. Long enough
+  // to be infeasible to brute-force even without rate limiting.
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes)
+    .map(b => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+export async function enableSheetSync(centerId) {
+  const token = generateSyncToken();
+  const ref = doc(db, 'centers', centerId, 'schedulerSettings', 'main');
+  await setDoc(ref, {
+    sheetSync: {
+      token,
+      enabledAt: new Date().toISOString(),
+    },
+  }, { merge: true });
+  return token;
+}
+
+export async function rotateSheetSyncToken(centerId) {
+  // Rotate keeps the historical lastSyncedAt / counts so the UI doesn't
+  // wipe the "Last synced …" line just because the user clicked rotate.
+  const token = generateSyncToken();
+  const ref = doc(db, 'centers', centerId, 'schedulerSettings', 'main');
+  await setDoc(ref, {
+    sheetSync: { token, rotatedAt: new Date().toISOString() },
+  }, { merge: true });
+  return token;
+}
+
+export async function disableSheetSync(centerId) {
+  // Clear the token AND the historical metadata — disabling means the user
+  // wants the connection gone, not just paused.
+  const ref = doc(db, 'centers', centerId, 'schedulerSettings', 'main');
+  // setDoc with merge can't unset fields cleanly, so write an explicit null
+  // marker. The server treats a missing/falsy token as "not configured".
+  await setDoc(ref, { sheetSync: null }, { merge: true });
+}
+
 // ───── Students ──────────────────────────────────────────────────────────
 export async function getStudents(centerId) {
   const snap = await getDocs(collection(db, 'centers', centerId, 'schedulerStudents'));

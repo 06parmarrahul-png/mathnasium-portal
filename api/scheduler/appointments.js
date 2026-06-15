@@ -421,8 +421,180 @@ function groupSchedule(appts, day) {
   };
 }
 
+// ───── Student-roster sync from Google Sheets ───────────────────────────
+//
+// Apps Script in the owner's Student Assessment Tracker sheet POSTs the
+// raw 2D values here whenever a cell changes (and on a "Sync now" menu
+// click). We:
+//   1. Authenticate via a per-centre token stored on schedulerSettings/main
+//      (NOT a Firebase ID token — Apps Script can't easily mint one).
+//   2. Run the same section-header parser as the in-app CSV import so the
+//      semantics are byte-for-byte identical (Elementary / HS / Online,
+//      hybrid routing, column-I assigned instructor, "binder" → assessment).
+//   3. Diff against existing students and delete any roster entry that's
+//      no longer in the sheet — keeps the source-of-truth = the sheet.
+//   4. Stamp lastSyncedAt + lastSyncedCount on settings so the UI can
+//      show "Last synced 2m ago — 47 students".
+//
+// Co-located with the appointments GET handler so we stay at 12 Vercel
+// functions on the Hobby plan; method routing dispatches between them.
+
+const HS_GRADES = /^(8|9|10|11|12)$/i;
+function hybridDisplaySide(grade) {
+  // Mirror src/pages/SchedulerCreation.jsx's hybridDisplaySide so a hybrid
+  // grade-9 student goes to HS regardless of which import path was taken.
+  return HS_GRADES.test(String(grade || '').trim()) ? 'HS' : 'EM';
+}
+
+// Same parser shape as importCsv() in SchedulerCreation.jsx. If you change
+// one, change the other — they MUST agree on category/isHybrid/hasAssessment.
+function parseSheetRows(rows) {
+  if (!Array.isArray(rows) || rows.length < 2) {
+    return { students: [], assessmentCount: 0, hybridCount: 0 };
+  }
+  const out = [];
+  let assessmentCount = 0, hybridCount = 0;
+  let section = 'EM';
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i] || [];
+    const name = String(r[0] ?? '').trim();
+    const grade = String(r[1] ?? '').trim();
+    const status = String(r[2] ?? '').trim();
+    // Section header row — col A set, B & C empty.
+    if (name && !grade && !status) {
+      const h = name.toLowerCase();
+      if (/high\s*school/.test(h)) section = 'HS';
+      else if (/elementary/.test(h)) section = 'EM';
+      else if (/online/.test(h)) section = 'ONLINE_SECTION';
+      continue;
+    }
+    if (!name) continue;
+    let category, isHybrid = false;
+    if (section === 'ONLINE_SECTION') {
+      if (/hybrid|hyrid/i.test(status)) {
+        isHybrid = true;
+        category = hybridDisplaySide(grade);
+        hybridCount++;
+      } else {
+        category = 'Online';
+      }
+    } else {
+      category = section;
+    }
+    const hasAssessment = r.some(cell => /binder/i.test(String(cell ?? '')));
+    if (hasAssessment) assessmentCount++;
+    out.push({
+      name, grade, status, category, isHybrid,
+      assignedInstructor: String(r[8] ?? '').trim(),
+      hasAssessment,
+    });
+  }
+  return { students: out, assessmentCount, hybridCount };
+}
+
+// Constant-time string comparison — we don't want a timing oracle on the
+// per-centre sync token, even if the surface is small.
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  if (a.length !== b.length) return false;
+  let mismatch = 0;
+  for (let i = 0; i < a.length; i++) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return mismatch === 0;
+}
+
+// Same character class as src/lib/scheduler-data.js nameKey — Firestore
+// rejects forward slashes etc., so sanitize identically on both sides.
+function studentDocId(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[/\\]/g, '_')
+    .replace(/^\.+$/, '_')
+    .replace(/^__(.*)__$/, '_$1_');
+}
+
+async function handleStudentSync(req, res) {
+  const centerId = req.headers['x-ratio-center'] || req.query.centerId;
+  const token    = req.headers['x-ratio-token']  || '';
+  if (!centerId) return res.status(400).json({ error: 'X-Ratio-Center header required' });
+  if (!token)    return res.status(401).json({ error: 'X-Ratio-Token header required' });
+
+  const fs = getFirestore();
+  const settingsRef = fs.doc(`centers/${centerId}/schedulerSettings/main`);
+  const settingsSnap = await settingsRef.get();
+  const settings = settingsSnap.exists ? settingsSnap.data() : {};
+  const expected = settings?.sheetSync?.token;
+  if (!expected || !safeEqual(token, expected)) {
+    // Same status for "no token configured" and "wrong token" so an
+    // attacker can't probe which centres have sync enabled.
+    return res.status(403).json({ error: 'Invalid sync token' });
+  }
+
+  // Body shape: { rows: [[col,col,...], ...], source?: 'onEdit'|'manual' }
+  let body = req.body;
+  if (typeof body === 'string') { try { body = JSON.parse(body); } catch { body = {}; } }
+  const rows = Array.isArray(body?.rows) ? body.rows : null;
+  if (!rows) return res.status(400).json({ error: 'rows[] required in JSON body' });
+  if (rows.length > 5000) return res.status(413).json({ error: 'Too many rows (max 5000)' });
+
+  const { students, assessmentCount, hybridCount } = parseSheetRows(rows);
+
+  // Diff: anything in Firestore but not in the incoming sheet gets deleted.
+  // Sheet is the source of truth — that's the whole point of auto-sync.
+  const existingSnap = await fs.collection(`centers/${centerId}/schedulerStudents`).get();
+  const incomingIds = new Set(students.map(s => studentDocId(s.name)).filter(Boolean));
+  const toDelete = existingSnap.docs.filter(d => !incomingIds.has(d.id));
+
+  // Chunked batched writes — Firestore batch limit is 500.
+  const BATCH = 400;
+  for (let i = 0; i < students.length; i += BATCH) {
+    const batch = fs.batch();
+    for (const s of students.slice(i, i + BATCH)) {
+      const id = studentDocId(s.name); if (!id) continue;
+      batch.set(fs.doc(`centers/${centerId}/schedulerStudents/${id}`), s, { merge: true });
+    }
+    await batch.commit();
+  }
+  for (let i = 0; i < toDelete.length; i += BATCH) {
+    const batch = fs.batch();
+    for (const d of toDelete.slice(i, i + BATCH)) batch.delete(d.ref);
+    await batch.commit();
+  }
+
+  await settingsRef.set({
+    sheetSync: {
+      ...(settings.sheetSync || {}),
+      lastSyncedAt: new Date().toISOString(),
+      lastSyncedCount: students.length,
+      lastSyncedAssessments: assessmentCount,
+      lastSyncedHybrids: hybridCount,
+      lastSyncedDeletions: toDelete.length,
+      lastSyncedSource: body?.source || 'unknown',
+    },
+  }, { merge: true });
+
+  return res.status(200).json({
+    ok: true,
+    imported: students.length,
+    deleted: toDelete.length,
+    assessments: assessmentCount,
+    hybrids: hybridCount,
+  });
+}
+
 // ───── Handler ──────────────────────────────────────────────────────────
 export default async function handler(req, res) {
+  // Method + action routing. Keeps both the appointments GET and the
+  // student-roster sync POST on the same Vercel function (function count
+  // is capped at 12 on the Hobby plan).
+  if (req.method === 'POST' && req.query.action === 'sync-students') {
+    try {
+      return await handleStudentSync(req, res);
+    } catch (e) {
+      return res.status(500).json({ error: e.message || 'sync failed' });
+    }
+  }
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
   try {

@@ -18,6 +18,7 @@ import { auth, db } from '../firebase';
 import {
   ClipboardList, Settings, CalendarCheck, BarChart3, Printer,
   Upload, Plus, Trash2, AlertTriangle, RefreshCw,
+  Sheet, Copy, CheckCircle2, Link2Off,
 } from 'lucide-react';
 import {
   getSettings, saveSettings,
@@ -25,6 +26,7 @@ import {
   watchAliases, upsertAlias, deleteAlias,
   watchCheckIns, setCheckIn, setStudentTag, setStudentDesk,
   watchInstructorAssignments, setInstructorAssignment,
+  enableSheetSync, rotateSheetSyncToken, disableSheetSync,
 } from '../lib/scheduler-data';
 
 // Standard parent-name aliases — one click in Setup loads all of them
@@ -947,6 +949,13 @@ function SetupTab({ centerId }) {
         </div>
       </section>
 
+      {/* Google Sheets auto-sync card */}
+      <SheetSyncCard
+        centerId={centerId}
+        settings={settings}
+        onRefresh={() => getSettings(centerId).then(setSettings)}
+      />
+
       {/* Roster card */}
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <div className="mb-3 flex items-center justify-between">
@@ -1101,4 +1110,236 @@ function SetupTab({ centerId }) {
       `}</style>
     </div>
   );
+}
+
+// ─── Google Sheets auto-sync card ────────────────────────────────────────
+// Lives in the Setup tab right above the roster. UX flow:
+//   - Not connected → big "Enable auto-sync" button. Click it and we mint a
+//     token, then reveal setup steps + a copy-to-clipboard for token & ID.
+//   - Connected     → green status + last-synced summary + rotate / disconnect.
+//
+// The actual sync happens in the user's Google Sheet via Apps Script — see
+// scripts/google-sheets-sync/RatioSync.gs.
+function SheetSyncCard({ centerId, settings, onRefresh }) {
+  const sync = settings?.sheetSync || null;
+  const enabled = !!sync?.token;
+  const [working, setWorking] = useState(false);
+  const [showSetup, setShowSetup] = useState(!enabled);
+  const [revealedToken, setRevealedToken] = useState(null); // shown only right after enable/rotate
+  const [copied, setCopied] = useState('');
+
+  // Pretty "x minutes ago" for the last sync line.
+  const lastSyncedLabel = sync?.lastSyncedAt ? relativeTime(sync.lastSyncedAt) : null;
+
+  const copy = async (label, value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(label);
+      setTimeout(() => setCopied(''), 1500);
+    } catch {
+      toast.error('Copy failed — select the value and copy manually.');
+    }
+  };
+
+  const handleEnable = async () => {
+    setWorking(true);
+    try {
+      const token = await enableSheetSync(centerId);
+      setRevealedToken(token);
+      setShowSetup(true);
+      toast.success('Auto-sync enabled. Follow the steps to connect your sheet.');
+    } catch (e) { toast.error(e.message); }
+    finally { setWorking(false); onRefresh?.(); }
+  };
+
+  const handleRotate = async () => {
+    if (!confirm('Rotating the token will stop the current sheet from syncing until you paste the new token into Apps Script. Continue?')) return;
+    setWorking(true);
+    try {
+      const token = await rotateSheetSyncToken(centerId);
+      setRevealedToken(token);
+      setShowSetup(true);
+      toast.success('New token generated. Paste it into your Apps Script.');
+    } catch (e) { toast.error(e.message); }
+    finally { setWorking(false); onRefresh?.(); }
+  };
+
+  const handleDisable = async () => {
+    if (!confirm('Disconnect Google Sheets auto-sync? Your sheet will stop pushing updates to Ratio. You can re-enable later.')) return;
+    setWorking(true);
+    try {
+      await disableSheetSync(centerId);
+      setRevealedToken(null);
+      setShowSetup(false);
+      toast.success('Auto-sync disconnected.');
+    } catch (e) { toast.error(e.message); }
+    finally { setWorking(false); onRefresh?.(); }
+  };
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+        <h2 className="font-semibold flex items-center gap-2">
+          <Sheet size={16} className="text-emerald-600" />
+          Auto-sync from Google Sheets
+        </h2>
+        {enabled && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+            <CheckCircle2 size={12} /> Connected
+          </span>
+        )}
+      </div>
+
+      {!enabled && (
+        <div className="rounded border border-dashed border-gray-300 bg-gray-50 p-4 text-sm">
+          <p className="mb-3 text-gray-700">
+            Stop exporting CSVs. Ratio can pull the Student Assessment Tracker
+            from your Google Sheet automatically every time you edit it.
+            Sheet stays fully private — only you and Ratio's server see it.
+          </p>
+          <button
+            onClick={handleEnable}
+            disabled={working}
+            className="rounded bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+          >
+            {working ? 'Enabling…' : 'Enable auto-sync'}
+          </button>
+        </div>
+      )}
+
+      {enabled && (
+        <div className="space-y-3 text-sm">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-gray-700">
+              {lastSyncedLabel ? (
+                <>
+                  Last synced <b>{lastSyncedLabel}</b>
+                  {' · '}
+                  {sync.lastSyncedCount} students
+                  {sync.lastSyncedAssessments ? ` · ${sync.lastSyncedAssessments} assessment` : ''}
+                  {sync.lastSyncedHybrids ? ` · ${sync.lastSyncedHybrids} hybrid` : ''}
+                  {sync.lastSyncedDeletions ? ` · ${sync.lastSyncedDeletions} removed` : ''}
+                </>
+              ) : (
+                <span className="text-amber-700">
+                  Token generated — paste it into Apps Script to start syncing.
+                </span>
+              )}
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setShowSetup(s => !s)}
+                className="rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50"
+              >
+                {showSetup ? 'Hide setup' : 'Setup steps'}
+              </button>
+              <button
+                onClick={handleRotate}
+                disabled={working}
+                className="rounded border border-gray-300 px-3 py-1 text-xs hover:bg-gray-50 disabled:opacity-50"
+              >
+                Rotate token
+              </button>
+              <button
+                onClick={handleDisable}
+                disabled={working}
+                className="inline-flex items-center gap-1 rounded border border-red-200 px-3 py-1 text-xs text-red-700 hover:bg-red-50 disabled:opacity-50"
+              >
+                <Link2Off size={12} /> Disconnect
+              </button>
+            </div>
+          </div>
+
+          {showSetup && (
+            <div className="rounded border border-emerald-200 bg-emerald-50/40 p-3 text-xs text-gray-800">
+              <p className="mb-2 font-semibold text-gray-900">Setup (one-time, ~2 minutes)</p>
+              <ol className="ml-4 list-decimal space-y-2">
+                <li>
+                  Open your <b>Student Assessment Tracker</b> Google Sheet.
+                </li>
+                <li>
+                  Click <b>Extensions → Apps Script</b>. Delete anything that's in <code>Code.gs</code>.
+                </li>
+                <li>
+                  Paste in the contents of{' '}
+                  <code className="rounded bg-gray-200 px-1">scripts/google-sheets-sync/RatioSync.gs</code>{' '}
+                  from your Ratio repo. (Open it on your computer and copy the whole file.)
+                </li>
+                <li>
+                  At the top of the script, fill in these two values:
+                  <div className="mt-2 space-y-2">
+                    <CopyField
+                      label="CENTER_ID"
+                      value={centerId}
+                      copied={copied === 'center'}
+                      onCopy={() => copy('center', centerId)}
+                    />
+                    <CopyField
+                      label="SYNC_TOKEN"
+                      value={revealedToken || '••••••••••••  (rotate to view a new one)'}
+                      copied={copied === 'token'}
+                      onCopy={() => revealedToken && copy('token', revealedToken)}
+                      monospace
+                      muted={!revealedToken}
+                    />
+                    {!revealedToken && (
+                      <p className="text-xs text-gray-500">
+                        For security, the token is only shown right after it's generated. Click "Rotate token" above to mint a new one.
+                      </p>
+                    )}
+                  </div>
+                </li>
+                <li>
+                  Click <b>Save</b> (disk icon), then run the function called <code>setup</code>.
+                  Apps Script will ask for permissions — accept them. You'll see "Ratio sync installed" when it's done.
+                </li>
+                <li>
+                  That's it. Edits to the sheet now push to Ratio within seconds. You can also click
+                  <b> Ratio → Sync now</b> in the sheet's menu bar to force one manually.
+                </li>
+              </ol>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// Small copy-to-clipboard row used inside the setup steps.
+function CopyField({ label, value, onCopy, copied, monospace, muted }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-24 shrink-0 text-xs text-gray-500">{label}</span>
+      <code
+        className={`flex-1 truncate rounded border border-gray-300 bg-white px-2 py-1 ${monospace ? 'font-mono text-[11px]' : 'text-xs'} ${muted ? 'text-gray-400' : 'text-gray-800'}`}
+      >
+        {value}
+      </code>
+      <button
+        onClick={onCopy}
+        disabled={muted}
+        className="inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs hover:bg-gray-50 disabled:opacity-40"
+        title="Copy to clipboard"
+      >
+        {copied ? <CheckCircle2 size={12} className="text-emerald-600" /> : <Copy size={12} />}
+        {copied ? 'Copied' : 'Copy'}
+      </button>
+    </div>
+  );
+}
+
+// Short "5 minutes ago" formatter. Avoids pulling in date-fns just for this.
+function relativeTime(iso) {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return 'just now';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} hr ago`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} day${d === 1 ? '' : 's'} ago`;
+  return new Date(iso).toLocaleDateString();
 }
