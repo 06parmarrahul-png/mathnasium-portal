@@ -3,8 +3,9 @@
 // Three sub-tabs:
 //   1. Setup    — iCal URLs, ratio, instructor pool, student roster (CSV
 //                 import + per-row edit), parent-name aliases.
-//   2. Today    — Live daily ops dashboard: HS/EM side-by-side, click to
-//                 check students in, assign instructors per slot, print.
+//   2. Today    — Live daily ops dashboard: Elementary stacked above High
+//                 School, click to check students in, assign instructors
+//                 per slot, print.
 //   3. Forecast — Next 7/14/30 days, peak demand vs. ratio.
 //
 // All data is per-centre. Reads `activeCenterId` from AuthContext. iCal
@@ -139,7 +140,7 @@ function TabButton(props) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-//  TODAY TAB — daily ops dashboard (HS|EM side-by-side, check-ins)
+//  TODAY TAB — daily ops dashboard (EM on top, HS below, check-ins)
 // ═══════════════════════════════════════════════════════════════════════
 function TodayTab({ centerId }) {
   const [date, setDate] = useState(todayStr());
@@ -312,24 +313,23 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.all > 0 && (
-        // On-screen layout:
-        //   - Below 2xl (1536px): stack HS on top, EM below. Each side gets
-        //     full screen width so 6 columns on HS can render without
-        //     letter-by-letter wrapping.
-        //   - 2xl+ : side-by-side, with HS spanning 3/5 of the row (it has
-        //     an extra 1.5hr column) and EM 2/5.
+        // On-screen layout: always vertically stacked, Elementary on top,
+        // High School below. Each side gets the full viewport width so the
+        // 6-column HS grid renders without horizontal scrolling and there's
+        // no need to track two side-by-side tables at once.
+        //
         // While printOnly is set (Print HS / Print EM click), only that
         // side renders so the printer never sees the other.
-        <div className="grid grid-cols-1 2xl:grid-cols-5 gap-3">
-          {(!printOnly || printOnly === 'HS') && (
-            <div className="2xl:col-span-3">
-              <SideTable side="HS" data={data} centerId={centerId} date={date}
+        <div className="flex flex-col gap-3">
+          {(!printOnly || printOnly === 'EM') && (
+            <div>
+              <SideTable side="EM" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
             </div>
           )}
-          {(!printOnly || printOnly === 'EM') && (
-            <div className="2xl:col-span-2">
-              <SideTable side="EM" data={data} centerId={centerId} date={date}
+          {(!printOnly || printOnly === 'HS') && (
+            <div>
+              <SideTable side="HS" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool} />
             </div>
           )}
