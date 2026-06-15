@@ -227,7 +227,10 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th className="w-0" />
+              {/* Time-label column header — kept empty since the row
+                  labels speak for themselves. CRITICAL: count must match
+                  the body row's cells (1 + 7) so columns align. */}
+              <th className="px-2 py-3 w-16" />
               {days.map(d => {
                 const date = new Date(d.date + 'T12:00:00');
                 const h = fmtDayHeader(date);
@@ -243,6 +246,12 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
           <tbody>
             {timeRows.map(label => (
               <tr key={label} className="border-t border-gray-100">
+                {/* Leading time-label cell — matches the empty thead
+                    column so the 7 day cells below align with their
+                    matching column headers. */}
+                <td className="px-2 py-1 text-xs font-medium text-gray-500 whitespace-nowrap tabular-nums">
+                  {label}
+                </td>
                 {days.map(d => {
                   const slot = d.slots.find(s => s.label === label);
                   if (!slot) {
