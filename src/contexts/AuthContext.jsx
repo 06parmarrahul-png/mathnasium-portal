@@ -6,7 +6,7 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, getDoc, getDocs, query, where, collection, limit } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
@@ -208,36 +208,56 @@ export function AuthProvider({ children }) {
   const signup = async (email, password, displayName, extras = {}) => {
     const cleanEmail = email.trim();
     const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-    // Always default new accounts to plain "Instructor". The owner promotes
-    // people to Lead/Admin/Manager etc. from the admin panel after approval.
-    // Don't trust any role value passed in from the signup form.
-    //
-    // Center assignment: until the signup form has a center-picker dropdown
-    // (Phase 5), every new user lands in the default center. The owner can
-    // move them to another center by editing centerIds in Manage Users
-    // (or, for multi-center staff, add a second center to the array).
     const centerId = extras.centerId || DEFAULT_CENTER_ID;
+
+    // Auto-promote the FIRST signup at a centre to owner+approved.
+    // Rationale: until now, every signup defaulted to pending-instructor,
+    // requiring a super-admin to promote them manually. That was a hidden
+    // step where new-centre owners got stuck (they'd sign up, see a
+    // "pending approval" screen, and assume the app was broken). For any
+    // centre that already has an approved owner, this branch is skipped
+    // and the legacy pending-instructor flow takes over — so existing
+    // centres are unaffected and only the actual owner gets auto-promoted.
+    let isFirstOwner = false;
+    try {
+      const ownersSnap = await getDocs(query(
+        collection(db, 'users'),
+        where('centerIds', 'array-contains', centerId),
+        where('role', '==', 'owner'),
+        where('approved', '==', true),
+        limit(1),
+      ));
+      isFirstOwner = ownersSnap.empty;
+    } catch {
+      // If the query fails (rare — rules or transient), fall back to the
+      // pending-instructor flow rather than risk auto-granting owner to
+      // someone we couldn't verify.
+      isFirstOwner = false;
+    }
+
+    const role     = isFirstOwner ? 'owner'    : 'instructor';
+    const approved = isFirstOwner;
     // Operational fields (instructorType, priority, approved, etc.) are
     // now scoped per-centre via `centerMemberships`. The top-level copies
     // are kept as the legacy fallback so reads in any code path that
     // hasn't been migrated yet still produce a sensible value. See
     // src/lib/centerMembership.js for the full rationale.
     const initialMembership = buildInitialMembership({
-      instructorType: 'Instructor',
+      instructorType: isFirstOwner ? 'Owner' : 'Instructor',
       priority:       2,
       maxDaysPerWeek: 5,
       subRoles:       [],
       guaranteed:     false,
-      approved:       false,
+      approved,
     });
     const profileData = {
       uid: cred.user.uid,
       email: cleanEmail,
       displayName: displayName.trim(),
-      role: 'instructor',
-      approved: false,
+      role,
+      approved,
       // Scheduling fields (set defaults; admin can edit)
-      instructorType: 'Instructor',
+      instructorType: isFirstOwner ? 'Owner' : 'Instructor',
       priority: 2,           // Admin sets this (1=high, 2=medium, 3=low)
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',

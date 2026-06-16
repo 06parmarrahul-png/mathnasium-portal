@@ -51,13 +51,18 @@ function RootGate() {
   if (loading) return null;
   if (!user) return <Landing />;
   // Owners (and AA) of a centre that hasn't completed onboarding get
-  // bounced to the setup wizard. We check `=== false` (not falsy) so a
-  // centre whose config doc predates this field — Langley and any other
-  // pre-existing centres — continues to land on Home as before.
+  // bounced to the setup wizard.
+  //
+  // We check FALSY (covers both `false` AND `undefined`) so that every
+  // new centre triggers onboarding by default — owners don't have to
+  // remember to set the field. Pre-existing operational centres (Langley)
+  // are exempted by a one-time backfill that sets the field to `true`
+  // explicitly, NOT by leaving the field undefined.
+  //
   // super_admins are exempt: they jump between centres for support and
   // shouldn't be force-routed into someone else's wizard.
   const ownerLike = isOwner || isAdminAssistant;
-  if (ownerLike && !isSuperAdmin && centerConfig?.completedOnboarding === false) {
+  if (ownerLike && !isSuperAdmin && !centerConfig?.completedOnboarding) {
     return <Navigate to="/onboarding" replace />;
   }
   return <ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>;
