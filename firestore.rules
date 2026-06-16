@@ -92,6 +92,22 @@ service cloud.firestore {
         allow read:  if isSignedIn();
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
+
+      // ─── Leads (the CRM funnel) ──────────────────────────────────────
+      // Leads carry parent contact info (email, phone) the same way the
+      // top-level centerIntakes collection does. We deliberately keep
+      // leads under centers/{centerId}/leads (not top-level) for query
+      // ergonomics, but TIGHTEN the catchall above: only owner-like and
+      // super-admin can read OR write. Plain admins and instructors are
+      // shut out — they don't need to see prospect contact info.
+      // Server-side intake mirror writes via firebase-admin and bypasses
+      // these rules, so the auto-create flow keeps working.
+      //
+      // More-specific match wins in Firestore, so this overrides the
+      // {document=**} grant above for any path matching /leads/*.
+      match /leads/{leadId} {
+        allow read, write: if isOwnerLike() || isSuperAdmin();
+      }
     }
 
     // ─── Centre intakes (native booking flow) ──────────────────────────

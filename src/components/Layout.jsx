@@ -11,6 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
+  UserPlus,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -153,12 +154,17 @@ export default function Layout({ children }) {
   // Built only when useOwnerLayout is true. Empty arrays otherwise so
   // the section-assembly below stays uniform.
   //
-  // GROWTH — the lead → student funnel. Today this is just Intakes
-  // (the public booking flow). A first-class "Leads" object lives here
-  // when we build it.
+  // GROWTH — the lead → student funnel. Leads sits above Intakes
+  // because it's the wider top of the funnel (anyone interested),
+  // while Intakes is the narrower next step (a scheduled assessment).
+  // Owners scan the sidebar top-to-bottom — putting them in funnel
+  // order reinforces the mental model every time.
   const growth = [];
   if (useOwnerLayout) {
-    growth.push({ to: '/intakes', label: 'Intakes', icon: CalendarCheck });
+    growth.push(
+      { to: '/leads',   label: 'Leads',   icon: UserPlus },
+      { to: '/intakes', label: 'Intakes', icon: CalendarCheck },
+    );
   }
 
   // DEMAND — active students + today's room. The daily ops tool sits

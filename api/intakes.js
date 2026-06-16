@@ -171,6 +171,37 @@ async function handleCreate(req, res) {
   };
   const ref = await fs.collection('centerIntakes').add(payload);
 
+  // Mirror the booking into the Leads funnel so the owner sees every
+  // new family in one place. Status starts as "new" — staff moves it
+  // forward as they contact/run the assessment/enroll. A failed lead
+  // write does NOT block the booking; the intake itself succeeded and
+  // that's the user-visible promise.
+  try {
+    const now = new Date().toISOString();
+    await fs.collection(`centers/${centerId}/leads`).add({
+      parentName:   payload.guardianName,
+      parentEmail:  payload.email,
+      parentPhone:  payload.phone,
+      childName:    payload.childName,
+      childGrade:   payload.childGrade,
+      childSchool:  payload.childSchool,
+      status:       'new',
+      source:       'intake-form',
+      sourceDetail: `Booked assessment for ${new Date(payload.slot).toLocaleString()}`,
+      notes:        payload.notes || '',
+      assignedTo:   '',
+      // Same shape as src/lib/leads.js createLead() writes. Timestamps
+      // use FieldValue.serverTimestamp() so they sort consistently with
+      // leads created from the website UI.
+      history: [{ at: now, by: 'system', text: 'Created from intake booking' }],
+      intakeId:  ref.id,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+  } catch (e) {
+    console.error('Lead mirror failed:', e?.message || e); // eslint-disable-line no-console
+  }
+
   try {
     const r = resendClient();
     const niceTime = new Date(slot).toLocaleString('en-US', {

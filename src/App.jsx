@@ -37,6 +37,7 @@ const ChatsHub                  = lazy(() => import('./pages/Chats'));
 const ApptotoSchedule           = lazy(() => import('./pages/ApptotoSchedule'));
 const PublicBook                = lazy(() => import('./pages/PublicBook'));
 const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'));
+const Leads                     = lazy(() => import('./pages/Leads'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -108,6 +109,7 @@ function AppRoutes() {
         {/* Public, NO auth — parents land here from marketing links. */}
         <Route path="/book/:centerId" element={<PublicBook />} />
         <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
+        <Route path="/leads"   element={<ProtectedRoute><Layout><Leads /></Layout></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>
