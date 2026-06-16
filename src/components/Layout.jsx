@@ -11,7 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
-  UserPlus,
+  UserPlus, FileBarChart,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -190,11 +190,13 @@ export default function Layout({ children }) {
   }
 
   // INTELLIGENCE — the answers. Centre Analytics belongs here, not
-  // mixed with the verbs above. When we add forecasting / utilization
-  // dashboards, they sit here too.
+  // mixed with the verbs above. Case Study is the slide-ready numbers
+  // used for sales pitches (Owner-only conceptually, but admin_assistant
+  // who runs operations should see them too).
   const intelligence = [];
   if (useOwnerLayout) {
     intelligence.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
+    intelligence.push({ to: '/case-study',       label: 'Case Study',       icon: FileBarChart });
   }
 
   // CENTRE — configuration. Sits at the bottom because owners touch it
