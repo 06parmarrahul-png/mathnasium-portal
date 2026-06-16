@@ -93,23 +93,38 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile]);
 
-  // Build nav based on role. Sections appear in this order:
-  //   GENERAL → MANAGE → INSIGHTS → COMMUNICATE → ENTERPRISE → SETTINGS
-  // ordered roughly by how often a new owner needs each thing. The
-  // "Manage" group breaks the old Admin Panel mega-tab into three
-  // verb-named destinations a brand-new owner can scan and understand
-  // without prior training. Holidays moved under Settings, time off is
-  // a sub-tab of Manage Schedule, and Shift Board is hidden for owners
-  // (they see open shifts inside Manage Schedule already).
+  // Build nav based on role.
   //
-  // Role guide:
+  // Two distinct layouts:
+  //
+  // (A) OWNER / ADMIN-ASSISTANT layout (the business operator) — uses a
+  //     supply / demand mental model that mirrors the actual economics
+  //     of a tutoring centre. The owner's whole job is matching demand
+  //     (students) against supply (staff hours), so the sidebar is
+  //     literally shaped like the P&L:
+  //
+  //       GENERAL  → home, chats — daily start point
+  //       GROWTH   → the funnel (leads → assessments → enrolled)
+  //       DEMAND   → active students + today's room
+  //       SUPPLY   → staff: schedule, roster, payroll
+  //       INTELLIGENCE → analytics, the answers
+  //       CENTRE   → settings + configuration
+  //
+  // (B) EVERYONE ELSE — instructor / plain admin / super-admin — uses
+  //     the original verb-named groupings (General / Manage / Insights /
+  //     Communicate / Enterprise / Settings) because the supply/demand
+  //     frame is for the business owner, not the people running shifts
+  //     in the room or the platform operator.
+  //
+  // Role guide unchanged:
   //   instructor  → GENERAL + personal Scheduling / Shift Board / Chat.
   //   admin       → GENERAL + MANAGE + COMMUNICATE.
-  //   admin_asst. → GENERAL + MANAGE + INSIGHTS + COMMUNICATE + SETTINGS,
-  //                 PLUS personal Scheduling (they take shifts).
-  //   owner       → GENERAL + MANAGE + INSIGHTS + COMMUNICATE + SETTINGS.
-  //   super_admin → above + ENTERPRISE: Manage Centres, Manage Roles,
-  //                 Platform Revenue, Management Chat, Owner Chat, Audit Logs.
+  //   admin_asst. → owner-style layout (they ARE owner-equivalent for ops).
+  //   owner       → owner-style layout.
+  //   super_admin → original layout + ENTERPRISE.
+  const useOwnerLayout = isOwner || isAdminAssistant;
+
+  // ─── GENERAL (both layouts share this) ─────────────────────────────
   const general = [
     { to: '/', label: 'Home', icon: House },
   ];
@@ -134,53 +149,79 @@ export default function Layout({ children }) {
     general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
   }
 
-  // MANAGE — verb-named top-level destinations for the things an owner
-  // does every day. Each links to a focused view of what used to be a
-  // tab inside the old Admin Panel. Internal Admin component reads
-  // ?tab= from the URL so the existing tab system keeps working.
+  // ─── OWNER LAYOUT ──────────────────────────────────────────────────
+  // Built only when useOwnerLayout is true. Empty arrays otherwise so
+  // the section-assembly below stays uniform.
   //
-  // Scheduler Creation lives here too (rather than under Enterprise) so
-  // owners don't have to scroll the sidebar past Insights / Communicate
-  // every shift. Available to anyone with daily-ops responsibility:
-  // super_admin, owner, admin_assistant. Plain admin doesn't get it
-  // (they're not configuring the scheduler).
-  const manage = [];
-  if (canSeeAdminPanel) {
-    manage.push({ to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange });
+  // GROWTH — the lead → student funnel. Today this is just Intakes
+  // (the public booking flow). A first-class "Leads" object lives here
+  // when we build it.
+  const growth = [];
+  if (useOwnerLayout) {
+    growth.push({ to: '/intakes', label: 'Intakes', icon: CalendarCheck });
   }
-  // Scheduler Creation is the daily ops tool — anyone who runs a shift
-  // (super_admin, owner, admin_assistant, AND plain admin) gets access.
-  // Same audience as canSeeAdminPanel so admins running the front desk
-  // can check students in without needing owner-level rights.
-  if (canSeeAdminPanel) {
-    manage.push({ to: '/scheduler-creation', label: 'Scheduler Creation', icon: ClipboardList });
+
+  // DEMAND — active students + today's room. The daily ops tool sits
+  // here, not under Manage, because students ARE the demand. Renamed
+  // "Scheduler Creation" → "Student Scheduler" to match how owners
+  // actually describe it (and to underline that it's about students,
+  // not about building schedulers).
+  const demand = [];
+  if (useOwnerLayout) {
+    demand.push({ to: '/scheduler-creation', label: 'Student Scheduler', icon: ClipboardList });
   }
-  if (canSeeAdminPanel) {
-    manage.push(
-      { to: '/admin?tab=users',   label: 'Manage Staff',   icon: Users },
-      { to: '/admin?tab=payroll', label: 'Manage Payroll', icon: Wallet },
+
+  // SUPPLY — staff. Schedule + roster + pay = supply being allocated,
+  // maintained, settled. Same three Admin sub-tabs as before, just
+  // re-framed under the right mental bucket.
+  const supply = [];
+  if (useOwnerLayout && canSeeAdminPanel) {
+    supply.push(
+      { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
+      { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
+      { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
     );
   }
-  // (Connectors moved to Centre Settings → Connections tab so it lives
-  // alongside Holidays/Hours/Appearance and doesn't crowd the sidebar.)
 
-  // INSIGHTS — strategy / metrics surface. Owners + AA + Enterprise.
-  // Plain admins run day-to-day ops but don't see strategic metrics.
+  // INTELLIGENCE — the answers. Centre Analytics belongs here, not
+  // mixed with the verbs above. When we add forecasting / utilization
+  // dashboards, they sit here too.
+  const intelligence = [];
+  if (useOwnerLayout) {
+    intelligence.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
+  }
+
+  // CENTRE — configuration. Sits at the bottom because owners touch it
+  // rarely. Connectors and Holidays already live inside Centre Settings
+  // as sub-tabs.
+  const centre = [];
+  if (useOwnerLayout) {
+    centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
+  }
+
+  // ─── NON-OWNER LAYOUT (original Manage / Insights / Communicate) ──
+  // Built only when useOwnerLayout is false (instructor, plain admin,
+  // super_admin). Owners / AA reach all of this via Growth / Demand /
+  // Supply / Intelligence / Centre above.
+
+  const manage = [];
+  if (!useOwnerLayout && canSeeAdminPanel) {
+    manage.push(
+      { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
+      { to: '/scheduler-creation',    label: 'Scheduler Creation',    icon: ClipboardList },
+      { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
+      { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
+    );
+  }
+
   const insights = [];
-  if (isSuperAdmin || isOwner || isAdminAssistant) {
+  if (!useOwnerLayout && isSuperAdmin) {
     insights.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
     insights.push({ to: '/intakes',          label: 'Intakes',          icon: CalendarCheck });
   }
 
   // COMMUNICATE — chat, announcements, personal notification prefs.
-  //
-  // OWNERS see no Communicate section at all: everything chat lives
-  // behind the single "Chats" entry in General (centre / management /
-  // owner). Notification prefs live on Account. Announcements moves
-  // under that same hub for owners.
-  //
-  // INSTRUCTORS / ADMINS / AA still get individual Chat & Management
-  // links since they aren't getting the consolidated hub.
+  // Owners skip this entirely (consolidated under General → Chats).
   const communicate = [];
   if (!isSuperAdmin && !isOwner) {
     communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
@@ -196,9 +237,7 @@ export default function Layout({ children }) {
   }
 
   // ENTERPRISE — platform-operator only. Sits between COMMUNICATE and
-  // SETTINGS so super-admin tools are grouped together but don't crowd
-  // the per-centre nav above. (Scheduler Creation used to live here too
-  // but moved under Manage so owners reach it without scrolling.)
+  // SETTINGS so super-admin tools are grouped together.
   const enterprise = [];
   if (isSuperAdmin) {
     enterprise.push(
@@ -211,23 +250,30 @@ export default function Layout({ children }) {
     );
   }
 
-  // SETTINGS — one-time / rare-touch configuration. Sits at the bottom
-  // so it doesn't crowd the daily-use items above. Centre Settings
-  // includes Holidays as a sub-section (one less sidebar row for the
-  // owner to scan past).
+  // SETTINGS — non-owner fallback for those who didn't get a Centre
+  // section above. Super-admin lands here.
   const settingsSection = [];
-  if (isSuperAdmin || isOwner || isAdminAssistant) {
+  if (!useOwnerLayout && isSuperAdmin) {
     settingsSection.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
   }
 
-  const navSections = [
-    { label: 'General',     items: general     },
-    { label: 'Manage',      items: manage      },
-    { label: 'Insights',    items: insights    },
-    { label: 'Communicate', items: communicate },
-    { label: 'Enterprise',  items: enterprise  },
-    { label: 'Settings',    items: settingsSection },
-  ].filter(s => s.items.length > 0);
+  const navSections = useOwnerLayout
+    ? [
+        { label: 'General',      items: general      },
+        { label: 'Growth',       items: growth       },
+        { label: 'Demand',       items: demand       },
+        { label: 'Supply',       items: supply       },
+        { label: 'Intelligence', items: intelligence },
+        { label: 'Centre',       items: centre       },
+      ].filter(s => s.items.length > 0)
+    : [
+        { label: 'General',     items: general     },
+        { label: 'Manage',      items: manage      },
+        { label: 'Insights',    items: insights    },
+        { label: 'Communicate', items: communicate },
+        { label: 'Enterprise',  items: enterprise  },
+        { label: 'Settings',    items: settingsSection },
+      ].filter(s => s.items.length > 0);
 
   // Path equality + (when the link carries a ?tab= query string)
   // also matches the active tab. This keeps Manage Schedule /
