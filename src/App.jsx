@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext';
 import ProtectedRoute from './components/ProtectedRoute';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -39,6 +39,7 @@ const PublicBook                = lazy(() => import('./pages/PublicBook'));
 const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'));
 const Leads                     = lazy(() => import('./pages/Leads'));
 const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
+const Onboarding                = lazy(() => import('./pages/Onboarding'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -46,9 +47,19 @@ const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
 // This keeps the existing app surface unchanged for current owners while
 // the same URL doubles as the front door for prospective franchisees.
 function RootGate() {
-  const { user, loading } = useAuth();
+  const { user, loading, isOwner, isAdminAssistant, isSuperAdmin, centerConfig } = useAuth();
   if (loading) return null;
   if (!user) return <Landing />;
+  // Owners (and AA) of a centre that hasn't completed onboarding get
+  // bounced to the setup wizard. We check `=== false` (not falsy) so a
+  // centre whose config doc predates this field — Langley and any other
+  // pre-existing centres — continues to land on Home as before.
+  // super_admins are exempt: they jump between centres for support and
+  // shouldn't be force-routed into someone else's wizard.
+  const ownerLike = isOwner || isAdminAssistant;
+  if (ownerLike && !isSuperAdmin && centerConfig?.completedOnboarding === false) {
+    return <Navigate to="/onboarding" replace />;
+  }
   return <ProtectedRoute><Layout><Home /></Layout></ProtectedRoute>;
 }
 
@@ -112,6 +123,8 @@ function AppRoutes() {
         <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
         <Route path="/leads"        element={<ProtectedRoute><Layout><Leads /></Layout></ProtectedRoute>} />
         <Route path="/case-study"   element={<ProtectedRoute><Layout><CaseStudy /></Layout></ProtectedRoute>} />
+        {/* Onboarding runs full-screen (no sidebar) until the owner finishes setup. */}
+        <Route path="/onboarding"   element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     </Suspense>

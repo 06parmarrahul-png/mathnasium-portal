@@ -429,13 +429,17 @@ function CreateCenterForm({ existing }) {
         timezone: 'America/Vancouver',
         createdAt: serverTimestamp(),
       });
-      // Seed the per-center config with reasonable defaults
+      // Seed the per-center config with reasonable defaults.
+      // completedOnboarding: false → the centre owner gets sent to the
+      // setup wizard on first login. Existing pre-onboarding-feature
+      // centres have this field unset (not === false) and are exempt.
       await setDoc(doc(db, 'centers', id, 'config', 'main'), {
         ...DEFAULT_CENTER_CONFIG,
         name: name.trim(),
         city: city.trim(),
         province: province.trim(),
         country: country.trim(),
+        completedOnboarding: false,
         createdAt: serverTimestamp(),
       });
 
