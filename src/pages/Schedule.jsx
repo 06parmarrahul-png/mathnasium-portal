@@ -634,6 +634,18 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
   // submit availability for everything else. Cleared when the inputs
   // change so excludes don't quietly persist across edits.
   const [excludedDates, setExcludedDates] = useState(() => new Set());
+  // Optional note (e.g. "Can stay later if needed", "Online only this week").
+  // Mirrors the single-day modal's `comment` field. When non-empty AND
+  // `noteAppliesToAll` is true (the default), every preview date in the
+  // batch gets the note written into Firestore's `comment` field. Owner /
+  // admin sees it when they open Schedule the same way they see single-
+  // day notes today — no separate read path needed.
+  const [note, setNote] = useState('');
+  const [noteAppliesToAll, setNoteAppliesToAll] = useState(true);
+  // Per-date opt-out. Only consulted when noteAppliesToAll is FALSE and
+  // the user has manually deselected specific dates. When all-on, this
+  // set is ignored. Reset on the same triggers as excludedDates.
+  const [noteExcludedDates, setNoteExcludedDates] = useState(() => new Set());
 
   // Build preview as [{date, startTime, endTime}] — per-day times when "Full Day"
   // is on (Saturday's 10–2 differs from Monday's 3–7), or the modal's chosen
@@ -664,25 +676,33 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
 
         // Skip dates the user X'd out from the preview.
         if (excludedDates.has(ds)) continue;
+        // Apply the note to this date if a note is entered AND either
+        // "apply to all" is on, or the user hasn't opted this specific
+        // date out of the note.
+        const noteForThis = note.trim() && (noteAppliesToAll || !noteExcludedDates.has(ds))
+          ? note.trim()
+          : '';
         if (useFullDay) {
           // Full Day = the whole 24h window. Admin can schedule the
           // instructor anywhere they want within the day. (Closed days
           // are filtered out via isOperatingDay on the day-toggle row,
           // so anything that makes it here is a valid operating day.)
-          items.push({ date: ds, startTime: '00:00', endTime: '23:59', dow });
+          items.push({ date: ds, startTime: '00:00', endTime: '23:59', dow, comment: noteForThis });
         } else {
-          items.push({ date: ds, startTime, endTime, dow });
+          items.push({ date: ds, startTime, endTime, dow, comment: noteForThis });
         }
       }
     }
     return items;
-  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates]);
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates, note, noteAppliesToAll, noteExcludedDates]);
 
   // Reset the excluded-dates set when the generators change — otherwise
   // an old exclude on Aug 19 would silently apply if the user later
-  // switches days/recurrence/scope.
+  // switches days/recurrence/scope. Per-note opt-outs reset on the same
+  // triggers for the same reason.
   useEffect(() => {
     setExcludedDates(new Set());
+    setNoteExcludedDates(new Set());
   }, [selectedDays, recurrence, scope]);
 
   const toggleDay = (dow) => {
@@ -807,6 +827,35 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
             )}
           </div>
 
+          {/* Note (optional) — same field name as single-day modal so admins
+              see it in exactly the same place when reviewing availability. */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Note (optional)</label>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              rows={2}
+              placeholder="e.g. Online only this week · Can stay later if needed · Prefer HS side"
+              className="w-full rounded-xl border-2 border-gray-200 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+            />
+            {note.trim() && (
+              <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-emerald-700 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={noteAppliesToAll}
+                  onChange={e => setNoteAppliesToAll(e.target.checked)}
+                  className="accent-emerald-600 h-4 w-4"
+                />
+                Apply this note to every selected day
+                {!noteAppliesToAll && (
+                  <span className="ml-1 font-normal text-gray-500">
+                    — click date chips below to toggle individually
+                  </span>
+                )}
+              </label>
+            )}
+          </div>
+
           {/* Recurrence */}
           <div>
             <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Repeats</label>
@@ -876,23 +925,48 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
                 </div>
               </div>
               <p className="text-[11px] text-gray-500 mb-2">Click the × on any date to skip it.</p>
+              {/* Per-date toggle is enabled only when the user has typed a
+                  note AND turned OFF "apply to all". A small dot on each
+                  chip shows whether the note applies; clicking the chip
+                  body toggles it. The × button still removes the date
+                  from the batch entirely (independent of the note). */}
+              {note.trim() && !noteAppliesToAll && (
+                <p className="text-[11px] text-gray-500 mb-2">
+                  Click a date to toggle whether the note applies. Dot = note on.
+                </p>
+              )}
               <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
                 {preview.map(item => {
                   const isOverwrite = existingDates.has(item.date);
+                  const noteOn = !!item.comment;
+                  const perDateToggleEnabled = note.trim() && !noteAppliesToAll;
+                  const toggleNote = () => {
+                    if (!perDateToggleEnabled) return;
+                    setNoteExcludedDates(prev => {
+                      const next = new Set(prev);
+                      if (next.has(item.date)) next.delete(item.date);
+                      else next.add(item.date);
+                      return next;
+                    });
+                  };
                   return (
                     <span
                       key={item.date}
-                      title={`${fmtTime(item.startTime)} – ${fmtTime(item.endTime)}`}
+                      title={`${fmtTime(item.startTime)} – ${fmtTime(item.endTime)}${item.comment ? ` · note: ${item.comment}` : ''}`}
+                      onClick={toggleNote}
                       className={`group inline-flex items-center gap-1 rounded-lg pl-2 pr-1 py-1 text-xs font-medium ${
                         isOverwrite
                           ? 'bg-orange-100 text-orange-700'
                           : 'bg-emerald-100 text-emerald-700'
-                      }`}
+                      } ${perDateToggleEnabled ? 'cursor-pointer' : ''}`}
                     >
+                      {noteOn && (
+                        <span className={`h-1.5 w-1.5 rounded-full ${isOverwrite ? 'bg-orange-500' : 'bg-emerald-600'}`} />
+                      )}
                       {new Date(item.date + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                       <button
                         type="button"
-                        onClick={() => setExcludedDates(prev => new Set(prev).add(item.date))}
+                        onClick={(e) => { e.stopPropagation(); setExcludedDates(prev => new Set(prev).add(item.date)); }}
                         title="Remove this date from the batch"
                         className={`flex h-4 w-4 items-center justify-center rounded-full text-[10px] font-bold transition-colors ${
                           isOverwrite
@@ -1085,6 +1159,10 @@ export default function Schedule() {
           date: item.date,
           startTime: item.startTime,
           endTime: item.endTime,
+          // Same field name as the single-day modal so admins read it
+          // identically. Empty string when the user didn't opt this date
+          // into the note (or didn't enter one at all).
+          comment: item.comment || '',
           bulkSet: true,
         });
       }
