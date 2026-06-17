@@ -25,7 +25,7 @@ import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
-  isOperatingDay, holidayFor, ALL_WEEKDAYS,
+  isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
