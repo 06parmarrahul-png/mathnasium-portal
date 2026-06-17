@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
-import { DAY_NAMES } from '../lib/centerConfig';
-import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Users } from 'lucide-react';
+import { DAY_NAMES, isSummerOverrideActive } from '../lib/centerConfig';
+import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Users, Sun } from 'lucide-react';
 
 /**
  * Edit per-center settings: identity, instructional + operating hours,
@@ -146,6 +146,21 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
         <DayHoursTable
           hours={form?.instructionalHours}
           onChange={(day, side, value) => setHours('instructionalHours', day, side, value)}
+        />
+      </Section>
+
+      {/* Summer (date-bounded) override — narrow feature for Langley's
+          2026 July/August change. Auto-expires after the `to` date, so
+          there's no September cleanup task. */}
+      <Section
+        title="Seasonal Hours Override"
+        icon={Sun}
+        hint="Optional. Date-bounded overlay on instructional hours — auto-expires after the end date, no manual revert."
+      >
+        <SummerOverrideEditor
+          override={form?.summerHours2026}
+          baseHours={form?.instructionalHours}
+          onChange={(next) => setField('summerHours2026', next)}
         />
       </Section>
 
@@ -338,6 +353,106 @@ function ListEditor({ items, onAdd, onRemove, placeholder, chipColor = 'gray' })
           Add
         </button>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Editor for the date-bounded summer override on instructional hours.
+ *
+ * Deliberately narrow: one date range, one map of day → {start, end}.
+ * Designed for Langley's 2026 July/August schedule change. If we need
+ * recurring overrides or multiple windows later, this gets replaced
+ * with a generic editor — for now YAGNI.
+ *
+ * Saving null disables the override entirely. Owner can clear the
+ * "Enabled" checkbox to revert to year-round hours without touching
+ * the dates or per-day values (handy if they want to re-enable later).
+ */
+function SummerOverrideEditor({ override, baseHours, onChange }) {
+  const enabled = !!override;
+  const o = override || { from: '', to: '', byDay: {} };
+  const active = isSummerOverrideActive({ summerHours2026: override }, new Date());
+
+  const setOverride = (patch) => onChange({ ...o, ...patch });
+  const setDayHours = (day, side, value) => onChange({
+    ...o,
+    byDay: { ...(o.byDay || {}), [day]: { ...((o.byDay || {})[day] || {}), [side]: value } },
+  });
+  const removeDay = (day) => {
+    const next = { ...(o.byDay || {}) };
+    delete next[day];
+    onChange({ ...o, byDay: next });
+  };
+  const addDay = (day) => setDayHours(day, 'start', baseHours?.[day]?.start || '10:00') &&
+                          setDayHours(day, 'end',   baseHours?.[day]?.end   || '14:00');
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <label className="inline-flex items-center gap-2 text-sm">
+          <input type="checkbox" checked={enabled}
+            onChange={(e) => onChange(e.target.checked
+              ? { from: o.from || '', to: o.to || '', byDay: o.byDay || {} }
+              : null)} />
+          Enable a summer / seasonal override
+        </label>
+        {active && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+            <CheckCircle2 size={11} /> Active right now
+          </span>
+        )}
+      </div>
+
+      {enabled && (
+        <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Starts on">
+              <input type="date" value={o.from || ''}
+                onChange={(e) => setOverride({ from: e.target.value })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20" />
+            </Field>
+            <Field label="Ends on (auto-expires after this date)">
+              <input type="date" value={o.to || ''}
+                onChange={(e) => setOverride({ to: e.target.value })}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20" />
+            </Field>
+          </div>
+
+          <div className="rounded border border-gray-200 bg-gray-50 p-3">
+            <p className="mb-2 text-xs font-medium text-gray-700">
+              Per-day instructional hours during this window — days not listed below fall through to the year-round defaults above.
+            </p>
+            {Object.keys(o.byDay || {}).length === 0 && (
+              <p className="text-xs text-gray-500 mb-2">No days overridden yet.</p>
+            )}
+            {Object.entries(o.byDay || {}).map(([day, h]) => (
+              <div key={day} className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span className="w-20 shrink-0 font-medium text-gray-700">{day}</span>
+                <input type="time" value={h?.start || ''}
+                  onChange={(e) => setDayHours(day, 'start', e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                <span className="text-gray-400">to</span>
+                <input type="time" value={h?.end || ''}
+                  onChange={(e) => setDayHours(day, 'end', e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs" />
+                <button type="button" onClick={() => removeDay(day)}
+                  className="ml-auto inline-flex items-center rounded p-1 text-gray-400 hover:bg-red-50 hover:text-red-600">
+                  <X size={12} />
+                </button>
+              </div>
+            ))}
+            <div className="mt-2 flex flex-wrap gap-1">
+              {DAY_NAMES.filter(d => !(d in (o.byDay || {}))).map(d => (
+                <button key={d} type="button" onClick={() => addDay(d)}
+                  className="inline-flex items-center gap-1 rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[11px] text-gray-600 hover:border-purple-400 hover:text-purple-700">
+                  <Plus size={10} /> {d}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

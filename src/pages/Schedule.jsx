@@ -7,7 +7,7 @@ import {
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { styleFor as subRoleStyleFor, sickStyleFor } from '../lib/subRoles';
-import { isOperatingDay, isCenterClosedOn, closureReason } from '../lib/centerConfig';
+import { isOperatingDay, isCenterClosedOn, closureReason, resolveInstructionalHours } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   CalendarDays, ChevronLeft, ChevronRight,
@@ -141,7 +141,10 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
   const dayDefault = (() => {
     const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const dayName = DOW[date.getDay()];
-    const h = centerConfig?.instructionalHours?.[dayName];
+    // resolveInstructionalHours respects any active date-bound override
+    // (e.g. summerHours2026) so picking July 7 returns 10–14 for Tue/Thu
+    // instead of the year-round 15–19.
+    const h = resolveInstructionalHours(centerConfig, date)?.[dayName];
     return h?.start && h?.end ? h : { start: '15:00', end: '20:00' };
   })();
   const [startTime, setStartTime] = useState(dayDefault.start);
@@ -617,7 +620,10 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
   // Default custom-time inputs to this centre's Monday instructional
   // hours — the most common case for staff filling out availability.
   // The user can change them; per-day variation comes from "Full Day".
-  const weeklyDefault = centerConfig?.instructionalHours?.Monday;
+  // Resolver respects active date-bound overrides (Monday isn't part of
+  // the summer override today, so behaviour is unchanged — using the
+  // resolver keeps the call uniform with the rest of the codebase).
+  const weeklyDefault = resolveInstructionalHours(centerConfig, new Date())?.Monday;
   const [startTime, setStartTime] = useState(weeklyDefault?.start || '15:00');
   const [endTime, setEndTime] = useState(weeklyDefault?.end || '20:00');
   const [useFullDay, setUseFullDay] = useState(false);

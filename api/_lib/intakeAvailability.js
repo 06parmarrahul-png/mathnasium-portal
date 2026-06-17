@@ -44,6 +44,20 @@ export function instructionalHoursToWindows(instructionalHours) {
   return out;
 }
 
+// Server-side mirror of src/lib/centerConfig.js resolveInstructionalHours.
+// Returns the EFFECTIVE per-day instructional hours map for a specific
+// date, applying any active summer override. Kept here (rather than
+// imported from the frontend) so this serverless function has no
+// cross-bundle imports.
+export function effectiveInstructionalHoursForDate(instructionalHours, summerOverride, ymd) {
+  const base = instructionalHours || {};
+  if (!summerOverride || !summerOverride.from || !summerOverride.to || !summerOverride.byDay) {
+    return base;
+  }
+  if (!ymd || ymd < summerOverride.from || ymd > summerOverride.to) return base;
+  return { ...base, ...summerOverride.byDay };
+}
+
 // Build the effective availability the slot engine should use, given
 // owner settings + centre instructional hours. Either inherits from
 // instructional hours (default) or uses the custom override.
@@ -125,19 +139,16 @@ function isSlotTaken(candidateISO, slotDurationMin, bookedSlots) {
  * @param {object} settings              - intake settings (see DEFAULT_INTAKE_SETTINGS)
  * @param {Array}  bookedSlots           - [{ startISO, durationMin, status }]
  * @param {object} instructionalHours    - centerConfig.instructionalHours (fallback source for availability)
+ * @param {object} summerOverride        - centerConfig.summerHours2026 (applied per-date when in window)
  * @returns {Array} day rows
  */
-export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instructionalHours = null) {
+export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instructionalHours = null, summerOverride = null) {
   const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const slotInt  = s.slotIntervalMin  || 30;
   const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
   const maxFuture = Date.now() + (s.maxAdvanceDays || 60) * 24 * 3600 * 1000;
   const nowMs    = Date.now() + noticeMs;
-
-  // Pick the effective day-window map: instructional hours by default,
-  // owner's custom override if they enabled that toggle.
-  const availability = effectiveAvailability(s, instructionalHours);
 
   // Ignore cancelled bookings so the slot reopens.
   const active = bookedSlots.filter(b => b.status !== 'cancelled');
@@ -149,7 +160,18 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
     d.setUTCDate(d.getUTCDate() + i);
     const ymd = dateToYmd(d);
     const weekday = WEEKDAYS[d.getUTCDay()];
-    const windows = availability[weekday] || [];
+    // Resolve the day's windows per-date. When the owner uses a custom
+    // availability override (useCustomAvailability=true), it takes
+    // precedence as before. Otherwise we apply the summer override to
+    // instructional hours on a per-date basis — so Tuesday July 7 reads
+    // 10–14 while Tuesday September 8 reads 15–19.
+    let windows;
+    if (s.useCustomAvailability && s.availability) {
+      windows = (s.availability[weekday] || []);
+    } else {
+      const hoursForDate = effectiveInstructionalHoursForDate(instructionalHours, summerOverride, ymd);
+      windows = instructionalHoursToWindows(hoursForDate)[weekday] || [];
+    }
     const slots = [];
     for (const minutes of slotStartsForDay(windows, slotDur, slotInt)) {
       const iso = buildISO(ymd, minutes);
@@ -182,7 +204,7 @@ function formatTimeLabel(minutes) {
 // Validate that a candidate slot the parent picked is still bookable —
 // runs server-side before we insert the doc so a stale browser tab can't
 // race to double-book.
-export function validateSlot({ slotISO, settings, bookedSlots, instructionalHours }) {
+export function validateSlot({ slotISO, settings, bookedSlots, instructionalHours, summerOverride = null }) {
   const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
@@ -193,12 +215,18 @@ export function validateSlot({ slotISO, settings, bookedSlots, instructionalHour
   if (tMs < Date.now() + noticeMs) return { ok: false, error: 'Slot is too close to now (less than the centre\'s advance-notice window).' };
   if (tMs > maxFuture)     return { ok: false, error: 'Slot is too far in the future.' };
 
-  // Day-of-week window check using the same effective availability the
-  // grid renders against.
+  // Day-of-week window check, resolved per-date so a summer-window
+  // booking is validated against the override (not the year-round hours).
   const d = new Date(tMs);
   const weekday = WEEKDAYS[d.getUTCDay()];
-  const availability = effectiveAvailability(s, instructionalHours);
-  const windows = availability[weekday] || [];
+  const ymd     = dateToYmd(d);
+  let windows;
+  if (s.useCustomAvailability && s.availability) {
+    windows = (s.availability[weekday] || []);
+  } else {
+    const hoursForDate = effectiveInstructionalHoursForDate(instructionalHours, summerOverride, ymd);
+    windows = instructionalHoursToWindows(hoursForDate)[weekday] || [];
+  }
   if (windows.length === 0) return { ok: false, error: 'The centre is closed that day.' };
   const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
   const inAnyWindow = windows.some(w => {

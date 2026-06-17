@@ -39,6 +39,23 @@ export const DEFAULT_CENTER_CONFIG = {
     Saturday:  { start: '09:00', end: '15:00' },
   },
 
+  // Date-bounded INSTRUCTIONAL HOURS OVERRIDE. Targeted at Langley's
+  // summer 2026 schedule change (Tue/Thu shift from 3-7pm to 10am-2pm
+  // for July + August). Auto-expires September 1 — no manual revert.
+  //
+  // Shape (all fields optional; null disables the override entirely):
+  //   { from: 'YYYY-MM-DD', to: 'YYYY-MM-DD', byDay: { Tuesday: {start,end}, ... } }
+  //
+  // Days NOT listed in byDay fall through to the weekly default above.
+  // Use resolveInstructionalHours(config, date) below — never read this
+  // field directly from a consumer. That helper handles the date math
+  // and is the single source of truth for "what hours apply on date X."
+  //
+  // This is intentionally NOT a generic recurring-override system —
+  // we'll build one of those if we need it again next year. For now
+  // YAGNI applies: one summer, one override slot.
+  summerHours2026: null,
+
   // ─── Analytics ─────────────────────────────────────────────────────────
   // Manually-entered active student count for the Analytics dashboard.
   // Owners update this from Admin → Analytics. A future phase can replace
@@ -377,4 +394,51 @@ export function closureReason(date, centerConfig) {
   }
   const h = holidayFor(date, centerConfig);
   return h ? (h.name || 'Holiday') : null;
+}
+
+// ── Date-aware instructional hours ─────────────────────────────────────
+//
+// The single source of truth for "what are the teaching windows on date X?"
+// Returns a full weekly map (Monday … Saturday → {start, end}) with any
+// active override merged on top. Always returns an object — never null —
+// so callers can do `resolveInstructionalHours(cfg, date)[dayName]` safely.
+//
+// Used in place of `centerConfig.instructionalHours[dayName]` everywhere
+// the answer depends on the date. Cheap to call — pure function, no I/O.
+
+export function toYmd(date) {
+  if (!date) return '';
+  if (typeof date === 'string') {
+    // Already a YYYY-MM-DD prefix? Return as-is.
+    return /^\d{4}-\d{2}-\d{2}/.test(date) ? date.slice(0, 10) : '';
+  }
+  if (!(date instanceof Date) || isNaN(date.getTime())) return '';
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function resolveInstructionalHours(centerConfig, date) {
+  const base = centerConfig?.instructionalHours
+            || DEFAULT_CENTER_CONFIG.instructionalHours;
+  const override = centerConfig?.summerHours2026;
+  if (!override || !override.from || !override.to || !override.byDay) {
+    return base;
+  }
+  const ymd = toYmd(date);
+  if (!ymd) return base;
+  if (ymd < override.from || ymd > override.to) return base;
+  // Apply per-day overrides on top of the weekly default. Days not in
+  // byDay fall through unchanged.
+  return { ...base, ...override.byDay };
+}
+
+// True if the date sits inside a currently-active summer override
+// window. Lets the UI render a "summer hours active" badge in Settings.
+export function isSummerOverrideActive(centerConfig, date) {
+  const o = centerConfig?.summerHours2026;
+  if (!o || !o.from || !o.to) return false;
+  const ymd = toYmd(date);
+  return !!ymd && ymd >= o.from && ymd <= o.to;
 }

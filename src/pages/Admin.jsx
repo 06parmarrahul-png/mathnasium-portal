@@ -152,9 +152,12 @@ function defaultShiftTimesFor(date, userLike, centerConfig) {
   const dayName = DOW_NAMES[d.getDay()];
   if (!dayName) return FALLBACK;
   const isHost = (userLike?.instructorType || '').toLowerCase() === 'host';
+  // Hosts get operating hours (unchanged). Instructors get the
+  // date-resolved instructional hours so any active override (e.g.
+  // summerHours2026) is reflected automatically in shift defaults.
   const bucket = isHost
     ? centerConfig?.operatingHours
-    : centerConfig?.instructionalHours;
+    : resolveInstructionalHours(centerConfig, d);
   const hours = bucket?.[dayName];
   return hours && hours.start && hours.end ? hours : FALLBACK;
 }

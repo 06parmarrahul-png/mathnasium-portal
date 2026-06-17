@@ -8,6 +8,7 @@ import { db, serverTimestamp } from '../firebase';
 import {
   Save, ExternalLink, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
+import { resolveInstructionalHours, isSummerOverrideActive } from '../lib/centerConfig';
 
 const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
@@ -192,10 +193,19 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
 
         {!s.useCustomAvailability && centerConfig?.instructionalHours && (
           <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs">
-            <p className="font-semibold text-gray-700 mb-1">Currently in effect (from instructional hours):</p>
+            <p className="font-semibold text-gray-700 mb-1">
+              Currently in effect (from instructional hours)
+              {isSummerOverrideActive(centerConfig, new Date()) && (
+                <span className="ml-1.5 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0 text-[10px] font-semibold text-amber-800">
+                  summer override active
+                </span>
+              )}:
+            </p>
             <ul className="space-y-0.5">
               {WEEKDAYS.map(day => {
-                const h = centerConfig.instructionalHours[day];
+                // Resolve against today's date so an active summer
+                // override is reflected in the "currently in effect" list.
+                const h = resolveInstructionalHours(centerConfig, new Date())[day];
                 return (
                   <li key={day} className="flex justify-between">
                     <span className="text-gray-700">{day}</span>

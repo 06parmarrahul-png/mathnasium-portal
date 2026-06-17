@@ -49,8 +49,12 @@ async function loadCentreContext(fs, centerId) {
   };
   // Surface instructional hours so the slot engine can default to them
   // when the owner hasn't opted into a custom availability override.
+  // Also surface any date-bound override (summerHours2026) — the slot
+  // engine applies it per-date so July/August Tue/Thu slots respect the
+  // 10–14 summer window while the rest of the year stays 15–19.
   const instructionalHours = config.instructionalHours || null;
-  return { centre, settings, instructionalHours };
+  const summerOverride     = config.summerHours2026   || null;
+  return { centre, settings, instructionalHours, summerOverride };
 }
 
 // ── GET: availability grid ─────────────────────────────────────────────
@@ -62,7 +66,7 @@ async function handleAvailability(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ error: 'Centre not found' });
-  const { centre, settings, instructionalHours } = ctx;
+  const { centre, settings, instructionalHours, summerOverride } = ctx;
 
   if (!settings.enabled) {
     return res.status(200).json({
@@ -94,7 +98,7 @@ async function handleAvailability(req, res) {
     };
   });
 
-  const days = computeWeekSlots(weekStart, settings, bookedSlots, instructionalHours);
+  const days = computeWeekSlots(weekStart, settings, bookedSlots, instructionalHours, summerOverride);
   res.status(200).json({
     centre:   { name: centre.name || centerId, timezone: settings.timezone },
     settings: {
@@ -125,7 +129,7 @@ async function handleCreate(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ ok: false, error: 'Centre not found' });
-  const { centre, settings, instructionalHours } = ctx;
+  const { centre, settings, instructionalHours, summerOverride } = ctx;
   if (!settings.enabled) {
     return res.status(403).json({ ok: false, error: 'Online booking is not enabled for this centre.' });
   }
@@ -148,7 +152,7 @@ async function handleCreate(req, res) {
     };
   });
 
-  const v = validateSlot({ slotISO: slot, settings, bookedSlots, instructionalHours });
+  const v = validateSlot({ slotISO: slot, settings, bookedSlots, instructionalHours, summerOverride });
   if (!v.ok) return res.status(409).json({ ok: false, error: v.error });
 
   const cancelToken = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 24);
