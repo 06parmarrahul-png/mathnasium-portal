@@ -29,6 +29,11 @@ import {
   watchInstructorAssignments, setInstructorAssignment,
   enableSheetSync, rotateSheetSyncToken, disableSheetSync,
 } from '../lib/scheduler-data';
+// Legacy hardcoded fixed-staff map (Sabrina, Neeru, Rachel). Used as a
+// fallback so the Today tab knows about them even when the live Firestore
+// config doc has no `fixedStaff` key. Same fallback the auto-scheduler
+// uses in scheduler.js → getFixedStaffForDay, so the two stay in sync.
+import { FIXED_SCHEDULES } from '../lib/scheduler';
 
 // Standard parent-name aliases — one click in Setup loads all of them
 // into Firestore so staff don't have to type them in one by one.
@@ -174,14 +179,22 @@ function TodayTab({ centerId }) {
   const [instructorClipboard, setInstructorClipboard] = useState(null);
   useEffect(() => setInstructorClipboard(null), [date]);
 
-  // Pull the centre's per-day fixed staff out of the live config so the
-  // Today tab knows about Sabrina (Manager), Neeru (Director), etc. —
-  // even though they don't have Firebase user accounts in the roster
-  // query below. Used for both the pool dropdown and the alias resolver.
+  // Pull the centre's per-day fixed staff so the Today tab knows about
+  // Sabrina (Manager), Neeru (Director), etc. — even though they don't
+  // have Firebase user accounts in the roster query below.
+  //
+  // Source of truth, in order:
+  //   1. centerConfig.fixedStaff from the live Firestore doc — owner's
+  //      authoritative configuration.
+  //   2. Fallback to FIXED_SCHEDULES (legacy hardcoded Langley set) when
+  //      the live config is empty / unset. Same fallback the auto-
+  //      scheduler uses, so the two paths stay in sync — the user sees
+  //      the same fixed-staff list everywhere.
   const centerConfig = activeCenterConfig;
   const fixedStaffNames = useMemo(() => {
     const m = centerConfig?.fixedStaff;
-    return m ? Object.keys(m).filter(Boolean) : [];
+    const map = (m && Object.keys(m).length > 0) ? m : FIXED_SCHEDULES;
+    return Object.keys(map).filter(Boolean);
   }, [centerConfig]);
 
   // Subscribe to the centre's user roster. We include instructors and
