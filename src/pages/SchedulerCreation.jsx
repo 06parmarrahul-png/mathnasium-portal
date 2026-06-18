@@ -180,21 +180,29 @@ function TodayTab({ centerId }) {
   useEffect(() => setInstructorClipboard(null), [date]);
 
   // Pull the centre's per-day fixed staff so the Today tab knows about
-  // Sabrina (Manager), Neeru (Director), etc. — even though they don't
-  // have Firebase user accounts in the roster query below.
+  // staff who don't have Firebase accounts (Sabrina, Neeru, Rachel).
   //
   // Source of truth, in order:
-  //   1. centerConfig.fixedStaff from the live Firestore doc — owner's
-  //      authoritative configuration.
-  //   2. Fallback to FIXED_SCHEDULES (legacy hardcoded Langley set) when
-  //      the live config is empty / unset. Same fallback the auto-
-  //      scheduler uses, so the two paths stay in sync — the user sees
-  //      the same fixed-staff list everywhere.
+  //   1. centerConfig.fixedStaff from the live Firestore doc.
+  //   2. Fallback to FIXED_SCHEDULES (legacy hardcoded Langley set)
+  //      when the live config is empty. Same fallback the auto-scheduler
+  //      uses, so the two paths stay in sync.
+  //
+  // Filter: only include fixed staff whose ROLE means they can actually
+  // be scheduled to run student sessions — Manager, Lead, Instructor,
+  // Host. Director / Admin roles stay out of the dropdown because they
+  // aren't slot-eligible (they're support staff who never get assigned
+  // to an EM/HS time slot).
+  const SLOT_ELIGIBLE_ROLES = new Set(['Manager', 'Lead', 'Instructor', 'Host']);
   const centerConfig = activeCenterConfig;
   const fixedStaffNames = useMemo(() => {
     const m = centerConfig?.fixedStaff;
     const map = (m && Object.keys(m).length > 0) ? m : FIXED_SCHEDULES;
-    return Object.keys(map).filter(Boolean);
+    return Object.entries(map)
+      .filter(([, sched]) => SLOT_ELIGIBLE_ROLES.has(sched?.role))
+      .map(([name]) => name)
+      .filter(Boolean);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [centerConfig]);
 
   // Subscribe to the centre's user roster. We include instructors and
@@ -334,12 +342,13 @@ function TodayTab({ centerId }) {
   const ratio = settings?.studentsPerInstructor || 4;
   // Pool = live Firestore staff list, plus any custom names from Setup
   // (so one-off helpers can still be added without being approved users).
-  // Pool = live Firestore staff (instructors + AAs) + fixed staff from
-  // centerConfig (Sabrina the Manager, Neeru the Director, etc.) + any
-  // freeform names the owner typed under Setup → instructor pool.
-  // Deduped; rendered in the +add dropdown on every slot.
-  const pool = [...staffUsers, ...fixedStaffNames, ...((settings?.instructorPool) || [])]
-    .filter((n, i, a) => a.indexOf(n) === i);
+  // Pool = live Firestore staff (instructors + AAs) + slot-eligible
+  // fixed staff (Manager / Lead / Host) + any freeform names the owner
+  // typed under Setup. Deduped, then sorted alphabetically so fixed
+  // staff slot in by first name instead of bunching at the bottom of
+  // the dropdown. Rendered in the +add picker on every slot row.
+  const pool = [...new Set([...staffUsers, ...fixedStaffNames, ...((settings?.instructorPool) || [])])]
+    .sort((a, b) => a.localeCompare(b));
 
   return (
     <div>
@@ -718,16 +727,17 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         {row.counts[otherSide]}
       </td>
       <td className="px-1 py-1 align-top border-l border-gray-500 border-b border-gray-500">
-        {/* Stacked vertically (one name per row) — staff said reading
-            instructor names side-by-side was hard at a glance. The +add
-            and copy/paste action row sits BELOW the stack so the chips
-            never share a line with controls. */}
+        {/* Stacked vertically, one name per row. No chip / bubble — staff
+            said the rounded pill background was visually noisy; the bare
+            name reads cleaner against the row. Click-to-remove still
+            works on the whole row; the × on the right is print-hidden. */}
         <div className="flex flex-col gap-0.5">
           {instructors.map(n => (
             <span key={n}
               onClick={() => handleRemoveInstructor(n)} title="Click to remove"
-              className="cursor-pointer rounded-md border border-gray-500 bg-gray-100 px-1.5 py-0.5 text-[10px] hover:bg-red-100 hover:border-red-400">
-              {displayName(n)} <span className="text-red-600 print:hidden">×</span>
+              className="cursor-pointer text-[11px] leading-tight text-gray-800 hover:text-red-700 flex items-baseline gap-1">
+              <span>{displayName(n)}</span>
+              <span className="text-red-600 print:hidden">×</span>
             </span>
           ))}
         </div>
@@ -770,16 +780,15 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         </div>
       </td>
       {/* Cross-side instructor column — read-only, intentionally low
-          contrast. Visible in print so the printed sheet doubles as a
-          full-centre staffing snapshot, not just one side. Also stacked
-          vertically for parity with the own-side column. */}
+          contrast. Visible in print. No chip background — plain text
+          stacked vertically, matching the own-side column. */}
       <td className="px-1 py-1 align-top border-l border-gray-500 border-b border-gray-500">
         {otherInstructors.length === 0 ? (
           <span className="text-[10px] text-gray-300">—</span>
         ) : (
           <div className="flex flex-col gap-0.5">
             {otherInstructors.map(n => (
-              <span key={n} className="rounded-md bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600 border border-gray-400">
+              <span key={n} className="text-[11px] leading-tight text-gray-600">
                 {displayName(n)}
               </span>
             ))}
