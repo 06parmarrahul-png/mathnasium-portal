@@ -158,6 +158,11 @@ function TodayTab({ centerId }) {
   // the per-slot "+ add" dropdown so staff doesn't have to maintain a
   // separate text list.
   const [staffUsers, setStaffUsers] = useState([]);
+  // Map of stored-name → canonical full-name, populated from the user
+  // roster subscription below. Lets old assignment docs containing
+  // "Bri" or "Sabrina" render as "Brianna MacDonald" / "Sabrina Kedzior"
+  // without backfilling Firestore.
+  const [staffNameAliases, setStaffNameAliases] = useState(() => new Map());
   // Instructor clipboard — when a row's "copy" button is hit, we stash
   // { names: [...], from: 'HS|14:00' } here so any other row (either side)
   // can paste it. Lives in component state only — clears on refresh / day
@@ -167,6 +172,17 @@ function TodayTab({ centerId }) {
 
   // Subscribe to the centre's user roster. We include instructors and
   // admin assistants since both get scheduled to slots in practice.
+  //
+  // Two outputs from the same subscription:
+  //   1. staffUsers  — string[], canonical names used to populate the
+  //      "+ add" dropdown and dedupe against the manual instructorPool.
+  //      Prefers full displayName ("Brianna MacDonald") over a possibly-
+  //      nickname firstName ("Bri") so the pitch-quality schedule reads
+  //      well without anyone hand-editing user profiles.
+  //   2. staffNameAliases — Map<storedName, canonicalName>. Handles
+  //      OLD assignment docs that still contain short names like "Bri"
+  //      or "Sabrina" — they get rendered as the full canonical name
+  //      without requiring a backfill of the assignments collection.
   useEffect(() => {
     if (!centerId) return;
     const q = query(
@@ -174,17 +190,35 @@ function TodayTab({ centerId }) {
       where('centerIds', 'array-contains', centerId),
     );
     return onSnapshot(q, snap => {
-      const list = snap.docs
+      const members = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
         .filter(u =>
           u.approved !== false &&
           (u.role === 'instructor' || u.role === 'admin_assistant')
         )
-        // Use first name where possible — matches the paper schedule.
-        .map(u => (u.firstName || u.displayName || '').trim())
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b));
+        .map(u => ({
+          firstName:   (u.firstName   || '').trim(),
+          displayName: (u.displayName || '').trim(),
+        }))
+        .filter(m => m.firstName || m.displayName);
+
+      const canonicalFor = (m) => m.displayName || m.firstName;
+      const list = members.map(canonicalFor).filter(Boolean).sort((a, b) => a.localeCompare(b));
       setStaffUsers([...new Set(list)]);
+
+      // Build the stored-name → canonical map so old assignments still
+      // render the full name. We map both the firstName field and the
+      // FIRST WORD of the displayName, since either could have been
+      // stored in earlier assignment writes.
+      const aliases = new Map();
+      for (const m of members) {
+        const canonical = canonicalFor(m);
+        if (!canonical) continue;
+        if (m.firstName && !aliases.has(m.firstName)) aliases.set(m.firstName, canonical);
+        const firstWord = (m.displayName || '').split(/\s+/)[0];
+        if (firstWord && !aliases.has(firstWord)) aliases.set(firstWord, canonical);
+      }
+      setStaffNameAliases(aliases);
     });
   }, [centerId]);
 
@@ -362,7 +396,8 @@ function TodayTab({ centerId }) {
             <div>
               <SideTable side="EM" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
-                clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
+                clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
+                nameAliases={staffNameAliases} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
@@ -372,7 +407,8 @@ function TodayTab({ centerId }) {
             <div className={printOnly === 'BOTH' ? 'print:break-before-page' : ''}>
               <SideTable side="HS" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
-                clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
+                clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
+                nameAliases={staffNameAliases} />
             </div>
           )}
         </div>
@@ -445,7 +481,7 @@ function TodayTab({ centerId }) {
   );
 }
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
   const otherSide = side === 'HS' ? 'EM' : 'HS';
@@ -490,31 +526,31 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               paper was a regression we just reversed. */}
           <col className="w-28" />
         </colgroup>
-        <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
+        <thead className="bg-gray-100 text-[10px] uppercase text-gray-600">
           <tr>
-            <th className="px-1 py-1 text-left border-b border-gray-300">Time</th>
-            <th className="px-1 py-1 text-left border-b border-gray-300">
-              On the hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
+            <th className="px-1 py-1 text-left border-b-2 border-gray-600">Time</th>
+            <th className="px-1 py-1 text-left border-b-2 border-gray-600">
+              On the hour{side === 'HS' && <span className="ml-1 normal-case text-gray-500">(1 hr)</span>}
             </th>
-            <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
-              On the half hour{side === 'HS' && <span className="ml-1 normal-case text-gray-400">(1 hr)</span>}
+            <th className="px-1 py-1 text-left border-l-2 border-gray-600 border-b-2 border-gray-600">
+              On the half hour{side === 'HS' && <span className="ml-1 normal-case text-gray-500">(1 hr)</span>}
             </th>
             {side === 'HS' && (
-              <th className="px-1 py-1 text-left border-l-2 border-gray-400 border-b border-gray-300">
+              <th className="px-1 py-1 text-left border-l-2 border-gray-600 border-b-2 border-gray-600">
                 1.5 hr
               </th>
             )}
             {/* Own-side count: labeled with the side name so a printout
                 read out of context is unambiguous. Cross-side count follows
                 for at-a-glance awareness of what the other room is doing. */}
-            <th className="px-1 py-1 text-center border-l border-gray-300 border-b border-gray-300">
+            <th className="px-1 py-1 text-center border-l border-gray-500 border-b-2 border-gray-600">
               {side === 'HS' ? 'HS' : 'EM'}
             </th>
-            <th className="px-1 py-1 text-center border-l border-gray-300 border-b border-gray-300">
+            <th className="px-1 py-1 text-center border-l border-gray-500 border-b-2 border-gray-600">
               {side === 'HS' ? 'EM' : 'HS'}
             </th>
-            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300">Instructors</th>
-            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300">
+            <th className="px-1 py-1 text-left border-l border-gray-500 border-b-2 border-gray-600">Instructors</th>
+            <th className="px-1 py-1 text-left border-l border-gray-500 border-b-2 border-gray-600">
               {otherTitle}
             </th>
           </tr>
@@ -524,7 +560,8 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
             <SlotRow key={row.slot} row={row} side={side} alt={i % 2 === 1}
               centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
-              clipboard={clipboard} setClipboard={setClipboard} />
+              clipboard={clipboard} setClipboard={setClipboard}
+              nameAliases={nameAliases} />
           ))}
         </tbody>
       </table>
@@ -532,7 +569,11 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases }) {
+  // Map a stored instructor name to its canonical display version
+  // ("Bri" → "Brianna MacDonald"). Falls through unchanged when no
+  // alias is registered (custom pool names, deleted users, etc.).
+  const displayName = (stored) => (nameAliases && nameAliases.get(stored)) || stored;
   const rawOnHour = row.students[side].onHour;
   const rawHalfHour = row.students[side].halfHour;
   // HS only: 1-hour students stay in their start-time column; everyone
@@ -602,12 +643,12 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
 
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
-      <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap border-b border-gray-300">
+      <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap border-b border-gray-500">
         {row.label.split('–')[0]}<br/>
         <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
       </td>
       {/* On the hour column */}
-      <td className="px-1 py-1 align-top border-b border-gray-300 break-words">
+      <td className="px-1 py-1 align-top border-b border-gray-500 break-words">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
@@ -615,7 +656,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       {/* Half-hour column with thicker divider on the left — matches the
           header divider and gives clear column separation. Slight top
           padding so half-hour rows visually offset down. */}
-      <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 pt-3 break-words">
+      <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 pt-3 break-words">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
@@ -624,34 +665,41 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           half-hour column. Holds anyone in this row's slot whose session
           is longer than 60 min, regardless of start time. */}
       {side === 'HS' && (
-        <td className="px-1 py-1 align-top border-l-2 border-gray-400 border-b border-gray-300 break-words">
+        <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 break-words">
           <StudentList students={longHour} checkIns={checkIns}
             centerId={centerId} date={date} side={side}
             onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
         </td>
       )}
-      <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-300 border-b border-gray-300 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
+      <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
         {count}
       </td>
       {/* Other-side count: small, gray — informational, not the decision number. */}
-      <td className="px-1 py-1 align-top text-center text-xs font-semibold text-gray-500 border-l border-gray-300 border-b border-gray-300">
+      <td className="px-1 py-1 align-top text-center text-xs font-semibold text-gray-500 border-l border-gray-500 border-b border-gray-500">
         {row.counts[otherSide]}
       </td>
-      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
-        <div className="flex flex-wrap items-center gap-0.5">
+      <td className="px-1 py-1 align-top border-l border-gray-500 border-b border-gray-500">
+        {/* Stacked vertically (one name per row) — staff said reading
+            instructor names side-by-side was hard at a glance. The +add
+            and copy/paste action row sits BELOW the stack so the chips
+            never share a line with controls. */}
+        <div className="flex flex-col gap-0.5">
           {instructors.map(n => (
-            <span key={n} className="cursor-pointer rounded-full bg-gray-100 px-1.5 py-0 text-[10px] hover:bg-red-100"
-              onClick={() => handleRemoveInstructor(n)} title="Click to remove">
-              {n} <span className="text-red-600 print:hidden">×</span>
+            <span key={n}
+              onClick={() => handleRemoveInstructor(n)} title="Click to remove"
+              className="cursor-pointer rounded-md border border-gray-500 bg-gray-100 px-1.5 py-0.5 text-[10px] hover:bg-red-100 hover:border-red-400">
+              {displayName(n)} <span className="text-red-600 print:hidden">×</span>
             </span>
           ))}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-1 print:hidden">
           {/* Native select used as a quick instructor picker. Empty default
               option acts as the "+ add" affordance; picking a name from the
               dropdown adds it instantly with no prompt. */}
           <select
             onChange={handlePickInstructor}
             defaultValue=""
-            className="rounded-full border border-dashed border-gray-300 bg-white px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600 print:hidden">
+            className="rounded-md border border-dashed border-gray-400 bg-white px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600">
             <option value="">+ add</option>
             {pool.filter(n => !instructors.includes(n)).map(n => (
               <option key={n} value={n}>{n}</option>
@@ -660,21 +708,20 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           </select>
           {/* Copy & paste buttons. Copy is always visible (no-op'd if the
               row is empty). Paste shows only when something is on the
-              clipboard from a different row. Tiny, neutral styling so
-              they don't compete visually with the chips. */}
+              clipboard from a different row. */}
           <button onClick={handleCopy}
             title={isCopySource ? 'This row is on the clipboard' : 'Copy these instructors'}
-            className={`inline-flex items-center rounded-full border border-dashed px-1 py-0 text-[10px] print:hidden ${
+            className={`inline-flex items-center rounded-md border border-dashed px-1 py-0 text-[10px] ${
               isCopySource
                 ? 'border-blue-400 bg-blue-50 text-blue-700'
-                : 'border-gray-300 text-gray-500 hover:border-blue-400 hover:text-blue-600'
+                : 'border-gray-400 text-gray-500 hover:border-blue-400 hover:text-blue-600'
             }`}>
             {isCopySource ? <ClipboardCheck size={10} /> : <Copy size={10} />}
           </button>
           {canPaste && (
             <button onClick={handlePaste}
               title={`Paste ${clipboard.names.length} from ${clipboard.from}`}
-              className="inline-flex items-center rounded-full border border-dashed border-blue-300 bg-blue-50 px-1 py-0 text-[10px] text-blue-700 hover:bg-blue-100 print:hidden">
+              className="inline-flex items-center rounded-md border border-dashed border-blue-400 bg-blue-50 px-1 py-0 text-[10px] text-blue-700 hover:bg-blue-100">
               <Clipboard size={10} />
             </button>
           )}
@@ -685,15 +732,16 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       </td>
       {/* Cross-side instructor column — read-only, intentionally low
           contrast. Visible in print so the printed sheet doubles as a
-          full-centre staffing snapshot, not just one side. */}
-      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
+          full-centre staffing snapshot, not just one side. Also stacked
+          vertically for parity with the own-side column. */}
+      <td className="px-1 py-1 align-top border-l border-gray-500 border-b border-gray-500">
         {otherInstructors.length === 0 ? (
           <span className="text-[10px] text-gray-300">—</span>
         ) : (
-          <div className="flex flex-wrap gap-0.5">
+          <div className="flex flex-col gap-0.5">
             {otherInstructors.map(n => (
-              <span key={n} className="rounded-full bg-gray-50 px-1.5 py-0 text-[10px] text-gray-500 border border-gray-200">
-                {n}
+              <span key={n} className="rounded-md bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600 border border-gray-400">
+                {displayName(n)}
               </span>
             ))}
           </div>
