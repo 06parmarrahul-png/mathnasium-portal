@@ -160,10 +160,19 @@ function getDaysInRange(startDate, endDate) {
 function resolveAvailability(availabilityRecords, previousMonthsAvail, userId, dateStr, dayName) {
   const userRecords = availabilityRecords.filter(a => a.userId === userId);
 
-  // 1. Exact date match in current month — highest priority
+  // 1. Exact date match in current month — highest priority.
+  // `preferredAssignment` lets a normally-centre instructor opt into the
+  // online pass for that day (or vice versa). Fallback chains down through
+  // previous months do NOT carry a preference forward — those are stale
+  // recurring availability, not a fresh-this-week decision.
   const exact = userRecords.find(a => a.date === dateStr);
   if (exact) {
-    return { available: true, startTime: exact.startTime, endTime: exact.endTime };
+    return {
+      available: true,
+      startTime: exact.startTime,
+      endTime: exact.endTime,
+      preferredAssignment: exact.preferredAssignment || 'either',
+    };
   }
 
   // 2. No current month record for this date.
@@ -216,6 +225,16 @@ export function parseAMPMtoHHMM(timeStr) {
  * Falls back to the legacy FIXED_SCHEDULES export when no map is provided
  * (lets older callers keep working).
  */
+// Default whether a fixed-staff role counts toward the in-centre
+// instructor ratio when the config doesn't say otherwise. Manager,
+// Lead, and Instructor are floor staff who actively run sessions —
+// they count. Director and Admin are off-floor support — they don't.
+//
+// An EXPLICIT `countsTowardRatio: false` on the fixed-staff entry still
+// wins (e.g. a Manager who genuinely doesn't teach), so existing config
+// docs that opted Sabrina out can still do so deliberately.
+const COUNTS_TOWARD_RATIO_BY_ROLE = new Set(['Manager', 'Lead', 'Instructor']);
+
 function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
   const map = fixedStaffMap && Object.keys(fixedStaffMap).length > 0
     ? fixedStaffMap
@@ -228,13 +247,19 @@ function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
       if (!sched.saturday_weeks.includes(weekOfMonth)) continue;
     }
     const parts = shift.split(' - ');
+    // Explicit setting wins; otherwise infer from the role. Previously
+    // the fallback was `false`, which meant Sabrina (Manager) was never
+    // counted even though she's on the floor every day.
+    const ctr = (typeof sched.countsTowardRatio === 'boolean')
+      ? sched.countsTowardRatio
+      : COUNTS_TOWARD_RATIO_BY_ROLE.has(sched.role);
     result.push({
       name,
       role: sched.role,
       shift,
       startTime: parts.length === 2 ? parseAMPMtoHHMM(parts[0]) : null,
       endTime: parts.length === 2 ? parseAMPMtoHHMM(parts[1]) : null,
-      countsTowardRatio: sched.countsTowardRatio ?? false,
+      countsTowardRatio: ctr,
     });
   }
   result.sort((a, b) => (ROLE_DISPLAY_ORDER[a.role] ?? 99) - (ROLE_DISPLAY_ORDER[b.role] ?? 99));
@@ -278,14 +303,26 @@ export function isOnlineOnly(instructor) {
 }
 
 /**
- * Pick the sub-role to tag an auto-scheduled shift with, based on the
- * instructor's teaching track:
- *   - Online instructors → 'Online' (separate platform)
- *   - Highschool-capable → 'Highschool' (the higher-skill in-centre bucket)
- *   - everyone else      → 'Elementary'
+ * Pick the sub-role to tag an auto-scheduled shift with.
+ *
+ * @param {Object} instructor
+ * @param {'centre'|'online'} [track]
+ *   Optional EFFECTIVE track for this day's shift (from effectiveTrack()).
+ *   When provided, it wins — so a normally-Online instructor who opted
+ *   into centre for today gets tagged 'Highschool'/'Elementary' (not
+ *   'Online'), and vice versa. When not provided, falls back to the old
+ *   profile-only behaviour for backwards compatibility.
  */
-export function shiftSubRoleFor(instructor) {
+export function shiftSubRoleFor(instructor, track) {
   const subs = instructor.subRoles || [];
+  if (track === 'online') return 'Online';
+  if (track === 'centre') {
+    return subs.includes('Highschool') ? 'Highschool' : 'Elementary';
+  }
+  // Legacy path: no explicit track → derive from profile.
+  //   - Online instructors → 'Online' (separate platform)
+  //   - Highschool-capable → 'Highschool' (higher-skill in-centre bucket)
+  //   - everyone else      → 'Elementary'
   if (subs.includes('Online')) return 'Online';
   if (subs.includes('Highschool')) return 'Highschool';
   return 'Elementary';
@@ -311,6 +348,29 @@ export function isGuaranteed(instructor, guaranteedNames) {
  */
 export function isHostRole(instructor) {
   return (instructor.instructorType || '').toLowerCase() === 'host';
+}
+
+/**
+ * Per-day track resolution. Combines an instructor's permanent subRoles
+ * (their CAPABILITY) with an optional per-day preferredAssignment from
+ * the availability doc (their PREFERENCE for that specific day).
+ *
+ * Returns 'online' or 'centre' — the bucket the scheduler should put
+ * them in for this day's pass. Rules:
+ *   - preferredAssignment in {'centre', 'online'} → honoured outright.
+ *     A centre-tagged instructor wanting Online today, or vice versa,
+ *     gets routed to the requested pass.
+ *   - 'either' or unset → fall back to the profile default:
+ *       isOnlineOnly(inst) ? 'online' : 'centre'
+ *
+ * This is the only place the per-day override interacts with routing —
+ * everywhere else in the scheduler keeps using the same isOnlineOnly /
+ * isHostRole filters, just driven by the result of this helper.
+ */
+export function effectiveTrack(instructor, preferredAssignment) {
+  if (preferredAssignment === 'online') return 'online';
+  if (preferredAssignment === 'centre') return 'centre';
+  return isOnlineOnly(instructor) ? 'online' : 'centre';
 }
 
 // ─── Main scheduling engine ───────────────────────────────────────────────────
@@ -470,15 +530,21 @@ export function generateSchedule({
         endTime: avail.endTime,
         shiftStr: avail.startTime && avail.endTime ? `${avail.startTime} - ${avail.endTime}` : '',
         fromPreviousMonth: avail.fromPreviousMonth || false,
+        preferredAssignment: avail.preferredAssignment || 'either',
       });
     }
 
     // ── 3. Split into online-only / hosts / in-centre instructors ────────────
     // Hosts are scheduled in their own pass below — they don't go through the
     // priority/fairness ranking and they don't compete for Instructor slots.
-    const onlineOnly = availableInstructors.filter(a => isOnlineOnly(a.inst));
-    const hosts      = availableInstructors.filter(a => !isOnlineOnly(a.inst) && isHostRole(a.inst));
-    const inCentre   = availableInstructors.filter(a => !isOnlineOnly(a.inst) && !isHostRole(a.inst));
+    //
+    // effectiveTrack() honours the per-day preferredAssignment from the
+    // availability doc, so an instructor whose profile is Centre-only can
+    // opt into the online pass for one specific day (and vice versa).
+    // When the preference is 'either' or unset, the profile default wins.
+    const onlineOnly = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'online');
+    const hosts      = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && isHostRole(a.inst));
+    const inCentre   = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && !isHostRole(a.inst));
 
     // ── 4. Sort in-centre instructors by scheduling priority ─────────────────
     // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
@@ -525,7 +591,7 @@ export function generateSchedule({
 
       assignedNames.push(candidate.inst.displayName);
       roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
-      subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
+      subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst, 'centre');
       // Instructors get clamped to instructional hours so a "Full Day"
       // availability doesn't accidentally schedule them 10am–8pm.
       const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
@@ -549,7 +615,7 @@ export function generateSchedule({
 
         assignedNames.push(candidate.inst.displayName);
         roles[candidate.inst.displayName] = candidate.inst.instructorType || 'Instructor';
-        subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
+        subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst, 'centre');
         const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
         if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
         else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;
@@ -609,7 +675,7 @@ export function generateSchedule({
           // 10-hour shift. Admins add admin/prep time manually after
           // the schedule is generated.
           roles[candidate.inst.displayName] = 'Host';
-          subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst);
+          subRoles[candidate.inst.displayName] = shiftSubRoleFor(candidate.inst, 'centre');
           const c = clampToInstructionalHours(candidate.startTime, candidate.endTime, dayName, instructionalHours);
           if (c) shiftTimes[candidate.inst.displayName] = `${c.start} - ${c.end}`;
           else if (candidate.shiftStr) shiftTimes[candidate.inst.displayName] = candidate.shiftStr;

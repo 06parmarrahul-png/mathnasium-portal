@@ -12,7 +12,7 @@
 // fetching happens server-side via /api/scheduler/appointments to avoid
 // shipping private feed URLs to the browser.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
 import { auth, db } from '../firebase';
@@ -143,6 +143,10 @@ function TabButton(props) {
 //  TODAY TAB — daily ops dashboard (EM on top, HS below, check-ins)
 // ═══════════════════════════════════════════════════════════════════════
 function TodayTab({ centerId }) {
+  // Pull centerConfig so we can read fixedStaff (auto-populates the
+  // pool dropdown with Sabrina, Neeru, etc. — users who don't have
+  // a Firebase account but ARE part of daily centre staffing).
+  const { centerConfig: activeCenterConfig } = useAuth();
   const [date, setDate] = useState(todayStr());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -170,6 +174,16 @@ function TodayTab({ centerId }) {
   const [instructorClipboard, setInstructorClipboard] = useState(null);
   useEffect(() => setInstructorClipboard(null), [date]);
 
+  // Pull the centre's per-day fixed staff out of the live config so the
+  // Today tab knows about Sabrina (Manager), Neeru (Director), etc. —
+  // even though they don't have Firebase user accounts in the roster
+  // query below. Used for both the pool dropdown and the alias resolver.
+  const centerConfig = activeCenterConfig;
+  const fixedStaffNames = useMemo(() => {
+    const m = centerConfig?.fixedStaff;
+    return m ? Object.keys(m).filter(Boolean) : [];
+  }, [centerConfig]);
+
   // Subscribe to the centre's user roster. We include instructors and
   // admin assistants since both get scheduled to slots in practice.
   //
@@ -183,6 +197,8 @@ function TodayTab({ centerId }) {
   //      OLD assignment docs that still contain short names like "Bri"
   //      or "Sabrina" — they get rendered as the full canonical name
   //      without requiring a backfill of the assignments collection.
+  //      Also seeded from centerConfig.fixedStaff keys so "Sabrina"
+  //      maps to "Sabrina Kedzior" even though she has no user account.
   useEffect(() => {
     if (!centerId) return;
     const q = query(
@@ -209,7 +225,9 @@ function TodayTab({ centerId }) {
       // Build the stored-name → canonical map so old assignments still
       // render the full name. We map both the firstName field and the
       // FIRST WORD of the displayName, since either could have been
-      // stored in earlier assignment writes.
+      // stored in earlier assignment writes. Fixed-staff entries from
+      // centerConfig get the same treatment so a manually-added "Sabrina"
+      // resolves to "Sabrina Kedzior" even though she has no user account.
       const aliases = new Map();
       for (const m of members) {
         const canonical = canonicalFor(m);
@@ -218,9 +236,13 @@ function TodayTab({ centerId }) {
         const firstWord = (m.displayName || '').split(/\s+/)[0];
         if (firstWord && !aliases.has(firstWord)) aliases.set(firstWord, canonical);
       }
+      for (const fullName of fixedStaffNames) {
+        const firstWord = fullName.split(/\s+/)[0];
+        if (firstWord && !aliases.has(firstWord)) aliases.set(firstWord, fullName);
+      }
       setStaffNameAliases(aliases);
     });
-  }, [centerId]);
+  }, [centerId, fixedStaffNames]);
 
   // Trigger a print run for the named side. We render exclusively that
   // side, calculate a per-day zoom level so the content fills (but doesn't
@@ -299,7 +321,11 @@ function TodayTab({ centerId }) {
   const ratio = settings?.studentsPerInstructor || 4;
   // Pool = live Firestore staff list, plus any custom names from Setup
   // (so one-off helpers can still be added without being approved users).
-  const pool = [...staffUsers, ...((settings?.instructorPool) || [])]
+  // Pool = live Firestore staff (instructors + AAs) + fixed staff from
+  // centerConfig (Sabrina the Manager, Neeru the Director, etc.) + any
+  // freeform names the owner typed under Setup → instructor pool.
+  // Deduped; rendered in the +add dropdown on every slot.
+  const pool = [...staffUsers, ...fixedStaffNames, ...((settings?.instructorPool) || [])]
     .filter((n, i, a) => a.indexOf(n) === i);
 
   return (
