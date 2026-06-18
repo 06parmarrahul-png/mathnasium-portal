@@ -484,9 +484,11 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
           <col className="w-8" />
           <col className="w-8" />
           <col className="w-32" />
-          {/* Cross-side instructor column — print:hidden because each
-              printed sheet covers one side only. */}
-          <col className="w-28 print:hidden" />
+          {/* Cross-side instructor column — visible on screen AND in
+              print. Front-desk staff use the printed sheet to confirm
+              the OTHER side is covered at a glance, so hiding it on
+              paper was a regression we just reversed. */}
+          <col className="w-28" />
         </colgroup>
         <thead className="bg-gray-100 text-[10px] uppercase text-gray-500">
           <tr>
@@ -512,7 +514,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               {side === 'HS' ? 'EM' : 'HS'}
             </th>
             <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300">Instructors</th>
-            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300 print:hidden">
+            <th className="px-1 py-1 text-left border-l border-gray-300 border-b border-gray-300">
               {otherTitle}
             </th>
           </tr>
@@ -682,8 +684,9 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         </div>
       </td>
       {/* Cross-side instructor column — read-only, intentionally low
-          contrast. Print-hidden because each printed sheet is one side. */}
-      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300 print:hidden">
+          contrast. Visible in print so the printed sheet doubles as a
+          full-centre staffing snapshot, not just one side. */}
+      <td className="px-1 py-1 align-top border-l border-gray-300 border-b border-gray-300">
         {otherInstructors.length === 0 ? (
           <span className="text-[10px] text-gray-300">—</span>
         ) : (
