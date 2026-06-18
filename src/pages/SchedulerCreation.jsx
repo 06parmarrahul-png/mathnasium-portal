@@ -282,6 +282,13 @@ function TodayTab({ centerId }) {
         {/* Two print buttons — one per side. Each conditionally renders only
             its own section, so the resulting print output is single-side
             and the page break is implicit. */}
+        {/* Default print is both sides stacked (EM then HS on separate
+            pages). Single-side buttons remain for staff who want to hand
+            one section to each room. */}
+        <button onClick={() => printSide('BOTH')}
+          className="flex items-center gap-1 rounded bg-gray-900 px-3 py-1 text-sm text-white hover:bg-gray-700">
+          <Printer size={14} /> Print Both
+        </button>
         <button onClick={() => printSide('HS')}
           className="flex items-center gap-1 rounded bg-blue-900 px-3 py-1 text-sm text-white hover:bg-blue-800">
           <Printer size={14} /> Print HS
@@ -344,18 +351,25 @@ function TodayTab({ centerId }) {
         // 6-column HS grid renders without horizontal scrolling and there's
         // no need to track two side-by-side tables at once.
         //
-        // While printOnly is set (Print HS / Print EM click), only that
-        // side renders so the printer never sees the other.
+        // Print modes (printOnly state):
+        //   null   → on-screen view, both sections visible
+        //   'EM'   → printer sees only Elementary (single-side handoff)
+        //   'HS'   → printer sees only High School
+        //   'BOTH' → both sections render with a page break between them,
+        //            so the printer produces two sheets — one per side.
         <div className="flex flex-col gap-3">
-          {(!printOnly || printOnly === 'EM') && (
+          {(!printOnly || printOnly === 'EM' || printOnly === 'BOTH') && (
             <div>
               <SideTable side="EM" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
             </div>
           )}
-          {(!printOnly || printOnly === 'HS') && (
-            <div>
+          {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
+            // Force a page break before HS when printing both — keeps each
+            // side on its own sheet so staff can hand the right page to
+            // the right room without splitting one section across pages.
+            <div className={printOnly === 'BOTH' ? 'print:break-before-page' : ''}>
               <SideTable side="HS" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard} />
