@@ -210,6 +210,51 @@ export async function setStudentDesk(centerId, dateStr, studentId, desk) {
   await patchEntry(centerId, dateStr, studentId, { desk: desk || '' });
 }
 
+// ───── Walk-in / manually-added students per slot (per day) ──────────────
+// Lets staff add a student to a specific time slot mid-day — for the call-in
+// "can you fit my kid in at 4?" case. Stored as ONE doc per date with a map
+// keyed by `${side}|${slot}` → [{id, name, isAssessment, addedAt, addedBy}].
+// Merged with the iCal-sourced students client-side at render time so the
+// page treats them identically (check-in, presumed-absent inference, etc).
+
+export function watchWalkIns(centerId, dateStr, cb) {
+  const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
+  return onSnapshot(ref, snap => cb(snap.exists() ? snap.data() : {}));
+}
+
+export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessment, addedByName }) {
+  if (!name?.trim()) throw new Error('Walk-in needs a name.');
+  const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
+  const snap = await getDoc(ref);
+  const current = snap.exists() ? snap.data() : {};
+  const key = `${side}|${slot}`;
+  // Locally-unique ID — prefix with `wi_` so check-in / classify code can
+  // tell walk-ins apart from iCal-sourced students if it ever needs to.
+  const id = `wi_${dateStr}_${side}_${slot}_${Math.random().toString(36).slice(2, 8)}`;
+  const entry = {
+    id,
+    name: name.trim(),
+    isAssessment: !!isAssessment,
+    addedAt: new Date().toISOString(),
+    addedBy: addedByName || '',
+  };
+  const next = { ...current, [key]: [...((current[key]) || []), entry] };
+  await setDoc(ref, next, { merge: false });
+  return id;
+}
+
+export async function removeWalkIn(centerId, dateStr, side, slot, walkInId) {
+  const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const current = snap.data();
+  const key = `${side}|${slot}`;
+  const list = (current[key] || []).filter(w => w.id !== walkInId);
+  const next = { ...current, [key]: list };
+  if (list.length === 0) delete next[key];
+  await setDoc(ref, next, { merge: false });
+}
+
 // ───── Instructor assignments (per day) ──────────────────────────────────
 // Key format: "<side>|<slotHHMM>" e.g. "HS|14:00"
 export function watchInstructorAssignments(centerId, dateStr, cb) {

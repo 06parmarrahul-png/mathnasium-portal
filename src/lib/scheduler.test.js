@@ -199,28 +199,19 @@ describe('getSubRoleScore', () => {
   });
 });
 
-describe('isGuaranteed', () => {
-  it('is true when the per-user flag is set, regardless of name', () => {
-    expect(isGuaranteed({ displayName: 'Random Person', guaranteed: true })).toBe(true);
+describe('isGuaranteed (removed feature — stub always false)', () => {
+  // Guaranteed-shift pinning was removed in favour of pure priority-
+  // based scheduling. The exported function remains as a stub so
+  // anything importing the symbol still resolves, but it always
+  // returns false — confirms the old hardcoded name list, per-user
+  // flag, and centre-config list are all no-ops.
+  it('always returns false (per-user flag ignored)', () => {
+    expect(isGuaranteed({ displayName: 'Random Person', guaranteed: true })).toBe(false);
   });
-
-  it('is true for names in the per-centre guaranteed list (by first name)', () => {
-    const list = ['Luke', 'Ainsley'];
-    expect(isGuaranteed({ displayName: 'Luke Skywalker' }, list)).toBe(true);
-    expect(isGuaranteed({ displayName: 'Ainsley Hartley' }, list)).toBe(true);
+  it('always returns false (per-centre list ignored)', () => {
+    expect(isGuaranteed({ displayName: 'Luke Skywalker' }, ['Luke'])).toBe(false);
+    expect(isGuaranteed({ displayName: 'Kaitlyn Murphy' })).toBe(false);
   });
-
-  it('is false for names not in the list and without the flag', () => {
-    const list = ['Luke'];
-    expect(isGuaranteed({ displayName: 'Sarah Smith' }, list)).toBe(false);
-  });
-
-  it('falls back to the built-in defaults when no centre list is supplied', () => {
-    // DEFAULT_GUARANTEED_NAMES = ['Luke', 'Ainsley', 'Kaitlyn']
-    expect(isGuaranteed({ displayName: 'Kaitlyn Murphy' })).toBe(true);
-    expect(isGuaranteed({ displayName: 'Random Name' })).toBe(false);
-  });
-
   it('handles missing displayName without throwing', () => {
     expect(isGuaranteed({})).toBe(false);
     expect(isGuaranteed({ displayName: '' })).toBe(false);

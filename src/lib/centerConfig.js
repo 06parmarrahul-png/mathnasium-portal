@@ -84,8 +84,6 @@ export const DEFAULT_CENTER_CONFIG = {
   defaultMaxDaysPerWeek: 5,
 
   // ─── Staff lists ───────────────────────────────────────────────────────
-  // First names that get a guaranteed shift when they submit availability.
-  guaranteedNames: [],
   // Full names excluded from hourly payroll summaries (salaried staff).
   salaryStaff: [],
   // Fixed staff with hardcoded weekly schedules — keyed by display name.
@@ -254,8 +252,11 @@ export const LANGLEY_DEFAULT_CONFIG = {
   name:     'Mathnasium Langley',
   city:     'Langley',
   province: 'BC',
-  guaranteedNames: ['Luke', 'Ainsley', 'Kaitlyn'],
-  salaryStaff:     ['Neeru Gill'],
+  // Guaranteed-shift list removed. Auto-scheduler now ranks purely on
+  // priority + sub-role + fairness — no name-based override. If you
+  // want someone scheduled first, set their priority to 1 in Manage
+  // Staff (per-user, transferable across centres).
+  salaryStaff:     ['Sabrina Kedzior', 'Neeru Gill'],
   fixedStaff: {
     'Neeru Gill': {
       role: 'Dir. of Education',
@@ -269,7 +270,11 @@ export const LANGLEY_DEFAULT_CONFIG = {
     },
     'Sabrina Kedzior': {
       role: 'Manager',
-      countsTowardRatio: false,
+      // Manager counts toward the in-centre staffing ratio — she's on
+      // the floor running sessions, not off-floor admin. Per-role
+      // inference in getFixedStaffForDay defaults Manager → true; the
+      // explicit value here is just to be unambiguous for future eyes.
+      countsTowardRatio: true,
       Monday:    '11:00 AM - 7:00 PM',
       Tuesday:   '11:00 AM - 7:00 PM',
       Wednesday: '11:00 AM - 7:00 PM',
@@ -302,9 +307,6 @@ export function mergeCenterConfig(serverConfig) {
     instructionalHours: m('instructionalHours'),
     operatingHours:     m('operatingHours'),
     fixedStaff:         { ...DEFAULT_CENTER_CONFIG.fixedStaff, ...(serverConfig.fixedStaff || {}) },
-    guaranteedNames: Array.isArray(serverConfig.guaranteedNames)
-      ? serverConfig.guaranteedNames
-      : DEFAULT_CENTER_CONFIG.guaranteedNames,
     salaryStaff: Array.isArray(serverConfig.salaryStaff)
       ? serverConfig.salaryStaff
       : DEFAULT_CENTER_CONFIG.salaryStaff,

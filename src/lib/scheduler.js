@@ -73,7 +73,11 @@ const DEFAULT_INSTRUCTIONAL_HOURS = {
   Saturday:  { start: '10:00', end: '14:00' },
 };
 
-const DEFAULT_GUARANTEED_NAMES = ['Luke', 'Ainsley', 'Kaitlyn'];
+// (Removed) DEFAULT_GUARANTEED_NAMES — guaranteed-shift feature was
+// removed in favour of pure priority-based scheduling. The
+// auto-scheduler now ranks instructors by priority + sub-role + fairness
+// only; no name-based pin. Owners use Manage Staff → priority to
+// promote/demote individuals instead.
 
 /**
  * Intersect a user's availability window with the day's instructional
@@ -328,15 +332,15 @@ export function shiftSubRoleFor(instructor, track) {
   return 'Elementary';
 }
 
-export function isGuaranteed(instructor, guaranteedNames) {
-  // Per-user override (set via Admin → Manage Users → "Guaranteed shift" toggle)
-  if (instructor.guaranteed === true) return true;
-  const list = (Array.isArray(guaranteedNames) && guaranteedNames.length > 0)
-    ? guaranteedNames
-    : DEFAULT_GUARANTEED_NAMES;
-  const set = list instanceof Set ? list : new Set(list);
-  const firstName = (instructor.displayName || '').split(' ')[0];
-  return set.has(firstName);
+// (Removed) isGuaranteed — guaranteed-shift feature was removed.
+// Kept as a no-op stub for backwards compatibility with any external
+// caller still importing the symbol; always returns false now so old
+// per-user `guaranteed: true` flags don't accidentally re-enable the
+// pinning behaviour. Schedule order is now purely priority + sub-role
+// + fairness, set per-user via Manage Staff.
+// eslint-disable-next-line no-unused-vars
+export function isGuaranteed(_instructor, _guaranteedNames) {
+  return false;
 }
 
 /**
@@ -419,9 +423,8 @@ export function generateSchedule({
   const fixedStaffMap      = (centerConfig.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
                                 ? centerConfig.fixedStaff
                                 : FIXED_SCHEDULES;
-  const guaranteedNames    = (Array.isArray(centerConfig.guaranteedNames) && centerConfig.guaranteedNames.length > 0)
-                                ? centerConfig.guaranteedNames
-                                : DEFAULT_GUARANTEED_NAMES;
+  // Guaranteed-name list removed. Scheduling order is now pure
+  // priority + sub-role + fairness — see the sort below.
   // Days this center is open. Defaults to the full Mon–Sat week so any
   // caller that doesn't pass a centerConfig keeps its old behavior.
   const operatingDays      = (Array.isArray(centerConfig.operatingDays) && centerConfig.operatingDays.length > 0)
@@ -549,12 +552,10 @@ export function generateSchedule({
     // ── 4. Sort in-centre instructors by scheduling priority ─────────────────
     // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
     inCentre.sort((a, b) => {
-      // Guaranteed instructors always first
-      const ga = isGuaranteed(a.inst, guaranteedNames) ? 0 : 1;
-      const gb = isGuaranteed(b.inst, guaranteedNames) ? 0 : 1;
-      if (ga !== gb) return ga - gb;
-
-      // Then by priority
+      // Priority first (1=high, 2=medium, 3=low — set per-user in Manage
+      // Staff). The previous "guaranteed names always pinned first"
+      // pass is gone; if you want someone to schedule before everyone
+      // else, set their priority to 1.
       const pa = a.inst.priority ?? 2;
       const pb = b.inst.priority ?? 2;
       if (pa !== pb) return pa - pb;
@@ -583,9 +584,10 @@ export function generateSchedule({
       const isHS = subScore === 0;
       const isEL = subScore === 1;
 
-      // Soft balance: don't let elementary outnumber highschool by more than 2
-      // unless we have no choice (guaranteed instructors bypass this)
-      if (isEL && !isGuaranteed(candidate.inst, guaranteedNames)) {
+      // Soft balance: don't let elementary outnumber highschool by more
+      // than 2 unless we have no choice. Priority-1 instructors bypass
+      // this throttle so they still get scheduled when imbalance hits.
+      if (isEL && (candidate.inst.priority ?? 2) > 1) {
         if (elCount - hsCount >= 2) continue; // Skip for now, may add later
       }
 

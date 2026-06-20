@@ -25,8 +25,9 @@ import {
   getSettings, saveSettings,
   watchStudents, upsertStudent, deleteStudent, bulkImportStudents,
   watchAliases, upsertAlias, deleteAlias,
-  watchCheckIns, setCheckIn, setStudentTag, setStudentDesk,
+  watchCheckIns, setCheckIn, setStudentDesk,
   watchInstructorAssignments, setInstructorAssignment,
+  watchWalkIns, addWalkIn, removeWalkIn,
   enableSheetSync, rotateSheetSyncToken, disableSheetSync,
 } from '../lib/scheduler-data';
 // Legacy hardcoded fixed-staff map (Sabrina, Neeru, Rachel). Used as a
@@ -160,7 +161,7 @@ function TodayTab({ centerId }) {
   // Pull centerConfig so we can read fixedStaff (auto-populates the
   // pool dropdown with Sabrina, Neeru, etc. — users who don't have
   // a Firebase account but ARE part of daily centre staffing).
-  const { centerConfig: activeCenterConfig } = useAuth();
+  const { centerConfig: activeCenterConfig, profile } = useAuth();
   const [date, setDate] = useState(todayStr());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -327,9 +328,11 @@ function TodayTab({ centerId }) {
   // Load settings (for the instructor pool + ratio).
   useEffect(() => { getSettings(centerId).then(setSettings); }, [centerId]);
 
-  // Subscribe to today's check-ins + instructor assignments.
+  // Subscribe to today's check-ins + instructor assignments + walk-ins.
   useEffect(() => watchCheckIns(centerId, date, setCheckIns), [centerId, date]);
   useEffect(() => watchInstructorAssignments(centerId, date, setAssignments), [centerId, date]);
+  const [walkIns, setWalkIns] = useState({});
+  useEffect(() => watchWalkIns(centerId, date, setWalkIns), [centerId, date]);
 
   // Fetch the schedule from the server (which reads iCal + categorizes).
   async function loadSchedule() {
@@ -545,7 +548,8 @@ function TodayTab({ centerId }) {
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
                 nameAliases={staffNameAliases}
                 timezone={data?.timezone}
-                scheduledTodayNames={scheduledTodayNames} />
+                scheduledTodayNames={scheduledTodayNames}
+                walkIns={walkIns} profile={profile} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
@@ -558,7 +562,8 @@ function TodayTab({ centerId }) {
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
                 nameAliases={staffNameAliases}
                 timezone={data?.timezone}
-                scheduledTodayNames={scheduledTodayNames} />
+                scheduledTodayNames={scheduledTodayNames}
+                walkIns={walkIns} profile={profile} />
             </div>
           )}
         </div>
@@ -631,7 +636,7 @@ function TodayTab({ centerId }) {
   );
 }
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
   const otherSide = side === 'HS' ? 'EM' : 'HS';
@@ -713,7 +718,8 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               clipboard={clipboard} setClipboard={setClipboard}
               nameAliases={nameAliases}
               timezone={timezone}
-              scheduledTodayNames={scheduledTodayNames} />
+              scheduledTodayNames={scheduledTodayNames}
+              walkIns={walkIns} profile={profile} />
           ))}
         </tbody>
       </table>
@@ -721,7 +727,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
   // Two-tier dropdown. By default we show only staff scheduled today
   // (from the `shifts` collection + fixed-staff schedule). A "+ More"
   // option at the bottom expands the picker to the full pool — useful
@@ -738,14 +744,29 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const slotEnded = hasSlotEnded(date, row.slot, timezone || 'America/Vancouver');
   const rawOnHour = row.students[side].onHour;
   const rawHalfHour = row.students[side].halfHour;
+  // Walk-ins added manually for THIS slot/side — normalised to the same
+  // shape iCal-sourced students use so StudentRow doesn't care where
+  // they came from. They land in the on-hour column; staff adding a
+  // walk-in always picks the row's slot, so there's nothing to split.
+  const slotWalkIns = (walkIns?.[`${side}|${row.slot}`] || []).map(w => ({
+    id: w.id,
+    name: w.name,
+    isAssessment: !!w.isAssessment,
+    duration: 60,
+    isWalkIn: true,
+  }));
   // HS only: 1-hour students stay in their start-time column; everyone
   // else (1.5 hr, etc.) is pulled into the dedicated long-session column.
-  const onHour    = side === 'HS' ? rawOnHour.filter(s => s.duration === 60) : rawOnHour;
+  const onHour    = side === 'HS'
+    ? [...rawOnHour.filter(s => s.duration === 60), ...slotWalkIns]
+    : [...rawOnHour, ...slotWalkIns];
   const halfHour  = side === 'HS' ? rawHalfHour.filter(s => s.duration === 60) : rawHalfHour;
   const longHour  = side === 'HS'
     ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
     : [];
-  const count = row.counts[side];
+  // Walk-ins count toward the slot's demand same as iCal students do.
+  const count = row.counts[side] + slotWalkIns.length;
+  const [addingWalkIn, setAddingWalkIn] = useState(false);
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
   // Realised demand-vs-supply efficiency for this slot. Drives the
@@ -821,6 +842,19 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       await setInstructorAssignment(centerId, date, side, row.slot, [...clipboard.names]);
     } catch (e) { toast.error(e.message); }
   };
+  const handleAddWalkIn = async ({ name, isAssessment }) => {
+    try {
+      await addWalkIn(centerId, date, side, row.slot, {
+        name, isAssessment,
+        addedByName: profile?.displayName || profile?.firstName || '',
+      });
+      setAddingWalkIn(false);
+    } catch (e) { toast.error(e.message); }
+  };
+  const handleRemoveWalkIn = async (id) => {
+    try { await removeWalkIn(centerId, date, side, row.slot, id); }
+    catch (e) { toast.error(e.message); }
+  };
 
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
@@ -833,7 +867,22 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
+          onRemoveWalkIn={handleRemoveWalkIn}
           slotEnded={slotEnded} />
+        {/* Walk-in entry — call-in / drop-in students that aren't in the
+            iCal feed. Renders a tiny "+ student" link until clicked,
+            then a small inline form for name + assessment toggle. */}
+        {!addingWalkIn ? (
+          <button onClick={() => setAddingWalkIn(true)}
+            className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
+            <Plus size={10} /> student
+          </button>
+        ) : (
+          <WalkInForm
+            onSave={handleAddWalkIn}
+            onCancel={() => setAddingWalkIn(false)}
+          />
+        )}
       </td>
       {/* Half-hour column with thicker divider on the left — matches the
           header divider and gives clear column separation. Slight top
@@ -980,7 +1029,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, slotEnded }) {
+function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
   return (
     <ul className="space-y-0.5">
@@ -988,13 +1037,14 @@ function StudentList({ students, checkIns, centerId, date, onStatusClick, onStat
         <StudentRow key={s.id} s={s} entry={checkIns[s.id] || {}}
           centerId={centerId} date={date}
           onStatusClick={onStatusClick} onStatusMenu={onStatusMenu}
+          onRemoveWalkIn={onRemoveWalkIn}
           slotEnded={slotEnded} />
       ))}
     </ul>
   );
 }
 
-function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, slotEnded }) {
+function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded }) {
   const status = entry.status || '';
   // classifyStudent decides 'present' / 'absent' / 'presumed-absent' /
   // 'pending'. Presumed-absent gets a SOFT visual (low-contrast gray,
@@ -1013,7 +1063,12 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, slo
   // `key={...}` forces remount when another staff member updates the value
   // on a different device, so the input always shows the latest Firestore
   // value without a controlled-component sync loop.
-  const saveTag = (v) => setStudentTag(centerId, date, s.id, v).catch(e => toast.error(e.message));
+  //
+  // The manual TAG input (A / FT / N / HM) was removed per staff feedback —
+  // it cluttered the row and the only useful signal it carried (Assessment)
+  // is now sourced automatically from the Student Assessment Tracker via
+  // s.isAssessment. Desk number stays — that's an operational detail
+  // staff legitimately needs to set per-day.
   const saveDesk = (v) => setStudentDesk(centerId, date, s.id, v).catch(e => toast.error(e.message));
 
   return (
@@ -1044,25 +1099,72 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, slo
           (?)
         </span>
       )}
-      {/* Tag input — A / FT / N / HM / etc.
-          Borderless when empty so the row stays compact. Light gray hover
-          band hints it's editable; full input style appears on focus. */}
-      <input
-        key={`tag-${entry.tag || ''}`}
-        type="text" defaultValue={entry.tag || ''} maxLength={3}
-        onBlur={e => saveTag(e.target.value.toUpperCase())}
-        title="A=Assessment · FT=Free Trial · N=New · HM=High Maintenance"
-        className="ml-auto w-6 shrink-0 border-0 bg-transparent px-0 text-[10px] uppercase text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-8"
-      />
-      {/* Desk input — same compact treatment. */}
+      {s.isWalkIn && (
+        <span className="text-[10px] font-semibold text-emerald-700 shrink-0" title="Added manually (walk-in / call-in)">
+          (W)
+        </span>
+      )}
+      {s.isWalkIn && onRemoveWalkIn && (
+        <button onClick={() => onRemoveWalkIn(s.id)}
+          title="Remove walk-in"
+          className="ml-0.5 inline-flex items-center text-[10px] text-gray-300 hover:text-red-600 print:hidden">
+          ×
+        </button>
+      )}
+      {/* Desk number — kept (operational, set per day, useful on print).
+          Borderless when empty so the row stays compact. */}
       <input
         key={`desk-${entry.desk || ''}`}
         type="text" defaultValue={entry.desk || ''} maxLength={4}
         onBlur={e => saveDesk(e.target.value)}
         title="Desk number"
-        className="w-8 shrink-0 border-0 bg-transparent px-0 text-[10px] text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-10"
+        className="ml-auto w-8 shrink-0 border-0 bg-transparent px-0 text-[10px] text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-10"
       />
     </li>
+  );
+}
+
+// Inline walk-in entry form — appears below the on-hour student list
+// when staff clicks "+ student" on a slot. Just a name + assessment
+// toggle; the slot/side/date are implicit from where it was clicked.
+function WalkInForm({ onSave, onCancel }) {
+  const [name, setName] = useState('');
+  const [isAssessment, setIsAssessment] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!name.trim()) return;
+    setSaving(true);
+    try { await onSave({ name: name.trim(), isAssessment }); }
+    finally { setSaving(false); }
+  };
+  return (
+    <form onSubmit={submit}
+      className="mt-1 rounded-md border border-emerald-300 bg-emerald-50 p-1.5 print:hidden">
+      <input
+        autoFocus
+        type="text" value={name}
+        onChange={e => setName(e.target.value)}
+        placeholder="Student name"
+        className="w-full rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-[11px] focus:border-emerald-500 focus:outline-none"
+        onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
+      />
+      <label className="mt-1 flex items-center gap-1 text-[10px] text-gray-700">
+        <input type="checkbox" checked={isAssessment}
+          onChange={e => setIsAssessment(e.target.checked)} />
+        Assessment
+      </label>
+      <div className="mt-1 flex gap-1">
+        <button type="submit" disabled={saving || !name.trim()}
+          className="flex-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
+          {saving ? '…' : 'Add'}
+        </button>
+        <button type="button" onClick={onCancel}
+          className="rounded border border-gray-300 bg-white px-1.5 py-0.5 text-[10px] text-gray-600 hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </form>
   );
 }
 

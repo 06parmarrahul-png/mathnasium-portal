@@ -93,6 +93,16 @@ service cloud.firestore {
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
 
+      // ─── Walk-in / manual student additions per day ────────────────
+      // One doc per centre per date, ID = YYYY-MM-DD. Written when staff
+      // adds a call-in / drop-in via the +student button on a slot.
+      // Same access posture as schedulerInstructorAssignments — readable
+      // by signed-in staff, writable by people who run the dashboard.
+      match /scheduleAddOns/{dateId} {
+        allow read:  if isSignedIn();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
       // ─── Daily schedule snapshots (analytics history) ──────────────
       // One doc per centre per day, ID = YYYY-MM-DD. Captured lazily
       // by the Today tab once a day completes. No PII (just counts +
