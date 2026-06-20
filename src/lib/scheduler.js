@@ -44,14 +44,31 @@ export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
 // When a center config doc exists, the scheduler uses that. When it doesn't
 // (pre-migration), it falls back to these.
 export const FIXED_SCHEDULES = {
+  'Vinod Bandla': {
+    // Promoted to Center Director — salary, doesn't count toward
+    // in-centre staffing ratio. Mirrors Neeru's pattern but Mon/Fri
+    // are swapped (Vinod opens Friday at 10:30, Neeru opens Monday).
+    role: 'Center Director',
+    countsTowardRatio: false,
+    Monday: 'Off',
+    Tuesday: '11:00 AM - 7:30 PM',
+    Wednesday: '11:00 AM - 7:30 PM',
+    Thursday: '11:00 AM - 7:30 PM',
+    Friday: '10:30 AM - 7:00 PM',
+    Saturday: '9:00 AM - 3:00 PM',
+  },
   'Neeru Gill': {
     role: 'Dir. of Education',
+    countsTowardRatio: false,
     Monday: '11:00 AM - 7:30 PM', Tuesday: '11:00 AM - 7:30 PM',
     Wednesday: '11:00 AM - 7:30 PM', Thursday: '11:00 AM - 7:30 PM',
     Friday: 'Off', Saturday: '9:00 AM - 3:00 PM',
   },
   'Sabrina Kedzior': {
     role: 'Manager',
+    // Manager counts toward in-centre staffing ratio — she's on the
+    // floor every day running sessions, not off-floor admin.
+    countsTowardRatio: true,
     Monday: '11:00 AM - 7:00 PM', Tuesday: '11:00 AM - 7:00 PM',
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
