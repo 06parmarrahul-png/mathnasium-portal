@@ -93,6 +93,18 @@ service cloud.firestore {
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
 
+      // ─── Daily schedule snapshots (analytics history) ──────────────
+      // One doc per centre per day, ID = YYYY-MM-DD. Captured lazily
+      // by the Today tab once a day completes. No PII (just counts +
+      // ratios) so read access mirrors the broader centre catchall —
+      // signed-in. Writes are restricted to roles that can actually
+      // run the dashboard so a random instructor can't backfill or
+      // overwrite history.
+      match /scheduleSnapshots/{snapshotId} {
+        allow read:  if isSignedIn();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
       // ─── Leads (the CRM funnel) ──────────────────────────────────────
       // Leads carry parent contact info (email, phone) the same way the
       // top-level centerIntakes collection does. We deliberately keep

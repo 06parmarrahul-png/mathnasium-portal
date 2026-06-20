@@ -201,6 +201,11 @@ export function computeDayAnalytics({ data, assignments, checkIns, ratio, dateSt
   let onTargetSlots = 0;
   let totalSlackUnits = 0;          // sum of positive slack across ended slots
 
+  // Per-slot detail — keyed `${side}|${slotKey}`. Kept compact (small
+  // numbers only) so we can persist this object straight into a daily
+  // snapshot doc and aggregate later without re-deriving from raw data.
+  const perSlot = {};
+
   for (const row of data.slots) {
     const slotEnded = hasSlotEnded(dateStr, row.slot, tz, now);
     for (const side of sides) {
@@ -228,6 +233,17 @@ export function computeDayAnalytics({ data, assignments, checkIns, ratio, dateSt
       if (eff.state === 'understaffed')  understaffedSlots++;
       if (eff.state === 'on-target')     onTargetSlots++;
       if (eff.slotEnded && eff.slack > 0) totalSlackUnits += eff.slack;
+
+      // Per-slot snapshot row — only the numbers; reconstruction lives
+      // in the aggregator. State is omitted because it can be re-derived
+      // from scheduled/present/instructors at read time.
+      perSlot[`${side}|${row.slot}`] = {
+        side, slot: row.slot,
+        scheduled: eff.scheduled,
+        present: eff.present,
+        absent: eff.presumedAbsent + eff.confirmedAbsent,
+        instructors: eff.instructors,
+      };
     }
   }
 
@@ -243,13 +259,29 @@ export function computeDayAnalytics({ data, assignments, checkIns, ratio, dateSt
 
   return {
     hasData: true,
+    dateStr,
     totalScheduled, totalPresent, totalAbsent, totalPending,
     totalInstructorSlots, utilisedInstructorSlots,
     onTargetSlots, overstaffedSlots, understaffedSlots,
     attendanceRate,
     utilisation,
     excessInstructorSlots: totalSlackUnits,
+    perSlot,
   };
+}
+
+/**
+ * Has every slot on the given day's data ended? Used by the snapshot
+ * capture path to decide whether the analytics represent a FINAL
+ * picture (worth persisting) or a mid-day in-progress view (skip).
+ */
+export function isDayComplete(data, dateStr, timezone, now = new Date()) {
+  if (!data || !data.slots || data.slots.length === 0) return false;
+  const tz = timezone || data.timezone || 'America/Vancouver';
+  for (const row of data.slots) {
+    if (!hasSlotEnded(dateStr, row.slot, tz, now)) return false;
+  }
+  return true;
 }
 
 /**

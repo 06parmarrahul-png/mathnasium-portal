@@ -36,9 +36,13 @@ import {
 import { FIXED_SCHEDULES } from '../lib/scheduler';
 import {
   hasSlotEnded, classifyStudent, computeSlotEfficiency,
-  computeDayAnalytics, recommendationFor,
+  computeDayAnalytics, recommendationFor, isDayComplete,
   fmtRatio, fmtPct,
 } from '../lib/scheduler-analytics';
+import {
+  saveSnapshot, getSnapshot, getSnapshotsInRange,
+  computeWeeklyAverages, rangeForLookback, MIN_SAMPLES_FOR_AVG,
+} from '../lib/schedule-snapshots';
 
 // Standard parent-name aliases — one click in Setup loads all of them
 // into Firestore so staff don't have to type them in one by one.
@@ -367,6 +371,33 @@ function TodayTab({ centerId }) {
     });
   }, [data, assignments, checkIns, ratio, date]);
   const recommendation = useMemo(() => recommendationFor(dayAnalytics), [dayAnalytics]);
+
+  // ── Lazy snapshot capture ────────────────────────────────────────────
+  // When the viewed day is COMPLETE (all slots have ended) and no
+  // snapshot exists yet for it, save one. This builds the historical
+  // record used by the Forecast tab's "Weekly patterns" section without
+  // requiring a cron — the dashboard being opened is the trigger.
+  // Guards: requires centre + final data + still-correct date in view
+  // (so a stale snapshot doesn't write after the date input changes).
+  useEffect(() => {
+    if (!centerId || !data || !dayAnalytics?.hasData) return;
+    const tz = data.timezone || 'America/Vancouver';
+    if (!isDayComplete(data, date, tz)) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const existing = await getSnapshot(centerId, date);
+        if (cancelled) return;
+        if (existing) return;   // already captured
+        await saveSnapshot(centerId, date, dayAnalytics);
+      } catch (e) {
+        // Capture failures are non-blocking — schedule still works.
+        // eslint-disable-next-line no-console
+        console.warn('[snapshot] capture skipped:', e?.message || e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [centerId, date, data, dayAnalytics]);
 
   return (
     <div>
@@ -1146,7 +1177,13 @@ function ForecastTab({ centerId }) {
   useEffect(() => { load(); }, [centerId, days]);
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="space-y-4">
+      {/* Historical "an average Tuesday looks like…" patterns first,
+          since they shape the staffing decision the owner will make
+          about the upcoming-days table below. */}
+      <WeeklyPatterns centerId={centerId} />
+
+      <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="mb-3 flex items-center gap-3">
         <label className="text-sm">Window
           <select value={days} onChange={e => setDays(+e.target.value)}
@@ -1184,6 +1221,181 @@ function ForecastTab({ centerId }) {
           </tbody>
         </table>
       )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Weekly patterns ────────────────────────────────────────────────────
+// Aggregates the last 90 days of daily snapshots into per-DOW averages
+// + per-DOW × slot tables. Owner picks a day of week and sees what
+// average demand looks like, what the centre typically staffs, and what
+// the target ratio would suggest. Three pieces of info per slot.
+function WeeklyPatterns({ centerId }) {
+  const [snapshots, setSnapshots] = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState(null);
+  const [activeDow, setActiveDow] = useState(() => {
+    const today = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date().getDay()];
+    // Default to today's day-of-week if it's an operating day, else Monday.
+    return today === 'Sunday' ? 'Monday' : today;
+  });
+  const [ratio, setRatio] = useState(4);
+
+  useEffect(() => {
+    if (!centerId) return;
+    let cancelled = false;
+    setLoading(true); setError(null);
+    (async () => {
+      try {
+        const range = rangeForLookback();
+        const snaps = await getSnapshotsInRange(centerId, range.from, range.to);
+        if (cancelled) return;
+        setSnapshots(snaps);
+      } catch (e) { if (!cancelled) setError(e.message); }
+      finally { if (!cancelled) setLoading(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [centerId]);
+
+  // Pull the centre's target ratio so suggestedInstructors uses the
+  // real value, not the 4 default baked into the aggregator.
+  useEffect(() => {
+    if (!centerId) return;
+    getSettings(centerId).then(s => setRatio(s.studentsPerInstructor || 4));
+  }, [centerId]);
+
+  const aggregated = useMemo(
+    () => snapshots ? computeWeeklyAverages(snapshots, { ratio }) : null,
+    [snapshots, ratio],
+  );
+
+  const dows = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const dowBucket = aggregated?.byDow?.[activeDow] || null;
+  const slotKeys = dowBucket
+    ? Object.keys(dowBucket.perSlot).sort((a, b) => a.split('|')[1].localeCompare(b.split('|')[1]))
+    : [];
+
+  return (
+    <section className="rounded-lg border border-gray-200 bg-white p-4">
+      <div className="mb-3 flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h3 className="font-semibold text-gray-900">Weekly patterns</h3>
+          <p className="text-xs text-gray-500">
+            What an average {activeDow} looks like at this centre — based on the last 90 days of daily snapshots.
+          </p>
+        </div>
+        {snapshots && (
+          <div className="text-xs text-gray-500">
+            {snapshots.length} day{snapshots.length === 1 ? '' : 's'} captured
+            {snapshots.length < MIN_SAMPLES_FOR_AVG * 6 && (
+              <span className="ml-1 text-amber-700">· still collecting</span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {loading && <div className="text-sm text-gray-500">Loading patterns…</div>}
+      {error   && <div className="rounded bg-red-50 p-2 text-sm text-red-700">{error}</div>}
+
+      {snapshots && snapshots.length === 0 && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-900">
+          No snapshots yet. Open the <b>Today</b> tab on any completed past day and the page will save a snapshot in the background. Once you have ~4 records for each weekday (≈ 4 weeks of operation), the table below populates with averages you can plan against.
+        </div>
+      )}
+
+      {aggregated && snapshots && snapshots.length > 0 && (
+        <>
+          {/* Day-of-week selector */}
+          <div className="mb-3 flex flex-wrap gap-1">
+            {dows.map(d => {
+              const n = aggregated.byDow[d]?.sampleSize || 0;
+              const active = d === activeDow;
+              return (
+                <button key={d} onClick={() => setActiveDow(d)}
+                  className={`rounded-md border-2 px-3 py-1.5 text-xs font-bold transition-colors ${
+                    active
+                      ? 'bg-emerald-50 border-emerald-500 text-emerald-700'
+                      : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}>
+                  {d}<span className="ml-1 font-normal text-gray-400">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {dowBucket && dowBucket.sampleSize >= MIN_SAMPLES_FOR_AVG ? (
+            <>
+              {/* DOW headline numbers */}
+              <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <Mini label="Avg students" value={dowBucket.avgScheduled.toFixed(1)} sub="scheduled" />
+                <Mini label="Avg attended" value={dowBucket.avgPresent.toFixed(1)} sub={dowBucket.avgAttendance != null ? `${fmtPct(dowBucket.avgAttendance)} show rate` : ''} />
+                <Mini label="Avg staffed" value={dowBucket.avgInstructors.toFixed(1)} sub="instructor-slots" />
+                <Mini label="Sample" value={String(dowBucket.sampleSize)} sub={`past ${activeDow}s`} />
+              </div>
+
+              {/* Per-slot detail */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="text-[10px] uppercase text-gray-500">
+                    <tr>
+                      <th className="text-left py-1">Slot</th>
+                      <th className="text-center py-1">Side</th>
+                      <th className="text-right py-1">Avg scheduled</th>
+                      <th className="text-right py-1">Avg attended</th>
+                      <th className="text-right py-1">Avg staffed</th>
+                      <th className="text-right py-1 pr-1">Target staff (1:{ratio})</th>
+                      <th className="text-right py-1">Verdict</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {slotKeys.map(k => {
+                      const s = dowBucket.perSlot[k];
+                      const enoughSamples = s.sampleSize >= MIN_SAMPLES_FOR_AVG;
+                      const diff = enoughSamples ? s.avgInstructors - s.suggestedInstructors : null;
+                      const verdict = diff == null ? null
+                        : diff >= 1 ? { label: `over by ${diff.toFixed(1)}`, cls: 'text-amber-700' }
+                        : diff <= -1 ? { label: `short by ${Math.abs(diff).toFixed(1)}`, cls: 'text-red-600' }
+                        : { label: 'on target', cls: 'text-emerald-700' };
+                      return (
+                        <tr key={k} className="border-t border-gray-100">
+                          <td className="py-1 font-mono text-xs">{s.slot}</td>
+                          <td className="py-1 text-center text-xs">{s.side}</td>
+                          <td className="py-1 text-right">{enoughSamples ? s.avgScheduled.toFixed(1) : '—'}</td>
+                          <td className="py-1 text-right">{enoughSamples ? s.avgPresent.toFixed(1) : '—'}</td>
+                          <td className="py-1 text-right">{enoughSamples ? s.avgInstructors.toFixed(1) : '—'}</td>
+                          <td className="py-1 text-right pr-1 font-semibold">{enoughSamples ? s.suggestedInstructors : '—'}</td>
+                          <td className={`py-1 text-right text-xs font-semibold ${verdict?.cls || 'text-gray-400'}`}>
+                            {enoughSamples ? verdict?.label : `n=${s.sampleSize}`}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <p className="mt-2 text-[11px] text-gray-500">
+                "Verdict" compares typical staffing on this weekday to what the target ratio would call for given typical attendance. Over = consistent slack to consider trimming; short = consistent shortfall to consider covering.
+              </p>
+            </>
+          ) : (
+            <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm text-gray-700">
+              Only {dowBucket?.sampleSize || 0} {activeDow} snapshot{dowBucket?.sampleSize === 1 ? '' : 's'} so far —
+              need at least {MIN_SAMPLES_FOR_AVG} before averages become meaningful. Keep using the Today tab on each {activeDow} and this view will fill in within a few weeks.
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function Mini({ label, value, sub }) {
+  return (
+    <div className="rounded border border-gray-200 bg-gray-50 p-2">
+      <div className="text-[10px] uppercase tracking-wider text-gray-500">{label}</div>
+      <div className="text-xl font-bold text-gray-900">{value}</div>
+      {sub && <div className="text-[10px] text-gray-500">{sub}</div>}
     </div>
   );
 }
