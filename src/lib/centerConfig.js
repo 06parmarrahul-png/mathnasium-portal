@@ -256,8 +256,25 @@ export const LANGLEY_DEFAULT_CONFIG = {
   // priority + sub-role + fairness — no name-based override. If you
   // want someone scheduled first, set their priority to 1 in Manage
   // Staff (per-user, transferable across centres).
-  salaryStaff:     ['Sabrina Kedzior', 'Neeru Gill'],
+  // Salaried staff — excluded from hourly payroll summaries. Sabrina
+  // is hourly (NOT in this list); Vinod is the new Center Director,
+  // promoted from hourly to salary.
+  salaryStaff:     ['Vinod Bandla', 'Neeru Gill'],
   fixedStaff: {
+    'Vinod Bandla': {
+      // Promoted from instructor → Center Director. Salary, doesn't
+      // count toward in-centre staffing ratio (same as Neeru's CD pattern).
+      // Schedule mirrors Neeru's structure but inverted Mon/Fri — Vinod
+      // opens Friday (10:30 start), Neeru opens Monday (her existing 11:00).
+      role: 'Center Director',
+      countsTowardRatio: false,
+      Monday:    'Off',
+      Tuesday:   '11:00 AM - 7:30 PM',
+      Wednesday: '11:00 AM - 7:30 PM',
+      Thursday:  '11:00 AM - 7:30 PM',
+      Friday:    '10:30 AM - 7:00 PM',
+      Saturday:  '9:00 AM - 3:00 PM',
+    },
     'Neeru Gill': {
       role: 'Dir. of Education',
       countsTowardRatio: false,
