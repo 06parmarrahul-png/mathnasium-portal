@@ -34,6 +34,11 @@ import {
 // config doc has no `fixedStaff` key. Same fallback the auto-scheduler
 // uses in scheduler.js → getFixedStaffForDay, so the two stay in sync.
 import { FIXED_SCHEDULES } from '../lib/scheduler';
+import {
+  hasSlotEnded, classifyStudent, computeSlotEfficiency,
+  computeDayAnalytics, recommendationFor,
+  fmtRatio, fmtPct,
+} from '../lib/scheduler-analytics';
 
 // Standard parent-name aliases — one click in Setup loads all of them
 // into Firestore so staff don't have to type them in one by one.
@@ -350,6 +355,19 @@ function TodayTab({ centerId }) {
   const pool = [...new Set([...staffUsers, ...fixedStaffNames, ...((settings?.instructorPool) || [])])]
     .sort((a, b) => a.localeCompare(b));
 
+  // ── Day-level analytics ──────────────────────────────────────────────
+  // Pure derivation from the data already in memory. Recomputes when
+  // anything material changes (slot data, assignments, check-ins,
+  // ratio). The timezone comes from the server response so the
+  // "has this slot ended?" math is centre-local, not browser-local.
+  const dayAnalytics = useMemo(() => {
+    if (!data) return { hasData: false };
+    return computeDayAnalytics({
+      data, assignments, checkIns, ratio, dateStr: date,
+    });
+  }, [data, assignments, checkIns, ratio, date]);
+  const recommendation = useMemo(() => recommendationFor(dayAnalytics), [dayAnalytics]);
+
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3 print:hidden">
@@ -407,6 +425,13 @@ function TodayTab({ centerId }) {
         <UnknownBanner data={data} centerId={centerId} onFix={loadSchedule} />
       )}
 
+      {/* Day-level supply / demand summary — visible whenever the day
+          has something to measure. Renders one number per dimension
+          and (when confident enough) a single actionable sentence. */}
+      {dayAnalytics?.hasData && data?.totals?.all > 0 && (
+        <DaySummary analytics={dayAnalytics} recommendation={recommendation} ratio={ratio} />
+      )}
+
       {/* Floating clipboard chip — appears when something is copied. Lets
           the user see at a glance what's pending and clear it without
           having to find the source row. */}
@@ -445,7 +470,8 @@ function TodayTab({ centerId }) {
               <SideTable side="EM" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
-                nameAliases={staffNameAliases} />
+                nameAliases={staffNameAliases}
+                timezone={data?.timezone} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
@@ -456,7 +482,8 @@ function TodayTab({ centerId }) {
               <SideTable side="HS" data={data} centerId={centerId} date={date}
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
-                nameAliases={staffNameAliases} />
+                nameAliases={staffNameAliases}
+                timezone={data?.timezone} />
             </div>
           )}
         </div>
@@ -529,7 +556,7 @@ function TodayTab({ centerId }) {
   );
 }
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
   const otherSide = side === 'HS' ? 'EM' : 'HS';
@@ -609,7 +636,8 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
               clipboard={clipboard} setClipboard={setClipboard}
-              nameAliases={nameAliases} />
+              nameAliases={nameAliases}
+              timezone={timezone} />
           ))}
         </tbody>
       </table>
@@ -617,11 +645,15 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone }) {
   // Map a stored instructor name to its canonical display version
   // ("Bri" → "Brianna MacDonald"). Falls through unchanged when no
   // alias is registered (custom pool names, deleted users, etc.).
   const displayName = (stored) => (nameAliases && nameAliases.get(stored)) || stored;
+  // Has this slot's 30-min window finished? Drives the no-show
+  // inference + the per-slot efficiency badge. Recomputed every render
+  // so a slot that ends mid-session flips state without a refresh.
+  const slotEnded = hasSlotEnded(date, row.slot, timezone || 'America/Vancouver');
   const rawOnHour = row.students[side].onHour;
   const rawHalfHour = row.students[side].halfHour;
   // HS only: 1-hour students stay in their start-time column; everyone
@@ -634,6 +666,17 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const count = row.counts[side];
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
+  // Realised demand-vs-supply efficiency for this slot. Drives the
+  // small badge under the "need X · have Y" line. Computed against the
+  // SCHEDULED student set (onHour + halfHour + longHour combined for
+  // HS, simpler for EM) — same set the row already renders.
+  const efficiency = computeSlotEfficiency({
+    scheduledStudents: [...rawOnHour, ...rawHalfHour],
+    instructors,
+    checkIns,
+    ratio,
+    slotEnded,
+  });
   const otherSide = side === 'HS' ? 'EM' : 'HS';
   // Read-only view of who the OTHER side has staffed at the same time
   // slot. Lets a HS shift lead see at a glance that EM is covered (and
@@ -699,7 +742,8 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       <td className="px-1 py-1 align-top border-b border-gray-500 break-words">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
-          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
+          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
+          slotEnded={slotEnded} />
       </td>
       {/* Half-hour column with thicker divider on the left — matches the
           header divider and gives clear column separation. Slight top
@@ -707,7 +751,8 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 pt-3 break-words">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
-          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
+          onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
+          slotEnded={slotEnded} />
       </td>
       {/* HS only: dedicated 1.5-hour student column to the right of the
           half-hour column. Holds anyone in this row's slot whose session
@@ -716,7 +761,8 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 break-words">
           <StudentList students={longHour} checkIns={checkIns}
             centerId={centerId} date={date} side={side}
-            onStatusClick={handleStatus} onStatusMenu={handleStatusMenu} />
+            onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
+            slotEnded={slotEnded} />
         </td>
       )}
       <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
@@ -778,6 +824,23 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         <div className={`mt-0.5 text-[9px] ${understaffed ? 'text-red-600 font-semibold' : 'text-gray-500'}`}>
           need {need} · have {instructors.length}
         </div>
+        {/* Realised efficiency, only shown once the slot has ended. The
+            colour reflects state: overstaffed (orange), understaffed
+            (red), on-target (green), idle (gray). Owner sees per-slot
+            whether the staffing call paid off against actual demand. */}
+        {slotEnded && efficiency.scheduled > 0 && (
+          <div className={`mt-0.5 text-[9px] font-medium ${
+            efficiency.state === 'understaffed' ? 'text-red-600'
+            : efficiency.state === 'overstaffed' ? 'text-amber-700'
+            : efficiency.state === 'on-target' ? 'text-emerald-700'
+            : 'text-gray-500'
+          }`}>
+            actual {efficiency.present}/{efficiency.scheduled}
+            {efficiency.instructors > 0 && <> · {fmtRatio(efficiency.effectiveRatio)}</>}
+            {efficiency.state === 'overstaffed'   && <> · over by {efficiency.slack}</>}
+            {efficiency.state === 'understaffed'  && <> · short by {Math.abs(efficiency.slack)}</>}
+          </div>
+        )}
       </td>
       {/* Cross-side instructor column — read-only, intentionally low
           contrast. Visible in print. No chip background — plain text
@@ -799,27 +862,34 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu }) {
+function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, slotEnded }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
   return (
     <ul className="space-y-0.5">
       {students.map(s => (
         <StudentRow key={s.id} s={s} entry={checkIns[s.id] || {}}
           centerId={centerId} date={date}
-          onStatusClick={onStatusClick} onStatusMenu={onStatusMenu} />
+          onStatusClick={onStatusClick} onStatusMenu={onStatusMenu}
+          slotEnded={slotEnded} />
       ))}
     </ul>
   );
 }
 
-function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
+function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, slotEnded }) {
   const status = entry.status || '';
+  // classifyStudent decides 'present' / 'absent' / 'presumed-absent' /
+  // 'pending'. Presumed-absent gets a SOFT visual (low-contrast gray,
+  // strike-through) — never red — to communicate "best guess" not
+  // "verdict." Staff who realise they forgot to check the student in
+  // can still click the row to flip the status to 'in'.
+  const klass = classifyStudent(entry, slotEnded);
   const cls = {
     in:      'text-emerald-700',
     late:    'text-amber-600',
     noshow:  'text-red-600 line-through',
     cancel:  'text-gray-400 line-through',
-  }[status] || '';
+  }[status] || (klass === 'presumed-absent' ? 'text-gray-400 italic' : '');
 
   // Uncontrolled inputs: typing only touches the DOM; saves fire on blur.
   // `key={...}` forces remount when another staff member updates the value
@@ -875,6 +945,95 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu }) {
         className="w-8 shrink-0 border-0 bg-transparent px-0 text-[10px] text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-10"
       />
     </li>
+  );
+}
+
+// Day-level supply/demand summary card — the at-a-glance number for
+// owners. Three tiles + (when confident) a one-sentence recommendation.
+// Numbers come from src/lib/scheduler-analytics.js so the math stays
+// testable and re-usable for weekly / monthly rollups later.
+function DaySummary({ analytics, recommendation, ratio }) {
+  if (!analytics?.hasData) return null;
+  const {
+    totalScheduled, totalPresent, totalAbsent,
+    totalInstructorSlots,
+    onTargetSlots, overstaffedSlots, understaffedSlots,
+    attendanceRate, utilisation,
+  } = analytics;
+
+  return (
+    <section className="mb-4 rounded-xl border border-gray-200 bg-white p-3 print:hidden">
+      <div className="mb-2 flex items-center justify-between flex-wrap gap-2">
+        <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">
+          Supply vs demand · today
+        </div>
+        <div className="text-[10px] text-gray-400">Target ratio 1:{ratio} · live as the day plays out</div>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <SummaryTile
+          label="Attendance"
+          value={attendanceRate == null ? '—' : fmtPct(attendanceRate)}
+          sub={`${totalPresent} of ${totalPresent + totalAbsent} booked${totalAbsent ? ` · ${totalAbsent} no-show` : ''}`}
+          tone={attendanceRate == null ? 'neutral'
+                : attendanceRate >= 0.85 ? 'good'
+                : attendanceRate >= 0.7 ? 'warn'
+                : 'bad'}
+        />
+        <SummaryTile
+          label="Demand"
+          value={String(totalScheduled)}
+          sub={`students scheduled${totalScheduled ? '' : ' — empty day'}`}
+          tone="neutral"
+        />
+        <SummaryTile
+          label="Supply"
+          value={String(totalInstructorSlots)}
+          sub={`instructor-slots${utilisation != null ? ` · ${fmtPct(utilisation)} utilised` : ''}`}
+          tone="neutral"
+        />
+        <SummaryTile
+          label="Slot fit"
+          value={`${onTargetSlots} / ${onTargetSlots + overstaffedSlots + understaffedSlots}`}
+          sub={[
+            understaffedSlots ? `${understaffedSlots} short` : null,
+            overstaffedSlots  ? `${overstaffedSlots} over`   : null,
+          ].filter(Boolean).join(' · ') || 'on target'}
+          tone={understaffedSlots > 0 ? 'bad' : overstaffedSlots > 2 ? 'warn' : 'good'}
+        />
+      </div>
+      {recommendation && (
+        <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${
+          recommendation.kind === 'understaffed'   ? 'bg-red-50 border-red-200 text-red-800'
+          : recommendation.kind === 'overstaffed'  ? 'bg-amber-50 border-amber-200 text-amber-900'
+          : recommendation.kind === 'low-attendance' ? 'bg-orange-50 border-orange-200 text-orange-900'
+          : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+        }`}>
+          <span className="font-semibold">Today's signal: </span>{recommendation.text}
+        </div>
+      )}
+      <p className="mt-2 text-[10px] text-gray-400">
+        Unchecked students past a slot's end time are presumed no-shows (dimmed below). Click a student row to flip them to present if they actually attended.
+      </p>
+    </section>
+  );
+}
+
+function SummaryTile({ label, value, sub, tone = 'neutral' }) {
+  const toneClasses = {
+    good:    'bg-emerald-50 border-emerald-200',
+    warn:    'bg-amber-50  border-amber-200',
+    bad:     'bg-red-50    border-red-200',
+    neutral: 'bg-gray-50   border-gray-200',
+  }[tone];
+  const valueColour = {
+    good: 'text-emerald-700', warn: 'text-amber-700', bad: 'text-red-700', neutral: 'text-gray-900',
+  }[tone];
+  return (
+    <div className={`rounded-lg border p-2 ${toneClasses}`}>
+      <div className="text-[10px] font-medium uppercase tracking-wider text-gray-500">{label}</div>
+      <div className={`mt-0.5 text-xl font-bold ${valueColour}`}>{value}</div>
+      <div className="text-[10px] text-gray-600">{sub}</div>
+    </div>
   );
 }
 
