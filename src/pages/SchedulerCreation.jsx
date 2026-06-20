@@ -372,6 +372,48 @@ function TodayTab({ centerId }) {
   }, [data, assignments, checkIns, ratio, date]);
   const recommendation = useMemo(() => recommendationFor(dayAnalytics), [dayAnalytics]);
 
+  // ── Today's scheduled staff (from the shifts collection) ────────────
+  // Drives the "On shift today" pre-filter on the +add dropdown so
+  // staff doesn't scroll through every approved instructor when picking
+  // someone for a slot. Falls back to the day-of-week fixed-staff
+  // entries — Sabrina works Mon-Fri implicitly even though there's no
+  // shift doc for her.
+  const [todayShifts, setTodayShifts] = useState([]);
+  useEffect(() => {
+    if (!centerId || !date) return;
+    return onSnapshot(
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', centerId),
+        where('date', '==', date),
+      ),
+      snap => setTodayShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.status !== 'draft')),
+      () => setTodayShifts([]),
+    );
+  }, [centerId, date]);
+
+  const scheduledTodayNames = useMemo(() => {
+    const set = new Set();
+    // From actual shift docs:
+    for (const s of todayShifts) if (s.userName) set.add(s.userName);
+    // From fixed staff schedule for this day of week:
+    const fixedMap = (centerConfig?.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
+      ? centerConfig.fixedStaff
+      : FIXED_SCHEDULES;
+    const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][new Date(date + 'T12:00').getDay()];
+    for (const [name, sched] of Object.entries(fixedMap)) {
+      if (!SLOT_ELIGIBLE_ROLES.has(sched?.role)) continue;
+      const shift = sched?.[dayName];
+      if (shift && shift.toLowerCase() !== 'off') set.add(name);
+    }
+    // Manual instructorPool — these are explicit owner overrides, treat
+    // them as "always on shift" so they're visible without expanding.
+    for (const n of (settings?.instructorPool || [])) if (n) set.add(n);
+    return set;
+    // SLOT_ELIGIBLE_ROLES is a module-level constant — safe to leave out.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [todayShifts, centerConfig, date, settings]);
+
   // ── Lazy snapshot capture ────────────────────────────────────────────
   // When the viewed day is COMPLETE (all slots have ended) and no
   // snapshot exists yet for it, save one. This builds the historical
@@ -502,7 +544,8 @@ function TodayTab({ centerId }) {
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
                 nameAliases={staffNameAliases}
-                timezone={data?.timezone} />
+                timezone={data?.timezone}
+                scheduledTodayNames={scheduledTodayNames} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
@@ -514,7 +557,8 @@ function TodayTab({ centerId }) {
                 checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
                 clipboard={instructorClipboard} setClipboard={setInstructorClipboard}
                 nameAliases={staffNameAliases}
-                timezone={data?.timezone} />
+                timezone={data?.timezone}
+                scheduledTodayNames={scheduledTodayNames} />
             </div>
           )}
         </div>
@@ -587,7 +631,7 @@ function TodayTab({ centerId }) {
   );
 }
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
   const otherSide = side === 'HS' ? 'EM' : 'HS';
@@ -668,7 +712,8 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
               clipboard={clipboard} setClipboard={setClipboard}
               nameAliases={nameAliases}
-              timezone={timezone} />
+              timezone={timezone}
+              scheduledTodayNames={scheduledTodayNames} />
           ))}
         </tbody>
       </table>
@@ -676,7 +721,13 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames }) {
+  // Two-tier dropdown. By default we show only staff scheduled today
+  // (from the `shifts` collection + fixed-staff schedule). A "+ More"
+  // option at the bottom expands the picker to the full pool — useful
+  // for substitutes / one-off assignments. Per-row state because each
+  // row's expand decision is independent.
+  const [showAllStaff, setShowAllStaff] = useState(false);
   // Map a stored instructor name to its canonical display version
   // ("Bri" → "Brianna MacDonald"). Falls through unchanged when no
   // alias is registered (custom pool names, deleted users, etc.).
@@ -735,10 +786,18 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   // Replaces the old prompt() dialog. We render an invisible <select>
   // and trigger it via the + add button — that gives a native dropdown
   // of the daily pool, one tap to add, no typing.
+  //
+  // Two pseudo-options live in the dropdown alongside real names:
+  //   __SHOW_ALL__   — toggle showAllStaff true (expand list)
+  //   __SHOW_LESS__  — toggle it back false (collapse list)
+  // The pseudo-values are caught here and routed away from the actual
+  // assignment write.
   const handlePickInstructor = async (e) => {
     const name = e.target.value;
     if (!name) return;
     e.target.value = '';
+    if (name === '__SHOW_ALL__')  { setShowAllStaff(true);  return; }
+    if (name === '__SHOW_LESS__') { setShowAllStaff(false); return; }
     try { await setInstructorAssignment(centerId, date, side, row.slot, [...instructors, name]); }
     catch (err) { toast.error(err.message); }
   };
@@ -819,19 +878,47 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           ))}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-1 print:hidden">
-          {/* Native select used as a quick instructor picker. Empty default
-              option acts as the "+ add" affordance; picking a name from the
-              dropdown adds it instantly with no prompt. */}
-          <select
-            onChange={handlePickInstructor}
-            defaultValue=""
-            className="rounded-md border border-dashed border-gray-400 bg-white px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600">
-            <option value="">+ add</option>
-            {pool.filter(n => !instructors.includes(n)).map(n => (
-              <option key={n} value={n}>{n}</option>
-            ))}
-            {pool.length === 0 && <option value="" disabled>Set pool in Setup</option>}
-          </select>
+          {/* Native select with a two-tier list:
+                - "On shift today" group (default; from shifts + fixed staff)
+                - "+ More (N more)" pseudo-option that expands to the full
+                  pool (substitutes, anyone). When expanded, an "Everyone
+                  else" optgroup appears + "Show fewer" to collapse. */}
+          {(() => {
+            const available = pool.filter(n => !instructors.includes(n));
+            const onShift   = available.filter(n => scheduledTodayNames?.has(n));
+            const others    = available.filter(n => !scheduledTodayNames?.has(n));
+            const visibleOthers = showAllStaff ? others : [];
+            return (
+              <select
+                onChange={handlePickInstructor}
+                defaultValue=""
+                className="rounded-md border border-dashed border-gray-400 bg-white px-1.5 py-0 text-[10px] text-gray-500 hover:border-red-400 hover:text-red-600">
+                <option value="">+ add</option>
+                {onShift.length > 0 && (
+                  <optgroup label={`On shift today (${onShift.length})`}>
+                    {onShift.map(n => <option key={n} value={n}>{n}</option>)}
+                  </optgroup>
+                )}
+                {!showAllStaff && others.length > 0 && (
+                  <option value="__SHOW_ALL__">+ More ({others.length} more)</option>
+                )}
+                {showAllStaff && others.length > 0 && (
+                  <optgroup label="Everyone else">
+                    {visibleOthers.map(n => <option key={n} value={n}>{n}</option>)}
+                  </optgroup>
+                )}
+                {showAllStaff && (
+                  <option value="__SHOW_LESS__">– Show only on-shift</option>
+                )}
+                {available.length === 0 && pool.length === 0 && (
+                  <option value="" disabled>Set pool in Setup</option>
+                )}
+                {available.length === 0 && pool.length > 0 && (
+                  <option value="" disabled>All staff already added</option>
+                )}
+              </select>
+            );
+          })()}
           {/* Copy & paste buttons. Copy is always visible (no-op'd if the
               row is empty). Paste shows only when something is on the
               clipboard from a different row. */}
