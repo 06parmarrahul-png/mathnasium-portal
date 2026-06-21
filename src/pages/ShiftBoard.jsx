@@ -437,8 +437,16 @@ export default function ShiftBoard() {
     }
     try {
       await runTransaction(db, async (tx) => {
-        const chatRef = doc(db, 'chat', swap.id);
-        const chatSnap = await tx.get(chatRef);
+        // Firestore rule: ALL reads must happen BEFORE any writes inside
+        // a transaction. The previous version interleaved them
+        // (read chat → write chat → read shift → write shift) which threw
+        // "Firestore transactions require all reads to be executed before
+        // all writes." Hoisting both reads to the top fixes it.
+        const chatRef   = doc(db, 'chat', swap.id);
+        const chatSnap  = await tx.get(chatRef);
+        const shiftRef  = swap.shiftId ? doc(db, 'shifts', swap.shiftId) : null;
+        const shiftSnap = shiftRef ? await tx.get(shiftRef) : null;
+
         if (!chatSnap.exists()) throw new Error('Swap request no longer exists.');
         const data = chatSnap.data();
         if (data.swapStatus !== 'open') throw new Error('This shift has already been taken.');
@@ -452,15 +460,11 @@ export default function ShiftBoard() {
           acceptedByName: profile.displayName,
         });
 
-        if (swap.shiftId) {
-          const shiftRef = doc(db, 'shifts', swap.shiftId);
-          const shiftSnap = await tx.get(shiftRef);
-          if (shiftSnap.exists()) {
-            tx.update(shiftRef, {
-              userId: profile.uid,
-              userName: profile.displayName,
-            });
-          }
+        if (shiftRef && shiftSnap?.exists()) {
+          tx.update(shiftRef, {
+            userId: profile.uid,
+            userName: profile.displayName,
+          });
         }
       });
 
