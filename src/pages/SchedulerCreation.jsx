@@ -636,6 +636,19 @@ function TodayTab({ centerId }) {
   );
 }
 
+// Given a half-hour slot key like "15:30", return the prior slot key
+// ("15:00"). Used to detect walk-ins from the previous slot whose
+// 60-min duration is still in session here. Defensive against bad
+// input — returns the original key if parsing fails.
+function prevSlotKey(slot) {
+  const parts = (slot || '').split(':').map(Number);
+  if (parts.length !== 2 || parts.some(Number.isNaN)) return slot;
+  let [h, m] = parts;
+  m -= 30;
+  if (m < 0) { m += 60; h -= 1; }
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
@@ -755,6 +768,19 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
     duration: 60,
     isWalkIn: true,
   }));
+  // Walk-ins from the PREVIOUS slot whose 60-min duration spills into
+  // this one. Their name was already displayed in their start slot
+  // (matches iCal 60-min behaviour — server adds the name once but
+  // increments counts across every slot the session occupies). Here
+  // they're invisible to render but counted for staffing + efficiency.
+  const prevKey = prevSlotKey(row.slot);
+  const overflowWalkIns = (walkIns?.[`${side}|${prevKey}`] || []).map(w => ({
+    id: w.id,
+    name: w.name,
+    isAssessment: !!w.isAssessment,
+    duration: 60,
+    isWalkIn: true,
+  }));
   // Which sub-column owns this row visually? Rows whose slot key ends
   // in :30 (e.g. "15:30") are inherently half-hour rows — the on-hour
   // column is structurally empty for them. Route walk-ins + the
@@ -772,17 +798,22 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const longHour  = side === 'HS'
     ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
     : [];
-  // Walk-ins count toward the slot's demand same as iCal students do.
-  const count = row.counts[side] + slotWalkIns.length;
+  // Walk-ins count toward the slot's demand the same way iCal 60-min
+  // students do — once at the start slot AND once at the next slot they
+  // overflow into. The server already handles this for iCal entries
+  // via `row.counts[side]`; we add (a) walk-ins starting this slot and
+  // (b) walk-ins from the previous slot still in session.
+  const count = row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
   const [addingWalkIn, setAddingWalkIn] = useState(false);
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
-  // Realised demand-vs-supply efficiency for this slot. Drives the
-  // small badge under the "need X · have Y" line. Computed against the
-  // SCHEDULED student set (onHour + halfHour + longHour combined for
-  // HS, simpler for EM) — same set the row already renders.
+  // Realised demand-vs-supply efficiency for this slot. Demand =
+  // iCal students for this slot + walk-ins starting in this slot +
+  // walk-ins from the previous slot whose 60-min duration overflows
+  // into here. Same set the "have X" math is computed against, so the
+  // overstaffed/understaffed badge stays internally consistent.
   const efficiency = computeSlotEfficiency({
-    scheduledStudents: [...rawOnHour, ...rawHalfHour],
+    scheduledStudents: [...rawOnHour, ...rawHalfHour, ...slotWalkIns, ...overflowWalkIns],
     instructors,
     checkIns,
     ratio,
