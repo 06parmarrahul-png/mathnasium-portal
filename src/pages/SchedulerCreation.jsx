@@ -755,12 +755,20 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
     duration: 60,
     isWalkIn: true,
   }));
+  // Which sub-column owns this row visually? Rows whose slot key ends
+  // in :30 (e.g. "15:30") are inherently half-hour rows — the on-hour
+  // column is structurally empty for them. Route walk-ins + the
+  // +student button to the matching side so they appear where staff
+  // expects, not in the empty cell next to it.
+  const slotIsHalfHour = (row.slot || '').endsWith(':30');
   // HS only: 1-hour students stay in their start-time column; everyone
   // else (1.5 hr, etc.) is pulled into the dedicated long-session column.
   const onHour    = side === 'HS'
-    ? [...rawOnHour.filter(s => s.duration === 60), ...slotWalkIns]
-    : [...rawOnHour, ...slotWalkIns];
-  const halfHour  = side === 'HS' ? rawHalfHour.filter(s => s.duration === 60) : rawHalfHour;
+    ? [...rawOnHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? [] : slotWalkIns)]
+    : [...rawOnHour, ...(slotIsHalfHour ? [] : slotWalkIns)];
+  const halfHour  = side === 'HS'
+    ? [...rawHalfHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? slotWalkIns : [])]
+    : [...rawHalfHour, ...(slotIsHalfHour ? slotWalkIns : [])];
   const longHour  = side === 'HS'
     ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
     : [];
@@ -862,36 +870,46 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         {row.label.split('–')[0]}<br/>
         <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
       </td>
-      {/* On the hour column */}
+      {/* On the hour column — also hosts the +student button when the
+          row's natural side is on-hour (slot key ends :00). */}
       <td className="px-1 py-1 align-top border-b border-gray-500 break-words">
         <StudentList students={onHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
           onRemoveWalkIn={handleRemoveWalkIn}
           slotEnded={slotEnded} />
-        {/* Walk-in entry — call-in / drop-in students that aren't in the
-            iCal feed. Renders a tiny "+ student" link until clicked,
-            then a small inline form for name + assessment toggle. */}
-        {!addingWalkIn ? (
-          <button onClick={() => setAddingWalkIn(true)}
-            className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
-            <Plus size={10} /> student
-          </button>
-        ) : (
-          <WalkInForm
-            onSave={handleAddWalkIn}
-            onCancel={() => setAddingWalkIn(false)}
-          />
+        {!slotIsHalfHour && (
+          addingWalkIn ? (
+            <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
+          ) : (
+            <button onClick={() => setAddingWalkIn(true)}
+              className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
+              <Plus size={10} /> student
+            </button>
+          )
         )}
       </td>
       {/* Half-hour column with thicker divider on the left — matches the
           header divider and gives clear column separation. Slight top
-          padding so half-hour rows visually offset down. */}
+          padding so half-hour rows visually offset down. The +student
+          button lives here when the row's natural side is half-hour
+          (slot key ends :30) so it sits next to the students it adds to. */}
       <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 pt-3 break-words">
         <StudentList students={halfHour} checkIns={checkIns}
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
+          onRemoveWalkIn={handleRemoveWalkIn}
           slotEnded={slotEnded} />
+        {slotIsHalfHour && (
+          addingWalkIn ? (
+            <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
+          ) : (
+            <button onClick={() => setAddingWalkIn(true)}
+              className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
+              <Plus size={10} /> student
+            </button>
+          )
+        )}
       </td>
       {/* HS only: dedicated 1.5-hour student column to the right of the
           half-hour column. Holds anyone in this row's slot whose session
