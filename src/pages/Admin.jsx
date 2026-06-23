@@ -2418,44 +2418,50 @@ export default function Admin() {
     await batch.commit();
 
     if (!silent) {
-      // For each month touched, decide whether this is the first publish
-      // (no other live shifts in that month yet) and notify if so.
+      // Per-month notification fan-out. Two distinct signals:
+      //
+      //  1. CHAT POST — gated to once-per-month-per-centre. The "schedule
+      //     is live!" announcement is spammy if repeated; only fires on
+      //     the FIRST publish for a given month (no prior live shifts).
+      //
+      //  2. EMAIL — fires on EVERY draft→live transition, because the
+      //     emails are now PER-USER and each recipient only sees their
+      //     own shifts. Mid-month additions (a missing shift, a new
+      //     instructor onboarded) correctly notify just the affected
+      //     people. The old "first publish" gate was hiding these.
       for (const ym of monthsTouched) {
         const monthStart = `${ym}-01`;
         const [yy, mm] = ym.split('-').map(Number);
         const lastDay = new Date(yy, mm, 0).getDate();
         const monthEnd = `${ym}-${String(lastDay).padStart(2, '0')}`;
+        const publishedThisMonth = drafts.filter(s => s.date >= monthStart && s.date <= monthEnd);
+        const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-US',
+          { month: 'long', year: 'numeric' });
+
+        // ── Chat announcement (gated to first-publish of the month) ──
         const otherLiveInMonth = shifts.filter(s =>
           s.status !== 'draft' &&
           s.date >= monthStart && s.date <= monthEnd &&
           !drafts.some(d => d.id === s.id)
         );
-        if (otherLiveInMonth.length > 0) continue; // not the first publish
+        if (otherLiveInMonth.length === 0) {
+          await addDoc(collection(db, 'chat'), {
+            text: `📅 The ${monthLabel} schedule is live! Check your shifts on the Schedule page.`,
+            userId: 'system',
+            userName: centerConfig?.name || 'Mathnasium',
+            userRole: 'system',
+            centerId: activeCenterId,
+            createdAt: serverTimestamp(),
+            type: 'schedule_posted',
+          });
+        }
 
-        // First publish for this month — drop a chat post + notify staff.
-        const monthLabel = new Date(yy, mm - 1, 1).toLocaleDateString('en-US',
-          { month: 'long', year: 'numeric' });
-        await addDoc(collection(db, 'chat'), {
-          text: `📅 The ${monthLabel} schedule is live! Check your shifts on the Schedule page.`,
-          userId: 'system',
-          userName: centerConfig?.name || 'Mathnasium',
-          userRole: 'system',
-          centerId: activeCenterId,
-          createdAt: serverTimestamp(),
-          type: 'schedule_posted',
-        });
-
-        // Per-user personalised emails. Each instructor gets their OWN
-        // shift list + count — never "144 shifts posted" leaking the
-        // whole centre's data. Users with zero shifts in this batch
-        // get skipped entirely.
-        //
-        // Emails live in users/{uid}/private/contact post-privacy-split,
-        // so attachEmails() reads them from the sub-doc when the user
-        // doc no longer carries the field. Admin role is sufficient
-        // (rule lets owner/AA/admin/super_admin read any user's private
-        // contact), so the cross-user reads succeed.
-        const publishedThisMonth = drafts.filter(s => s.date >= monthStart && s.date <= monthEnd);
+        // ── Per-user personalised emails (NOT gated) ──
+        // Each instructor gets their own shift list + count — never the
+        // centre total. Users with zero shifts in this batch are silently
+        // skipped (no inbox spam). Emails live in users/{uid}/private/
+        // contact post-privacy-split, so attachEmails() reads them from
+        // the sub-doc when the user doc no longer carries the field.
         try {
           const usersWithEmail = await attachEmails(approvedUsers);
           await notifySchedulePosted({
