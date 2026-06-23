@@ -160,6 +160,19 @@ export function AuthProvider({ children }) {
   const isOwnerLike        = isOwner || isAdminAssistant || isSuperAdmin;
   const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
   const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant;
+  // Lead is an instructorType, not a top-level role. Check per-centre
+  // first (centerMemberships[activeCenterId].instructorType) and fall
+  // back to the legacy top-level instructorType field for accounts
+  // that haven't been migrated to per-centre membership yet.
+  const isLead = (
+    profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Lead'
+    || profile?.instructorType === 'Lead'
+  );
+  // Roles allowed to drive the Student Scheduler day-of-day —
+  // owners, admin-assistants, plain admins, super-admins, AND lead
+  // instructors (per Rahul's request: Leads often run the floor and
+  // need to assign instructors / print / check students in).
+  const canRunScheduler = canSeeAdminPanel || isLead;
   const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
@@ -313,8 +326,10 @@ export function AuthProvider({ children }) {
       isOwnerLike,
       isAdmin,
       isInstructor,
+      isLead,
       canSeeAdminPanel,
       canSeeCenterSettings,
+      canRunScheduler,
     }}>
       {children}
     </AuthContext.Provider>

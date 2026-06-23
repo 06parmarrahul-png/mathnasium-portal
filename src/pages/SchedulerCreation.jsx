@@ -101,9 +101,11 @@ function parseCsv(text) {
 // ───── Page ─────────────────────────────────────────────────────────────
 export default function SchedulerCreation() {
   // Scheduler Creation is part of daily ops, so anyone running a shift
-  // can use it — super_admin, owner, admin_assistant, AND plain admin.
-  const { activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin } = useAuth();
-  const allowed = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
+  // can use it — super_admin, owner, admin_assistant, plain admin, AND
+  // lead instructors (per the centre's request — Leads often run the
+  // floor and need to assign instructors / check students in / print).
+  const { activeCenterId, canRunScheduler } = useAuth();
+  const allowed = canRunScheduler;
   const [tab, setTab] = useState('today');
 
   if (!allowed) {

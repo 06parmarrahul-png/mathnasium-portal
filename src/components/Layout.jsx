@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin, canSeeAdminPanel } = useAuth();
+  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -219,6 +219,13 @@ export default function Layout({ children }) {
       { to: '/scheduler-creation',    label: 'Scheduler Creation',    icon: ClipboardList },
       { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
+    );
+  } else if (!useOwnerLayout && isLead) {
+    // Lead instructors get Student Scheduler — but NOT the broader
+    // admin pages (Manage Staff / Payroll stay owner-side). They run
+    // the floor; they don't run HR.
+    manage.push(
+      { to: '/scheduler-creation',    label: 'Student Scheduler',     icon: ClipboardList },
     );
   }
 

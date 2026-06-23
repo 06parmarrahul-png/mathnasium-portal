@@ -74,6 +74,15 @@ service cloud.firestore {
       return profileExists() && profile().role == 'admin';
     }
 
+    // Lead instructors — not a top-level role, but an instructorType
+    // value. Granted limited write access to scheduler-operational
+    // collections below (assignments, check-ins, walk-ins) so Leads
+    // can run the day-of-day Student Scheduler. NOT granted write
+    // access to broader admin config / user docs.
+    function isLead() {
+      return profileExists() && profile().instructorType == 'Lead';
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
@@ -97,22 +106,38 @@ service cloud.firestore {
       // One doc per centre per date, ID = YYYY-MM-DD. Written when staff
       // adds a call-in / drop-in via the +student button on a slot.
       // Same access posture as schedulerInstructorAssignments — readable
-      // by signed-in staff, writable by people who run the dashboard.
+      // by signed-in staff, writable by anyone running the dashboard
+      // (now includes Lead instructors).
       match /scheduleAddOns/{dateId} {
         allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+      }
+
+      // ─── Per-day instructor assignments (slot → staff names) ───────
+      // The Today tab's "+ add" dropdown writes here. Leads need write
+      // access since they often staff the floor minute-by-minute.
+      match /schedulerInstructorAssignments/{dateId} {
+        allow read:  if isSignedIn();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+      }
+
+      // ─── Per-day check-ins (student presence / tags / desks) ───────
+      // Driven by clicking a student name on Today. Leads need write
+      // access to mark students in / late / no-show as they arrive.
+      match /schedulerCheckIns/{dateId} {
+        allow read:  if isSignedIn();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
       }
 
       // ─── Daily schedule snapshots (analytics history) ──────────────
       // One doc per centre per day, ID = YYYY-MM-DD. Captured lazily
       // by the Today tab once a day completes. No PII (just counts +
       // ratios) so read access mirrors the broader centre catchall —
-      // signed-in. Writes are restricted to roles that can actually
-      // run the dashboard so a random instructor can't backfill or
-      // overwrite history.
+      // signed-in. Writes also open to Leads since they trigger the
+      // lazy capture by opening completed-day views.
       match /scheduleSnapshots/{snapshotId} {
         allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
       }
 
       // ─── Leads (the CRM funnel) ──────────────────────────────────────
@@ -162,6 +187,26 @@ service cloud.firestore {
 
     // ─── Users ─────────────────────────────────────────────────────────
     match /users/{userId} {
+      // ─── Private contact sub-collection ──────────────────────────────
+      // Sensitive PII (email, phone) lives here, NOT on the parent user
+      // doc, so the more-specific rule below restricts reads. The user
+      // doc itself stays signed-in-readable so scheduler / chat / shift
+      // board continue to render names, photos, roles. Source of truth
+      // for email & phone is `users/{uid}/private/contact`. When a user
+      // opts to share email/phone publicly, those values are mirrored to
+      // `users/{uid}.publicEmail` / `publicPhone` (any signed-in user
+      // can read those).
+      //
+      // Access to the private doc: the user themselves, plus all four
+      // management roles. Plain instructors don't see contact info
+      // unless the target user mirrored it publicly.
+      match /private/{document=**} {
+        allow read, write: if isSignedIn() && (
+          request.auth.uid == userId
+          || isOwnerLike() || isSuperAdmin() || isAdmin()
+        );
+      }
+
       // Read: any signed-in user can read any user doc.
       allow read: if isSignedIn();
 
