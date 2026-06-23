@@ -134,32 +134,81 @@ export async function notifyOpenShift(shift, staffEmails) {
 // ─── Notify: schedule posted ───────────────────────────────────────────────
 
 /**
- * @param {object} schedule     - the draftSchedule from generateSchedule()
- * @param {Array}  staffEmails  - array of { email, displayName } for all approved staff
+ * Per-user personalised schedule-posted notification.
+ *
+ * Each instructor receives an email listing ONLY their own shifts and
+ * count — never "144 shifts posted." If a staff member is assigned zero
+ * shifts in the published batch, they're skipped entirely (no email).
+ *
+ * @param {object} params
+ * @param {Array}  params.shifts      - the just-published shift docs
+ *                                       ({ id, userId, userName, date,
+ *                                       startTime, endTime, role, subRole })
+ * @param {Array}  params.staffUsers  - array of { uid, email, displayName }
+ *                                       — email may be undefined when the
+ *                                       caller hasn't fetched private contact
+ *                                       (function silently skips those users)
+ * @param {string} params.monthLabel  - e.g. 'June'
+ * @param {number|string} params.year - e.g. 2026
  */
-export async function notifySchedulePosted(schedule, staffEmails) {
-  if (!Array.isArray(staffEmails) || staffEmails.length === 0) return;
+export async function notifySchedulePosted({ shifts, staffUsers, monthLabel, year }) {
+  if (!Array.isArray(staffUsers) || staffUsers.length === 0) return;
+  if (!Array.isArray(shifts) || shifts.length === 0) return;
 
-  const totalShifts = schedule.days.reduce((s, d) => s + d.assignedEmployees.length, 0);
-  const monthYear = `${schedule.month} ${schedule.year}`;
-
-  const subject = `${monthYear} schedule is posted (${totalShifts} shifts)`;
-  const body =
-    `The ${monthYear} schedule has been posted.\n\n` +
-    `${totalShifts} total shifts across ${schedule.days.length} working days.\n\n` +
-    `Check your assignments on the portal.`;
+  const monthYear = `${monthLabel} ${year}`;
   const cta_link = portalUrl();
 
-  const emails = staffEmails
-    .filter(s => s?.email)
-    .map(({ email, displayName }) => ({
-      to:       email,
-      to_name:  firstName(displayName, 'Instructor'),
-      subject,
-      body,
-      cta_text: 'View your schedule',
+  // Group shifts by user identity. Match on uid (preferred — stable) AND
+  // userName (legacy fallback for shifts created before the auto-scheduler
+  // started stamping uid).
+  const shiftsByUid  = new Map();
+  const shiftsByName = new Map();
+  for (const s of shifts) {
+    if (s.userId) {
+      if (!shiftsByUid.has(s.userId)) shiftsByUid.set(s.userId, []);
+      shiftsByUid.get(s.userId).push(s);
+    }
+    if (s.userName) {
+      if (!shiftsByName.has(s.userName)) shiftsByName.set(s.userName, []);
+      shiftsByName.get(s.userName).push(s);
+    }
+  }
+
+  const emails = [];
+  for (const user of staffUsers) {
+    if (!user?.email) continue;
+    const mine = (shiftsByUid.get(user.uid) || shiftsByName.get(user.displayName) || []);
+    // De-dupe — if both matchers hit the same shift (uid + name both set),
+    // we'd otherwise double-count.
+    const uniq = Array.from(new Map(mine.map(s => [s.id, s])).values());
+    if (uniq.length === 0) continue;
+
+    uniq.sort((a, b) =>
+      (a.date || '').localeCompare(b.date || '') ||
+      (a.startTime || '').localeCompare(b.startTime || ''),
+    );
+
+    const shiftLines = uniq.map(s => {
+      const date = fmtDate(s.date);
+      const time = `${fmtTime(s.startTime)} – ${fmtTime(s.endTime)}`;
+      const tag  = s.subRole ? ` · ${s.subRole}` : (s.role ? ` · ${s.role}` : '');
+      return `• ${date} · ${time}${tag}`;
+    }).join('\n');
+
+    const n = uniq.length;
+    emails.push({
+      to:       user.email,
+      to_name:  firstName(user.displayName, 'Instructor'),
+      subject:  `Your ${n} ${n === 1 ? 'shift' : 'shifts'} for ${monthYear} ${n === 1 ? 'is' : 'are'} posted`,
+      body:
+        `The ${monthYear} schedule is up.\n\n` +
+        `You have ${n} ${n === 1 ? 'shift' : 'shifts'}:\n\n` +
+        shiftLines + '\n\n' +
+        `Tap the button below to view your full schedule on the portal.`,
+      cta_text: 'View my schedule',
       cta_link,
-    }));
+    });
+  }
 
   await sendBatch(emails);
 }

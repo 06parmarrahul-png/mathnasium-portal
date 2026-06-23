@@ -35,6 +35,7 @@ import HolidaysEditor from '../components/HolidaysEditor';
 import {
   notifyOpenShift, notifySchedulePosted, notifyTimeOffDecision,
 } from '../lib/emailService';
+import { attachEmails } from '../lib/userContact';
 import {
   resolveUserForCenter,
   membershipFieldPath,
@@ -2444,24 +2445,29 @@ export default function Admin() {
           type: 'schedule_posted',
         });
 
-        // Reuse the existing schedule-posted email template by faking a
-        // minimal draftSchedule-shaped object out of the just-published shifts.
+        // Per-user personalised emails. Each instructor gets their OWN
+        // shift list + count — never "144 shifts posted" leaking the
+        // whole centre's data. Users with zero shifts in this batch
+        // get skipped entirely.
+        //
+        // Emails live in users/{uid}/private/contact post-privacy-split,
+        // so attachEmails() reads them from the sub-doc when the user
+        // doc no longer carries the field. Admin role is sufficient
+        // (rule lets owner/AA/admin/super_admin read any user's private
+        // contact), so the cross-user reads succeed.
         const publishedThisMonth = drafts.filter(s => s.date >= monthStart && s.date <= monthEnd);
-        const fakeDraft = {
-          month: new Date(yy, mm - 1, 1).toLocaleDateString('en-US', { month: 'long' }),
-          year:  yy,
-          days:  Object.values(
-            publishedThisMonth.reduce((acc, s) => {
-              if (!acc[s.date]) acc[s.date] = { date: s.date, assignedEmployees: [] };
-              acc[s.date].assignedEmployees.push(s.userName);
-              return acc;
-            }, {})
-          ),
-        };
-        const staffEmails = approvedUsers
-          .filter(u => u.email)
-          .map(u => ({ email: u.email, displayName: u.displayName }));
-        notifySchedulePosted(fakeDraft, staffEmails);
+        try {
+          const usersWithEmail = await attachEmails(approvedUsers);
+          await notifySchedulePosted({
+            shifts:     publishedThisMonth,
+            staffUsers: usersWithEmail,
+            monthLabel: new Date(yy, mm - 1, 1).toLocaleDateString('en-US', { month: 'long' }),
+            year:       yy,
+          });
+        } catch (notifyErr) {
+          // Fire-and-forget — never block the publish flow on email send.
+          console.error('[publish] notification batch failed:', notifyErr);
+        }
       }
     }
 
