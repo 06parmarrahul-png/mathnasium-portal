@@ -719,6 +719,84 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
     value: r.slot, label: r.label,
   }));
 
+  // ── Cross-slot occupancy map ─────────────────────────────────────────
+  // For each slot key, the set of student IDs that "occupy" it —
+  // including students whose start was an earlier slot but whose session
+  // duration spans into this one. The server only places a name at the
+  // start slot, so without this map a no-show at 3:00 wouldn't reduce
+  // 3:30's count even though the student would have been present in both.
+  //
+  // Built from the POST-MOVE adjusted slots so manual moves are honoured.
+  // Walk-ins (always 60 min) are added separately from the walkIns doc.
+  const slotMins = (k) => {
+    const [h, m] = (k || '0:0').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const slotStudentsHere = new Map(); // 'HH:MM' → Set of student IDs that span this slot
+  const allSlotKeys = adjustedSlots.map(r => r.slot);
+  const addToSlot = (k, id) => {
+    if (!id) return;
+    if (!slotStudentsHere.has(k)) slotStudentsHere.set(k, new Set());
+    slotStudentsHere.get(k).add(id);
+  };
+  // iCal + moved-in students — iterate visible students at each row's
+  // start slot and project across their duration to all overlapping
+  // slot keys.
+  for (const row of adjustedSlots) {
+    const visible = [
+      ...((row.students[side] || {}).onHour   || []),
+      ...((row.students[side] || {}).halfHour || []),
+    ];
+    const startMin = slotMins(row.slot);
+    for (const s of visible) {
+      const dur = s.duration || 30;
+      const endMin = startMin + dur;
+      for (const k of allSlotKeys) {
+        const km = slotMins(k);
+        if (km >= startMin && km < endMin) addToSlot(k, s.id);
+      }
+    }
+  }
+  // Walk-ins stored separately — they're not in adjustedSlots' student
+  // arrays for their start slot (they're added to onHour/halfHour at
+  // render time in SlotRow). Project each by its 60-min duration.
+  if (walkIns) {
+    for (const [key, list] of Object.entries(walkIns)) {
+      if (!key.startsWith(`${side}|`) || !Array.isArray(list)) continue;
+      const slot = key.split('|')[1];
+      const startMin = slotMins(slot);
+      for (const w of list) {
+        for (const k of allSlotKeys) {
+          const km = slotMins(k);
+          if (km >= startMin && km < startMin + 60) addToSlot(k, w.id);
+        }
+      }
+    }
+  }
+
+  // Per-row presence summary — drives the new "present/scheduled" display
+  // and the now-dynamic `need` calc in SlotRow. We classify each
+  // occupying student against the centre's current time so live no-show /
+  // presumed-absent flips update the count immediately.
+  const presenceByRow = new Map(); // slot → { scheduled, absent, effectivePresent, anyExplicit }
+  for (const row of adjustedSlots) {
+    const ids = slotStudentsHere.get(row.slot) || new Set();
+    const slotEnded = hasSlotEnded(date, row.slot, timezone || 'America/Vancouver');
+    let absent = 0, anyExplicit = false;
+    for (const id of ids) {
+      const k = classifyStudent(checkIns[id], slotEnded);
+      if (k === 'absent' || k === 'presumed-absent') absent++;
+      if (checkIns[id]?.status) anyExplicit = true;
+    }
+    const scheduled = row.counts?.[side] || 0;
+    presenceByRow.set(row.slot, {
+      scheduled,
+      absent,
+      effectivePresent: Math.max(0, scheduled - absent),
+      anyExplicit,
+    });
+  }
+
   // Handlers — passed down to each SlotRow / StudentRow.
   const handleMoveStudent = async (studentId, newSlotKey) => {
     try {
@@ -801,7 +879,8 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               scheduledTodayNames={scheduledTodayNames}
               walkIns={walkIns} profile={profile}
               slotPickerOptions={slotPickerOptions}
-              onMoveStudent={handleMoveStudent} />
+              onMoveStudent={handleMoveStudent}
+              presence={presenceByRow.get(row.slot)} />
           ))}
         </tbody>
       </table>
@@ -809,7 +888,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, slotPickerOptions, onMoveStudent }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, slotPickerOptions, onMoveStudent, presence }) {
   // Two-tier dropdown. By default we show only staff scheduled today
   // (from the `shifts` collection + fixed-staff schedule). A "+ More"
   // option at the bottom expands the picker to the full pool — useful
@@ -867,12 +946,22 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const longHour  = side === 'HS'
     ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
     : [];
-  // Walk-ins count toward the slot's demand the same way iCal 60-min
-  // students do — once at the start slot AND once at the next slot they
-  // overflow into. The server already handles this for iCal entries
-  // via `row.counts[side]`; we add (a) walk-ins starting this slot and
-  // (b) walk-ins from the previous slot still in session.
-  const count = row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
+  // Two demand numbers per slot:
+  //   scheduled = total students booked (server iCal + spanning) + walk-ins.
+  //   effective = scheduled minus students we KNOW aren't here (explicit
+  //               no-show / cancel, or unset after slot ended). Driven by
+  //               presence.absent which is computed in SideTable across
+  //               ALL students that occupy this slot (start-here + iCal
+  //               overflow + walk-in overflow), so a no-show at 3:00pm
+  //               correctly reduces both 3:00 AND 3:30 counts.
+  //
+  // Display uses both ("20/24"); `need` math uses effective so the moment
+  // a student is marked no-show, "need" drops and the owner sees the
+  // overstaffed signal in real time. Falls back to scheduled when
+  // SideTable didn't pass a presence summary (defensive).
+  const scheduled = row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
+  const count = presence ? Math.max(0, scheduled - presence.absent) : scheduled;
+  const showFraction = presence && presence.absent > 0;
   const [addingWalkIn, setAddingWalkIn] = useState(false);
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
@@ -1028,8 +1117,19 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
             slotEnded={slotEnded} />
         </td>
       )}
-      <td className={`px-1 py-1 align-top text-center text-base font-bold border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
-        {count}
+      <td className={`px-1 py-1 align-top text-center border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
+        {/* When some students are absent, render present/scheduled as a
+            stacked fraction so the owner sees both numbers at a glance.
+            When nobody is absent yet, just the single number (cleaner
+            for the common pre-slot / fully-present case). */}
+        {showFraction ? (
+          <div className="leading-none">
+            <span className="text-base font-bold">{count}</span>
+            <span className="text-[10px] text-gray-400">/{scheduled}</span>
+          </div>
+        ) : (
+          <span className="text-base font-bold">{count}</span>
+        )}
       </td>
       {/* Other-side count: small, gray — informational, not the decision number. */}
       <td className="px-1 py-1 align-top text-center text-xs font-semibold text-gray-500 border-l border-gray-500 border-b border-gray-500">
