@@ -830,8 +830,10 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
           <col />
           <col />
           {side === 'HS' && <col />}
-          <col className="w-8" />
-          <col className="w-8" />
+          {/* Count columns — w-12 leaves room for the "of N" line that
+              appears below the big number when some students are absent. */}
+          <col className="w-12" />
+          <col className="w-12" />
           <col className="w-32" />
           {/* Cross-side instructor column — visible on screen AND in
               print. Front-desk staff use the printed sheet to confirm
@@ -1118,17 +1120,17 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
         </td>
       )}
       <td className={`px-1 py-1 align-top text-center border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
-        {/* When some students are absent, render present/scheduled as a
-            stacked fraction so the owner sees both numbers at a glance.
-            When nobody is absent yet, just the single number (cleaner
-            for the common pre-slot / fully-present case). */}
+        {/* When some students are absent, render present over scheduled
+            vertically so 2-digit pairs like 20/24 fit cleanly in the
+            narrow column. When nobody is absent yet, just the single
+            number (cleaner for the common pre-slot / fully-present case). */}
         {showFraction ? (
-          <div className="leading-none">
-            <span className="text-base font-bold">{count}</span>
-            <span className="text-[10px] text-gray-400">/{scheduled}</span>
+          <div className="flex flex-col items-center leading-none">
+            <span className="text-base font-bold tabular-nums">{count}</span>
+            <span className="text-[9px] text-gray-400 tabular-nums">of {scheduled}</span>
           </div>
         ) : (
-          <span className="text-base font-bold">{count}</span>
+          <span className="text-base font-bold tabular-nums">{count}</span>
         )}
       </td>
       {/* Other-side count: small, gray — informational, not the decision number. */}
