@@ -28,6 +28,7 @@ import {
   watchCheckIns, setCheckIn, setStudentDesk,
   watchInstructorAssignments, setInstructorAssignment,
   watchWalkIns, addWalkIn, removeWalkIn,
+  setSlotOverride, clearSlotOverride,
   enableSheetSync, rotateSheetSyncToken, disableSheetSync,
 } from '../lib/scheduler-data';
 // Legacy hardcoded fixed-staff map (Sabrina, Neeru, Rachel). Used as a
@@ -662,6 +663,70 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
     } catch { return date; }
   })();
 
+  // ── Apply slot overrides ─────────────────────────────────────────────
+  // Override map shape: { studentId: "HH:MM" } (same side as original).
+  // Compute moved-out set + moved-in map up front, then build adjusted
+  // rows so SlotRow renders the post-move picture without knowing the
+  // override exists. Counts are adjusted to match.
+  const slotOverrides = walkIns?.slotOverrides || {};
+  const adjustedSlots = (() => {
+    if (!data?.slots || Object.keys(slotOverrides).length === 0) {
+      return data?.slots || [];
+    }
+    const movedOutIds = new Set();
+    const movedInBySlot = new Map(); // slotKey -> [students]
+    const originalSlotById = new Map(); // studentId -> original slot key (for the badge tooltip)
+    for (const row of data.slots) {
+      const all = [...((row.students[side] || {}).onHour || []),
+                   ...((row.students[side] || {}).halfHour || [])];
+      for (const s of all) {
+        const target = slotOverrides[s.id];
+        if (target && target !== row.slot) {
+          movedOutIds.add(s.id);
+          originalSlotById.set(s.id, row.slot);
+          if (!movedInBySlot.has(target)) movedInBySlot.set(target, []);
+          movedInBySlot.get(target).push({ ...s, isMoved: true, originalSlot: row.slot });
+        }
+      }
+    }
+    return data.slots.map(row => {
+      const orig = row.students[side] || { onHour: [], halfHour: [] };
+      const filteredOnHour   = (orig.onHour   || []).filter(s => !movedOutIds.has(s.id));
+      const filteredHalfHour = (orig.halfHour || []).filter(s => !movedOutIds.has(s.id));
+      const movedIn = movedInBySlot.get(row.slot) || [];
+      // Route moved-in students to the slot's natural column (matches
+      // walk-in logic — :30 slots are half-hour, :00 are on-hour).
+      const slotIsHalfHour = (row.slot || '').endsWith(':30');
+      const newOnHour   = slotIsHalfHour ? filteredOnHour   : [...filteredOnHour,   ...movedIn];
+      const newHalfHour = slotIsHalfHour ? [...filteredHalfHour, ...movedIn] : filteredHalfHour;
+      const removed = (orig.onHour || []).length + (orig.halfHour || []).length
+                      - filteredOnHour.length - filteredHalfHour.length;
+      const newCount = (row.counts?.[side] || 0) - removed + movedIn.length;
+      return {
+        ...row,
+        students: {
+          ...row.students,
+          [side]: { onHour: newOnHour, halfHour: newHalfHour },
+        },
+        counts: { ...row.counts, [side]: newCount },
+      };
+    });
+  })();
+
+  // Slot picker options for the per-student Move dropdown. All distinct
+  // slot keys + their human label, sorted by time.
+  const slotPickerOptions = (data?.slots || []).map(r => ({
+    value: r.slot, label: r.label,
+  }));
+
+  // Handlers — passed down to each SlotRow / StudentRow.
+  const handleMoveStudent = async (studentId, newSlotKey) => {
+    try {
+      if (!newSlotKey) await clearSlotOverride(centerId, date, studentId);
+      else await setSlotOverride(centerId, date, studentId, newSlotKey);
+    } catch (e) { toast.error(e.message); }
+  };
+
   return (
     <section className="rounded-lg border border-gray-200 bg-white overflow-hidden print:overflow-visible">
       {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
@@ -726,7 +791,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
           </tr>
         </thead>
         <tbody>
-          {data.slots.map((row, i) => (
+          {adjustedSlots.map((row, i) => (
             <SlotRow key={row.slot} row={row} side={side} alt={i % 2 === 1}
               centerId={centerId} date={date}
               checkIns={checkIns} assignments={assignments} ratio={ratio} pool={pool}
@@ -734,7 +799,9 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               nameAliases={nameAliases}
               timezone={timezone}
               scheduledTodayNames={scheduledTodayNames}
-              walkIns={walkIns} profile={profile} />
+              walkIns={walkIns} profile={profile}
+              slotPickerOptions={slotPickerOptions}
+              onMoveStudent={handleMoveStudent} />
           ))}
         </tbody>
       </table>
@@ -742,7 +809,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, slotPickerOptions, onMoveStudent }) {
   // Two-tier dropdown. By default we show only staff scheduled today
   // (from the `shifts` collection + fixed-staff schedule). A "+ More"
   // option at the bottom expands the picker to the full pool — useful
@@ -910,7 +977,10 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
           onRemoveWalkIn={handleRemoveWalkIn}
-          slotEnded={slotEnded} />
+          slotEnded={slotEnded}
+          slotPickerOptions={slotPickerOptions}
+          onMoveStudent={onMoveStudent}
+          currentSlot={row.slot} />
         {!slotIsHalfHour && (
           addingWalkIn ? (
             <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
@@ -932,7 +1002,10 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           centerId={centerId} date={date} side={side}
           onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
           onRemoveWalkIn={handleRemoveWalkIn}
-          slotEnded={slotEnded} />
+          slotEnded={slotEnded}
+          slotPickerOptions={slotPickerOptions}
+          onMoveStudent={onMoveStudent}
+          currentSlot={row.slot} />
         {slotIsHalfHour && (
           addingWalkIn ? (
             <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
@@ -1080,7 +1153,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
-function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded }) {
+function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded, slotPickerOptions, onMoveStudent, currentSlot }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
   return (
     <ul className="space-y-0.5">
@@ -1089,13 +1162,29 @@ function StudentList({ students, checkIns, centerId, date, onStatusClick, onStat
           centerId={centerId} date={date}
           onStatusClick={onStatusClick} onStatusMenu={onStatusMenu}
           onRemoveWalkIn={onRemoveWalkIn}
-          slotEnded={slotEnded} />
+          slotEnded={slotEnded}
+          slotPickerOptions={slotPickerOptions}
+          onMoveStudent={onMoveStudent}
+          currentSlot={currentSlot} />
       ))}
     </ul>
   );
 }
 
-function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded }) {
+function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded, slotPickerOptions, onMoveStudent, currentSlot }) {
+  // Move picker handler — onChange of the ↔ <select>. Sends '' to clear
+  // an existing override, the new slot key otherwise. The select is
+  // hidden for walk-ins (they're stored at one slot only; remove + re-add
+  // is the correct workflow) and when no move handler was passed (some
+  // call sites — print preview, future code — may skip it).
+  const handleMovePick = (e) => {
+    const next = e.target.value;
+    e.target.value = '';
+    if (!onMoveStudent) return;
+    if (next === '__CLEAR__') onMoveStudent(s.id, null);
+    else if (next) onMoveStudent(s.id, next);
+  };
+  const canMove = !s.isWalkIn && typeof onMoveStudent === 'function';
   const status = entry.status || '';
   // classifyStudent decides 'present' / 'absent' / 'presumed-absent' /
   // 'pending'. Presumed-absent gets a SOFT visual (low-contrast gray,
@@ -1161,6 +1250,38 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
           className="ml-0.5 inline-flex items-center text-[10px] text-gray-300 hover:text-red-600 print:hidden">
           ×
         </button>
+      )}
+      {/* Moved-here marker — appears on students whose original iCal
+          slot was elsewhere. The original time shows in the tooltip
+          so an admin can audit what got reshuffled. */}
+      {s.isMoved && (
+        <span className="text-[10px] font-semibold text-blue-700 shrink-0"
+          title={`Moved from ${s.originalSlot || 'another slot'}`}>
+          (M)
+        </span>
+      )}
+      {/* Move picker — native select so it's free keyboard nav + mobile.
+          Hidden for walk-ins (delete + re-add is the correct workflow
+          there). Shows ↔ as the closed-state label; the open menu lists
+          every slot time in the day plus a "Reset to original" option
+          for moved students. print:hidden — paper schedule never needs
+          interactive controls. */}
+      {canMove && slotPickerOptions?.length > 0 && (
+        <select
+          onChange={handleMovePick}
+          defaultValue=""
+          title="Move student to another slot"
+          className="ml-0.5 rounded border border-dashed border-gray-300 bg-white px-0.5 py-0 text-[10px] text-gray-400 hover:border-blue-400 hover:text-blue-600 print:hidden">
+          <option value="">↔</option>
+          {s.isMoved && <option value="__CLEAR__">↺ Reset to original</option>}
+          {slotPickerOptions
+            .filter(o => o.value !== currentSlot)
+            .map(o => (
+              <option key={o.value} value={o.value}>
+                Move to {o.label}
+              </option>
+            ))}
+        </select>
       )}
       {/* Desk number — kept (operational, set per day, useful on print).
           Borderless when empty so the row stays compact. */}

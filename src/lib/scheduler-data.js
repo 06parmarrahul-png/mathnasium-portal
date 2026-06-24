@@ -255,6 +255,40 @@ export async function removeWalkIn(centerId, dateStr, side, slot, walkInId) {
   await setDoc(ref, next, { merge: false });
 }
 
+// ───── Slot overrides (move student between slots, same side) ────────────
+// When a student booked for 3:30 arrives at 3:00 (or asks to swap), we
+// don't touch the iCal source — instead, we save an override that says
+// "for THIS date, render this student at this other slot." Render code
+// (SideTable in SchedulerCreation.jsx) applies the override before
+// passing the slot rows down to SlotRow.
+//
+// Stored as a single map on the date's scheduleAddOns doc:
+//   slotOverrides: { [studentId]: 'HH:MM' }    // same side as original
+//
+// Side is implicit from the student's original placement — we don't
+// support cross-side moves (HS↔EM) in V1; owners use cancel + add
+// walk-in for those rare cases.
+
+export async function setSlotOverride(centerId, dateStr, studentId, newSlotKey) {
+  if (!studentId || !newSlotKey) throw new Error('Move needs a student and target slot.');
+  const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
+  const snap = await getDoc(ref);
+  const current = snap.exists() ? snap.data() : {};
+  const overrides = { ...(current.slotOverrides || {}), [studentId]: newSlotKey };
+  await setDoc(ref, { ...current, slotOverrides: overrides }, { merge: false });
+}
+
+export async function clearSlotOverride(centerId, dateStr, studentId) {
+  const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return;
+  const current = snap.data();
+  const overrides = { ...(current.slotOverrides || {}) };
+  if (!(studentId in overrides)) return;
+  delete overrides[studentId];
+  await setDoc(ref, { ...current, slotOverrides: overrides }, { merge: false });
+}
+
 // ───── Instructor assignments (per day) ──────────────────────────────────
 // Key format: "<side>|<slotHHMM>" e.g. "HS|14:00"
 export function watchInstructorAssignments(centerId, dateStr, cb) {
