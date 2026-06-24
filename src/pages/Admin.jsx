@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
-  collection, onSnapshot, doc, updateDoc, deleteDoc,
+  collection, onSnapshot, doc, updateDoc, deleteDoc, deleteField,
   addDoc, query, where, orderBy, writeBatch, getDoc, getDocs, setDoc,
 } from 'firebase/firestore';
 import { db, auth, serverTimestamp } from '../firebase';
@@ -2610,17 +2610,31 @@ export default function Admin() {
           role: s.role || user?.instructorType || 'Instructor',
           shifts: [],
           totalHours: 0,
+          // payHours = what we actually pay. Defaults to scheduled total
+          // but each shift can override (e.g. instructor stayed an extra
+          // half hour). See the Pay h column on the per-person table.
+          payHours: 0,
           sickHours: 0,
           sickCount: 0,
         };
       }
       const hrs = shiftHours(s);
       const isSick = !!s.sickPay;
+      // payHoursOverride is a per-shift owner override. When unset, pay
+      // matches scheduled (the centre's default — "we pay what we
+      // scheduled"). When set (via double-click on the Pay h cell), the
+      // override wins and the diff between scheduled and paid is
+      // intentional (early leave / stayed late / negotiated time).
+      const payHrs = (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
+        ? s.payHoursOverride
+        : hrs;
       byPerson[key].shifts.push({
         date: s.date,
         startTime: s.startTime,
         endTime: s.endTime,
         hours: hrs,
+        payHours: payHrs,
+        payHoursOverride: typeof s.payHoursOverride === 'number' ? s.payHoursOverride : null,
         shiftId: s.id,
         sick: isSick,
       });
@@ -2629,6 +2643,7 @@ export default function Admin() {
         byPerson[key].sickCount += 1;
       } else {
         byPerson[key].totalHours += hrs;
+        byPerson[key].payHours   += payHrs;
       }
     }
 
@@ -2637,6 +2652,7 @@ export default function Admin() {
     for (const key of Object.keys(byPerson)) {
       byPerson[key].shifts.sort((a, b) => a.date.localeCompare(b.date));
       byPerson[key].totalHours = Math.round(byPerson[key].totalHours * 100) / 100;
+      byPerson[key].payHours   = Math.round(byPerson[key].payHours   * 100) / 100;
       byPerson[key].sickHours  = Math.round(byPerson[key].sickHours  * 100) / 100;
     }
 
@@ -3060,6 +3076,42 @@ export default function Admin() {
   const deleteRadiusEntry = (index) => {
     setRadiusData(prev => prev.filter((_, i) => i !== index));
   };
+
+  // ── Pay h override (per-shift) ──────────────────────────────────────
+  // The Pay h column on the payroll table defaults to the scheduled
+  // hours. Owners can double-click any cell to override (e.g. when an
+  // instructor stays an extra half hour or leaves early). Persisting
+  // null/empty REMOVES the override so the column reverts to scheduled.
+  //
+  // Writes go straight to the shift doc — payrollSummary re-derives
+  // from `shifts` on the next snapshot, so the column + per-person Pay
+  // total update without any local state plumbing.
+  const [payEditing, setPayEditing] = useState({ shiftId: null, draft: '' });
+  const beginPayEdit = (shift) => {
+    setPayEditing({
+      shiftId: shift.shiftId,
+      draft: (shift.payHoursOverride ?? shift.hours).toString(),
+    });
+  };
+  const commitPayEdit = async () => {
+    const { shiftId, draft } = payEditing;
+    if (!shiftId) return;
+    setPayEditing({ shiftId: null, draft: '' });
+    const trimmed = (draft || '').trim();
+    try {
+      if (trimmed === '') {
+        // Empty input = reset to scheduled. Persist deleteField() so the
+        // shift doc actually loses the override rather than carrying a 0.
+        await updateDoc(doc(db, 'shifts', shiftId), { payHoursOverride: deleteField() });
+        toast.success('Pay hours reset to scheduled.');
+        return;
+      }
+      const n = Number(trimmed);
+      if (!isFinite(n) || n < 0) { toast.error('Pay hours must be a number ≥ 0.'); return; }
+      await updateDoc(doc(db, 'shifts', shiftId), { payHoursOverride: Math.round(n * 100) / 100 });
+    } catch (e) { toast.error(e?.message || 'Failed to save pay hours.'); }
+  };
+  const cancelPayEdit = () => setPayEditing({ shiftId: null, draft: '' });
 
   const addRadiusEntry = (name) => {
     setRadiusData(prev => [...prev, { name, date: payStart, timeIn: '', timeOut: '', actualHours: 0 }]);
@@ -4799,6 +4851,11 @@ export default function Admin() {
                           {hasRadius && <th className="text-left px-4 py-2 text-xs font-medium text-blue-500">Radius Actual</th>}
                           <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">{hasRadius ? 'Sched. h' : 'Hours'}</th>
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-blue-500">Actual h</th>}
+                          {hasRadius && (
+                            <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; double-click any cell to override.">
+                              Pay h
+                            </th>
+                          )}
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Diff</th>}
                         </tr>
                       </thead>
@@ -4852,6 +4909,39 @@ export default function Admin() {
                                   {s.missingFromRadius ? '–' : `${s.actual.actualHours.toFixed(2)}h`}
                                 </td>
                               )}
+                              {/* Pay h — double-click to override. Purple
+                                  tint when an override is set so the
+                                  owner can spot manual edits at a glance. */}
+                              {hasRadius && (
+                                <td className="px-5 py-2.5 text-right font-semibold">
+                                  {payEditing.shiftId === s.shiftId ? (
+                                    <input
+                                      autoFocus
+                                      type="number" step="0.25" min="0"
+                                      value={payEditing.draft}
+                                      onChange={e => setPayEditing(p => ({ ...p, draft: e.target.value }))}
+                                      onBlur={commitPayEdit}
+                                      onKeyDown={e => {
+                                        if (e.key === 'Enter') commitPayEdit();
+                                        if (e.key === 'Escape') cancelPayEdit();
+                                      }}
+                                      className="w-16 rounded border border-purple-400 bg-white px-1.5 py-0.5 text-right text-sm text-purple-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                                    />
+                                  ) : (
+                                    <span
+                                      onDoubleClick={() => beginPayEdit(s)}
+                                      title={s.payHoursOverride != null
+                                        ? `Overridden — double-click to edit, clear to reset (scheduled: ${s.hours.toFixed(2)}h)`
+                                        : 'Double-click to override'}
+                                      className={`cursor-pointer select-none rounded px-1 py-0.5 hover:bg-purple-50 ${
+                                        s.payHoursOverride != null ? 'text-purple-700 underline decoration-dotted' : 'text-gray-700'
+                                      }`}
+                                    >
+                                      {s.payHours.toFixed(2)}h
+                                    </span>
+                                  )}
+                                </td>
+                              )}
                               {hasRadius && (
                                 <td className={`px-5 py-2.5 text-right font-bold text-xs ${s.missingFromRadius ? 'text-red-500' : s.shiftDiscrepancy ? 'text-red-600' : 'text-green-600'}`}>
                                   {s.missingFromRadius ? '⚠ missing' : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
@@ -4885,6 +4975,10 @@ export default function Admin() {
                             </td>
                             <td className="px-5 py-2.5 text-right text-gray-400">–</td>
                             <td className="px-5 py-2.5 text-right font-semibold text-blue-700">{r.actualHours.toFixed(2)}h</td>
+                            {/* Pay h column placeholder — unscheduled rows
+                                aren't payable (no scheduled basis), so we
+                                render a dash to keep the grid aligned. */}
+                            <td className="px-5 py-2.5 text-right text-gray-300">–</td>
                             <td className="px-5 py-2.5 text-right">
                               <div className="inline-flex items-center gap-2 justify-end">
                                 <span className="text-xs font-bold text-amber-600 whitespace-nowrap">⚠ unscheduled</span>
