@@ -12,7 +12,7 @@ import {
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
-  Users, Activity, Briefcase, Copy, CalendarX, Upload, Search,
+  Users, Activity, Briefcase, Copy, CalendarX, Upload, Search, ArrowUp,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -2635,6 +2635,10 @@ export default function Admin() {
         hours: hrs,
         payHours: payHrs,
         payHoursOverride: typeof s.payHoursOverride === 'number' ? s.payHoursOverride : null,
+        // payrollResolved — admin has explicitly signed off this shift's
+        // Pay h value (even when the Sched/Actual diff is flagged red).
+        // The red flag dims to green once true; the value remains editable.
+        payrollResolved: s.payrollResolved === true,
         shiftId: s.id,
         sick: isSick,
       });
@@ -3112,6 +3116,36 @@ export default function Admin() {
     } catch (e) { toast.error(e?.message || 'Failed to save pay hours.'); }
   };
   const cancelPayEdit = () => setPayEditing({ shiftId: null, draft: '' });
+
+  // ── Resolve flagged payroll row ─────────────────────────────────────
+  // Pressing the ✓ button on a red (discrepant / missing-from-Radius)
+  // shift marks it acknowledged by the admin. The Pay h value stays
+  // editable — resolve is "I've reviewed this and the Pay h I set is
+  // what we're paying," not a freeze. Stored per-shift so it survives
+  // page reloads and is visible to anyone who opens the period later.
+  const handleResolveShift = async (shiftId, next = true) => {
+    if (!shiftId) return;
+    try {
+      await updateDoc(doc(db, 'shifts', shiftId), { payrollResolved: !!next });
+    } catch (e) { toast.error(e?.message || 'Failed to update.'); }
+  };
+
+  // Export gated by unresolved count. When everything's resolved, just
+  // export. When some are still flagged, confirm before letting them
+  // proceed — admin should know what they're shipping.
+  const handleExportFinalPayroll = async (unresolvedCount) => {
+    if (unresolvedCount > 0) {
+      const ok = await confirmDialog({
+        title: `${unresolvedCount} discrepancy ${unresolvedCount === 1 ? 'is' : 'are'} still unresolved`,
+        message: `Some payroll rows are flagged as needing review and haven't been marked Resolved. Export anyway?`,
+        confirmText: 'Export anyway',
+        cancelText: 'Cancel — let me resolve first',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    handleExportPayroll();
+  };
 
   const addRadiusEntry = (name) => {
     setRadiusData(prev => [...prev, { name, date: payStart, timeIn: '', timeOut: '', actualHours: 0 }]);
@@ -4503,6 +4537,9 @@ export default function Admin() {
       {/* ── PAYROLL ─────────────────────────────────────────────────────── */}
       {tab === 'payroll' && (
         <div className="space-y-6">
+          {/* Floating scroll-to-top — the payroll table is long; the chip
+              hides itself until the user scrolls past ~400px. */}
+          <ScrollTopButton />
 
           {/* Always-visible toolbar — sits above the pay-period selector so
               the WIW import + bulk delete buttons are reachable even when
@@ -4688,10 +4725,43 @@ export default function Admin() {
                     <span className="font-bold text-green-700">{Math.round(totalPayrollHours * 100) / 100}h</span>
                   </div>
                 </div>
-                <button onClick={handleExportPayroll}
-                  className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
-                  <Download size={15} /> Export CSV
-                </button>
+                {/* Unresolved counter — aggregates red rows across all
+                    visible persons. Pulls from comparisonSummary (which
+                    overlays Radius matches onto payrollSummary). When
+                    there's no Radius import yet, comparisonSummary is
+                    null and we fall back to payrollSummary, where no
+                    discrepancies are computed → zero unresolved. */}
+                {(() => {
+                  const rows = (comparisonSummary?.perPerson) || [];
+                  let unresolved = 0;
+                  for (const p of rows) {
+                    for (const s of (p.shiftComparisons || [])) {
+                      if ((s.shiftDiscrepancy || s.missingFromRadius) && !s.payrollResolved) {
+                        unresolved++;
+                      }
+                    }
+                  }
+                  return (
+                    <div className="flex items-center gap-3">
+                      {unresolved > 0 ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700"
+                          title="Click Resolve on each red row after reviewing.">
+                          ⚠ {unresolved} unresolved
+                        </span>
+                      ) : (
+                        rows.length > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                            ✓ all resolved
+                          </span>
+                        )
+                      )}
+                      <button onClick={() => handleExportFinalPayroll(unresolved)}
+                        className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
+                        <Download size={15} /> Export Final Payroll
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -4857,6 +4927,7 @@ export default function Admin() {
                             </th>
                           )}
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Diff</th>}
+                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-16">Resolved</th>}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
@@ -4875,8 +4946,21 @@ export default function Admin() {
                             weekday: 'short', month: 'short', day: 'numeric',
                           });
                           const rowFlag = hasRadius && (s.shiftDiscrepancy || s.missingFromRadius);
+                          // Resolved overrides the red flag — once admin
+                          // ✓'s a row, it goes green even if the underlying
+                          // Sched/Actual diff is still mathematically wide.
+                          // The Diff number still shows red text so the
+                          // delta isn't hidden; the row background is the
+                          // "I've acknowledged this" signal.
+                          const rowResolved = rowFlag && s.payrollResolved;
+                          const showRedFlag = rowFlag && !rowResolved;
                           return (
-                            <tr key={i} className={`transition-colors ${rowFlag ? 'bg-red-50 hover:bg-red-100' : s.sick ? 'bg-amber-50/60 hover:bg-amber-100/60' : 'hover:bg-gray-50'}`}>
+                            <tr key={i} className={`transition-colors ${
+                              showRedFlag ? 'bg-red-50 hover:bg-red-100'
+                              : rowResolved ? 'bg-emerald-50/70 hover:bg-emerald-100/70'
+                              : s.sick ? 'bg-amber-50/60 hover:bg-amber-100/60'
+                              : 'hover:bg-gray-50'
+                            }`}>
                               <td className="px-5 py-2.5 text-gray-800 font-medium">
                                 {dateLabel}
                                 {s.sick && (
@@ -4947,6 +5031,29 @@ export default function Admin() {
                                   {s.missingFromRadius ? '⚠ missing' : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
                                 </td>
                               )}
+                              {/* Resolve column — only meaningful on red
+                                  rows. Unflagged rows render an empty cell
+                                  so the table grid stays aligned. */}
+                              {hasRadius && (
+                                <td className="px-5 py-2.5 text-right">
+                                  {rowFlag && !rowResolved && (
+                                    <button
+                                      onClick={() => handleResolveShift(s.shiftId, true)}
+                                      title="Mark this discrepancy as reviewed. Pay h stays editable."
+                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
+                                      ✓ Resolve
+                                    </button>
+                                  )}
+                                  {rowResolved && (
+                                    <button
+                                      onClick={() => handleResolveShift(s.shiftId, false)}
+                                      title="Un-resolve — re-flags this row as needing review."
+                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
+                                      ✓ Resolved
+                                    </button>
+                                  )}
+                                </td>
+                              )}
                             </tr>
                           );
                         })}
@@ -4992,19 +5099,28 @@ export default function Admin() {
                                 </button>
                               </div>
                             </td>
+                            {/* Resolve column placeholder — keeps grid aligned with the new column header. */}
+                            <td className="px-5 py-2.5"></td>
                           </tr>
                         ))}
                       </tbody>
                       <tfoot>
                         <tr className={`border-t ${isDiscrepant ? 'bg-red-50' : 'bg-green-50'}`}>
-                          <td colSpan={hasRadius ? 3 : 3} className={`px-5 py-2 text-sm font-semibold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}>Total</td>
+                          <td colSpan={3} className={`px-5 py-2 text-sm font-semibold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}>Total</td>
                           <td className={`px-5 py-2 text-right text-sm font-bold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}>{person.totalHours.toFixed(2)}h</td>
                           {hasRadius && <td className="px-5 py-2 text-right text-sm font-bold text-blue-700">{person.actualHours.toFixed(2)}h</td>}
+                          {hasRadius && (
+                            <td className="px-5 py-2 text-right text-sm font-bold text-purple-700"
+                              title="Sum of Pay h — what we actually pay this person.">
+                              {(person.payHours ?? person.totalHours).toFixed(2)}h
+                            </td>
+                          )}
                           {hasRadius && (
                             <td className={`px-5 py-2 text-right text-sm font-bold ${isDiscrepant ? 'text-red-600' : 'text-green-600'}`}>
                               {person.diff > 0 ? '+' : ''}{person.diff.toFixed(2)}h
                             </td>
                           )}
+                          {hasRadius && <td />}
                         </tr>
                       </tfoot>
                     </table>
@@ -6780,5 +6896,46 @@ Send a resume and a short note about why this role suits you to ${contactEmail |
         </div>
       </div>
     </div>
+  );
+}
+
+// ─── Scroll-to-top button ───────────────────────────────────────────────
+// Floating ↑ button anchored bottom-right. Appears only after the user
+// has scrolled past ~400px so it doesn't clutter the top of the page.
+// Click → smooth-scrolls back to the top of the scrollable container
+// (the <main> in Layout.jsx — fall back to document scrolling if that
+// element isn't found, e.g. when the page is opened standalone).
+function ScrollTopButton() {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    // The page lives inside Layout's <main className="overflow-y-auto">,
+    // so window.scrollY won't catch its scroll. Walk up from any element
+    // we can find to locate the actual scrolling container.
+    const scrollEl = document.querySelector('main') || document.scrollingElement || document.documentElement;
+    const onScroll = () => setShow((scrollEl.scrollTop || window.scrollY) > 400);
+    scrollEl.addEventListener('scroll', onScroll);
+    window.addEventListener('scroll', onScroll);
+    onScroll();
+    return () => {
+      scrollEl.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', onScroll);
+    };
+  }, []);
+  const handleClick = () => {
+    const scrollEl = document.querySelector('main') || document.scrollingElement || document.documentElement;
+    try { scrollEl.scrollTo({ top: 0, behavior: 'smooth' }); }
+    catch { scrollEl.scrollTop = 0; }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+  if (!show) return null;
+  return (
+    <button
+      onClick={handleClick}
+      aria-label="Scroll to top"
+      title="Back to top"
+      className="fixed bottom-6 right-6 z-40 flex h-11 w-11 items-center justify-center rounded-full bg-gray-900 text-white shadow-lg hover:bg-gray-700 transition-colors print:hidden"
+    >
+      <ArrowUp size={18} />
+    </button>
   );
 }
