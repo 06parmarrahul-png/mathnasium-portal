@@ -1543,6 +1543,11 @@ export default function Admin() {
   const [payEnd,   setPayEnd]   = useState(defaultPeriod.end);
   const [radiusData, setRadiusData] = useState([]); // parsed Radius timesheet rows
   const [radiusFileName, setRadiusFileName] = useState('');
+  // Whether the Radius import card is expanded. Defaults false so the
+  // card auto-collapses to a 1-line chip once a timesheet is loaded,
+  // freeing vertical space for the per-person reconciliation below.
+  // Owner clicks Re-import on the chip to expand again.
+  const [radiusExpanded, setRadiusExpanded] = useState(false);
   const [radiusError, setRadiusError] = useState('');
 
   // Firestore subscriptions — all scoped to the active center.
@@ -1873,7 +1878,10 @@ export default function Admin() {
 
   // Bulk-delete shifts in a date range (single day if from === to).
   // Used both for stat-holiday days AND for cleaning out a whole period
-  // before importing from When I Work.
+  // before importing from When I Work. Currently UNREFERENCED — the
+  // toolbar that used to surface it was removed. Kept around because
+  // owner may want it back (in a Settings menu or admin-only context).
+  // eslint-disable-next-line no-unused-vars
   const handleBulkDeleteShiftsForDate = async (from, to) => {
     if (!from) return;
     const end = to || from;
@@ -1903,6 +1911,10 @@ export default function Admin() {
   // Bulk-import shifts from a parsed When I Work CSV. Each entry has been
   // pre-matched in the modal to either a Ratio user (by uid) or marked
   // "skip" by the owner. We just batch-write the chosen ones.
+  // Currently UNREFERENCED — the WIW import button was removed from the
+  // payroll toolbar. Kept so re-mounting the importer later doesn't
+  // require re-writing the handler.
+  // eslint-disable-next-line no-unused-vars
   const handleImportWiwShifts = async (entries) => {
     const valid = entries.filter(e => e.userId && e.date && e.startTime && e.endTime);
     if (valid.length === 0) {
@@ -4541,25 +4553,12 @@ export default function Admin() {
               hides itself until the user scrolls past ~400px. */}
           <ScrollTopButton />
 
-          {/* Always-visible toolbar — sits above the pay-period selector so
-              the WIW import + bulk delete buttons are reachable even when
-              the centre has zero shifts in the selected period yet (the
-              chicken-and-egg case during initial migration from WIW). */}
-          <div className="rounded-xl border bg-white p-3 shadow-sm flex flex-wrap items-center gap-2">
-            <div className="flex items-center gap-2 mr-auto pl-1">
-              <Briefcase size={16} className="text-gray-500" />
-              <span className="text-sm font-semibold text-gray-700">Payroll tools</span>
-              <span className="text-xs text-gray-500 hidden sm:inline">
-                — migration, bulk delete, export
-              </span>
-            </div>
-            <ImportFromWiwButton
-              approvedUsers={approvedUsers}
-              onImport={handleImportWiwShifts}
-              onDeleteRange={handleBulkDeleteShiftsForDate}
-            />
-            <BulkDeleteShiftsByDate onConfirm={handleBulkDeleteShiftsForDate} />
-          </div>
+          {/* (Removed) "Payroll tools" toolbar — the WIW import + bulk-
+              delete buttons it housed are migration-era tooling we no
+              longer need surfaced at the top of every payroll view. The
+              ImportFromWiwButton + BulkDeleteShiftsByDate components are
+              still defined in this file and can be re-mounted somewhere
+              (e.g. a Settings page) if those workflows come back. */}
 
           {/* Sub-tabs inside Payroll. Default lands on the pay-period view
               (the existing screen). Sick Days flips to a roster view of
@@ -4766,16 +4765,40 @@ export default function Admin() {
             )}
           </div>
 
-          {/* Radius Import */}
-          {payrollSummary.length > 0 && (
+          {/* Radius Import — auto-collapses to a one-line chip once
+              entries are loaded, so it doesn't waste vertical space on
+              the working flow (reconcile rows → resolve → export).
+              Click the chip to expand and re-import a different file. */}
+          {payrollSummary.length > 0 && radiusData.length > 0 && !radiusExpanded && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-2.5 shadow-sm flex items-center gap-3">
+              <CheckCircle size={16} className="text-blue-600 shrink-0" />
+              <div className="flex-1 text-sm">
+                <span className="font-semibold text-blue-900">Radius timesheet loaded:</span>{' '}
+                <span className="text-blue-800">{radiusData.length} entries</span>
+                {radiusFileName && <span className="text-blue-600 ml-1">· {radiusFileName}</span>}
+              </div>
+              <button
+                onClick={() => setRadiusExpanded(true)}
+                className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100">
+                Re-import
+              </button>
+            </div>
+          )}
+          {payrollSummary.length > 0 && (radiusData.length === 0 || radiusExpanded) && (
             <div className="rounded-xl border bg-white p-5 shadow-sm">
               <div className="flex items-center gap-2 mb-1">
                 <div className="w-2 h-2 rounded-full bg-blue-500" />
                 <h3 className="font-semibold text-gray-900">Radius Timesheet Import</h3>
                 {radiusData.length > 0 && (
-                  <span className="ml-2 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                    {radiusData.length} entries loaded
-                  </span>
+                  <>
+                    <span className="ml-2 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                      {radiusData.length} entries loaded
+                    </span>
+                    <button onClick={() => setRadiusExpanded(false)}
+                      className="ml-auto text-xs font-semibold text-gray-500 hover:text-gray-800">
+                      Collapse
+                    </button>
+                  </>
                 )}
               </div>
               <p className="text-sm text-gray-500 mb-4">
