@@ -1956,6 +1956,11 @@ export default function Admin() {
   // Behaviour: try to match the Radius row's staff name to an approved
   // user by displayName; if no match, fall back to opening the existing
   // AddShiftModal so the owner can pick the right person manually.
+  // Currently UNREFERENCED — the "Schedule shift" button on unscheduled-
+  // Radius rows was removed per owner request (payroll is not the right
+  // surface for creating shifts). Kept around so it can be re-mounted
+  // from elsewhere (e.g. Manage Schedule) without rewriting.
+  // eslint-disable-next-line no-unused-vars
   const handleScheduleFromRadius = async (personName, radiusEntry) => {
     const user = approvedUsers.find(
       u => (u.displayName || '').toLowerCase() === (personName || '').toLowerCase()
@@ -2880,8 +2885,29 @@ export default function Admin() {
     );
   };
 
-  // Export to CSV
-  const handleExportPayroll = () => {
+  // Map an instructorType / role string to the short code used in the
+  // owner's existing QuickBooks worksheet. Best-effort — anything we
+  // don't recognise defaults to 'I' (Instructor). Update the mapping
+  // here if the centre adds a new role abbreviation.
+  const roleAbbrev = (role) => {
+    const r = String(role || '').toLowerCase();
+    if (r.includes('director'))  return 'CD';
+    if (r.includes('manager'))   return 'CD';
+    if (r.includes('assistant')) return 'ACD';
+    if (r.includes('admin'))     return 'ACD';
+    if (r.includes('lead'))      return 'LI';
+    if (r.includes('volunteer')) return 'V';
+    if (r.includes('host'))      return 'I';
+    return 'I';
+  };
+
+  // Export to XLSX — two sheets:
+  //   1. "Detail"     — every shift, per person + totals (existing format)
+  //   2. "Attendance" — one row per person for QuickBooks (Total Hours =
+  //      Payroll Hours, the owner's bookkeeping value). Volunteers count
+  //      0 in the Employees column; everyone else is 1. Sick pay sums the
+  //      per-person sickHours. Special Cases stays empty for manual fill.
+  const handleExportPayroll = async () => {
     const fmtTime = (t) => {
       if (!t) return '';
       const [hStr, mStr] = t.split(':');
@@ -2893,25 +2919,112 @@ export default function Admin() {
       return `${h}:${String(m).padStart(2,'0')} ${ampm}`;
     };
 
-    const rows = [['Name', 'Role', 'Date', 'Start', 'End', 'Hours']];
+    // Dynamically load SheetJS (same pattern as the Radius importer).
+    if (!window.XLSX) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+    const XLSX = window.XLSX;
+
+    // ── Sheet 1: Detail (per shift, per person + per-person totals) ──
+    const detailRows = [
+      ['Name', 'Role', 'Date', 'Start', 'End', 'Scheduled h', 'Payroll h', 'Resolved'],
+    ];
     for (const person of payrollSummary) {
       for (const s of person.shifts) {
         const dateLabel = new Date(s.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-        rows.push([person.name, person.role, dateLabel, fmtTime(s.startTime), fmtTime(s.endTime), s.hours.toFixed(2)]);
+        detailRows.push([
+          person.name,
+          person.role,
+          dateLabel,
+          fmtTime(s.startTime),
+          fmtTime(s.endTime),
+          s.hours.toFixed(2),
+          (s.payHours ?? s.hours).toFixed(2),
+          s.payrollResolved ? '✓' : '',
+        ]);
       }
-      rows.push([person.name, '', 'TOTAL', '', '', person.totalHours.toFixed(2)]);
-      rows.push([]);
+      detailRows.push([
+        person.name, '', 'TOTAL', '', '',
+        person.totalHours.toFixed(2),
+        (person.payHours ?? person.totalHours).toFixed(2),
+        '',
+      ]);
+      detailRows.push([]);
     }
-    rows.push(['', '', 'GRAND TOTAL', '', '', Math.round(totalPayrollHours * 100) / 100]);
+    const grandPay = payrollSummary.reduce(
+      (s, p) => s + (p.payHours ?? p.totalHours ?? 0), 0,
+    );
+    detailRows.push([
+      '', '', 'GRAND TOTAL', '', '',
+      Math.round(totalPayrollHours * 100) / 100,
+      Math.round(grandPay * 100) / 100,
+      '',
+    ]);
 
-    const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `payroll_${payStart}_to_${payEnd}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // ── Sheet 2: Attendance (QuickBooks-shaped) ──
+    const attendanceRows = [
+      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Special Cases'],
+    ];
+    let totalHoursSum = 0;
+    let employeesCount = 0;
+    let sickSum = 0;
+    // Sort alphabetically by last name where possible — matches the
+    // owner's existing template format.
+    const lastNameKey = (n) => {
+      const parts = String(n || '').trim().split(/\s+/);
+      return (parts[parts.length - 1] || '').toLowerCase();
+    };
+    const sorted = [...payrollSummary].sort((a, b) =>
+      lastNameKey(a.name).localeCompare(lastNameKey(b.name)),
+    );
+    for (const person of sorted) {
+      const abbrev = roleAbbrev(person.role);
+      const isVolunteer = abbrev === 'V';
+      const totalH = Math.round((person.payHours ?? person.totalHours ?? 0) * 100) / 100;
+      const sickH = Math.round((person.sickHours || 0) * 100) / 100;
+      attendanceRows.push([
+        `${person.name} (${abbrev})`,
+        totalH || '',
+        isVolunteer ? '' : 1,
+        sickH || '',
+        '', // Special Cases — left blank for manual fill
+      ]);
+      totalHoursSum += totalH;
+      if (!isVolunteer) employeesCount += 1;
+      sickSum += sickH;
+    }
+    attendanceRows.push([]);
+    attendanceRows.push([
+      'Totals',
+      Math.round(totalHoursSum * 100) / 100,
+      employeesCount,
+      Math.round(sickSum * 100) / 100 || '',
+      '',
+    ]);
+
+    // ── Workbook assembly ──
+    const wb = XLSX.utils.book_new();
+    const wsAttendance = XLSX.utils.aoa_to_sheet(attendanceRows);
+    const wsDetail     = XLSX.utils.aoa_to_sheet(detailRows);
+    // Reasonable default column widths so the file opens looking right.
+    wsAttendance['!cols'] = [
+      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 18 },
+    ];
+    wsDetail['!cols'] = [
+      { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
+      { wch: 12 }, { wch: 12 }, { wch: 10 },
+    ];
+    // Attendance first so it's the default tab when opened (it's the
+    // sheet the owner actually files in QuickBooks).
+    XLSX.utils.book_append_sheet(wb, wsAttendance, 'Attendance');
+    XLSX.utils.book_append_sheet(wb, wsDetail,     'Detail');
+    XLSX.writeFile(wb, `payroll_${payStart}_to_${payEnd}.xlsx`);
   };
 
   // Parse Radius XLSX export — loads xlsx via script tag (no npm needed).
@@ -4943,10 +5056,10 @@ export default function Admin() {
                           <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Scheduled</th>
                           {hasRadius && <th className="text-left px-4 py-2 text-xs font-medium text-blue-500">Radius Actual</th>}
                           <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">{hasRadius ? 'Sched. h' : 'Hours'}</th>
-                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-blue-500">Actual h</th>}
+                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-blue-500">Check In/Out Actuals</th>}
                           {hasRadius && (
-                            <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; double-click any cell to override.">
-                              Pay h
+                            <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; double-click any cell to override. This is the value Export Final Payroll uses for QuickBooks.">
+                              Payroll Hours
                             </th>
                           )}
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Diff</th>}
@@ -5110,17 +5223,12 @@ export default function Admin() {
                                 render a dash to keep the grid aligned. */}
                             <td className="px-5 py-2.5 text-right text-gray-300">–</td>
                             <td className="px-5 py-2.5 text-right">
-                              <div className="inline-flex items-center gap-2 justify-end">
-                                <span className="text-xs font-bold text-amber-600 whitespace-nowrap">⚠ unscheduled</span>
-                                {/* One-click: turn this Radius clock-in into a real
-                                    Ratio shift so it stops flagging on payroll. */}
-                                <button
-                                  onClick={() => handleScheduleFromRadius(person.name, r)}
-                                  className="rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-50 transition-colors whitespace-nowrap"
-                                  title="Create a Ratio shift from this Radius entry">
-                                  Schedule shift
-                                </button>
-                              </div>
+                              {/* "Schedule shift" button removed per owner
+                                  request — payroll is not the right surface
+                                  to be creating shifts. Owner will fix
+                                  scheduling gaps from Manage Schedule
+                                  before running payroll. */}
+                              <span className="text-xs font-bold text-amber-600 whitespace-nowrap">⚠ unscheduled</span>
                             </td>
                             {/* Resolve column placeholder — keeps grid aligned with the new column header. */}
                             <td className="px-5 py-2.5"></td>
