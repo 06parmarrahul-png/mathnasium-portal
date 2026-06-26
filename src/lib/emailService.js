@@ -266,6 +266,45 @@ export async function notifyShiftClaimed(shift, claimer, adminRecipients = []) {
   await sendBatch(emails);
 }
 
+// ─── Notify: new announcement posted ──────────────────────────────────────
+
+/**
+ * Fan out a new-announcement email to every approved staff member at
+ * the centre. Fire-and-forget — failures don't block the Firestore
+ * write that triggered the post.
+ *
+ * @param {object} params
+ * @param {object} params.post         - announcement doc fields ({ title, text, category, author, pinned })
+ * @param {Array}  params.staffEmails  - array of { email, displayName } for every staff recipient
+ * @param {string} params.centerName   - human centre label (e.g. "Mathnasium Langley")
+ */
+export async function notifyAnnouncement({ post, staffEmails, centerName }) {
+  if (!Array.isArray(staffEmails) || staffEmails.length === 0) return;
+  if (!post?.title) return;
+
+  const tag = post.category ? ` [${String(post.category).toUpperCase()}]` : '';
+  const subject = `${post.pinned ? '📌 ' : ''}${centerName || 'Ratio'} announcement${tag}: ${post.title}`;
+  const body =
+    `${post.title}\n\n` +
+    `${post.text || ''}\n\n` +
+    `— Posted by ${post.author || 'an admin'}`;
+
+  const cta_link = portalUrl() + '/announcements';
+
+  const emails = staffEmails
+    .filter(s => s?.email)
+    .map(({ email, displayName }) => ({
+      to:       email,
+      to_name:  firstName(displayName, 'Team'),
+      subject,
+      body,
+      cta_text: 'Open Ratio',
+      cta_link,
+    }));
+
+  await sendBatch(emails);
+}
+
 // ─── Notify: time-off decision ─────────────────────────────────────────────
 
 /**
