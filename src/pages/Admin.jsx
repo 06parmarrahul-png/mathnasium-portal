@@ -5172,8 +5172,11 @@ export default function Admin() {
                           <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">{hasRadius ? 'Sched. h' : 'Hours'}</th>
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-blue-500">Check In/Out Actuals</th>}
                           {hasRadius && (
-                            <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; double-click any cell to override. This is the value Export Final Payroll uses for QuickBooks.">
-                              Payroll Hours
+                            <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; click any cell to override. This is the value Export Final Payroll uses for QuickBooks.">
+                              <div className="flex flex-col items-end leading-tight">
+                                <span>Payroll Hours</span>
+                                <span className="text-[9px] font-normal text-purple-400 italic">click to edit</span>
+                              </div>
                             </th>
                           )}
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Diff</th>}
@@ -5243,9 +5246,13 @@ export default function Admin() {
                                   {s.missingFromRadius ? '–' : `${s.actual.actualHours.toFixed(2)}h`}
                                 </td>
                               )}
-                              {/* Pay h — double-click to override. Purple
-                                  tint when an override is set so the
-                                  owner can spot manual edits at a glance. */}
+                              {/* Payroll Hours — single click to override.
+                                  Rendered as an obvious editable cell:
+                                  bordered "input-style" box with a tiny
+                                  pencil mark so admins at other centres
+                                  can tell it's interactive without being
+                                  told. Purple ring when an override is
+                                  active so manual edits stand out. */}
                               {hasRadius && (
                                 <td className="px-5 py-2.5 text-right font-semibold">
                                   {payEditing.shiftId === s.shiftId ? (
@@ -5259,20 +5266,31 @@ export default function Admin() {
                                         if (e.key === 'Enter') commitPayEdit();
                                         if (e.key === 'Escape') cancelPayEdit();
                                       }}
-                                      className="w-16 rounded border border-purple-400 bg-white px-1.5 py-0.5 text-right text-sm text-purple-700 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                                      className="w-20 rounded-md border border-purple-500 bg-white px-2 py-1 text-right text-sm text-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-300"
                                     />
                                   ) : (
-                                    <span
-                                      onDoubleClick={() => beginPayEdit(s)}
+                                    <button
+                                      type="button"
+                                      onClick={() => beginPayEdit(s)}
                                       title={s.payHoursOverride != null
-                                        ? `Overridden — double-click to edit, clear to reset (scheduled: ${s.hours.toFixed(2)}h)`
-                                        : 'Double-click to override'}
-                                      className={`cursor-pointer select-none rounded px-1 py-0.5 hover:bg-purple-50 ${
-                                        s.payHoursOverride != null ? 'text-purple-700 underline decoration-dotted' : 'text-gray-700'
+                                        ? `Overridden — click to edit (scheduled: ${s.hours.toFixed(2)}h)`
+                                        : 'Click to override payroll hours'}
+                                      className={`group inline-flex items-center justify-end gap-1 w-20 rounded-md border bg-white px-2 py-1 text-right transition-colors cursor-pointer hover:border-purple-400 hover:bg-purple-50 focus:outline-none focus:ring-2 focus:ring-purple-300 ${
+                                        s.payHoursOverride != null
+                                          ? 'border-purple-400 text-purple-700 ring-1 ring-purple-200'
+                                          : 'border-gray-300 text-gray-700'
                                       }`}
                                     >
-                                      {s.payHours.toFixed(2)}h
-                                    </span>
+                                      <Edit3
+                                        size={10}
+                                        className={`shrink-0 transition-opacity ${
+                                          s.payHoursOverride != null
+                                            ? 'opacity-70 text-purple-500'
+                                            : 'opacity-30 text-gray-400 group-hover:opacity-80 group-hover:text-purple-500'
+                                        }`}
+                                      />
+                                      <span>{s.payHours.toFixed(2)}h</span>
+                                    </button>
                                   )}
                                 </td>
                               )}
