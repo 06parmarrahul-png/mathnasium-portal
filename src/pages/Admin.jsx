@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
-  startOfMonth, endOfMonth, subMonths,
+  startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
@@ -6030,8 +6030,14 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const todayStr      = format(now, 'yyyy-MM-dd');
   const weekStartStr  = format(startOfWeek(now), 'yyyy-MM-dd');
   const weekEndStr    = format(addDays(startOfWeek(now), 6), 'yyyy-MM-dd');
-  const monthStartStr = format(startOfMonth(now), 'yyyy-MM-dd');
-  const monthEndStr   = format(endOfMonth(now), 'yyyy-MM-dd');
+  // viewMonth drives the Snapshot + Leaderboard + Hours-by-Assignment +
+  // Payroll Projection cards. The other cards (Today / This Week /
+  // This Year / Coverage rolling-8 / Hiring forecast) intentionally
+  // stay anchored to "now" — they're not monthly.
+  const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
+  const monthStartStr = format(startOfMonth(viewMonth), 'yyyy-MM-dd');
+  const monthEndStr   = format(endOfMonth(viewMonth), 'yyyy-MM-dd');
+  const isViewingCurrentMonth = format(startOfMonth(now), 'yyyy-MM') === format(viewMonth, 'yyyy-MM');
   const yearStartStr  = `${now.getFullYear()}-01-01`;
   const yearEndStr    = `${now.getFullYear()}-12-31`;
 
@@ -6054,7 +6060,8 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const lastWeekEndStr   = format(addDays(startOfWeek(now), -1), 'yyyy-MM-dd');
   const hoursLastWeek    = sumHrs(posted.filter(s => s.date >= lastWeekStartStr && s.date <= lastWeekEndStr));
 
-  const lastMonthDate     = subMonths(now, 1);
+  // "Last month" delta is relative to whatever month is being viewed.
+  const lastMonthDate     = subMonths(viewMonth, 1);
   const lastMonthStartStr = format(startOfMonth(lastMonthDate), 'yyyy-MM-dd');
   const lastMonthEndStr   = format(endOfMonth(lastMonthDate),   'yyyy-MM-dd');
   const hoursLastMonth    = sumHrs(posted.filter(s => s.date >= lastMonthStartStr && s.date <= lastMonthEndStr));
@@ -6402,6 +6409,34 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const coverageVsTarget = coverageTarget > 0
     ? (coverageAvg / coverageTarget) * 100 : 0;
 
+  // ─── Payroll Projection (semi-monthly: 1–15 and 16–end) ──────────────
+  // Mathnasium pays semi-monthly: hours worked 1st–15th hit the 15th
+  // payroll, 16th–end-of-month hit the 30th payroll. Projection sums
+  // every shift in the viewed month (drafts + posted) by Payroll Hours
+  // (override wins; falls back to scheduled). For a CURRENT-month view
+  // this is "what your next pay run will probably cost"; for a past
+  // month it equals the actual amount (no drafts survive a published
+  // month). Resolved-only filter is not applied — projection should
+  // include everything, resolved or not, so the owner sees the full
+  // outstanding liability.
+  const payHrsOf = (s) =>
+    (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
+      ? s.payHoursOverride
+      : shiftHours(s);
+
+  const allMonthShifts = shifts.filter(s => s.date >= monthStartStr && s.date <= monthEndStr);
+  const period1CutoffStr = format(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 15), 'yyyy-MM-dd');
+  const period1Shifts = allMonthShifts.filter(s => s.date >= monthStartStr && s.date <= period1CutoffStr);
+  const period2Shifts = allMonthShifts.filter(s => s.date >  period1CutoffStr && s.date <= monthEndStr);
+  const period1Hours  = period1Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
+  const period2Hours  = period2Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
+  const period1Names  = new Set(period1Shifts.map(s => s.userName).filter(Boolean));
+  const period2Names  = new Set(period2Shifts.map(s => s.userName).filter(Boolean));
+
+  // Which period are we currently "in"? Used to badge the upcoming run.
+  const todayDay = isViewingCurrentMonth ? now.getDate() : null;
+  const currentPeriod = todayDay == null ? null : (todayDay <= 15 ? 1 : 2);
+
   // ─── Hiring forecast (Phase 2) ─────────────────────────────────────────
   // Roll up staff `careerPlan` fields into a projected headcount for each of
   // the next 4 months. "No" is treated as a definite departure on/by the
@@ -6743,10 +6778,41 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         {/* Operations Snapshot — dense, decision-useful numbers replacing
             the old 30-day bar chart. Each row is a single KPI that maps to
             a real operating question (Are shifts getting filled? Are we
-            short-staffed? Which day is our peak?). */}
+            short-staffed? Which day is our peak?). Month nav arrows let
+            the owner page through prior months for comparison without
+            losing the live deltas. */}
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-900 mb-1">Operations Snapshot</h3>
-          <p className="text-xs text-gray-500 mb-4">{format(now, 'MMMM yyyy')} · live numbers</p>
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-semibold text-gray-900">Operations Snapshot</h3>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setViewMonth(m => subMonths(m, 1))}
+                title="Previous month"
+                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              {!isViewingCurrentMonth && (
+                <button
+                  onClick={() => setViewMonth(startOfMonth(new Date()))}
+                  title="Jump to current month"
+                  className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Today
+                </button>
+              )}
+              <button
+                onClick={() => setViewMonth(m => addMonths(m, 1))}
+                title="Next month"
+                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            {format(viewMonth, 'MMMM yyyy')}{isViewingCurrentMonth ? ' · live numbers' : ''}
+          </p>
           <div className="divide-y divide-gray-100">
             <SnapshotRow label="Avg hours / day"        value={`${round1(avgHoursPerDay)}h`}  hint={`${monthDatesWithShifts.size} day${monthDatesWithShifts.size === 1 ? '' : 's'} scheduled`} />
             <SnapshotRow label="Avg hours / instructor" value={`${round1(avgPerInstructor)}h`} hint={`${monthInstructors.size} working this month`} />
@@ -6759,6 +6825,79 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
             <SnapshotRow label="Coverage vs target"    value={`${Math.round(coverageVsTarget)}%`}   hint={`${round1(coverageAvg)} of ${coverageTarget} target instructors / day`} tone={coverageVsTarget >= 95 ? 'good' : coverageVsTarget >= 80 ? 'warn' : 'bad'} />
           </div>
         </div>
+      </div>
+
+      {/* Payroll Projection — semi-monthly view. Splits the viewed
+          month into 1–15 (the 15th pay run) and 16–end (the 30th pay
+          run) and totals projected payroll hours. Uses the same
+          Payroll Hours value as Manage Payroll — Override wins,
+          scheduled falls back. Owners can spot a bloated upcoming run
+          before payroll day instead of after. */}
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold text-gray-900">Payroll Projection</h3>
+          <span className="text-xs text-gray-500">{format(viewMonth, 'MMMM yyyy')}</span>
+        </div>
+        <p className="text-xs text-gray-500 mb-4">
+          Semi-monthly pay runs · Payroll Hours = override (if set) or scheduled hours
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {[
+            {
+              label: '15th payroll',
+              window: `${format(viewMonth, 'MMM 1')} – ${format(viewMonth, 'MMM 15')}`,
+              hours: period1Hours,
+              shifts: period1Shifts.length,
+              instructors: period1Names.size,
+              upcoming: currentPeriod === 1,
+            },
+            {
+              label: '30th payroll',
+              window: `${format(viewMonth, 'MMM 16')} – ${format(endOfMonth(viewMonth), 'MMM d')}`,
+              hours: period2Hours,
+              shifts: period2Shifts.length,
+              instructors: period2Names.size,
+              upcoming: currentPeriod === 2,
+            },
+          ].map(p => (
+            <div
+              key={p.label}
+              className={`rounded-xl border p-4 ${
+                p.upcoming
+                  ? 'border-purple-300 bg-purple-50/40'
+                  : 'border-gray-200 bg-gray-50/40'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">{p.label}</span>
+                {p.upcoming && (
+                  <span className="rounded-full bg-purple-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-purple-800">
+                    Upcoming
+                  </span>
+                )}
+              </div>
+              <p className="text-[10px] text-gray-500 mb-2">{p.window}</p>
+              <div className="flex items-baseline gap-1">
+                <span className="text-2xl font-bold text-purple-700">{round1(p.hours)}</span>
+                <span className="text-sm text-gray-500">hrs</span>
+              </div>
+              <p className="mt-1 text-[10px] text-gray-500">
+                {p.shifts} shift{p.shifts === 1 ? '' : 's'} · {p.instructors} instructor{p.instructors === 1 ? '' : 's'}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
+          <span className="text-xs font-medium text-gray-600">Total month projection</span>
+          <span className="text-sm font-bold text-gray-900">
+            {round1(period1Hours + period2Hours)} hrs
+          </span>
+        </div>
+        {isViewingCurrentMonth && (
+          <p className="mt-2 text-[10px] text-gray-400 italic">
+            Includes draft shifts — numbers will firm up as drafts get published.
+          </p>
+        )}
       </div>
 
       {/* Native intake analytics — reads centerIntakes. Shows grade +
@@ -6774,7 +6913,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
       {/* Leaderboard */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-gray-900 mb-1">Top Instructors</h3>
-        <p className="text-xs text-gray-500 mb-4">By hours scheduled · {format(now, 'MMMM yyyy')}</p>
+        <p className="text-xs text-gray-500 mb-4">By hours scheduled · {format(viewMonth, 'MMMM yyyy')}</p>
         {leaderboard.length === 0 ? (
           <p className="py-6 text-center text-sm text-gray-400">No instructors have hours scheduled this month.</p>
         ) : (
