@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc, deleteField,
   addDoc, query, where, orderBy, writeBatch, getDoc, getDocs, setDoc,
@@ -13,6 +13,7 @@ import {
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X,
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
   Users, Activity, Briefcase, Copy, CalendarX, Upload, Search, ArrowUp,
+  ArrowLeft, LayoutGrid, Calendar, HelpCircle, TrendingUp, HandHeart, Megaphone,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
@@ -5998,13 +5999,15 @@ function SnapshotRow({ label, value, hint, tone }) {
 // config — no new data plumbing for Phase 1. Active student count is a
 // manual entry on this page (Phase 2 will add automated enrollment import).
 
-export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
+export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view = 'hub' }) {
+  const navigate = useNavigate();
   // Live counts that power the extra metric cards (open shifts, pending
   // time-off, etc). Pulled here rather than threaded through props
   // because the rest of Admin.jsx already subscribes to these elsewhere
   // — small duplication, but keeps the Analytics tab self-contained.
   const [openShiftsList, setOpenShiftsList] = useState([]);
   const [timeOffPending, setTimeOffPending] = useState(0);
+  const [pendingSwapsCount, setPendingSwapsCount] = useState(0);
   useEffect(() => {
     if (!activeCenterId) return;
     const u1 = onSnapshot(
@@ -6024,7 +6027,21 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
       snap => setTimeOffPending(snap.size),
       () => {},
     );
-    return () => { u1(); u2(); };
+    // Pending shift-swap requests — they live in the `chat` collection
+    // as documents tagged type: 'shift_swap' with swapStatus: 'open'.
+    // We count them so the owner sees pending swaps next to open
+    // shifts (both represent "schedule needs human attention").
+    const u3 = onSnapshot(
+      query(
+        collection(db, 'chat'),
+        where('centerId', '==', activeCenterId),
+        where('type', '==', 'shift_swap'),
+        where('swapStatus', '==', 'open'),
+      ),
+      snap => setPendingSwapsCount(snap.size),
+      () => {},
+    );
+    return () => { u1(); u2(); u3(); };
   }, [activeCenterId]);
   const now = new Date();
   const todayStr      = format(now, 'yyyy-MM-dd');
@@ -6128,7 +6145,12 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   statHoursYTD = Math.round(statHoursYTD * 10) / 10;
 
   // Active employees: approved staff at this centre, excluding super-admins.
-  const activeEmployees = users.filter(u => u.approved && u.role !== 'super_admin').length;
+  // Active staff split: employees = paid roster (excludes volunteers),
+  // volunteers = separate tile so the owner can see unpaid headcount.
+  // Combined headcount is still derivable for any future card that
+  // needs it: activeEmployees + activeVolunteers.
+  const activeEmployees  = users.filter(u => u.approved && u.role !== 'super_admin' && u.isVolunteer !== true).length;
+  const activeVolunteers = users.filter(u => u.approved && u.role !== 'super_admin' && u.isVolunteer === true).length;
 
   // Avg hours per instructor working this month.
   const monthInstructors = new Set(monthShifts.map(s => s.userName).filter(Boolean));
@@ -6299,22 +6321,14 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   const [savingStudents,  setSavingStudents]  = useState(false);
   const [studentSaveError,setStudentSaveError]= useState('');
 
-  // Manual "emails needing response" count + edit modal. Placeholder
-  // until we wire up Gmail / Outlook — same edit pattern as studentCount.
-  const emailsCount     = Number(centerConfig?.emailsPendingCount ?? 0) || 0;
-  const emailsUpdatedAt = centerConfig?.emailsCountUpdatedAt;
-  const [editingEmails, setEditingEmails] = useState(false);
-  const [emailsInput,   setEmailsInput]   = useState(emailsCount);
-  const [savingEmails,  setSavingEmails]  = useState(false);
-  const [emailsSaveError,setEmailsSaveError] = useState('');
+  // (Removed) Manual "emails needing response" state — the Emails-to-Reply
+  // tile was retired when Active Volunteers took its slot. Re-introduce if
+  // we ever build an inbox-sync connector that's worth surfacing here.
 
   // Re-sync input when the saved value changes (e.g. someone else updated it).
   useEffect(() => {
     if (!editingStudents) setStudentInput(studentCount);
   }, [studentCount, editingStudents]);
-  useEffect(() => {
-    if (!editingEmails) setEmailsInput(emailsCount);
-  }, [emailsCount, editingEmails]);
 
   const saveStudentCount = async () => {
     const n = Math.max(0, parseInt(studentInput, 10) || 0);
@@ -6334,32 +6348,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
     }
   };
 
-  const saveEmailsCount = async () => {
-    const n = Math.max(0, parseInt(emailsInput, 10) || 0);
-    setSavingEmails(true);
-    setEmailsSaveError('');
-    try {
-      await setDoc(
-        doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { emailsPendingCount: n, emailsCountUpdatedAt: serverTimestamp() },
-        { merge: true },
-      );
-      setEditingEmails(false);
-    } catch (err) {
-      setEmailsSaveError(err?.message || 'Failed to save.');
-    } finally {
-      setSavingEmails(false);
-    }
-  };
-
   const studentsPerEmployee = activeEmployees > 0
     ? Math.round((studentCount / activeEmployees) * 10) / 10
     : 0;
   const updatedAtLabel = studentUpdatedAt?.seconds
     ? format(new Date(studentUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
-    : null;
-  const emailsUpdatedAtLabel = emailsUpdatedAt?.seconds
-    ? format(new Date(emailsUpdatedAt.seconds * 1000), "MMM d, yyyy 'at' h:mm a")
     : null;
 
   // ─── Operations Snapshot stats (replaces the old Hours-per-Day bar
@@ -6517,15 +6510,110 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
   // Job posting modal state.
   const [jobModalOpen, setJobModalOpen] = useState(false);
 
+  // Metadata for each deep-dive module — used by the hub tiles and the
+  // detail-view headers. Keeping this in one place means renaming a
+  // module (or adding a 6th) only requires editing this array.
+  const MODULES = [
+    {
+      key: 'snapshot',
+      label: `${format(viewMonth, 'MMMM')} Operations Snapshot`,
+      desc: 'Daily averages, busiest day, fill rate, sick rate, and projected 15th/30th payroll for the viewed month.',
+      icon: Activity, accent: 'bg-purple-100 text-purple-700',
+    },
+    {
+      key: 'intakes',
+      label: 'Booking Intakes',
+      desc: 'Where new students are coming from — public intake form submissions plus your Apptoto appointment feed.',
+      icon: Megaphone, accent: 'bg-sky-100 text-sky-700',
+    },
+    {
+      key: 'coverage',
+      label: 'Avg Coverage by Day',
+      desc: 'Rolling 8-week average of how many instructors actually show up per weekday vs. your staffing target.',
+      icon: Calendar, accent: 'bg-amber-100 text-amber-700',
+    },
+    {
+      key: 'assignments',
+      label: 'Hours by Assignment',
+      desc: 'Where this month\'s hours are going — by sub-role and per-instructor leaderboard.',
+      icon: TrendingUp, accent: 'bg-emerald-100 text-emerald-700',
+    },
+    {
+      key: 'hiring',
+      label: 'Hiring Forecast',
+      desc: 'Projected headcount over the next 4 months based on staff career-plan answers, plus draft-a-posting tool.',
+      icon: Users, accent: 'bg-rose-100 text-rose-700',
+    },
+  ];
+  const currentModule = MODULES.find(m => m.key === view);
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-lg font-bold text-gray-900">Centre Analytics</h2>
-        <p className="text-sm text-gray-500">Headcount, hours, and what your team's been working on at a glance.</p>
-      </div>
+      {/* Header — view-aware. Detail pages get a back link + module
+          title; the hub stays as the generic Centre Analytics intro. */}
+      {view === 'hub' ? (
+        <div>
+          <h2 className="text-lg font-bold text-gray-900">Centre Analytics</h2>
+          <p className="text-sm text-gray-500">Headcount, hours, and what your team&apos;s been working on at a glance.</p>
+        </div>
+      ) : (
+        <div>
+          <button
+            onClick={() => navigate('/center-analytics')}
+            className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-gray-500 hover:text-gray-800"
+          >
+            <ArrowLeft size={12} /> Back to overview
+          </button>
+          <div className="flex items-center gap-2">
+            {currentModule?.icon && (
+              <span className={`rounded-lg p-1.5 ${currentModule.accent}`}>
+                <currentModule.icon size={16} />
+              </span>
+            )}
+            <h2 className="text-lg font-bold text-gray-900">{currentModule?.label || 'Analytics'}</h2>
+          </div>
+          <p className="text-sm text-gray-500 mt-0.5">{currentModule?.desc}</p>
+        </div>
+      )}
 
-      {/* Row 1 — People & inbox */}
+      {/* ── Hub: 5 module tiles ─────────────────────────────────────────
+          Only renders on the overview. Each tile is a button that
+          navigates to that module's dedicated detail page. Description
+          text is right on the tile so a new owner doesn't have to
+          click to learn what each module shows. */}
+      {view === 'hub' && (
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <LayoutGrid size={14} className="text-gray-500" />
+            <h3 className="text-sm font-semibold text-gray-900">Analytics modules</h3>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {MODULES.map(m => {
+              const Icon = m.icon;
+              return (
+                <button
+                  key={m.key}
+                  onClick={() => navigate(`/center-analytics/${m.key}`)}
+                  className="group rounded-xl border border-gray-200 bg-white p-3 text-left transition-all hover:border-purple-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-purple-300"
+                >
+                  <div className={`mb-2 inline-flex rounded-lg p-1.5 ${m.accent}`}>
+                    <Icon size={15} />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-900 leading-tight group-hover:text-purple-700">{m.label}</p>
+                  <p className="mt-1.5 text-xs leading-snug text-gray-500">{m.desc}</p>
+                  <p className="mt-2 text-[10px] font-semibold uppercase tracking-wide text-purple-600 opacity-0 group-hover:opacity-100 transition-opacity">
+                    Open →
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Row 1 — People & inbox.
+          Only on hub view. Detail pages don't need the KPI grid. */}
+      {view === 'hub' && (<>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-purple-100 text-purple-700"><Users size={16}/></div>
@@ -6564,22 +6652,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-start justify-between">
-            <div className="w-fit rounded-lg p-1.5 bg-sky-100 text-sky-700"><Mail size={16}/></div>
-            <button
-              type="button"
-              onClick={() => { setEmailsInput(emailsCount); setEditingEmails(true); }}
-              className="flex items-center gap-1 text-xs font-medium text-sky-700 hover:underline"
-            >
-              <Edit3 size={11}/> Edit
-            </button>
-          </div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Emails to Reply</p>
-          <p className={`mt-0.5 text-2xl font-bold ${emailsCount > 0 ? 'text-sky-700' : 'text-gray-900'}`}>
-            {emailsCount}
-          </p>
+          <div className="w-fit rounded-lg p-1.5 bg-sky-100 text-sky-700"><HandHeart size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Volunteers</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{activeVolunteers}</p>
           <p className="mt-1 text-xs text-gray-400">
-            {emailsUpdatedAtLabel ? `Updated ${emailsUpdatedAtLabel}` : 'Inbox sync coming soon'}
+            {activeVolunteers === 0 ? 'no volunteers approved' : 'unpaid contributors'}
           </p>
         </div>
       </div>
@@ -6627,12 +6704,16 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-orange-100 text-orange-700"><Briefcase size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Open Shifts</p>
-          <p className={`mt-0.5 text-2xl font-bold ${openShiftsCount > 0 ? 'text-orange-700' : 'text-gray-900'}`}>
-            {openShiftsCount}
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Open / Swap Shifts</p>
+          <p className={`mt-0.5 text-2xl font-bold ${
+            openShiftsCount + pendingSwapsCount > 0 ? 'text-orange-700' : 'text-gray-900'
+          }`}>
+            {openShiftsCount} <span className="text-gray-300">/</span> {pendingSwapsCount}
           </p>
           <p className="mt-1 text-xs text-gray-400">
-            {openShiftsCount === 0 ? 'all upcoming shifts filled' : 'unfilled — need pickup'}
+            {openShiftsCount === 0 && pendingSwapsCount === 0
+              ? 'queue is clear'
+              : `${openShiftsCount} open · ${pendingSwapsCount} pending swap${pendingSwapsCount === 1 ? '' : 's'}`}
           </p>
         </div>
 
@@ -6665,6 +6746,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           <p className="mt-1 text-xs text-gray-400">{ytdHolidays.length} stat holiday{ytdHolidays.length === 1 ? '' : 's'} paid out</p>
         </div>
       </div>
+      </>)}
 
       {/* Student count edit modal */}
       {editingStudents && (
@@ -6704,46 +6786,17 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
         </div>
       )}
 
-      {/* Emails-to-reply edit modal */}
-      {editingEmails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-          onClick={() => !savingEmails && setEditingEmails(false)}>
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">Emails to Reply</h3>
-            <p className="text-xs text-gray-500 mb-3">Manually log the number of emails awaiting a response. We&apos;ll wire this up to your inbox later.</p>
-            <input
-              type="number"
-              min={0}
-              value={emailsInput}
-              onChange={e => setEmailsInput(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-sky-500 focus:outline-none mb-3"
-              autoFocus
-            />
-            {emailsSaveError && <p className="text-xs text-red-600 mb-2">{emailsSaveError}</p>}
-            <div className="flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setEditingEmails(false)}
-                disabled={savingEmails}
-                className="text-sm text-gray-500 hover:text-gray-700"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={saveEmailsCount}
-                disabled={savingEmails}
-                className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
-              >
-                {savingEmails ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Emails-to-reply modal removed alongside the Emails-to-Reply
+          tile (Active Volunteers now sits in that slot). The
+          emailsCount / saveEmailsCount state vars remain in scope but
+          unused — safe to delete in a follow-up cleanup pass. */}
 
-      {/* Charts row */}
-      <div className="grid gap-4 lg:grid-cols-2">
+      {/* ── Assignments module: Hours by Assignment + Top Instructors ──
+          Originally lived in a 2-col grid alongside Operations Snapshot.
+          Split into stand-alone cards so each can be view-gated to its
+          own module. */}
+      {view === 'assignments' && (
+      <div className="grid gap-4">
         {/* Hours by assignment */}
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <h3 className="text-sm font-semibold text-gray-900 mb-1">Hours by Assignment</h3>
@@ -6775,12 +6828,17 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           )}
         </div>
 
-        {/* Operations Snapshot — dense, decision-useful numbers replacing
-            the old 30-day bar chart. Each row is a single KPI that maps to
-            a real operating question (Are shifts getting filled? Are we
-            short-staffed? Which day is our peak?). Month nav arrows let
-            the owner page through prior months for comparison without
-            losing the live deltas. */}
+      </div>
+      )}
+
+      {/* ── Snapshot module: Operations Snapshot + Payroll Projection ──
+          Operations Snapshot — dense, decision-useful numbers replacing
+          the old 30-day bar chart. Each row is a single KPI that maps to
+          a real operating question (Are shifts getting filled? Are we
+          short-staffed? Which day is our peak?). Month nav arrows let
+          the owner page through prior months for comparison without
+          losing the live deltas. */}
+      {view === 'snapshot' && (
         <div className="rounded-2xl border bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between mb-1">
             <h3 className="text-sm font-semibold text-gray-900">Operations Snapshot</h3>
@@ -6825,7 +6883,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
             <SnapshotRow label="Coverage vs target"    value={`${Math.round(coverageVsTarget)}%`}   hint={`${round1(coverageAvg)} of ${coverageTarget} target instructors / day`} tone={coverageVsTarget >= 95 ? 'good' : coverageVsTarget >= 80 ? 'warn' : 'bad'} />
           </div>
         </div>
-      </div>
+      )}
 
       {/* Payroll Projection — semi-monthly view. Splits the viewed
           month into 1–15 (the 15th pay run) and 16–end (the 30th pay
@@ -6833,6 +6891,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           Payroll Hours value as Manage Payroll — Override wins,
           scheduled falls back. Owners can spot a bloated upcoming run
           before payroll day instead of after. */}
+      {view === 'snapshot' && (
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-sm font-semibold text-gray-900">Payroll Projection</h3>
@@ -6899,18 +6958,14 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </p>
         )}
       </div>
+      )}
 
-      {/* Native intake analytics — reads centerIntakes. Shows grade +
-          school distribution so the owner can see who's coming through
-          the public booking page. */}
-      <IntakeAnalyticsCard />
+      {/* ── Intakes module: Public Intake form + Apptoto appointments ── */}
+      {view === 'intakes' && <IntakeAnalyticsCard />}
+      {view === 'intakes' && <ApptotoAppointmentsCard />}
 
-      {/* Apptoto appointments — live from the connected Apptoto account.
-          Self-contained component: handles "not connected" CTA, loading,
-          and error states internally. */}
-      <ApptotoAppointmentsCard />
-
-      {/* Leaderboard */}
+      {/* ── Assignments module: Top Instructors leaderboard ── */}
+      {view === 'assignments' && (
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <h3 className="text-sm font-semibold text-gray-900 mb-1">Top Instructors</h3>
         <p className="text-xs text-gray-500 mb-4">By hours scheduled · {format(viewMonth, 'MMMM yyyy')}</p>
@@ -6937,8 +6992,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
         )}
       </div>
+      )}
 
-      {/* ── Coverage by Day of Week ─────────────────────────────────────── */}
+      {/* ── Coverage module: Day-of-Week + Hourly heatmap ───────────── */}
+      {view === 'coverage' && (<>
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-4 flex items-baseline justify-between">
           <div>
@@ -7149,8 +7206,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
         )}
       </div>
+      </>)}
 
-      {/* ── Hiring Forecast ─────────────────────────────────────────────── */}
+      {/* ── Hiring module: 4-month forecast + job posting tools ─────── */}
+      {view === 'hiring' && (
       <div className="space-y-4">
         <div>
           <h3 className="text-base font-bold text-gray-900">Hiring Forecast</h3>
@@ -7316,8 +7375,12 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId }) {
           </div>
         )}
       </div>
+      )}
 
-      {/* Job posting template modal */}
+      {/* Job posting template modal — only relevant to the hiring view,
+          but we leave it mounted at any view since opening state lives
+          higher up. Safe: it just renders nothing while jobModalOpen is
+          false. */}
       {jobModalOpen && (
         <JobPostingModal
           centerConfig={centerConfig}

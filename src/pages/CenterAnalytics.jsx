@@ -1,10 +1,16 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useParams } from 'react-router-dom';
 import { collection, onSnapshot, query, where, orderBy } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { AnalyticsTab } from './Admin';
 import { ShieldAlert } from 'lucide-react';
 import { resolveUserForCenter } from '../lib/centerMembership';
+
+// Which :section route segments map to a real AnalyticsTab view. Anything
+// outside this list falls back to the hub. Keeps URL typos from rendering
+// a blank page.
+const VALID_VIEWS = new Set(['snapshot', 'intakes', 'coverage', 'assignments', 'hiring']);
 
 /**
  * Standalone Centre Analytics page. Pulls `shifts` + `users` for the
@@ -17,6 +23,8 @@ import { resolveUserForCenter } from '../lib/centerMembership';
  */
 export default function CenterAnalytics() {
   const { activeCenterId, centerConfig, canSeeCenterSettings } = useAuth();
+  const { section } = useParams();
+  const view = VALID_VIEWS.has(section) ? section : 'hub';
   const [shifts, setShifts] = useState([]);
   const [users, setUsers] = useState([]);
 
@@ -60,6 +68,7 @@ export default function CenterAnalytics() {
         users={usersForCentre}
         centerConfig={centerConfig}
         activeCenterId={activeCenterId}
+        view={view}
       />
     </div>
   );

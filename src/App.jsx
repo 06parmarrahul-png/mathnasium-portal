@@ -115,6 +115,7 @@ function AppRoutes() {
         <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
         <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
+        <Route path="/center-analytics/:section" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
