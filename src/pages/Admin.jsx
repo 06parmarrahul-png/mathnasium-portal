@@ -3550,7 +3550,7 @@ export default function Admin() {
 
       {/* ── SPREADSHEET (Weekly Calendar Grid) ──────────────────────────────── */}
       {tab === 'spreadsheet' && (
-        <div className="space-y-2">
+        <div className="space-y-2 schedule-print-zone">
           {/* Legend + tips. Swatches use this center's custom shift colors. */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 mb-2 text-xs text-gray-500">
             <span className="font-semibold text-gray-600 mr-1">Shift:</span>
@@ -3561,6 +3561,14 @@ export default function Admin() {
                 {a}
               </span>
             ))}
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-0 h-0 border-r-[8px] border-r-transparent border-t-[8px] border-t-amber-400" />
+              TO Pending
+            </span>
+            <span className="flex items-center gap-1.5">
+              <span className="inline-block w-0 h-0 border-r-[8px] border-r-transparent border-t-[8px] border-t-red-500" />
+              TO Approved
+            </span>
             <span className="ml-auto flex items-center gap-1 text-gray-400 italic">
               Click any cell to add a shift · Click <Plus size={10} className="inline" /> to add open shift
             </span>
@@ -3583,10 +3591,18 @@ export default function Admin() {
               <span className="text-xs text-gray-500">
                 Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
               </span>
-              {/* "Sync Fixed Staff This Week" and "Fix Duplicates" buttons
-                  removed — no longer needed. The handlers (handleSeedFixedStaffWeek
-                  and handlePurgeAndReseed) remain in scope in case any other
-                  surface wants to call them; only the UI affordances are gone. */}
+              {/* Export Schedule — opens the browser's print dialog with
+                  print CSS that hides chrome + sidebar. Owner picks
+                  "Save as PDF" from the destination dropdown to get a
+                  one-page snapshot of the current week. Matches the
+                  "screenshot" workflow without a heavy html2canvas dep. */}
+              <button
+                onClick={() => window.print()}
+                title="Print or save the current week as PDF"
+                className="ml-2 inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 print:hidden"
+              >
+                <Download size={12} /> Export Schedule
+              </button>
             </div>
 
             {/* Publish bar — surfaces draft counts and one-click bulk actions.
@@ -3771,11 +3787,57 @@ export default function Admin() {
                           const dayShifts = shifts.filter(s => s.userId === u.uid && s.date === ds);
                           const dayAvail = availability.filter(a => a.userId === u.uid && a.date === ds);
                           const hasAvail = dayAvail.length > 0;
+                          // Time-off overlay — pending shows yellow, approved
+                          // red. Triangle anchors top-LEFT so it doesn't
+                          // collide with the green availability triangle
+                          // (top-right). Approved wins if both pending and
+                          // approved cover the same date (unlikely but safe).
+                          const cellTimeOff = timeOffRequests.find(t =>
+                            t.userId === u.uid &&
+                            t.startDate && t.endDate &&
+                            ds >= t.startDate && ds <= t.endDate &&
+                            (t.status === 'pending' || t.status === 'approved'),
+                          );
+                          const timeOffColor = cellTimeOff?.status === 'approved'
+                            ? 'border-t-red-500'
+                            : cellTimeOff?.status === 'pending'
+                              ? 'border-t-amber-400'
+                              : '';
+                          const timeOffBg = cellTimeOff?.status === 'approved'
+                            ? 'bg-red-50/40'
+                            : cellTimeOff?.status === 'pending'
+                              ? 'bg-amber-50/40'
+                              : '';
                           return (
                             <td
                               key={ds}
-                              className={`px-1 py-1 align-top relative ${hasAvail && dayShifts.length === 0 ? 'bg-green-50/40' : ''}`}
+                              className={`px-1 py-1 align-top relative ${
+                                cellTimeOff && dayShifts.length === 0 ? timeOffBg
+                                : hasAvail && dayShifts.length === 0 ? 'bg-green-50/40'
+                                : ''
+                              }`}
                             >
+                              {/* Time-off triangle (top-left) — visible when
+                                  the user has a request covering this date. */}
+                              {cellTimeOff && (
+                                <div className="group/to absolute top-0 left-0 z-10">
+                                  <div className={`w-0 h-0 border-r-[14px] border-r-transparent border-t-[14px] cursor-pointer ${timeOffColor}`} />
+                                  <div className="hidden group-hover/to:block absolute left-0 top-4 z-20 w-56 rounded-lg border border-gray-200 bg-white shadow-lg p-2">
+                                    <p className={`text-xs font-semibold mb-1 ${cellTimeOff.status === 'approved' ? 'text-red-700' : 'text-amber-700'}`}>
+                                      Time off · {cellTimeOff.status === 'approved' ? 'Approved' : 'Pending'}
+                                    </p>
+                                    <p className="text-xs text-gray-600">
+                                      {cellTimeOff.startDate}{cellTimeOff.endDate !== cellTimeOff.startDate ? ` – ${cellTimeOff.endDate}` : ''}
+                                    </p>
+                                    {cellTimeOff.reason && (
+                                      <p className="text-xs text-gray-500 italic mt-1">&quot;{cellTimeOff.reason}&quot;</p>
+                                    )}
+                                    {dayShifts.length > 0 && cellTimeOff.status === 'approved' && (
+                                      <p className="text-[10px] text-red-600 font-semibold mt-1">⚠ Shift conflict — approve removes the shift.</p>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
                               {/* Green triangle availability indicator */}
                               {hasAvail && (
                                 <div className="group/avail absolute top-0 right-0 z-10">
@@ -4262,18 +4324,37 @@ export default function Admin() {
                 </div>
               )}
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Min staff/day</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Default min/day
+                </label>
                 <input type="number" value={schedConfig.minPerDay} min={1} max={20}
                   onChange={e => setSchedConfig(c => ({ ...c, minPerDay: Number(e.target.value) }))}
                   className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
+                <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
               </div>
               <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">Max staff/day</label>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  Default max/day
+                </label>
                 <input type="number" value={schedConfig.maxPerDay} min={1} max={30}
                   onChange={e => setSchedConfig(c => ({ ...c, maxPerDay: Number(e.target.value) }))}
                   className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
+                <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
               </div>
             </div>
+
+            {/* ── Per-day operating + staffing matrix ──────────────────────
+                Lets the owner say "Mondays we want 10 in-centre + 2 online,
+                Saturdays we want 6 in-centre + 1 online", AND mark whole
+                days closed (writes operatingDays back to centerConfig).
+                Empty cells fall back to the global defaults above so the
+                owner only has to fill the days that differ from the norm. */}
+            <PerDayStaffingMatrix
+              activeCenterId={activeCenterId}
+              centerConfig={centerConfig}
+              schedConfig={schedConfig}
+              setSchedConfig={setSchedConfig}
+            />
             <div className="flex flex-wrap items-center gap-4 mb-5">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max days/instructor/week</label>
@@ -4513,7 +4594,14 @@ export default function Admin() {
                               )}
                             </div>
 
-                            <p className="mb-2 text-xs font-semibold text-gray-600">Add from approved staff:</p>
+                            <p className="mb-2 text-xs font-semibold text-gray-600">
+                              Add from approved staff:
+                              <span className="ml-2 text-[10px] font-normal text-gray-400 italic">
+                                <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 align-middle mr-1" />available ·
+                                <span className="inline-block w-2 h-2 rounded-full bg-red-400 align-middle mx-1" />time off ·
+                                <span className="inline-block w-2 h-2 rounded-full bg-white border border-gray-300 align-middle mx-1" />no availability set
+                              </span>
+                            </p>
                             <div className="flex flex-wrap gap-1.5 mb-4">
                               {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => {
                                 const subs = u.subRoles || [];
@@ -4522,9 +4610,35 @@ export default function Admin() {
                                   ? 'Online'
                                   : subs.includes('Highschool') ? 'Highschool' : subs.length > 0 ? 'Elementary' : null;
                                 const sub = subRoleStyleFor(primarySub);
+
+                                // Availability + time-off status for THIS
+                                // day's date. Green = submitted an
+                                // available window, red = pending or
+                                // approved time-off covers the date,
+                                // white = no signal either way (the
+                                // existing default look).
+                                const dateStr = editingDay.date;
+                                const userAvail = availability.find(a => a.userId === u.uid && a.date === dateStr);
+                                const userTO = timeOffRequests.find(t =>
+                                  t.userId === u.uid &&
+                                  t.startDate && t.endDate &&
+                                  dateStr >= t.startDate && dateStr <= t.endDate &&
+                                  (t.status === 'pending' || t.status === 'approved'),
+                                );
+                                let pillCls = 'border-gray-300 bg-white text-gray-600 hover:border-gray-500 hover:bg-gray-50 hover:text-gray-900';
+                                let title = 'No availability submitted';
+                                if (userTO) {
+                                  pillCls = 'border-red-300 bg-red-50 text-red-700 hover:border-red-500 hover:bg-red-100';
+                                  title = `Time off — ${userTO.status === 'approved' ? 'approved' : 'pending'}${userTO.reason ? ` · ${userTO.reason}` : ''}`;
+                                } else if (userAvail) {
+                                  pillCls = 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-100';
+                                  const isFull = userAvail.startTime === '00:00' && (userAvail.endTime === '23:59' || userAvail.endTime === '24:00');
+                                  title = isFull ? 'Available — full day' : `Available ${fmtHHMM(userAvail.startTime)}–${fmtHHMM(userAvail.endTime)}`;
+                                }
                                 return (
                                   <button key={u.uid} onClick={() => handleAddToDay(u.displayName)}
-                                    className="flex items-center gap-1.5 rounded-full border border-dashed border-gray-300 bg-white px-2.5 py-1 text-xs text-gray-600 hover:border-gray-500 hover:text-gray-900 hover:bg-gray-50 transition-colors"
+                                    title={title}
+                                    className={`flex items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-xs transition-colors ${pillCls}`}
                                   >
                                     <span className={`w-1.5 h-1.5 rounded-full ${sub ? sub.dot : 'bg-gray-300'}`} />
                                     + {u.displayName}
@@ -5504,6 +5618,188 @@ export default function Admin() {
           onSave={handleAddOpenShift}
         />
       )}
+
+      {/* Print CSS — Export Schedule button calls window.print(). We hide
+          everything that ISN'T the spreadsheet print zone (sidebar, top
+          nav, publish bar, modals, the tab strip itself) and let the
+          grid take the whole page. The owner picks "Save as PDF" in
+          the destination dropdown to get a screenshot-style export. */}
+      <style>{`
+        @media print {
+          @page { size: landscape; margin: 0.3in; }
+          html, body { background: white !important; }
+          /* Hide chrome that's not the schedule zone. */
+          aside, header, nav,
+          [data-tab-strip],
+          .print\\:hidden { display: none !important; }
+          /* Reset scroll containers so the grid prints in full. */
+          .schedule-print-zone .overflow-auto,
+          .schedule-print-zone [class*="max-h-"] {
+            max-height: none !important;
+            overflow: visible !important;
+          }
+          /* When printing, only the schedule zone matters — collapse the
+             parent flex/grid layouts so nothing else takes space. */
+          body * { visibility: hidden !important; }
+          .schedule-print-zone, .schedule-print-zone * { visibility: visible !important; }
+          .schedule-print-zone {
+            position: absolute !important;
+            left: 0; top: 0; right: 0;
+            width: 100% !important;
+          }
+          /* Compact grid typography for print. */
+          .schedule-print-zone table { font-size: 9px !important; line-height: 1.15 !important; }
+          .schedule-print-zone th, .schedule-print-zone td { padding: 2px 3px !important; }
+          /* Hide interactive bits the printout doesn't need. */
+          .schedule-print-zone button,
+          .schedule-print-zone input { display: none !important; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── Per-Day Staffing Matrix ────────────────────────────────────────────
+// Operating days + per-day Min/Max for in-centre and online staff. Empty
+// cells inherit from schedConfig.minPerDay/maxPerDay. Toggling a day
+// closed writes operatingDays back to centerConfig (centre-wide
+// persistent), while the staffing numbers live on schedConfig (per-run).
+// Owners can edit either without touching the other.
+const MATRIX_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSchedConfig }) {
+  const operatingDays = useMemo(() => {
+    return Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
+      ? centerConfig.operatingDays
+      : MATRIX_DAYS;
+  }, [centerConfig?.operatingDays]);
+  const [savingDays, setSavingDays] = useState(false);
+
+  const perDay = schedConfig.perDay || {};
+
+  // Toggle a weekday open/closed in centerConfig.operatingDays.
+  // Persists immediately — there's no separate Save button — because
+  // it's a small list and instant feedback is more useful than batching.
+  const toggleOperating = async (day) => {
+    if (!activeCenterId) return;
+    const next = operatingDays.includes(day)
+      ? operatingDays.filter(d => d !== day)
+      : [...operatingDays, day];
+    // Preserve canonical order so the array doesn't shuffle every save.
+    const ordered = MATRIX_DAYS.filter(d => next.includes(d));
+    try {
+      setSavingDays(true);
+      await setDoc(
+        doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { operatingDays: ordered, updatedAt: serverTimestamp() },
+        { merge: true },
+      );
+    } catch (err) {
+      console.error('Failed to save operatingDays:', err);
+      toast.error('Could not save operating days');
+    } finally {
+      setSavingDays(false);
+    }
+  };
+
+  const setCell = (day, field, raw) => {
+    setSchedConfig(c => {
+      const cur = { ...(c.perDay || {}) };
+      const dayRow = { ...(cur[day] || {}) };
+      // Empty string means "fall back to default" — store as undefined so
+      // the scheduler reads it as "not set" rather than as 0.
+      if (raw === '' || raw == null) {
+        delete dayRow[field];
+      } else {
+        const n = Number(raw);
+        if (Number.isFinite(n) && n >= 0) dayRow[field] = n;
+      }
+      if (Object.keys(dayRow).length === 0) delete cur[day];
+      else cur[day] = dayRow;
+      return { ...c, perDay: cur };
+    });
+  };
+
+  return (
+    <div className="mb-5 rounded-xl border border-purple-200 bg-purple-50/30 overflow-hidden">
+      <div className="px-4 py-2.5 border-b border-purple-200 bg-white/60 flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <h4 className="text-sm font-bold text-purple-900">Per-day operating + staffing rules</h4>
+          <p className="text-xs text-purple-700/80">
+            Blank cells use the defaults above. Uncheck a day to mark the centre closed.
+          </p>
+        </div>
+        {savingDays && <span className="text-xs text-purple-600 italic">Saving…</span>}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="bg-white/60 text-purple-900">
+            <tr>
+              <th className="text-left px-3 py-2 font-semibold">Day</th>
+              <th className="text-center px-2 py-2 font-semibold">Open</th>
+              <th className="text-center px-2 py-2 font-semibold" colSpan={2}>In-centre</th>
+              <th className="text-center px-2 py-2 font-semibold" colSpan={2}>Online</th>
+            </tr>
+            <tr className="text-[10px] uppercase tracking-wide text-purple-700/70">
+              <th></th>
+              <th></th>
+              <th className="text-center px-2 py-1 font-medium">Min</th>
+              <th className="text-center px-2 py-1 font-medium">Max</th>
+              <th className="text-center px-2 py-1 font-medium">Min</th>
+              <th className="text-center px-2 py-1 font-medium">Max</th>
+            </tr>
+          </thead>
+          <tbody>
+            {MATRIX_DAYS.map(day => {
+              const open = operatingDays.includes(day);
+              const row = perDay[day] || {};
+              return (
+                <tr key={day} className={`border-t border-purple-100 ${open ? 'bg-white' : 'bg-gray-50 text-gray-400'}`}>
+                  <td className="px-3 py-1.5 font-medium">{day}</td>
+                  <td className="text-center px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      checked={open}
+                      onChange={() => toggleOperating(day)}
+                      className="accent-purple-600 h-4 w-4 cursor-pointer"
+                    />
+                  </td>
+                  {['min', 'max', 'onlineMin', 'onlineMax'].map(field => (
+                    <td key={field} className="text-center px-1 py-1.5">
+                      <input
+                        type="number"
+                        min={0}
+                        max={30}
+                        disabled={!open}
+                        value={row[field] ?? ''}
+                        placeholder={
+                          field === 'min'      ? String(schedConfig.minPerDay) :
+                          field === 'max'      ? String(schedConfig.maxPerDay) :
+                          field === 'onlineMin'? '0' :
+                                                  '—'
+                        }
+                        onChange={e => setCell(day, field, e.target.value)}
+                        className="w-14 rounded border border-purple-200 px-1.5 py-1 text-center focus:border-purple-500 focus:outline-none disabled:bg-gray-100 disabled:cursor-not-allowed text-xs"
+                      />
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="px-4 py-2 border-t border-purple-200 bg-white/40 flex items-center justify-between gap-2">
+        <span className="text-[10px] text-purple-700/70 italic">
+          Online Min is informational (warns if under-staffed). Online Max caps how many online instructors auto-schedule.
+        </span>
+        <button
+          onClick={() => setSchedConfig(c => ({ ...c, perDay: {} }))}
+          className="text-[10px] font-semibold text-purple-700 hover:text-purple-900 underline"
+        >
+          Clear per-day overrides
+        </button>
+      </div>
     </div>
   );
 }

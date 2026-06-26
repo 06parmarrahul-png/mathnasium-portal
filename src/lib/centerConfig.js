@@ -299,12 +299,12 @@ export const LANGLEY_DEFAULT_CONFIG = {
       Friday:    '11:00 AM - 7:00 PM',
       Saturday:  'Off',
     },
-    'Rachel Rozelle': {
-      role: 'Admin',
-      countsTowardRatio: false,
-      Monday:    'Off', Tuesday: 'Off', Wednesday: 'Off',
-      Thursday:  'Off', Friday:  'Off', Saturday:  'Off',
-    },
+    // Rachel Rozelle removed — was pinned here with every day 'Off',
+    // which had the unintended effect of filtering her out of the
+    // form-instructor pool (anyone named in fixedStaff is excluded at
+    // the top of generateSchedule). She submits availability like
+    // everyone else, so the scheduler should treat her as a normal
+    // instructor.
   },
 };
 

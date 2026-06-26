@@ -597,65 +597,94 @@ export default async function handler(req, res) {
   }
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
 
+  // Top-level try/catch so any failure surfaces as JSON the frontend can
+  // parse and display, instead of Vercel's default HTML 500 page (which
+  // shows up as "Unexpected token 'A', "A server e"... is not valid
+  // JSON" on the client — opaque, unhelpful). Each meaningful failure
+  // point inside also has a more specific catch so the JSON error
+  // message points at the actual cause (iCal fetch, Firestore read, etc).
   try {
-    const auth = await authenticateRequest(req);
-    if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const auth = await authenticateRequest(req);
+      if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+    } catch (e) {
+      return res.status(401).json({ error: e.message });
+    }
+
+    const { centerId, date } = req.query;
+    if (!centerId) return res.status(400).json({ error: 'centerId required' });
+    const day = date || (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    })();
+
+    const fs = getFirestore();
+
+    // Load settings, students, aliases for this centre.
+    let settingsSnap, studentsSnap, aliasesSnap;
+    try {
+      [settingsSnap, studentsSnap, aliasesSnap] = await Promise.all([
+        fs.doc(`centers/${centerId}/schedulerSettings/main`).get(),
+        fs.collection(`centers/${centerId}/schedulerStudents`).get(),
+        fs.collection(`centers/${centerId}/schedulerAliases`).get(),
+      ]);
+    } catch (e) {
+      return res.status(500).json({ error: `Firestore read failed: ${e.message}` });
+    }
+
+    const settings = settingsSnap.exists ? settingsSnap.data() : {};
+    const students = studentsSnap.docs.map(d => d.data());
+    const aliases = aliasesSnap.docs.map(d => d.data());
+
+    const icalUrls = (settings.icalUrls || []).filter(Boolean);
+    if (icalUrls.length === 0) {
+      return res.status(200).json({
+        day, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [],
+        warning: 'No iCal URLs configured. Add one in the Setup tab.',
+      });
+    }
+
+    // Fetch every feed in parallel. Per-feed errors surface their URL
+    // (truncated) and status so the actual broken URL is visible.
+    let feeds;
+    try {
+      feeds = await Promise.all(icalUrls.map(async (url) => {
+        const r = await fetch(url, { headers: { Accept: 'text/calendar' } });
+        if (!r.ok) {
+          const short = url.length > 80 ? `${url.slice(0, 80)}…` : url;
+          throw new Error(`iCal fetch failed (${r.status}) for ${short}`);
+        }
+        return r.text();
+      }));
+    } catch (e) {
+      return res.status(502).json({ error: e.message });
+    }
+
+    // Don't filter to `day` here — let groupSchedule handle the filtering in
+    // the centre's timezone. Filtering in UTC would drop e.g. a Saturday
+    // evening appointment that's already Sunday in UTC.
+    const allAppts = [];
+    for (const body of feeds) {
+      for (const ev of parseEvents(body)) {
+        const a = toAppointment(ev); if (!a) continue;
+        // Skip group-block events with no real client name (e.g. Acuity
+        // appointment-type rows like "High School Grades Only" that surface
+        // as standalone iCal events with no associated student).
+        if (!a.firstName && !a.lastName) continue;
+        allAppts.push(a);
+      }
+    }
+
+    const categorized = categorizeAll(allAppts, students, aliases);
+    const grouped = groupSchedule(categorized, day);
+
+    return res.status(200).json(grouped);
   } catch (e) {
-    return res.status(401).json({ error: e.message });
-  }
-
-  const { centerId, date } = req.query;
-  if (!centerId) return res.status(400).json({ error: 'centerId required' });
-  const day = date || (() => {
-    const d = new Date();
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  })();
-
-  const fs = getFirestore();
-
-  // Load settings, students, aliases for this centre.
-  const [settingsSnap, studentsSnap, aliasesSnap] = await Promise.all([
-    fs.doc(`centers/${centerId}/schedulerSettings/main`).get(),
-    fs.collection(`centers/${centerId}/schedulerStudents`).get(),
-    fs.collection(`centers/${centerId}/schedulerAliases`).get(),
-  ]);
-
-  const settings = settingsSnap.exists ? settingsSnap.data() : {};
-  const students = studentsSnap.docs.map(d => d.data());
-  const aliases = aliasesSnap.docs.map(d => d.data());
-
-  const icalUrls = (settings.icalUrls || []).filter(Boolean);
-  if (icalUrls.length === 0) {
-    return res.status(200).json({
-      day, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [],
-      warning: 'No iCal URLs configured. Add one in the Setup tab.',
+    // Outer catch-all — anything that wasn't trapped by a more specific
+    // handler still returns JSON so the frontend can show the message
+    // instead of "is not valid JSON".
+    return res.status(500).json({
+      error: `Scheduler appointments handler error: ${e?.message || e}`,
     });
   }
-
-  // Fetch every feed in parallel.
-  const feeds = await Promise.all(icalUrls.map(async (url) => {
-    const r = await fetch(url, { headers: { Accept: 'text/calendar' } });
-    if (!r.ok) throw new Error(`iCal fetch failed (${r.status})`);
-    return r.text();
-  }));
-
-  // Don't filter to `day` here — let groupSchedule handle the filtering in
-  // the centre's timezone. Filtering in UTC would drop e.g. a Saturday
-  // evening appointment that's already Sunday in UTC.
-  const allAppts = [];
-  for (const body of feeds) {
-    for (const ev of parseEvents(body)) {
-      const a = toAppointment(ev); if (!a) continue;
-      // Skip group-block events with no real client name (e.g. Acuity
-      // appointment-type rows like "High School Grades Only" that surface
-      // as standalone iCal events with no associated student).
-      if (!a.firstName && !a.lastName) continue;
-      allAppts.push(a);
-    }
-  }
-
-  const categorized = categorizeAll(allAppts, students, aliases);
-  const grouped = groupSchedule(categorized, day);
-
-  res.status(200).json(grouped);
 }

@@ -11,8 +11,9 @@ import { toast, confirmDialog } from '../lib/notify';
 import { Link } from 'react-router-dom';
 import {
   UserCog, Mail, Lock, Image as ImageIcon, Trash2, Save, AlertTriangle,
-  CheckCircle2, ShieldAlert, Bell, ArrowRight,
+  CheckCircle2, ShieldAlert, Bell, ArrowRight, Phone, Eye, EyeOff,
 } from 'lucide-react';
+import { watchOwnContact, saveContact, lazyMigrateContact } from '../lib/userContact';
 
 /**
  * Account Details — the signed-in user's self-service profile page.
@@ -58,6 +59,7 @@ export default function AccountDetails() {
       firstName: profile?.firstName ?? split.firstName,
       lastName:  profile?.lastName  ?? split.lastName,
       bio:       profile?.bio || '',
+      pronouns:  profile?.pronouns || '',
     };
   };
 
@@ -70,12 +72,13 @@ export default function AccountDetails() {
   useEffect(() => {
     setForm(seed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile?.displayName, profile?.firstName, profile?.lastName, profile?.bio]);
+  }, [profile?.displayName, profile?.firstName, profile?.lastName, profile?.bio, profile?.pronouns]);
 
   const dirty = (
     form.firstName !== (profile?.firstName ?? splitDisplayName(profile?.displayName).firstName) ||
     form.lastName  !== (profile?.lastName  ?? splitDisplayName(profile?.displayName).lastName) ||
-    form.bio       !== (profile?.bio || '')
+    form.bio       !== (profile?.bio || '') ||
+    form.pronouns  !== (profile?.pronouns || '')
   );
 
   const handleSaveProfile = async () => {
@@ -91,6 +94,7 @@ export default function AccountDetails() {
         lastName:  last,
         displayName: [first, last].filter(Boolean).join(' '),
         bio: form.bio.trim().slice(0, MAX_BIO_LEN),
+        pronouns: form.pronouns.trim().slice(0, 40),
         profileUpdatedAt: serverTimestamp(),
       });
       toast.success('Profile updated.');
@@ -98,6 +102,58 @@ export default function AccountDetails() {
       setProfileError(err?.message || 'Failed to save profile.');
     } finally {
       setSavingProfile(false);
+    }
+  };
+
+  // ── Private contact (email + phone live in users/{uid}/private/contact) ──
+  // Subscribed live so an edit elsewhere reflects here without a refresh.
+  // The lazy migration runs once per account on first visit AFTER this
+  // privacy split shipped — copies any legacy email/phone from the user
+  // doc down into the private sub-doc and clears the public copies.
+  const [contact, setContact] = useState({ email: '', phone: '', emailPublic: false, phonePublic: false });
+  useEffect(() => {
+    if (!profile?.uid) return;
+    return watchOwnContact(profile.uid, setContact);
+  }, [profile?.uid]);
+  useEffect(() => {
+    if (!profile?.uid) return;
+    lazyMigrateContact(profile.uid, profile).catch(() => { /* silent — non-blocking */ });
+  }, [profile?.uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [contactForm, setContactForm] = useState({ phone: '', emailPublic: false, phonePublic: false });
+  useEffect(() => {
+    setContactForm({
+      phone: contact.phone || '',
+      emailPublic: !!contact.emailPublic,
+      phonePublic: !!contact.phonePublic,
+    });
+  }, [contact.phone, contact.emailPublic, contact.phonePublic]);
+
+  const contactDirty = (
+    contactForm.phone !== (contact.phone || '') ||
+    contactForm.emailPublic !== !!contact.emailPublic ||
+    contactForm.phonePublic !== !!contact.phonePublic
+  );
+
+  const [savingContact, setSavingContact] = useState(false);
+  const handleSaveContact = async () => {
+    if (!profile?.uid) return;
+    setSavingContact(true);
+    try {
+      // Email source-of-truth comes from Firebase Auth (user.email).
+      // We mirror it into the private sub-doc so admins reading the
+      // sub-doc don't need a separate auth fetch.
+      await saveContact(profile.uid, {
+        email: user?.email || '',
+        phone: contactForm.phone,
+        emailPublic: contactForm.emailPublic,
+        phonePublic: contactForm.phonePublic,
+      });
+      toast.success('Contact info updated.');
+    } catch (err) {
+      toast.error(err?.message || 'Failed to save contact info.');
+    } finally {
+      setSavingContact(false);
     }
   };
 
@@ -156,6 +212,19 @@ export default function AccountDetails() {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
             />
           </div>
+          <div className="sm:col-span-2">
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+              Pronouns <span className="font-normal normal-case text-gray-400">(optional, shown on your profile)</span>
+            </label>
+            <input
+              type="text"
+              value={form.pronouns}
+              onChange={e => setForm(f => ({ ...f, pronouns: e.target.value }))}
+              placeholder="e.g. she/her, they/them, he/him"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+              maxLength={40}
+            />
+          </div>
         </div>
 
         <div className="mt-3">
@@ -192,12 +261,97 @@ export default function AccountDetails() {
         </div>
       </div>
 
+      {/* Privacy & Contact — phone number + sharing toggles. Email is
+          edited in the Email card below (it touches Firebase Auth), but
+          its public-visibility toggle lives here for symmetry. */}
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="mb-3 flex items-center gap-2">
+          <Phone size={16} className="text-purple-600" />
+          <h2 className="font-semibold text-gray-900">Privacy &amp; Contact</h2>
+        </div>
+        <p className="mb-4 text-xs text-gray-500">
+          Your phone number is private by default. Admins, the Centre Director, and the Owner can always see your contact info so they can reach you about shifts. Other coworkers can only see what you choose to share publicly.
+        </p>
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Phone number</label>
+            <input
+              type="tel"
+              value={contactForm.phone}
+              onChange={e => setContactForm(f => ({ ...f, phone: e.target.value }))}
+              placeholder="604-555-0100"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Email (sign-in address)</label>
+            <input
+              type="email"
+              value={user?.email || ''}
+              disabled
+              className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 cursor-not-allowed"
+            />
+            <p className="mt-1 text-[11px] text-gray-400">Edit your email in the section below — it changes how you sign in.</p>
+          </div>
+        </div>
+
+        <div className="mt-4 space-y-2">
+          <PrivacyToggle
+            label="Show my email to coworkers"
+            description="If off, only admins / the owner can see your email."
+            checked={contactForm.emailPublic}
+            onChange={(v) => setContactForm(f => ({ ...f, emailPublic: v }))}
+          />
+          <PrivacyToggle
+            label="Show my phone number to coworkers"
+            description="If off, only admins / the owner can see your phone."
+            checked={contactForm.phonePublic}
+            onChange={(v) => setContactForm(f => ({ ...f, phonePublic: v }))}
+          />
+        </div>
+
+        <div className="mt-4 flex items-center justify-end">
+          <button
+            type="button"
+            onClick={handleSaveContact}
+            disabled={!contactDirty || savingContact}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
+          >
+            <Save size={14} />
+            {savingContact ? 'Saving…' : 'Save contact'}
+          </button>
+        </div>
+      </div>
+
       {/* Email */}
       <EmailCard profile={profile} user={user} />
 
       {/* Password */}
       <PasswordCard profile={profile} user={user} />
     </div>
+  );
+}
+
+// Small reusable toggle used by the Privacy section. Native checkbox
+// styled as a switch — minimal, no third-party dep.
+function PrivacyToggle({ label, description, checked, onChange }) {
+  return (
+    <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2.5 cursor-pointer hover:bg-gray-100">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={e => onChange(e.target.checked)}
+        className="mt-0.5 h-4 w-4 accent-purple-600"
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          {checked ? <Eye size={12} className="text-emerald-600" /> : <EyeOff size={12} className="text-gray-400" />}
+          <span className="text-sm font-medium text-gray-800">{label}</span>
+        </div>
+        <p className="text-xs text-gray-500 mt-0.5">{description}</p>
+      </div>
+    </label>
   );
 }
 

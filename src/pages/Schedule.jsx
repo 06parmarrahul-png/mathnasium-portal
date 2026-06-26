@@ -151,6 +151,11 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
   const [endTime, setEndTime] = useState(dayDefault.end);
   const [reason, setReason] = useState('');
   const [comment, setComment] = useState('');
+  // Per-day preference: where do you want to work today?
+  // 'either' = scheduler uses profile default (current behaviour).
+  // 'centre' / 'online' = override the profile default for this day only.
+  // The scheduler honours this via effectiveTrack() in src/lib/scheduler.js.
+  const [preferredAssignment, setPreferredAssignment] = useState('either');
   const [toStart, setToStart] = useState(format(date, 'yyyy-MM-dd'));
   const [toEnd, setToEnd] = useState(format(date, 'yyyy-MM-dd'));
   const [saving, setSaving] = useState(false);
@@ -173,7 +178,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
     }
     setSaving(true);
     try {
-      await onSaveAvail(dateStr, startTime, endTime, comment);
+      await onSaveAvail(dateStr, startTime, endTime, comment, preferredAssignment);
     } catch {
       setError('Failed to save availability. Please try again.');
       setSaving(false);
@@ -451,12 +456,38 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-gray-500 mb-1.5">
+                        Where today? <span className="font-normal text-gray-400">(scheduler uses this)</span>
+                      </label>
+                      <div className="grid grid-cols-3 gap-2">
+                        {[
+                          { v: 'either', label: 'Either',   hint: 'Use profile default' },
+                          { v: 'centre', label: 'In-centre', hint: 'Schedule me on the floor' },
+                          { v: 'online', label: 'Online',    hint: 'Schedule me online today' },
+                        ].map(opt => (
+                          <button
+                            key={opt.v}
+                            type="button"
+                            onClick={() => setPreferredAssignment(opt.v)}
+                            title={opt.hint}
+                            className={`rounded-xl border-2 px-2 py-2 text-xs font-bold transition-all ${
+                              preferredAssignment === opt.v
+                                ? 'border-green-500 bg-green-50 text-green-700'
+                                : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                            }`}
+                          >
+                            {opt.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-500 mb-1.5">
                         Note for admin <span className="font-normal text-gray-400">(optional)</span>
                       </label>
                       <textarea
                         value={comment}
                         onChange={e => setComment(e.target.value)}
-                        placeholder="e.g. Prefer online this day, available earlier if needed..."
+                        placeholder="e.g. Available earlier if needed, prefer HS side..."
                         rows={2}
                         className="w-full rounded-xl border-2 border-gray-200 px-3 py-2 text-sm resize-none focus:border-green-500 focus:outline-none"
                       />
@@ -646,6 +677,10 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
   // the user has manually deselected specific dates. When all-on, this
   // set is ignored. Reset on the same triggers as excludedDates.
   const [noteExcludedDates, setNoteExcludedDates] = useState(() => new Set());
+  // Per-day routing preference applied to every selected date in this
+  // batch. 'either' = scheduler uses profile default (no override).
+  // Centre / Online apply for every date in the preview.
+  const [weeklyPreferredAssignment, setWeeklyPreferredAssignment] = useState('either');
 
   // Build preview as [{date, startTime, endTime}] — per-day times when "Full Day"
   // is on (Saturday's 10–2 differs from Monday's 3–7), or the modal's chosen
@@ -687,14 +722,14 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
           // instructor anywhere they want within the day. (Closed days
           // are filtered out via isOperatingDay on the day-toggle row,
           // so anything that makes it here is a valid operating day.)
-          items.push({ date: ds, startTime: '00:00', endTime: '23:59', dow, comment: noteForThis });
+          items.push({ date: ds, startTime: '00:00', endTime: '23:59', dow, comment: noteForThis, preferredAssignment: weeklyPreferredAssignment });
         } else {
-          items.push({ date: ds, startTime, endTime, dow, comment: noteForThis });
+          items.push({ date: ds, startTime, endTime, dow, comment: noteForThis, preferredAssignment: weeklyPreferredAssignment });
         }
       }
     }
     return items;
-  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates, note, noteAppliesToAll, noteExcludedDates]);
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates, note, noteAppliesToAll, noteExcludedDates, weeklyPreferredAssignment]);
 
   // Reset the excluded-dates set when the generators change — otherwise
   // an old exclude on Aug 19 would silently apply if the user later
@@ -825,6 +860,35 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Where for this batch — scheduler reads it via effectiveTrack().
+              Applies to every selected day in the preview. Per-day overrides
+              are a single-day modal feature; the weekly batch keeps one
+              value to stay simple. Owner can edit individual days after. */}
+          <div>
+            <label className="block text-xs font-bold text-gray-500 uppercase tracking-widest mb-2">Where</label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { v: 'either', label: 'Either',    hint: 'Scheduler uses my profile default' },
+                { v: 'centre', label: 'In-centre', hint: 'Schedule me on the floor every selected day' },
+                { v: 'online', label: 'Online',    hint: 'Schedule me online every selected day' },
+              ].map(opt => (
+                <button
+                  key={opt.v}
+                  type="button"
+                  onClick={() => setWeeklyPreferredAssignment(opt.v)}
+                  title={opt.hint}
+                  className={`rounded-xl px-3 py-2.5 text-xs font-bold border-2 transition-all ${
+                    weeklyPreferredAssignment === opt.v
+                      ? 'bg-emerald-50 border-emerald-400 text-emerald-700'
+                      : 'bg-white border-gray-200 text-gray-500 hover:border-gray-300'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Note (optional) — same field name as single-day modal so admins
@@ -1116,7 +1180,7 @@ export default function Schedule() {
   const availDocId = (uid, dateStr) => `${uid}_${dateStr}`;
 
   // ── Handlers (throw on error so modal can catch) ──
-  const handleSaveAvail = async (dateStr, startTime, endTime, comment) => {
+  const handleSaveAvail = async (dateStr, startTime, endTime, comment, preferredAssignment) => {
     const id = availDocId(profile.uid, dateStr);
     // If a legacy doc with a random ID exists for this date, remove it
     // so we don't end up with two records for the same (user, date).
@@ -1132,6 +1196,10 @@ export default function Schedule() {
       startTime,
       endTime,
       comment: comment || '',
+      // Per-day routing preference — scheduler.effectiveTrack() reads it.
+      // 'either' is the no-op default; 'centre' / 'online' override the
+      // instructor's profile track for this one day.
+      preferredAssignment: preferredAssignment || 'either',
     });
     setSelectedDate(null);
   };
@@ -1163,6 +1231,9 @@ export default function Schedule() {
           // identically. Empty string when the user didn't opt this date
           // into the note (or didn't enter one at all).
           comment: item.comment || '',
+          // Same field name as the single-day modal so the scheduler
+          // honours the override identically on bulk-set days.
+          preferredAssignment: item.preferredAssignment || 'either',
           bulkSet: true,
         });
       }

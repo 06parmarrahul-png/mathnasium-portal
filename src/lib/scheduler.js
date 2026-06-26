@@ -73,12 +73,14 @@ export const FIXED_SCHEDULES = {
     Wednesday: '11:00 AM - 7:00 PM', Thursday: '11:00 AM - 7:00 PM',
     Friday: '11:00 AM - 7:00 PM', Saturday: 'Off',
   },
-  'Rachel Rozelle': {
-    role: 'Admin',
-    countsTowardRatio: false,
-    Monday: 'Off', Tuesday: 'Off', Wednesday: 'Off',
-    Thursday: 'Off', Friday: 'Off', Saturday: 'Off',
-  },
+  // Rachel Rozelle WAS pinned here with every day 'Off'. That had the
+  // side-effect of bouncing her out of `formInstructors` (anyone in the
+  // fixedStaff map is filtered out at line ~487), so even when she
+  // submitted availability the scheduler never considered her — she
+  // had to add herself by hand every week. She's a regular form
+  // instructor now: availability-driven like everyone else. If she
+  // ever goes back to being fixed staff, give her real day strings,
+  // not blanket Off.
 };
 
 const DEFAULT_INSTRUCTIONAL_HOURS = {
@@ -433,6 +435,14 @@ export function generateSchedule({
     minPerDay = 8,
     maxPerDay = 11,
     maxDaysPerWeek = 5,
+    // Per-day overrides. Shape:
+    //   { Monday: { min, max, onlineMin, onlineMax }, ... }
+    // Any field omitted falls back to the global min/max above
+    // (online cap defaults to "no cap" / online floor to 0). Lets the
+    // owner say "Saturdays we want 6 in-centre + 1 online; Mondays we
+    // want 10 in-centre + 2 online" without splitting into separate
+    // scheduler runs.
+    perDay = {},
   } = config;
 
   // Center-specific tunables (with defaults that match legacy Langley behavior)
@@ -471,7 +481,18 @@ export function generateSchedule({
     workingDays = getDaysInMonth(year, monthNumber);
     rangeLabel = `${month} ${year}`;
   }
-  const fixedStaffNames = new Set(Object.keys(fixedStaffMap));
+  // Fixed-staff members whose every day is "Off" shouldn't actually
+  // be in the fixed pool — pinning them here filters them out of
+  // formInstructors below, so even when they submit availability the
+  // scheduler ignores them. (This bit Rachel for months: she was
+  // seeded as all-Off Admin and had to add herself by hand every
+  // week.) Defensively strip those entries so a stale live config
+  // can't reintroduce the bug.
+  const fixedStaffNames = new Set(
+    Object.entries(fixedStaffMap)
+      .filter(([, sched]) => DAY_NAMES.some(d => sched && sched[d] && sched[d].toLowerCase() !== 'off'))
+      .map(([name]) => name),
+  );
 
   // Eligible form instructors: approved, not owner, not Enterprise, not
   // fixed staff. Enterprise (super_admin) accounts have global platform
@@ -515,6 +536,16 @@ export function generateSchedule({
     // specific holiday date.
     if (!operatingDays.includes(dayName)) continue;
     if (holidayDates.has(dateStr)) continue;
+
+    // Per-day rule resolution. perDay[dayName] can override the global
+    // min/max and add an explicit online cap. Anything not set in the
+    // override falls through to the global config (and online stays
+    // unlimited unless the owner sets a cap).
+    const dayRule = perDay[dayName] || {};
+    const effectiveMin       = Number.isFinite(dayRule.min)       ? dayRule.min       : minPerDay;
+    const effectiveMax       = Number.isFinite(dayRule.max)       ? dayRule.max       : maxPerDay;
+    const effectiveOnlineMin = Number.isFinite(dayRule.onlineMin) ? dayRule.onlineMin : 0;
+    const effectiveOnlineMax = Number.isFinite(dayRule.onlineMax) ? dayRule.onlineMax : Infinity;
 
     // ── 1. Fixed staff for this day ──────────────────────────────────────────
     const fixedToday = getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap);
@@ -587,7 +618,7 @@ export function generateSchedule({
     });
 
     // ── 5. Assign in-centre instructors up to maxPerDay ──────────────────────
-    const remainingSlots = Math.max(0, maxPerDay - fixedRatioCount);
+    const remainingSlots = Math.max(0, effectiveMax - fixedRatioCount);
     let assigned = 0;
 
     // Track HS/EL balance for this day
@@ -663,7 +694,7 @@ export function generateSchedule({
         return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
       });
 
-      const stillNeeded = () => Math.max(0, minPerDay - (fixedRatioCount + assigned + promotedFromHost));
+      const stillNeeded = () => Math.max(0, effectiveMin - (fixedRatioCount + assigned + promotedFromHost));
 
       for (const candidate of hosts) {
         const weekCount = (weeklyAssignments[candidate.inst.uid] || {})[weekKey] || 0;
@@ -715,11 +746,14 @@ export function generateSchedule({
       return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
     });
 
+    let onlineAssigned = 0;
     for (const candidate of onlineOnly) {
+      if (onlineAssigned >= effectiveOnlineMax) break;
       const weekCount = (weeklyAssignments[candidate.inst.uid] || {})[weekKey] || 0;
       if (weekCount >= maxDaysPerWeek) continue;
 
       assignedNames.push(candidate.inst.displayName);
+      onlineAssigned++;
       roles[candidate.inst.displayName] = 'Online Instructor';
       subRoles[candidate.inst.displayName] = 'Online';
       // Clamp Online instructors to instructional hours too — a "Full Day"
@@ -739,14 +773,22 @@ export function generateSchedule({
     // as Instructor). Non-promoted Hosts do not.
     const inCentreTotal = fixedRatioCount + assigned + promotedFromHost;
 
-    if (inCentreTotal < minPerDay) {
-      const shortfall = minPerDay - inCentreTotal;
+    if (inCentreTotal < effectiveMin) {
+      const shortfall = effectiveMin - inCentreTotal;
       warnings.push(
-        `⚠ ${dayName} ${dayMonth} ${dayNumber}: Only ${inCentreTotal} in-centre staff (need ${minPerDay}). ${shortfall} open shift${shortfall > 1 ? 's' : ''} needed.`
+        `⚠ ${dayName} ${dayMonth} ${dayNumber}: Only ${inCentreTotal} in-centre staff (need ${effectiveMin}). ${shortfall} open shift${shortfall > 1 ? 's' : ''} needed.`
       );
       for (let i = 0; i < shortfall; i++) {
         openShiftNeeded.push({ date: dateStr, dayName, dayNumber });
       }
+    }
+
+    // Online floor — warn but DON'T post open shifts (online supply is
+    // bring-your-own, not the centre's problem to fill on-site).
+    if (onlineAssigned < effectiveOnlineMin) {
+      warnings.push(
+        `⚠ ${dayName} ${dayMonth} ${dayNumber}: Only ${onlineAssigned} online instructor${onlineAssigned === 1 ? '' : 's'} (target ${effectiveOnlineMin}).`,
+      );
     }
 
     if (inCentre.length === 0 && hosts.length === 0 && onlineOnly.length === 0 && fixedToday.length === 0) {
@@ -763,7 +805,17 @@ export function generateSchedule({
       roles,
       subRoles,
       countingStaffCount: inCentreTotal,
-      openSlotsNeeded: Math.max(0, minPerDay - inCentreTotal),
+      onlineCount: onlineAssigned,
+      openSlotsNeeded: Math.max(0, effectiveMin - inCentreTotal),
+      // Echo the effective rule back so UI surfaces (low-staff badge,
+      // matrix highlights) can show what the scheduler used for this
+      // day without re-deriving it.
+      effectiveRule: {
+        min: effectiveMin,
+        max: effectiveMax,
+        onlineMin: effectiveOnlineMin,
+        onlineMax: Number.isFinite(effectiveOnlineMax) ? effectiveOnlineMax : null,
+      },
     });
   }
 

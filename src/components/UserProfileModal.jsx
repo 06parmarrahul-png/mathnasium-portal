@@ -1,22 +1,26 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  X, Mail, Building2, Shield, ShieldCheck, UserCog,
+  X, Mail, Phone, Building2, Shield, ShieldCheck, UserCog, Lock,
 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { getContact } from '../lib/userContact';
 
 /**
  * UserProfileModal — a lightweight viewer for someone else's profile.
  *
- * Opens when a teammate clicks a name / avatar in chat surfaces (Chat,
- * Leadership Chat) or admin lists (Manage Users, Manage Roles). Shows
- * the picture, name, role badge, centre membership, and bio.
- *
- * Pass the full user object — every caller already has it loaded.
- * No extra Firestore read at open time.
+ * Privacy model:
+ *  - Public to everyone signed in: photo, displayName, pronouns, bio,
+ *    role pill, instructor type, centre membership.
+ *  - Email / phone visible if EITHER:
+ *      (a) the target user has opted in (mirror exists on the user doc as
+ *          publicEmail / publicPhone), OR
+ *      (b) the viewer is admin / admin_assistant / owner / super_admin
+ *          (we fetch the private sub-doc when this is true).
  *
  *   <UserProfileModal user={someUser} onClose={() => ...} />
  *
- * The bio is the field someone can edit on /account. If it's empty
- * we hide the section so the modal stays tight.
+ * No prop drilling needed — the modal pulls the viewer's role from
+ * AuthContext to decide whether to make the admin fetch.
  */
 
 const ROLE_LABEL = {
@@ -42,6 +46,28 @@ function initialsOf(user) {
 }
 
 export default function UserProfileModal({ user, onClose }) {
+  const { profile: viewerProfile, isAdmin, isAdminAssistant, isOwner, isSuperAdmin } = useAuth();
+  const viewerCanSeePrivate = isAdmin || isAdminAssistant || isOwner || isSuperAdmin;
+  const isSelf = viewerProfile?.uid && user?.uid && viewerProfile.uid === user.uid;
+
+  // Pull the private contact sub-doc when the viewer has rights to see
+  // it. Firestore rules enforce the gate even if the client lies; we
+  // skip the fetch entirely for non-admins / non-self to avoid the
+  // wasted permission-denied round trip.
+  const [privateContact, setPrivateContact] = useState(null);
+  useEffect(() => {
+    if (!user?.uid) return;
+    if (!viewerCanSeePrivate && !isSelf) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const c = await getContact(user.uid);
+        if (!cancelled) setPrivateContact(c);
+      } catch { /* permission-denied / network — render the public bits only */ }
+    })();
+    return () => { cancelled = true; };
+  }, [user?.uid, viewerCanSeePrivate, isSelf]);
+
   // Close on Escape — small QoL.
   useEffect(() => {
     if (!user) return undefined;
@@ -60,9 +86,22 @@ export default function UserProfileModal({ user, onClose }) {
     : (user.centerId ? [user.centerId] : []);
   const displayName = user.displayName
     || `${user.firstName || ''} ${user.lastName || ''}`.trim()
-    || user.email
     || 'User';
   const initials = initialsOf(user);
+
+  // Decide what email / phone to display:
+  //  - Admin / self → private sub-doc value (always the truth)
+  //  - Anyone else  → public mirror on the user doc, only if user opted in
+  const visibleEmail = (viewerCanSeePrivate || isSelf)
+    ? (privateContact?.email || user.publicEmail || '')
+    : (user.emailPublic ? user.publicEmail : '');
+  const visiblePhone = (viewerCanSeePrivate || isSelf)
+    ? (privateContact?.phone || user.publicPhone || '')
+    : (user.phonePublic ? user.publicPhone : '');
+  // True if the value comes from admin access rather than the user's own
+  // opt-in — drives the small "(admin view)" hint badge.
+  const emailIsPrivateView = viewerCanSeePrivate && !isSelf && !user.emailPublic && !!visibleEmail;
+  const phoneIsPrivateView = viewerCanSeePrivate && !isSelf && !user.phonePublic && !!visiblePhone;
 
   return (
     <div
@@ -102,6 +141,9 @@ export default function UserProfileModal({ user, onClose }) {
             )}
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-bold text-white truncate">{displayName}</h2>
+              {user.pronouns && (
+                <div className="mt-0.5 text-xs text-white/70">{user.pronouns}</div>
+              )}
               <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                 <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${rolePill}`}>
                   {role === 'super_admin' ? <ShieldCheck size={10} /> : role === 'owner' ? <Shield size={10} /> : <UserCog size={10} />}
@@ -126,12 +168,31 @@ export default function UserProfileModal({ user, onClose }) {
             </div>
           )}
 
-          {user.email && (
+          {visibleEmail && (
             <div className="flex items-center gap-2 text-sm text-gray-700">
               <Mail size={14} className="text-gray-400 shrink-0" />
-              <a href={`mailto:${user.email}`} className="truncate text-purple-700 hover:underline">
-                {user.email}
+              <a href={`mailto:${visibleEmail}`} className="truncate text-purple-700 hover:underline">
+                {visibleEmail}
               </a>
+              {emailIsPrivateView && (
+                <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1.5 py-0 text-[10px] font-semibold text-amber-700" title="Visible to you because you're an admin">
+                  <Lock size={9} /> admin view
+                </span>
+              )}
+            </div>
+          )}
+
+          {visiblePhone && (
+            <div className="flex items-center gap-2 text-sm text-gray-700">
+              <Phone size={14} className="text-gray-400 shrink-0" />
+              <a href={`tel:${visiblePhone}`} className="truncate text-purple-700 hover:underline">
+                {visiblePhone}
+              </a>
+              {phoneIsPrivateView && (
+                <span className="inline-flex items-center gap-0.5 rounded bg-amber-50 px-1.5 py-0 text-[10px] font-semibold text-amber-700" title="Visible to you because you're an admin">
+                  <Lock size={9} /> admin view
+                </span>
+              )}
             </div>
           )}
 
@@ -150,6 +211,16 @@ export default function UserProfileModal({ user, onClose }) {
           {!user.bio && (
             <p className="text-xs text-gray-400 italic">
               {displayName.split(' ')[0]} hasn't added a bio yet.
+            </p>
+          )}
+
+          {/* When the viewer has NO right to see private contact AND the
+              target hasn't opted in to share, surface that fact briefly so
+              the modal doesn't feel like a blank wall. Keeps the user-
+              education load low without nagging admins who already see it. */}
+          {!visibleEmail && !visiblePhone && !viewerCanSeePrivate && !isSelf && (
+            <p className="text-[11px] text-gray-400 italic flex items-center gap-1">
+              <Lock size={10} /> Contact info is private — reach out via your manager.
             </p>
           )}
         </div>
