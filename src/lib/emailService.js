@@ -196,16 +196,23 @@ export async function notifySchedulePosted({ shifts, staffUsers, monthLabel, yea
     }).join('\n');
 
     const n = uniq.length;
+    // Phrasing note — this email goes out on EVERY publish batch (a week,
+    // a day, a single shift, or a whole month), so we deliberately frame
+    // the content as "newly added" instead of a totals view. Staff were
+    // reading "You have 1 shift" as "1 shift for the whole month" and
+    // panicking; "1 new shift was just added" makes it clear this is an
+    // update, not their full allocation.
+    const noun = n === 1 ? 'shift' : 'shifts';
     emails.push({
       to:       user.email,
       to_name:  firstName(user.displayName, 'Instructor'),
-      subject:  `Your ${n} ${n === 1 ? 'shift' : 'shifts'} for ${monthYear} ${n === 1 ? 'is' : 'are'} posted`,
+      subject:  `${n} new ${noun} added to your ${monthYear} schedule`,
       body:
-        `The ${monthYear} schedule is up.\n\n` +
-        `You have ${n} ${n === 1 ? 'shift' : 'shifts'}:\n\n` +
+        `${n} new ${noun} ${n === 1 ? 'has' : 'have'} been added to your ${monthYear} schedule:\n\n` +
         shiftLines + '\n\n' +
-        `Tap the button below to view your full schedule on the portal.`,
-      cta_text: 'View my schedule',
+        `Heads up — this email only covers what was just published in this batch. ` +
+        `Tap the button below to see your full ${monthLabel} schedule, including any shifts already on it.`,
+      cta_text: 'View my full schedule',
       cta_link,
     });
   }
