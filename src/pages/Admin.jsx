@@ -6402,33 +6402,49 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const coverageVsTarget = coverageTarget > 0
     ? (coverageAvg / coverageTarget) * 100 : 0;
 
-  // ─── Payroll Projection (semi-monthly: 1–15 and 16–end) ──────────────
-  // Mathnasium pays semi-monthly: hours worked 1st–15th hit the 15th
-  // payroll, 16th–end-of-month hit the 30th payroll. Projection sums
-  // every shift in the viewed month (drafts + posted) by Payroll Hours
-  // (override wins; falls back to scheduled). For a CURRENT-month view
-  // this is "what your next pay run will probably cost"; for a past
+  // ─── Payroll Projection (semi-monthly) ───────────────────────────────
+  // Mathnasium pays semi-monthly with a lagged window:
+  //   • 15th payroll covers the 26th of the PRIOR month → 10th of this month
+  //   • 30th payroll covers the 11th → 25th of this month
+  // Hours worked from the 26th onward roll into NEXT month's 15th run.
+  // Projection sums every shift in the window (drafts + posted) by Payroll
+  // Hours (override wins; falls back to scheduled). For a CURRENT-month
+  // view this is "what your next pay run will probably cost"; for a past
   // month it equals the actual amount (no drafts survive a published
   // month). Resolved-only filter is not applied — projection should
-  // include everything, resolved or not, so the owner sees the full
-  // outstanding liability.
+  // include everything so the owner sees the full outstanding liability.
   const payHrsOf = (s) =>
     (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
       ? s.payHoursOverride
       : shiftHours(s);
 
-  const allMonthShifts = shifts.filter(s => s.date >= monthStartStr && s.date <= monthEndStr);
-  const period1CutoffStr = format(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), 15), 'yyyy-MM-dd');
-  const period1Shifts = allMonthShifts.filter(s => s.date >= monthStartStr && s.date <= period1CutoffStr);
-  const period2Shifts = allMonthShifts.filter(s => s.date >  period1CutoffStr && s.date <= monthEndStr);
+  const _vmY = viewMonth.getFullYear();
+  const _vmM = viewMonth.getMonth();
+  const period1StartDate = new Date(_vmY, _vmM - 1, 26);
+  const period1EndDate   = new Date(_vmY, _vmM,     10);
+  const period2StartDate = new Date(_vmY, _vmM,     11);
+  const period2EndDate   = new Date(_vmY, _vmM,     25);
+  const period1StartStr = format(period1StartDate, 'yyyy-MM-dd');
+  const period1EndStr   = format(period1EndDate,   'yyyy-MM-dd');
+  const period2StartStr = format(period2StartDate, 'yyyy-MM-dd');
+  const period2EndStr   = format(period2EndDate,   'yyyy-MM-dd');
+
+  const period1Shifts = shifts.filter(s => s.date >= period1StartStr && s.date <= period1EndStr);
+  const period2Shifts = shifts.filter(s => s.date >= period2StartStr && s.date <= period2EndStr);
   const period1Hours  = period1Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
   const period2Hours  = period2Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
   const period1Names  = new Set(period1Shifts.map(s => s.userName).filter(Boolean));
   const period2Names  = new Set(period2Shifts.map(s => s.userName).filter(Boolean));
 
-  // Which period are we currently "in"? Used to badge the upcoming run.
+  // Which pay run is "upcoming" given today's date:
+  //   day 1–10  → 15th of this month is next up (period 1)
+  //   day 11–25 → 30th of this month is next up (period 2)
+  //   day 26+   → already accruing toward NEXT month's 15th, so neither
+  //               card in the viewed month is upcoming.
   const todayDay = isViewingCurrentMonth ? now.getDate() : null;
-  const currentPeriod = todayDay == null ? null : (todayDay <= 15 ? 1 : 2);
+  const currentPeriod = todayDay == null
+    ? null
+    : (todayDay <= 10 ? 1 : todayDay <= 25 ? 2 : null);
 
   // ─── Hiring forecast (Phase 2) ─────────────────────────────────────────
   // Roll up staff `careerPlan` fields into a projected headcount for each of
@@ -6885,12 +6901,12 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         </div>
       )}
 
-      {/* Payroll Projection — semi-monthly view. Splits the viewed
-          month into 1–15 (the 15th pay run) and 16–end (the 30th pay
-          run) and totals projected payroll hours. Uses the same
-          Payroll Hours value as Manage Payroll — Override wins,
-          scheduled falls back. Owners can spot a bloated upcoming run
-          before payroll day instead of after. */}
+      {/* Payroll Projection — semi-monthly view. 15th pay run covers
+          prior-month 26th → this-month 10th; 30th pay run covers
+          this-month 11th → 25th. Uses the same Payroll Hours value as
+          Manage Payroll — Override wins, scheduled falls back. Owners
+          can spot a bloated upcoming run before payroll day instead
+          of after. */}
       {view === 'snapshot' && (
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between mb-1">
@@ -6904,7 +6920,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
           {[
             {
               label: '15th payroll',
-              window: `${format(viewMonth, 'MMM 1')} – ${format(viewMonth, 'MMM 15')}`,
+              window: `${format(period1StartDate, 'MMM d')} – ${format(period1EndDate, 'MMM d')}`,
               hours: period1Hours,
               shifts: period1Shifts.length,
               instructors: period1Names.size,
@@ -6912,7 +6928,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
             },
             {
               label: '30th payroll',
-              window: `${format(viewMonth, 'MMM 16')} – ${format(endOfMonth(viewMonth), 'MMM d')}`,
+              window: `${format(period2StartDate, 'MMM d')} – ${format(period2EndDate, 'MMM d')}`,
               hours: period2Hours,
               shifts: period2Shifts.length,
               instructors: period2Names.size,
