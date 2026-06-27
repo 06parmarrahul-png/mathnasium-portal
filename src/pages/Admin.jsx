@@ -6641,6 +6641,15 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         </div>
 
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="w-fit rounded-lg p-1.5 bg-sky-100 text-sky-700"><HandHeart size={16}/></div>
+          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Volunteers</p>
+          <p className="mt-0.5 text-2xl font-bold text-gray-900">{activeVolunteers}</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {activeVolunteers === 0 ? 'no volunteers approved' : 'unpaid contributors'}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="w-fit rounded-lg p-1.5 bg-yellow-100 text-yellow-700"><CalendarX size={16}/></div>
           <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Pending Time-Off</p>
           <p className={`mt-0.5 text-2xl font-bold ${timeOffPending > 0 ? 'text-yellow-700' : 'text-gray-900'}`}>
@@ -6648,15 +6657,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
           </p>
           <p className="mt-1 text-xs text-gray-400">
             {timeOffPending === 0 ? 'inbox clear' : `request${timeOffPending === 1 ? '' : 's'} waiting on you`}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="w-fit rounded-lg p-1.5 bg-sky-100 text-sky-700"><HandHeart size={16}/></div>
-          <p className="mt-3 text-xs font-medium uppercase tracking-wide text-gray-400">Active Volunteers</p>
-          <p className="mt-0.5 text-2xl font-bold text-gray-900">{activeVolunteers}</p>
-          <p className="mt-1 text-xs text-gray-400">
-            {activeVolunteers === 0 ? 'no volunteers approved' : 'unpaid contributors'}
           </p>
         </div>
       </div>
