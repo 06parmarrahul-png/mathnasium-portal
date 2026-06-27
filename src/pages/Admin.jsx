@@ -6407,16 +6407,45 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   //   • 15th payroll covers the 26th of the PRIOR month → 10th of this month
   //   • 30th payroll covers the 11th → 25th of this month
   // Hours worked from the 26th onward roll into NEXT month's 15th run.
-  // Projection sums every shift in the window (drafts + posted) by Payroll
-  // Hours (override wins; falls back to scheduled). For a CURRENT-month
-  // view this is "what your next pay run will probably cost"; for a past
-  // month it equals the actual amount (no drafts survive a published
-  // month). Resolved-only filter is not applied — projection should
-  // include everything so the owner sees the full outstanding liability.
+  //
+  // This card MUST match the Manage Payroll export's "Total Hours" column
+  // so owners can reconcile the two. That means the same filters as
+  // payrollSummary in Admin.jsx:
+  //   – posted only (drafts excluded)
+  //   – Volunteer-role shifts excluded
+  //   – salaried staff, flagged volunteers, and hidden ops accounts
+  //     (owner / super-admin / Admin Team / internal) excluded
+  //   – sick shifts NOT added to the headline (they live in a separate
+  //     Sick Pay column in the export)
+  //   – Payroll Hours = payHoursOverride if set, else scheduled.
   const payHrsOf = (s) =>
     (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
       ? s.payHoursOverride
       : shiftHours(s);
+
+  // Rebuild the same exclusion sets the payroll tab uses. AnalyticsTab
+  // only receives `users` + `activeCenterId`, so we resolve per-centre
+  // here (cheap; users list is small).
+  const _payUsersForCentre = users.map(u => resolveUserForCenter(u, activeCenterId));
+  const _paySalaryStaff = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
+  const _payVolunteerNames = new Set();
+  for (const u of _payUsersForCentre) {
+    if (u.isVolunteer === true && u.displayName) _payVolunteerNames.add(u.displayName);
+  }
+  const _payHiddenFromOps = new Set();
+  for (const u of users) {
+    const hidden = u.role === 'owner' || u.role === 'super_admin'
+      || u.internal === true
+      || u.displayName === 'Admin Team';
+    if (hidden && u.displayName) _payHiddenFromOps.add(u.displayName);
+  }
+  const _payEligible = (s) =>
+    s.status !== 'draft'
+    && s.role !== 'Volunteer'
+    && !s.sickPay
+    && !_paySalaryStaff.has(s.userName)
+    && !_payVolunteerNames.has(s.userName)
+    && !_payHiddenFromOps.has(s.userName);
 
   const _vmY = viewMonth.getFullYear();
   const _vmM = viewMonth.getMonth();
@@ -6429,8 +6458,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const period2StartStr = format(period2StartDate, 'yyyy-MM-dd');
   const period2EndStr   = format(period2EndDate,   'yyyy-MM-dd');
 
-  const period1Shifts = shifts.filter(s => s.date >= period1StartStr && s.date <= period1EndStr);
-  const period2Shifts = shifts.filter(s => s.date >= period2StartStr && s.date <= period2EndStr);
+  const period1Shifts = shifts.filter(s =>
+    s.date >= period1StartStr && s.date <= period1EndStr && _payEligible(s));
+  const period2Shifts = shifts.filter(s =>
+    s.date >= period2StartStr && s.date <= period2EndStr && _payEligible(s));
   const period1Hours  = period1Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
   const period2Hours  = period2Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
   const period1Names  = new Set(period1Shifts.map(s => s.userName).filter(Boolean));
@@ -6970,7 +7001,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         </div>
         {isViewingCurrentMonth && (
           <p className="mt-2 text-[10px] text-gray-400 italic">
-            Includes draft shifts — numbers will firm up as drafts get published.
+            Matches the Manage Payroll export (Total Hours): posted shifts only, sick / volunteers / salaried / hidden accounts excluded.
           </p>
         )}
       </div>
