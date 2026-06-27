@@ -6031,6 +6031,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
     // as documents tagged type: 'shift_swap' with swapStatus: 'open'.
     // We count them so the owner sees pending swaps next to open
     // shifts (both represent "schedule needs human attention").
+    //
+    // We additionally drop swaps whose shiftDate is in the past — a swap
+    // request for a shift that already happened is dead even if nobody
+    // closed the chat doc, and shouldn't inflate the badge. Matches the
+    // ShiftBoard + sidebar logic (`!m.shiftDate || m.shiftDate >= today`).
     const u3 = onSnapshot(
       query(
         collection(db, 'chat'),
@@ -6038,7 +6043,14 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         where('type', '==', 'shift_swap'),
         where('swapStatus', '==', 'open'),
       ),
-      snap => setPendingSwapsCount(snap.size),
+      snap => {
+        const today = format(new Date(), 'yyyy-MM-dd');
+        const stillPending = snap.docs.filter(d => {
+          const date = d.data()?.shiftDate;
+          return !date || date >= today;
+        });
+        setPendingSwapsCount(stillPending.length);
+      },
       () => {},
     );
     return () => { u1(); u2(); u3(); };
