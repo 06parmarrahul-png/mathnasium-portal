@@ -37,7 +37,7 @@ import {
 // uses in scheduler.js → getFixedStaffForDay, so the two stay in sync.
 import { FIXED_SCHEDULES } from '../lib/scheduler';
 import {
-  hasSlotEnded, classifyStudent, computeSlotEfficiency,
+  hasSlotEnded, classifyStudent,
   computeDayAnalytics, recommendationFor, isDayComplete,
   fmtRatio, fmtPct,
 } from '../lib/scheduler-analytics';
@@ -967,18 +967,41 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const [addingWalkIn, setAddingWalkIn] = useState(false);
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
-  // Realised demand-vs-supply efficiency for this slot. Demand =
-  // iCal students for this slot + walk-ins starting in this slot +
-  // walk-ins from the previous slot whose 60-min duration overflows
-  // into here. Same set the "have X" math is computed against, so the
-  // overstaffed/understaffed badge stays internally consistent.
-  const efficiency = computeSlotEfficiency({
-    scheduledStudents: [...rawOnHour, ...rawHalfHour, ...slotWalkIns, ...overflowWalkIns],
-    instructors,
-    checkIns,
-    ratio,
-    slotEnded,
-  });
+
+  // Per-slot efficiency badge — uses IN-CENTRE demand so it lines up with
+  // the "N of M" count rendered right above this row. Previous version
+  // called computeSlotEfficiency with only the start-here students, which
+  // undercounted demand whenever a 60-min session from an earlier slot
+  // was still in the centre (and inflated the ratio the wrong way —
+  // 14/7 instead of the 24/7 the owner actually sees on the row).
+  //
+  // - scheduled = students physically in centre this slot (row.counts +
+  //               walk-ins + previous-slot walk-in overflow).
+  // - present   = scheduled − presence.absent. `presence.absent` is built
+  //               in SideTable across ALL occupants (start-here + iCal
+  //               overflow + walk-in overflow) so this is the right
+  //               denominator even after the slot has ended.
+  // - realised  = present once the slot ends, else scheduled (planned).
+  const efficiencyScheduled = scheduled;
+  const efficiencyPresent   = count;
+  const realisedDemand      = slotEnded ? efficiencyPresent : efficiencyScheduled;
+  const targetInstructors   = Math.max(1, Math.ceil(realisedDemand / Math.max(1, ratio)));
+  const slack               = instructors.length - targetInstructors;
+  const effectiveRatio      = instructors.length > 0 ? realisedDemand / instructors.length : null;
+  let efficiencyState;
+  if (!slotEnded)                                                  efficiencyState = 'pending';
+  else if (efficiencyScheduled === 0)                              efficiencyState = 'idle';
+  else if (slack > 0 && efficiencyPresent < efficiencyScheduled)   efficiencyState = 'overstaffed';
+  else if (slack < 0)                                              efficiencyState = 'understaffed';
+  else                                                              efficiencyState = 'on-target';
+  const efficiency = {
+    scheduled:      efficiencyScheduled,
+    present:        efficiencyPresent,
+    instructors:    instructors.length,
+    effectiveRatio,
+    slack,
+    state:          efficiencyState,
+  };
   const otherSide = side === 'HS' ? 'EM' : 'HS';
   // Read-only view of who the OTHER side has staffed at the same time
   // slot. Lets a HS shift lead see at a glance that EM is covered (and
