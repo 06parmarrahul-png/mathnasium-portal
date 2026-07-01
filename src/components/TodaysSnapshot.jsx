@@ -66,47 +66,47 @@ export default function TodaysSnapshot() {
     )
   ), [todayStr, activeCenterId]);
 
-  // Build the day-shaped object that CoverageGrid expects.
+  // Build the day-shaped object that CoverageGrid expects. We pass
+  // per-SHIFT entries (not name-keyed maps) so one person scheduled in
+  // two roles on the same day — e.g. LEAD 11–3 covering for the owner,
+  // HOST 3–7 — renders as two distinct rows with their actual roles
+  // and times. The legacy name-keyed shape silently overwrote the
+  // first shift, leaving Bri showing twice with both rows mislabelled.
   const dayData = useMemo(() => {
-    const assignedEmployees = [];
-    const shiftTimes = {};
-    const roles = {};
-    const subRoles = {};
-    const sickPay  = {}; // name -> true if this person's today shift is sick
+    const shiftEntries = [];
     for (const s of shifts) {
       const name = s.userName;
       if (!name || !s.startTime || !s.endTime) continue;
-      assignedEmployees.push(name);
-      shiftTimes[name] = `${s.startTime} - ${s.endTime}`;
-      roles[name]      = s.role || 'Instructor';
-      subRoles[name]   = s.subRole;
-      if (s.sickPay) sickPay[name] = true;
+      shiftEntries.push({
+        key:       s.id,
+        name,
+        role:      s.role || 'Instructor',
+        subRole:   s.subRole,
+        shiftTime: `${s.startTime} - ${s.endTime}`,
+        sickPay:   !!s.sickPay,
+      });
     }
     return {
       date: todayStr,
       dayOfWeek,
       dayNumber: now.getDate(),
-      assignedEmployees,
-      shiftTimes,
-      roles,
-      subRoles,
-      sickPay,
+      shiftEntries,
     };
   }, [shifts, todayStr, dayOfWeek, now]);
 
-  // Stats
+  // Stats — counted per SHIFT, not per person, because each shift is
+  // distinct work. (A teacher pulling both a LEAD and a HOST shift today
+  // legitimately fills 1 of each tile's headline number.)
   const teachingCount = useMemo(() => (
-    dayData.assignedEmployees.filter(n =>
-      ['Instructor', 'Lead'].includes(dayData.roles[n])
-    ).length
+    dayData.shiftEntries.filter(e => ['Instructor', 'Lead'].includes(e.role)).length
   ), [dayData]);
 
   const hostCount = useMemo(() => (
-    dayData.assignedEmployees.filter(n => dayData.roles[n] === 'Host').length
+    dayData.shiftEntries.filter(e => e.role === 'Host').length
   ), [dayData]);
 
   const onlineCount = useMemo(() => (
-    dayData.assignedEmployees.filter(n => dayData.roles[n] === 'Online Instructor').length
+    dayData.shiftEntries.filter(e => e.role === 'Online Instructor').length
   ), [dayData]);
 
   const totalHours = useMemo(() => (
@@ -119,7 +119,7 @@ export default function TodaysSnapshot() {
     }, 0)
   ), [shifts]);
 
-  const totalStaff = dayData.assignedEmployees.length;
+  const totalStaff = dayData.shiftEntries.length;
 
   // ─── Render ───────────────────────────────────────────────────────────────
 

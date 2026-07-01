@@ -101,51 +101,87 @@ const rolePriority = (role, subRole) => {
 export default function CoverageGrid({ day, centerConfig }) {
   const slots = useMemo(() => generateSlots(day.dayOfWeek), [day.dayOfWeek]);
 
-  const sortedNames = useMemo(() => {
-    return [...(day.assignedEmployees || [])].sort((a, b) => {
-      const ra = day.roles?.[a] || 'Instructor';
-      const rb = day.roles?.[b] || 'Instructor';
-      const sa = day.subRoles?.[a];
-      const sb = day.subRoles?.[b];
-      const dp = rolePriority(ra, sa) - rolePriority(rb, sb);
-      if (dp !== 0) return dp;
-      return a.localeCompare(b);
-    });
-  }, [day.assignedEmployees, day.roles, day.subRoles]);
-
-  // Pre-parse each person's shift once
-  const shiftByName = useMemo(() => {
-    const m = {};
-    for (const name of sortedNames) {
-      m[name] = parseShift(day.shiftTimes?.[name]);
+  // Normalise input to a list of per-SHIFT entries. Each entry is one
+  // shift on the day, so one person with two shifts (e.g. LEAD 11–3
+  // AND HOST 3–7) gets two entries with distinct roles + times instead
+  // of name-keyed maps that silently overwrote each other.
+  //
+  // - New format (`day.shiftEntries`): preferred — caller already has
+  //   per-shift data with stable keys.
+  // - Legacy format (`day.assignedEmployees` + name-keyed maps): kept
+  //   for callers like the auto-scheduler draft editor that don't ship
+  //   duplicates. Each name becomes a single entry.
+  const entries = useMemo(() => {
+    if (Array.isArray(day.shiftEntries) && day.shiftEntries.length > 0) {
+      return day.shiftEntries.map((e, i) => ({
+        key:       e.key || `${e.name}|${i}`,
+        name:      e.name,
+        role:      e.role || 'Instructor',
+        subRole:   e.subRole,
+        shiftTime: e.shiftTime,
+        sickPay:   !!e.sickPay,
+      }));
     }
-    return m;
-  }, [sortedNames, day.shiftTimes]);
+    return (day.assignedEmployees || []).map((name, i) => ({
+      key:       `${name}|${i}`,
+      name,
+      role:      day.roles?.[name] || 'Instructor',
+      subRole:   day.subRoles?.[name],
+      shiftTime: day.shiftTimes?.[name],
+      sickPay:   !!day.sickPay?.[name],
+    }));
+  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay]);
 
-  // Per-slot counts (teaching + total)
+  // Sort by tier, then by name within tier. Two entries for the same
+  // person stay adjacent (same name, same tier) but each shows its own
+  // role badge + bar.
+  const sortedEntries = useMemo(() => {
+    return [...entries].sort((a, b) => {
+      const dp = rolePriority(a.role, a.subRole) - rolePriority(b.role, b.subRole);
+      if (dp !== 0) return dp;
+      return a.name.localeCompare(b.name);
+    });
+  }, [entries]);
+
+  // Pre-parse each entry's shift once (keyed by entry key, not name —
+  // a person with two shifts needs two parses).
+  const shiftByKey = useMemo(() => {
+    const m = {};
+    for (const e of sortedEntries) m[e.key] = parseShift(e.shiftTime);
+    return m;
+  }, [sortedEntries]);
+
+  // Per-slot counts (teaching + total). Teaching counts every teaching
+  // SHIFT in the slot (so Bri's LEAD 11–3 counts in 11–3 and her HOST
+  // 3–7 doesn't, even though they're the same person). Total counts
+  // distinct PEOPLE so two overlapping shifts for one body still read
+  // as one body in the room.
   const slotData = useMemo(() => {
     return slots.map(slot => {
       const sStart = toMinutes(slot.start);
       const sEnd   = toMinutes(slot.end);
       let teachingCount = 0;
-      let totalCount = 0;
-      for (const name of sortedNames) {
-        const shift = shiftByName[name];
+      const namesPresent = new Set();
+      for (const e of sortedEntries) {
+        const shift = shiftByKey[e.key];
         if (!shift) continue;
-        // Person covers this slot if their shift overlaps [sStart, sEnd)
         if (shift.startMins < sEnd && shift.endMins > sStart) {
-          totalCount++;
-          if (TEACHING_ROLES.has(day.roles?.[name])) teachingCount++;
+          namesPresent.add(e.name);
+          if (TEACHING_ROLES.has(e.role)) teachingCount++;
         }
       }
-      return { ...slot, teachingCount, totalCount };
+      return { ...slot, teachingCount, totalCount: namesPresent.size };
     });
-  }, [slots, sortedNames, shiftByName, day.roles]);
+  }, [slots, sortedEntries, shiftByKey]);
 
   const peakTeaching = slotData.reduce((mx, s) => Math.max(mx, s.teachingCount), 0);
   const peakSlot = slotData.find(s => s.teachingCount === peakTeaching && peakTeaching > 0);
 
-  if (sortedNames.length === 0) {
+  // Distinct head-count for the summary bar — one person scheduled twice
+  // is still one body in the room.
+  const distinctStaff = useMemo(() => new Set(sortedEntries.map(e => e.name)).size, [sortedEntries]);
+
+  if (sortedEntries.length === 0) {
     return (
       <div className="rounded-lg border-2 border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
         <p className="text-sm text-gray-400 italic">No staff assigned — nothing to cover.</p>
@@ -170,7 +206,9 @@ export default function CoverageGrid({ day, centerConfig }) {
         </span>
         <span className="flex items-center gap-1.5 text-gray-500">
           <span>·</span>
-          <span>{sortedNames.length} staff total</span>
+          <span>{distinctStaff} staff total{sortedEntries.length > distinctStaff && (
+            <> · {sortedEntries.length} shifts</>
+          )}</span>
         </span>
       </div>
 
@@ -195,35 +233,39 @@ export default function CoverageGrid({ day, centerConfig }) {
             </tr>
           </thead>
           <tbody>
-            {sortedNames.map((name, idx) => {
-              const role = day.roles?.[name];
-              const shift = shiftByName[name];
-              const isSick = !!day.sickPay?.[name];
+            {sortedEntries.map((entry, idx) => {
+              const { name, role, subRole, shiftTime, sickPay: isSick } = entry;
+              const shift = shiftByKey[entry.key];
               // Bold dividers between the three tiers so the staff list
               // reads "important staff → online → in-centre instructors"
               // at a glance. Insert a section header before the FIRST
               // row of each tier whose priority is new.
-              const myPriority = rolePriority(role, day.subRoles?.[name]);
+              const myPriority = rolePriority(role, subRole);
               const prevPriority = idx === 0
                 ? -1
-                : rolePriority(day.roles?.[sortedNames[idx - 1]], day.subRoles?.[sortedNames[idx - 1]]);
+                : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole);
               const isFirstOfTier = myPriority !== prevPriority;
               const tierLabel = myPriority === 0 ? 'Hosts & Management'
                               : myPriority === 1 ? 'Online Instructors'
                               : 'In-Centre Instructors';
               const colspan = 1 + slots.length;
-              // Derive a single clean assignment label per person ("Manager",
+              // Derive a single clean assignment label per shift ("Manager",
               // "Highschool Instructor", "Host", "Online Instructor", etc.)
               // and use the centre's assignment-colour palette so BOTH the
               // bar AND the badge use the role's colour — matches the chip
               // on the right of each row.
-              const assignment = assignmentFor({ role, subRole: day.subRoles?.[name] });
+              const assignment = assignmentFor({ role, subRole });
               const roleBg = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
               const roleText = contrastText(roleBg);
               const badgeLabel = isSick ? 'SICK' : assignmentShort(assignment);
               const badgeTooltip = isSick ? `${assignment} · Sick Pay` : assignment;
+              // Flag rows where the same person has another entry on the
+              // day — gives an at-a-glance "this is one of two shifts for
+              // this person today" cue so it doesn't look like a duplicate.
+              const sameNameCount = sortedEntries.reduce((n, e) => e.name === name ? n + 1 : n, 0);
+              const isDoubleBooked = sameNameCount > 1;
               return (
-                <Fragment key={name}>
+                <Fragment key={entry.key}>
                   {isFirstOfTier && (
                     <tr className="bg-gray-50 border-y-2 border-gray-300">
                       <td colSpan={colspan}
@@ -240,6 +282,14 @@ export default function CoverageGrid({ day, centerConfig }) {
                         style={{ backgroundColor: roleBg }}
                       />
                       <span className="truncate">{name}</span>
+                      {isDoubleBooked && (
+                        <span
+                          className="shrink-0 rounded bg-amber-100 px-1 text-[9px] font-bold uppercase tracking-wide text-amber-700"
+                          title={`${name} has ${sameNameCount} shifts today`}
+                        >
+                          ×{sameNameCount}
+                        </span>
+                      )}
                       <span
                         className="shrink-0 ml-auto rounded px-1.5 text-[10px] font-bold uppercase tracking-wide"
                         style={{ backgroundColor: roleBg, color: roleText }}
@@ -259,7 +309,7 @@ export default function CoverageGrid({ day, centerConfig }) {
                         <div
                           className="h-5"
                           style={inSlot ? { backgroundColor: roleBg } : undefined}
-                          title={inSlot ? `${name}${isSick ? ' (sick)' : ''} · ${day.shiftTimes?.[name] || ''}` : ''}
+                          title={inSlot ? `${name}${isSick ? ' (sick)' : ''} · ${shiftTime || ''}` : ''}
                         />
                       </td>
                     );
