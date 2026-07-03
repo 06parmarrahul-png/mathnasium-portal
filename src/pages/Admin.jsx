@@ -1514,10 +1514,8 @@ export default function Admin() {
   });
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
-  // Draft review layout: 'grid' = whole-month grid (Rachel's preferred
-  // Manage-Staff look), 'day' = day-by-day editor. Only one shows at a time
-  // so the draft page isn't both stacked at once. Defaults to grid.
-  const [draftView, setDraftView] = useState('grid');
+  // Day-centric draft review — which day index is focused in the week strip.
+  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
   // Set of day-indexes that have their CoverageGrid expanded.
   const [expandedDays, setExpandedDays] = useState(new Set());
 
@@ -2122,6 +2120,7 @@ export default function Admin() {
         priorShifts: shifts,  // seed fairness from already-saved shifts this month
       });
       setDraftSchedule(result);
+      setSelectedDayIndex(0);
     } catch (err) {
       setSchedError(`Scheduler error: ${err.message}`);
     } finally {
@@ -4446,55 +4445,34 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Draft layout toggle — grid (whole-month look Rachel likes)
-                  vs day-by-day editor. Only one renders at a time so the
-                  page isn't both stacked at once. */}
-              <div className="flex items-center gap-1.5">
-                <button onClick={() => setDraftView('grid')}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${draftView === 'grid' ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
-                  <LayoutGrid size={13} /> Grid view
-                </button>
-                <button onClick={() => setDraftView('day')}
-                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${draftView === 'day' ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
-                  <CalendarRange size={13} /> Day-by-day
-                </button>
-              </div>
-
-              {/* Weekly grid view of the entire draft — same look as Manage
-                  Staff Schedule. Only instructors working that week appear
-                  (no empty rows). Switch to Day-by-day to edit inline. */}
-              {draftView === 'grid' && (
-                <DraftWeeklyGrid
-                  draftSchedule={draftSchedule}
-                  centerConfig={centerConfig}
-                  schedConfig={schedConfig}
-                />
-              )}
-
-              {draftView === 'day' && (
+              {/* Day-centric review — a week strip to jump between days, then
+                  ONE focused day at a time. Editing still works exactly as
+                  before (Edit → the same inline roster editor). */}
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
-                <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
-                  <div>
-                    <h4 className="font-semibold text-gray-900">Day-by-Day Editor</h4>
-                    <p className="text-xs text-gray-500">Expand a day to edit its roster, times, or sub-roles — changes save to the draft, not posted yet.</p>
-                  </div>
-                  <div className="flex gap-1.5">
-                    <button
-                      onClick={expandAllDays}
-                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors"
-                    >
-                      Expand all
-                    </button>
-                    <button
-                      onClick={collapseAllDays}
-                      className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 hover:border-gray-300 hover:bg-gray-50 transition-colors"
-                    >
-                      Collapse all
-                    </button>
-                  </div>
+                <div className="border-b bg-gray-50 px-5 py-3">
+                  <h4 className="font-semibold text-gray-900">Schedule review</h4>
+                  <p className="text-xs text-gray-500">Pick a day to review or edit — red pills are understaffed. Changes save to the draft, not posted yet.</p>
                 </div>
+
+                {/* Day strip — the whole range at a glance, coloured by
+                    coverage. Click a day to focus it below. */}
+                <div className="border-b bg-white px-4 py-3 flex flex-wrap gap-1.5">
+                  {draftSchedule.days.map((day, i) => {
+                    const low = day.countingStaffCount < schedConfig.minPerDay;
+                    const sel = i === selectedDayIndex;
+                    return (
+                      <button key={day.date} onClick={() => setSelectedDayIndex(i)}
+                        className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                        <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
+                        <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+
                 <div className="divide-y divide-gray-100">
                   {draftSchedule.days.map((day, i) => {
+                    if (i !== selectedDayIndex) return null;
                     const isLow = day.countingStaffCount < schedConfig.minPerDay;
                     const isEditing = editingDay?.index === i;
 
@@ -4770,7 +4748,6 @@ export default function Admin() {
                   })}
                 </div>
               </div>
-              )}
 
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <h4 className="font-semibold text-gray-900 mb-3">Shift Distribution</h4>
