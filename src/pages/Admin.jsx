@@ -1514,6 +1514,10 @@ export default function Admin() {
   });
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
+  // Draft review layout: 'grid' = whole-month grid (Rachel's preferred
+  // Manage-Staff look), 'day' = day-by-day editor. Only one shows at a time
+  // so the draft page isn't both stacked at once. Defaults to grid.
+  const [draftView, setDraftView] = useState('grid');
   // Set of day-indexes that have their CoverageGrid expanded.
   const [expandedDays, setExpandedDays] = useState(new Set());
 
@@ -4442,16 +4446,32 @@ export default function Admin() {
                 </div>
               )}
 
-              {/* Weekly grid view of the entire draft — same look as Manage
-                  Staff Schedule. Lets the owner SEE the whole month at a
-                  glance. The detailed day-by-day card list below is still
-                  available for inline edits (Expand all / Collapse all). */}
-              <DraftWeeklyGrid
-                draftSchedule={draftSchedule}
-                centerConfig={centerConfig}
-                schedConfig={schedConfig}
-              />
+              {/* Draft layout toggle — grid (whole-month look Rachel likes)
+                  vs day-by-day editor. Only one renders at a time so the
+                  page isn't both stacked at once. */}
+              <div className="flex items-center gap-1.5">
+                <button onClick={() => setDraftView('grid')}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${draftView === 'grid' ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                  <LayoutGrid size={13} /> Grid view
+                </button>
+                <button onClick={() => setDraftView('day')}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${draftView === 'day' ? 'border-purple-300 bg-purple-50 text-purple-700' : 'border-gray-200 bg-white text-gray-600 hover:border-gray-300'}`}>
+                  <CalendarRange size={13} /> Day-by-day
+                </button>
+              </div>
 
+              {/* Weekly grid view of the entire draft — same look as Manage
+                  Staff Schedule. Only instructors working that week appear
+                  (no empty rows). Switch to Day-by-day to edit inline. */}
+              {draftView === 'grid' && (
+                <DraftWeeklyGrid
+                  draftSchedule={draftSchedule}
+                  centerConfig={centerConfig}
+                  schedConfig={schedConfig}
+                />
+              )}
+
+              {draftView === 'day' && (
               <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
                 <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
                   <div>
@@ -4750,6 +4770,7 @@ export default function Admin() {
                   })}
                 </div>
               </div>
+              )}
 
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <h4 className="font-semibold text-gray-900 mb-3">Shift Distribution</h4>
@@ -5885,12 +5906,17 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
       <div className="border-b bg-gray-50 px-5 py-3">
         <h4 className="font-semibold text-gray-900">Weekly Grid View</h4>
         <p className="text-xs text-gray-500">
-          Whole-month look — same layout as Manage Staff Schedule. Use the day-by-day editor below to change anything.
+          Whole-month look — same layout as Manage Staff Schedule. Only staff working each week are shown. Switch to Day-by-day to edit.
         </p>
       </div>
 
       <div className="space-y-4 p-4">
-        {weeks.map((week, wi) => (
+        {weeks.map((week, wi) => {
+          // Only render rows for instructors working THIS week — drops the
+          // empty rows that made the grid long and scroll-heavy.
+          const weekNames = names.filter(name =>
+            week.some(day => day.assignedEmployees?.includes(name)));
+          return (
           <div key={wi} className="overflow-x-auto">
             <table className="w-full text-xs border-collapse table-fixed min-w-[680px] [&_td]:border [&_th]:border [&_td]:border-gray-300 [&_th]:border-gray-300">
               <thead>
@@ -5913,7 +5939,7 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
                 </tr>
               </thead>
               <tbody>
-                {names.map(name => (
+                {weekNames.map(name => (
                   <tr key={name}>
                     <td className="px-3 py-1.5 font-medium text-gray-800 bg-white">
                       {name}
@@ -5949,7 +5975,8 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
               </tbody>
             </table>
           </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
