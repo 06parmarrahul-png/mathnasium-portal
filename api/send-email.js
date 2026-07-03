@@ -31,7 +31,7 @@
 //                        for testing, use "onboarding@resend.dev")
 
 import { Resend } from 'resend';
-import { authenticateRequest } from './_lib/firebase-admin.js';
+import { authenticateRequest, getFirestore } from './_lib/firebase-admin.js';
 
 const BATCH_LIMIT = 100;
 
@@ -127,6 +127,35 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'RESEND_FROM env var is not set' });
   }
 
+  // Respect each recipient's email opt-out. Anyone who toggled "Email
+  // Notifications" off on the /notifications page has emailEnabled:false on
+  // their notificationPreferences doc. We drop those recipients from EVERY
+  // batch here — so all notification flows (schedule posted, open shift,
+  // shift claimed, announcement, time-off decision) honour the setting
+  // centrally, instead of only the shift-reminder cron checking it.
+  //
+  // The collection is tiny (a handful of centres × ~30 staff), so one
+  // scan per request is cheap. Password resets go through a different
+  // endpoint (/api/send-password-reset) and are intentionally unaffected —
+  // auth mail must always send.
+  //
+  // Fail OPEN: if the lookup errors, we send unfiltered rather than
+  // silently swallowing notifications on a transient Firestore hiccup.
+  let optedOut = new Set();
+  try {
+    const db = getFirestore();
+    const snap = await db.collection('notificationPreferences')
+      .where('emailEnabled', '==', false)
+      .get();
+    snap.forEach(d => {
+      const addr = String(d.data()?.email || '').trim().toLowerCase();
+      if (addr) optedOut.add(addr);
+    });
+  } catch (err) {
+    console.error('[send-email] opt-out lookup failed; sending unfiltered:', err);
+    optedOut = new Set();
+  }
+
   // Validate + shape each email, dropping bad ones rather than failing the
   // whole batch. Returns parallel arrays so we can map results back.
   const valid = [];
@@ -135,6 +164,10 @@ export default async function handler(req, res) {
     const to = String(e?.to || '').trim();
     if (!EMAIL_RE.test(to)) {
       dropped.push({ index: i, reason: 'invalid recipient' });
+      return;
+    }
+    if (optedOut.has(to.toLowerCase())) {
+      dropped.push({ index: i, reason: 'recipient opted out of email' });
       return;
     }
     valid.push({
@@ -157,6 +190,13 @@ export default async function handler(req, res) {
   });
 
   if (valid.length === 0) {
+    // If everyone in the batch opted out, that's a successful no-op — not a
+    // client error. Only 400 when the batch had genuinely invalid input.
+    const onlyOptOuts = dropped.length > 0 &&
+      dropped.every(d => d.reason === 'recipient opted out of email');
+    if (onlyOptOuts) {
+      return res.status(200).json({ sent: 0, suppressed: dropped.length });
+    }
     return res.status(400).json({ error: 'No valid emails in batch', dropped });
   }
 
@@ -169,6 +209,7 @@ export default async function handler(req, res) {
     return res.status(200).json({
       sent: valid.length,
       dropped: dropped.length,
+      suppressed: dropped.filter(d => d.reason === 'recipient opted out of email').length,
       ids: data?.data?.map(d => d.id) || [],
     });
   } catch (err) {

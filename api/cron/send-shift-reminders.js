@@ -1,7 +1,8 @@
 // GET /api/cron/send-shift-reminders
 //
-// Daily cron — sends "upcoming shift" reminder emails based on each user's
-// notificationPreferences doc. Triggered by Vercel Cron (see vercel.json).
+// Frequent cron — sends "upcoming shift" reminder emails based on each
+// user's notificationPreferences doc. Triggered every 15 min by Vercel
+// Cron (see vercel.json).
 //
 // SETUP (one-time)
 //   1. Set CRON_SECRET in Vercel env vars (any long random string).
@@ -12,17 +13,23 @@
 //      normal /api/send-email handler uses).
 //   3. FIREBASE_SERVICE_ACCOUNT must already be set (same as Stripe webhook).
 //
-// PRECISION CAVEAT
-//   Vercel Hobby cron runs at most once a day. So "1 hour before" and
-//   "3 hours before" preferences can't be honored precisely — those users
-//   get a same-day morning reminder instead. Users on "1 day" / "2 days"
-//   get a reminder on the matching day. If precise hourly granularity ever
-//   matters, the same endpoint can be pinged by an external cron pinger
-//   (cron-job.org, GitHub Actions) every 15–30 mins — the idempotency
-//   guard below means no double-sends.
+// TIMING — how lead-time preferences are honoured
+//   Each reminderTiming maps to a lead time (1hour=60m, 3hours=180m,
+//   1day=24h, 2days=48h). For every candidate shift we compute its REAL
+//   start instant in the centre's timezone, then send once the current
+//   time has reached (shiftStart − leadTime). Because this runs every
+//   15 min, a "3 hours before" user with a 3:00 PM shift gets the email
+//   at ~12:00 PM — not at a fixed 6 AM blast. Granularity is the cron
+//   interval (~15 min), which is fine for shift reminders.
+//
+//   PLAN NOTE: sub-daily Vercel Cron requires the Pro plan. On the Hobby
+//   plan (daily-only), keep vercel.json but ALSO hit this same URL every
+//   15–30 min from a free external pinger (cron-job.org, GitHub Actions)
+//   with header `Authorization: Bearer <CRON_SECRET>`. The idempotency
+//   guard below makes any number of pingers safe.
 //
 // IDEMPOTENCY
-//   Each shift gets a `reminderSentAt` timestamp once emailed. The query
+//   Each shift gets a `reminderSentAt` timestamp once emailed. The loop
 //   skips any shift that already has it, so re-running the cron (or having
 //   multiple cron services hit the endpoint) won't double-email.
 
@@ -48,28 +55,69 @@ function checkAuth(req) {
   return auth === `Bearer ${secret}`;
 }
 
-// YYYY-MM-DD for "today + n days" in UTC. Matches the date format stored on
-// shift docs (e.g. "2026-05-27").
-function dateStrOffset(daysFromNow) {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + daysFromNow);
-  const y = d.getUTCFullYear();
-  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+// Centre timezone. Shift `date`/`startTime` are stored as centre-local wall
+// clock (e.g. "2026-05-27" + "15:00"), so all date/time math must happen in
+// this zone — not the UTC that Vercel Lambdas run in. Overridable via env in
+// case a centre in another zone is added later.
+const CENTER_TZ = process.env.CENTER_TZ || 'America/Vancouver';
+
+// reminderTiming preference -> lead time in minutes before shift start.
+const LEAD_MINUTES = {
+  '2days':  2 * 24 * 60,
+  '1day':   1 * 24 * 60,
+  '3hours': 3 * 60,
+  '1hour':  1 * 60,
+  // 'none' / missing -> no entry -> no reminder
+};
+
+// Offset (ms) to ADD to a UTC instant to get the wall-clock reading in `tz`.
+// Uses Intl so DST is handled correctly for the specific instant.
+function tzOffsetMs(timeZone, date) {
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone, hourCycle: 'h23',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const p = {};
+  for (const part of dtf.formatToParts(date)) p[part.type] = part.value;
+  const asUTC = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+  return asUTC - (date.getTime() - date.getMilliseconds());
 }
 
-// Map a user's reminderTiming preference to the target date we should pull
-// shifts for on this cron run. "1hour"/"3hours" can't be honored precisely
-// from a daily cron, so they degrade gracefully to a same-day reminder.
-function targetDateForPref(pref) {
-  switch (pref) {
-    case '2days':  return dateStrOffset(2);
-    case '1day':   return dateStrOffset(1);
-    case '3hours':
-    case '1hour':  return dateStrOffset(0);
-    default:       return null; // 'none' or missing -> no reminder
-  }
+// Combine a centre-local date ("YYYY-MM-DD") + time ("HH:MM") into the true
+// UTC instant that wall clock represents. Refines once for DST boundaries.
+function zonedToUtc(dateStr, timeStr, timeZone) {
+  const [y, mo, d] = String(dateStr).split('-').map(Number);
+  const [h, mi] = String(timeStr || '00:00').split(':').map(Number);
+  const guess = new Date(Date.UTC(y, (mo || 1) - 1, d || 1, h || 0, mi || 0, 0));
+  const off1 = tzOffsetMs(timeZone, guess);
+  let result = new Date(guess.getTime() - off1);
+  const off2 = tzOffsetMs(timeZone, result);
+  if (off2 !== off1) result = new Date(guess.getTime() - off2);
+  return result;
+}
+
+// Centre-local calendar date ("YYYY-MM-DD") for now + offsetDays.
+function centerDateStr(offsetDays, timeZone) {
+  const d = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+  const p = {};
+  const dtf = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  });
+  for (const part of dtf.formatToParts(d)) p[part.type] = part.value;
+  return `${p.year}-${p.month}-${p.day}`;
+}
+
+// Which centre-local date to query for a given lead time, so we only pull
+// the shifts whose reminder could plausibly be due right now:
+//   1hour / 3hours -> shift is TODAY   (reminder window is same-day)
+//   1day           -> shift is TOMORROW (sendAt = start − 24h = today)
+//   2days          -> shift is in 2 days (sendAt = start − 48h = today)
+// This keeps the cheap one-exact-date-per-user query and needs no new index.
+function targetDateForLead(leadMin) {
+  if (leadMin == null) return null;
+  const days = leadMin >= 24 * 60 ? Math.round(leadMin / (24 * 60)) : 0;
+  return centerDateStr(days, CENTER_TZ);
 }
 
 // "15:00" -> "3:00PM" for human-friendly display.
@@ -132,12 +180,15 @@ export default async function handler(req, res) {
     const pref = d.data() || {};
     if (!pref.emailEnabled) return;
     if (!pref.email)        return;
-    const targetDate = targetDateForPref(pref.reminderTiming);
+    const leadMin = LEAD_MINUTES[pref.reminderTiming];
+    if (leadMin == null) return; // 'none' or missing -> no reminder
+    const targetDate = targetDateForLead(leadMin);
     if (!targetDate) return;
     lookups.push({
       uid:        d.id,
       email:      pref.email,
       name:       pref.userName || 'Team',
+      leadMin,
       targetDate,
     });
   });
@@ -146,9 +197,11 @@ export default async function handler(req, res) {
     return res.status(200).json({ scanned: 0, sent: 0, message: 'No users due reminders' });
   }
 
-  // For each (user, target date) pair, pull the matching shift(s) and
-  // collect them for sending. One small query per user — cheap, and lets us
-  // skip shifts that already have reminderSentAt stamped.
+  // For each (user, target date) pair, pull the matching shift(s) and decide
+  // whether each one is DUE right now: due when now >= (shiftStart − leadTime)
+  // and the shift hasn't started yet. One small query per user — cheap, and
+  // lets us skip shifts already stamped with reminderSentAt.
+  const now = Date.now();
   const toSend = [];
   for (const lookup of lookups) {
     const snap = await db.collection('shifts')
@@ -160,6 +213,17 @@ export default async function handler(req, res) {
       if (shift.reminderSentAt) continue; // already emailed for this shift
       // Skip drafts — instructor hasn't been told about this shift yet.
       if (shift.status === 'draft') continue;
+
+      // Time gate. If the shift has a start time, only send once we're
+      // inside the window [start − leadTime, start]. If startTime is
+      // missing (legacy/all-day), fall back to sending on the target date.
+      if (shift.startTime) {
+        const startMs = zonedToUtc(shift.date, shift.startTime, CENTER_TZ).getTime();
+        const sendAtMs = startMs - lookup.leadMin * 60 * 1000;
+        if (now < sendAtMs) continue; // not due yet
+        if (now > startMs)  continue; // shift already started — don't nag
+      }
+
       toSend.push({
         shiftRef:  docSnap.ref,
         email:     lookup.email,

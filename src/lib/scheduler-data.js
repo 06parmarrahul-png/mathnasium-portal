@@ -222,7 +222,7 @@ export function watchWalkIns(centerId, dateStr, cb) {
   return onSnapshot(ref, snap => cb(snap.exists() ? snap.data() : {}));
 }
 
-export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessment, addedByName }) {
+export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessment, duration, addedByName }) {
   if (!name?.trim()) throw new Error('Walk-in needs a name.');
   const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
   const snap = await getDoc(ref);
@@ -231,10 +231,15 @@ export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessm
   // Locally-unique ID — prefix with `wi_` so check-in / classify code can
   // tell walk-ins apart from iCal-sourced students if it ever needs to.
   const id = `wi_${dateStr}_${side}_${slot}_${Math.random().toString(36).slice(2, 8)}`;
+  // Duration in minutes — defaults to 60 for back-compat. HS's 1.5 hr
+  // column stores 90-min walk-ins so ratio math projects them across
+  // three slots (start + two overflow) instead of the standard two.
+  const dur = duration === 90 ? 90 : 60;
   const entry = {
     id,
     name: name.trim(),
     isAssessment: !!isAssessment,
+    duration: dur,
     addedAt: new Date().toISOString(),
     addedBy: addedByName || '',
   };

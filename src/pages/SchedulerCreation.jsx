@@ -639,18 +639,11 @@ function TodayTab({ centerId }) {
   );
 }
 
-// Given a half-hour slot key like "15:30", return the prior slot key
-// ("15:00"). Used to detect walk-ins from the previous slot whose
-// 60-min duration is still in session here. Defensive against bad
-// input — returns the original key if parsing fails.
-function prevSlotKey(slot) {
-  const parts = (slot || '').split(':').map(Number);
-  if (parts.length !== 2 || parts.some(Number.isNaN)) return slot;
-  let [h, m] = parts;
-  m -= 30;
-  if (m < 0) { m += 60; h -= 1; }
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-}
+// (Removed — was used to detect walk-ins spilling from the prior slot
+// under a hard-coded 60-min lookback. Replaced by the duration-aware
+// scan in SlotRow that iterates every walk-in on the side and keeps
+// the ones whose [start, start+duration) window overlaps the row's
+// slot, so 90-min walk-ins carry over the extra slot correctly.)
 
 function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
@@ -759,16 +752,20 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   }
   // Walk-ins stored separately — they're not in adjustedSlots' student
   // arrays for their start slot (they're added to onHour/halfHour at
-  // render time in SlotRow). Project each by its 60-min duration.
+  // render time in SlotRow). Project each by its stored duration (60 min
+  // by default, 90 min for 1.5 hr walk-ins added from the HS long-hour
+  // column). Fallback to 60 so pre-existing walk-in docs still project
+  // exactly as before.
   if (walkIns) {
     for (const [key, list] of Object.entries(walkIns)) {
       if (!key.startsWith(`${side}|`) || !Array.isArray(list)) continue;
       const slot = key.split('|')[1];
       const startMin = slotMins(slot);
       for (const w of list) {
+        const dur = w.duration || 60;
         for (const k of allSlotKeys) {
           const km = slotMins(k);
-          if (km >= startMin && km < startMin + 60) addToSlot(k, w.id);
+          if (km >= startMin && km < startMin + dur) addToSlot(k, w.id);
         }
       }
     }
@@ -907,46 +904,63 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const slotEnded = hasSlotEnded(date, row.slot, timezone || 'America/Vancouver');
   const rawOnHour = row.students[side].onHour;
   const rawHalfHour = row.students[side].halfHour;
-  // Walk-ins added manually for THIS slot/side — normalised to the same
-  // shape iCal-sourced students use so StudentRow doesn't care where
-  // they came from. They land in the on-hour column; staff adding a
-  // walk-in always picks the row's slot, so there's nothing to split.
-  const slotWalkIns = (walkIns?.[`${side}|${row.slot}`] || []).map(w => ({
-    id: w.id,
-    name: w.name,
-    isAssessment: !!w.isAssessment,
-    duration: 60,
-    isWalkIn: true,
-  }));
-  // Walk-ins from the PREVIOUS slot whose 60-min duration spills into
-  // this one. Their name was already displayed in their start slot
-  // (matches iCal 60-min behaviour — server adds the name once but
-  // increments counts across every slot the session occupies). Here
-  // they're invisible to render but counted for staffing + efficiency.
-  const prevKey = prevSlotKey(row.slot);
-  const overflowWalkIns = (walkIns?.[`${side}|${prevKey}`] || []).map(w => ({
-    id: w.id,
-    name: w.name,
-    isAssessment: !!w.isAssessment,
-    duration: 60,
-    isWalkIn: true,
-  }));
+
+  // Walk-ins that are ACTIVE in this slot (start-here + still-running
+  // from an earlier slot), grouped by whether they started here or
+  // spilled in. Old code hard-coded a 60-min lookback (prev-slot only);
+  // that misses 90-min walk-ins whose overlap spans an extra slot. This
+  // scan iterates every walk-in on THIS side, checks its stored
+  // duration, and keeps the ones whose [start, start+duration) window
+  // covers `row.slot`.
+  const slotMinsOf = (k) => {
+    const [h, m] = (k || '0:0').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  const thisMin = slotMinsOf(row.slot);
+  const activeSideWalkIns = [];
+  if (walkIns) {
+    for (const [key, list] of Object.entries(walkIns)) {
+      if (!key.startsWith(`${side}|`) || !Array.isArray(list)) continue;
+      const wStart = slotMinsOf(key.split('|')[1]);
+      for (const w of list) {
+        const dur = w.duration || 60;
+        if (wStart <= thisMin && wStart + dur > thisMin) {
+          activeSideWalkIns.push({
+            id: w.id,
+            name: w.name,
+            isAssessment: !!w.isAssessment,
+            duration: dur,
+            isWalkIn: true,
+            _wStart: wStart,
+          });
+        }
+      }
+    }
+  }
+  const slotWalkIns     = activeSideWalkIns.filter(w => w._wStart === thisMin);
+  const overflowWalkIns = activeSideWalkIns.filter(w => w._wStart <  thisMin);
+
   // Which sub-column owns this row visually? Rows whose slot key ends
   // in :30 (e.g. "15:30") are inherently half-hour rows — the on-hour
   // column is structurally empty for them. Route walk-ins + the
   // +student button to the matching side so they appear where staff
   // expects, not in the empty cell next to it.
   const slotIsHalfHour = (row.slot || '').endsWith(':30');
+  // Split walk-ins by duration. 60-min ones live in the on-hour /
+  // half-hour column matching the row's slot type. 90-min ones live in
+  // the HS 1.5 hr column alongside iCal-sourced 1.5 hr sessions.
+  const shortSlotWalkIns = slotWalkIns.filter(w => w.duration === 60);
+  const longSlotWalkIns  = slotWalkIns.filter(w => w.duration !== 60);
   // HS only: 1-hour students stay in their start-time column; everyone
   // else (1.5 hr, etc.) is pulled into the dedicated long-session column.
   const onHour    = side === 'HS'
-    ? [...rawOnHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? [] : slotWalkIns)]
-    : [...rawOnHour, ...(slotIsHalfHour ? [] : slotWalkIns)];
+    ? [...rawOnHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? [] : shortSlotWalkIns)]
+    : [...rawOnHour, ...(slotIsHalfHour ? [] : shortSlotWalkIns)];
   const halfHour  = side === 'HS'
-    ? [...rawHalfHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? slotWalkIns : [])]
-    : [...rawHalfHour, ...(slotIsHalfHour ? slotWalkIns : [])];
+    ? [...rawHalfHour.filter(s => s.duration === 60), ...(slotIsHalfHour ? shortSlotWalkIns : [])]
+    : [...rawHalfHour, ...(slotIsHalfHour ? shortSlotWalkIns : [])];
   const longHour  = side === 'HS'
-    ? [...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60)
+    ? [...[...rawOnHour, ...rawHalfHour].filter(s => s.duration !== 60), ...longSlotWalkIns]
     : [];
   // Two demand numbers per slot:
   //   scheduled = total students booked (server iCal + spanning) + walk-ins.
@@ -964,7 +978,11 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   const scheduled = row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
   const count = presence ? Math.max(0, scheduled - presence.absent) : scheduled;
   const showFraction = presence && presence.absent > 0;
-  const [addingWalkIn, setAddingWalkIn] = useState(false);
+  // addingWalkIn drives which "+ student" form is open. Values:
+  //   null    → no form open
+  //   'short' → the row's normal on/half hour column, adds a 60-min walk-in
+  //   'long'  → the HS 1.5 hr column, adds a 90-min walk-in
+  const [addingWalkIn, setAddingWalkIn] = useState(null);
   const need = Math.max(1, Math.ceil(count / ratio));
   const instructors = assignments[`${side}|${row.slot}`] || [];
 
@@ -1064,13 +1082,13 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       await setInstructorAssignment(centerId, date, side, row.slot, [...clipboard.names]);
     } catch (e) { toast.error(e.message); }
   };
-  const handleAddWalkIn = async ({ name, isAssessment }) => {
+  const handleAddWalkIn = async ({ name, isAssessment }, duration = 60) => {
     try {
       await addWalkIn(centerId, date, side, row.slot, {
-        name, isAssessment,
+        name, isAssessment, duration,
         addedByName: profile?.displayName || profile?.firstName || '',
       });
-      setAddingWalkIn(false);
+      setAddingWalkIn(null);
     } catch (e) { toast.error(e.message); }
   };
   const handleRemoveWalkIn = async (id) => {
@@ -1096,10 +1114,10 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           onMoveStudent={onMoveStudent}
           currentSlot={row.slot} />
         {!slotIsHalfHour && (
-          addingWalkIn ? (
-            <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
+          addingWalkIn === 'short' ? (
+            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
           ) : (
-            <button onClick={() => setAddingWalkIn(true)}
+            <button onClick={() => setAddingWalkIn('short')}
               className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
               <Plus size={10} /> student
             </button>
@@ -1121,10 +1139,10 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           onMoveStudent={onMoveStudent}
           currentSlot={row.slot} />
         {slotIsHalfHour && (
-          addingWalkIn ? (
-            <WalkInForm onSave={handleAddWalkIn} onCancel={() => setAddingWalkIn(false)} />
+          addingWalkIn === 'short' ? (
+            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
           ) : (
-            <button onClick={() => setAddingWalkIn(true)}
+            <button onClick={() => setAddingWalkIn('short')}
               className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
               <Plus size={10} /> student
             </button>
@@ -1133,13 +1151,28 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
       </td>
       {/* HS only: dedicated 1.5-hour student column to the right of the
           half-hour column. Holds anyone in this row's slot whose session
-          is longer than 60 min, regardless of start time. */}
+          is longer than 60 min, regardless of start time. Its "+ student"
+          button adds a 90-min walk-in that starts in this row's slot and
+          occupies the next two slots too — counts propagate automatically
+          because slotStudentsHere honours per-walk-in duration. */}
       {side === 'HS' && (
         <td className="px-1 py-1 align-top border-l-2 border-gray-600 border-b border-gray-500 break-words">
           <StudentList students={longHour} checkIns={checkIns}
             centerId={centerId} date={date} side={side}
             onStatusClick={handleStatus} onStatusMenu={handleStatusMenu}
-            slotEnded={slotEnded} />
+            onRemoveWalkIn={handleRemoveWalkIn}
+            slotEnded={slotEnded}
+            slotPickerOptions={slotPickerOptions}
+            onMoveStudent={onMoveStudent}
+            currentSlot={row.slot} />
+          {addingWalkIn === 'long' ? (
+            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 90)} onCancel={() => setAddingWalkIn(null)} />
+          ) : (
+            <button onClick={() => setAddingWalkIn('long')}
+              className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
+              <Plus size={10} /> student <span className="text-gray-300">(1.5 hr)</span>
+            </button>
+          )}
         </td>
       )}
       <td className={`px-1 py-1 align-top text-center border-l border-gray-500 border-b border-gray-500 ${understaffed ? 'text-red-600' : 'text-gray-700'}`}>
