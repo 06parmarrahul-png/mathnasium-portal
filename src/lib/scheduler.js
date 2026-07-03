@@ -4,8 +4,13 @@
  * Rules:
  * - Purely availability-driven. No availability = no shift (their responsibility).
  * - If no availability this month, look back month by month until found.
- * - Priority 1 > 2 > 3. Lower number = higher priority = more likely to get shift.
- * - Luke, Ainsley, Kaitlyn: guaranteed shift if available (treated as priority 0).
+ * - Priority 1 > 2 > 3 (lower number = higher priority). Priority is BLENDED
+ *   with fairness, not an absolute gate: a lower-priority instructor who's
+ *   been under-scheduled will out-rank a higher-priority one who already has
+ *   plenty of shifts. See schedulingScore() / PRIORITY_WEIGHT below. This
+ *   keeps priority-3 staff from being benched for a whole month.
+ * - Priority 0 (e.g. Luke, Ainsley, Kaitlyn): near-guaranteed — the lowest
+ *   base score, so they schedule first while still counting toward fairness.
  * - Sub-roles: Elementary, Highschool, Online.
  *   - Online instructors are NOT counted in the in-centre min/max ratio.
  *   - Prefer Highschool-capable instructors (can float) but respect priority.
@@ -419,6 +424,11 @@ export function effectiveTrack(instructor, preferredAssignment) {
  * @param {Object} params.centerConfig         - per-center settings (instructionalHours, fixedStaff,
  *                                                guaranteedNames). Falls back to legacy hardcoded values
  *                                                when missing or empty.
+ * @param {Array}  [params.priorShifts]        - Already-saved shift docs ({ userId, date }). Used to
+ *                                                seed fairness so day-by-day / week-by-week generation
+ *                                                accounts for shifts assigned earlier in the same month.
+ *                                                Shifts inside the current window (being regenerated)
+ *                                                and shifts from earlier months are ignored.
  */
 export function generateSchedule({
   instructors,
@@ -430,6 +440,7 @@ export function generateSchedule({
   endDate,
   config = {},
   centerConfig = {},
+  priorShifts = [],
 }) {
   const {
     minPerDay = 8,
@@ -517,6 +528,51 @@ export function generateSchedule({
     weeklyAssignments[inst.uid] = {};
   }
 
+  // ── Blended priority + fairness score ──────────────────────────────────
+  // LOWER score = scheduled first. Priority is a strong but NON-absolute
+  // factor: each level is worth PRIORITY_WEIGHT shifts of "head start". A
+  // higher-priority instructor leads early, but an underserved lower-priority
+  // instructor overtakes them once the gap in shifts-so-far grows past the
+  // head start. This is what stops priority-3 staff from being benched all
+  // month (the old sort gated strictly by priority, so tier 3 only ever got
+  // leftover slots — often zero) while still letting priority 1/2 average
+  // more shifts overall.
+  //
+  // TUNING: raise PRIORITY_WEIGHT to make priority dominate more (closer to
+  // the old strict tiers); lower it to even everyone out faster. At the
+  // default 3, a priority-1 instructor gets ~3 shifts of lead over a
+  // priority-2, ~6 over a priority-3, before fairness pulls the others in.
+  // Fairness accrues across every day in this run, so generating a whole
+  // month at once (rather than week-by-week) gives the fairest rotation.
+  const PRIORITY_WEIGHT = 3;
+  const schedulingScore = (inst) =>
+    (inst.priority ?? 2) * PRIORITY_WEIGHT + (totalAssignments[inst.uid] || 0);
+
+  // ── Seed fairness from prior dates ─────────────────────────────────────
+  // Makes day-by-day / week-by-week generation fair ACROSS separate runs.
+  // Count shifts already saved earlier THIS MONTH (before the current
+  // window) as shifts-worked, so someone scheduled a lot earlier is
+  // de-prioritised now and under-scheduled staff catch up. This also lets
+  // the per-week cap see prior days of the same week. Resets each month;
+  // skips shifts inside the current window (they get regenerated) and any
+  // user not part of this run.
+  if (Array.isArray(priorShifts) && priorShifts.length) {
+    const windowDates   = new Set(workingDays.map(d => d.dateStr));
+    const trackedUids   = new Set(formInstructors.map(i => i.uid));
+    const firstDayStr   = workingDays.length ? workingDays[0].dateStr : null;
+    const lookbackStart = firstDayStr ? `${firstDayStr.slice(0, 8)}01` : null; // 1st of window's month
+    for (const s of priorShifts) {
+      if (!s || !s.userId || !s.date) continue;
+      if (!trackedUids.has(s.userId)) continue;
+      if (windowDates.has(s.date)) continue;                 // in current window → regenerated
+      if (lookbackStart && s.date < lookbackStart) continue; // earlier month → fresh start
+      totalAssignments[s.userId] = (totalAssignments[s.userId] || 0) + 1;
+      const wk = getSunSatWeekKey(s.date);
+      if (!weeklyAssignments[s.userId]) weeklyAssignments[s.userId] = {};
+      weeklyAssignments[s.userId][wk] = (weeklyAssignments[s.userId][wk] || 0) + 1;
+    }
+  }
+
   const scheduleDays = [];
   const warnings = [];
   const openShiftNeeded = []; // Days that need open shift postings
@@ -597,23 +653,21 @@ export function generateSchedule({
     const hosts      = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && isHostRole(a.inst));
     const inCentre   = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && !isHostRole(a.inst));
 
-    // ── 4. Sort in-centre instructors by scheduling priority ─────────────────
-    // Order: guaranteed (Luke/Ainsley/Kaitlyn) → priority 1→2→3 → sub-role (HS first) → fairness (fewest shifts)
+    // ── 4. Sort in-centre instructors by blended priority + fairness ─────────
+    // Blended score (priority + shifts-so-far) is the primary key, so a
+    // lower-priority instructor who's been under-scheduled rises above a
+    // higher-priority one who already has plenty. Ties break on sub-role
+    // (Highschool-capable first), then raw shift count for stability.
     inCentre.sort((a, b) => {
-      // Priority first (1=high, 2=medium, 3=low — set per-user in Manage
-      // Staff). The previous "guaranteed names always pinned first"
-      // pass is gone; if you want someone to schedule before everyone
-      // else, set their priority to 1.
-      const pa = a.inst.priority ?? 2;
-      const pb = b.inst.priority ?? 2;
-      if (pa !== pb) return pa - pb;
+      const score = schedulingScore(a.inst) - schedulingScore(b.inst);
+      if (score !== 0) return score;
 
-      // Then prefer Highschool-capable (sub-role score 0 beats 1)
+      // Tie-break: prefer Highschool-capable (sub-role score 0 beats 1)
       const sa = getSubRoleScore(a.inst);
       const sb = getSubRoleScore(b.inst);
       if (sa !== sb) return sa - sb;
 
-      // Finally fairness — fewest total assignments first
+      // Final stable tie-break — fewest total assignments first
       return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
     });
 
@@ -686,11 +740,10 @@ export function generateSchedule({
     // fill the gap and count toward the staffing ratio.
     let promotedFromHost = 0;
     if (hosts.length > 0) {
-      // Sort hosts by priority then fairness, same as online-only
+      // Sort hosts by the same blended priority + fairness score.
       hosts.sort((a, b) => {
-        const pa = a.inst.priority ?? 2;
-        const pb = b.inst.priority ?? 2;
-        if (pa !== pb) return pa - pb;
+        const score = schedulingScore(a.inst) - schedulingScore(b.inst);
+        if (score !== 0) return score;
         return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
       });
 
@@ -738,11 +791,10 @@ export function generateSchedule({
     }
 
     // ── 6b. Assign online-only instructors (don't count toward ratio) ────────
-    // Sort by priority + fairness
+    // Sort by the same blended priority + fairness score.
     onlineOnly.sort((a, b) => {
-      const pa = a.inst.priority ?? 2;
-      const pb = b.inst.priority ?? 2;
-      if (pa !== pb) return pa - pb;
+      const score = schedulingScore(a.inst) - schedulingScore(b.inst);
+      if (score !== 0) return score;
       return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
     });
 

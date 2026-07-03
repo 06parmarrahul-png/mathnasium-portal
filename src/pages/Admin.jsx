@@ -2115,6 +2115,7 @@ export default function Admin() {
         ...rangeArgs,
         config: schedConfig,
         centerConfig,   // per-center hours, fixed staff, guaranteed names
+        priorShifts: shifts,  // seed fairness from already-saved shifts this month
       });
       setDraftSchedule(result);
     } catch (err) {
