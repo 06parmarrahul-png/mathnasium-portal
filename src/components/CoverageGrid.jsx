@@ -48,6 +48,20 @@ function generateSlots(dayOfWeek) {
   return slots;
 }
 
+// Build half-hour slots spanning an explicit [startMins, endMins] window
+// (minutes since midnight). Lets the grid hug the actual first/last shift of
+// the day instead of a fixed opening time.
+function generateSlotsFromRange(startMins, endMins) {
+  const slots = [];
+  if (!(endMins > startMins)) return slots;
+  const fmt = (mins) =>
+    `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+  for (let m = startMins; m < endMins; m += 30) {
+    slots.push({ start: fmt(m), end: fmt(m + 30) });
+  }
+  return slots;
+}
+
 function fmtSlotLabel(timeStr) {
   const [h, m] = timeStr.split(':').map(Number);
   const ampm = h >= 12 ? 'p' : 'a';
@@ -99,8 +113,6 @@ const rolePriority = (role, subRole) => {
 };
 
 export default function CoverageGrid({ day, centerConfig }) {
-  const slots = useMemo(() => generateSlots(day.dayOfWeek), [day.dayOfWeek]);
-
   // Normalise input to a list of per-SHIFT entries. Each entry is one
   // shift on the day, so one person with two shifts (e.g. LEAD 11–3
   // AND HOST 3–7) gets two entries with distinct roles + times instead
@@ -150,6 +162,20 @@ export default function CoverageGrid({ day, centerConfig }) {
     for (const e of sortedEntries) m[e.key] = parseShift(e.shiftTime);
     return m;
   }, [sortedEntries]);
+
+  // Axis range — span from the FIRST shift to the LAST shift today, not a
+  // fixed 10 AM opening. Early/summer shifts (e.g. 8:30 AM) now show instead
+  // of being clipped off the left edge. Snaps to the enclosing half-hour and
+  // falls back to the day's configured hours only when nobody is scheduled.
+  const slots = useMemo(() => {
+    const bounds = Object.values(shiftByKey).filter(
+      b => b && Number.isFinite(b.startMins) && Number.isFinite(b.endMins) && b.endMins > b.startMins
+    );
+    if (bounds.length === 0) return generateSlots(day.dayOfWeek);
+    const startMins = Math.floor(Math.min(...bounds.map(b => b.startMins)) / 30) * 30;
+    const endMins   = Math.ceil(Math.max(...bounds.map(b => b.endMins)) / 30) * 30;
+    return generateSlotsFromRange(startMins, endMins);
+  }, [day.dayOfWeek, shiftByKey]);
 
   // Per-slot counts (teaching + total). Teaching counts every teaching
   // SHIFT in the slot (so Bri's LEAD 11–3 counts in 11–3 and her HOST
