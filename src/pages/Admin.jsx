@@ -2629,6 +2629,7 @@ export default function Admin() {
         const user = usersForCentre.find(u => u.displayName === s.userName || u.uid === s.userId);
         byPerson[key] = {
           name: s.userName || key,
+          userId: user?.uid || s.userId || null,
           role: s.role || user?.instructorType || 'Instructor',
           shifts: [],
           totalHours: 0,
@@ -2693,11 +2694,24 @@ export default function Admin() {
     // shifts in the pay period itself won't appear here, since this loop
     // only walks byPerson — which is built from shifts inside the period.
     // Rare (typically a vacationer); admin can add a manual entry.
-    const allShiftsByName = {};
+    // Group EVERY shift by a STABLE person identity for the stat-pay window.
+    // Prefer userId; else map the userName to a roster member's uid; else the
+    // raw name. This keeps the prior-30-day count correct when a timesheet
+    // import (e.g. Radius) tags the same person with a slightly different
+    // name than the scheduler used — previously that mismatch zeroed out
+    // their stat pay because aggregation was by exact userName.
+    const nameToUid = {};
+    for (const u of usersForCentre) {
+      if (u?.displayName && u?.uid) nameToUid[u.displayName] = u.uid;
+    }
+    const canonId = (s) => s.userId || nameToUid[s.userName] || s.userName;
+    const shiftsByPerson = {};
     for (const s of shifts) {
-      if (!s.userName || !s.date) continue;
-      if (!allShiftsByName[s.userName]) allShiftsByName[s.userName] = [];
-      allShiftsByName[s.userName].push(s);
+      if (!s.date) continue;
+      const id = canonId(s);
+      if (!id) continue;
+      if (!shiftsByPerson[id]) shiftsByPerson[id] = [];
+      shiftsByPerson[id].push(s);
     }
     const statHolidays = (Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [])
       .filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
@@ -2708,7 +2722,8 @@ export default function Admin() {
     };
     for (const key of Object.keys(byPerson)) {
       const person = byPerson[key];
-      const personShifts = allShiftsByName[person.name] || [];
+      const pid = person.userId || nameToUid[person.name] || person.name;
+      const personShifts = shiftsByPerson[pid] || [];
       person.statHours = 0;
       person.statDays = 0;
       person.statEntries = []; // [{ date, name, hours, basisShifts }]
@@ -2818,17 +2833,29 @@ export default function Admin() {
       d.setDate(d.getDate() - n);
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     };
-    const byName = {};
+    // Aggregate by a STABLE identity (userId, else roster-name→uid, else raw
+    // name) so a timesheet import that renames a person slightly doesn't
+    // split their shifts and hide their stat-pay qualification. Mirrors the
+    // payroll calc above.
+    const nameToUid = {};
+    const uidToName = {};
+    for (const u of usersForCentre) {
+      if (u?.displayName && u?.uid) { nameToUid[u.displayName] = u.uid; uidToName[u.uid] = u.displayName; }
+    }
+    const canonId = (s) => s.userId || nameToUid[s.userName] || s.userName;
+    const byPerson = {};
     for (const s of shifts) {
-      if (!s.userName || !s.date) continue;
-      if (!byName[s.userName]) byName[s.userName] = [];
-      byName[s.userName].push(s);
+      if (!s.date) continue;
+      const id = canonId(s);
+      if (!id) continue;
+      if (!byPerson[id]) byPerson[id] = { name: uidToName[id] || s.userName || id, shifts: [] };
+      byPerson[id].shifts.push(s);
     }
     const detail = inPeriod.map(h => {
       const windowStart = minusDays(h.date, 30);
-      const perPerson = Object.entries(byName).map(([name, ss]) => {
-        const relevant = ss.filter(s => s.date >= windowStart && s.date < h.date);
-        return { name, count: relevant.length, qualifies: relevant.length >= 15 };
+      const perPerson = Object.values(byPerson).map(p => {
+        const relevant = p.shifts.filter(s => s.date >= windowStart && s.date < h.date);
+        return { name: p.name, count: relevant.length, qualifies: relevant.length >= 15 };
       }).sort((a, b) => b.count - a.count);
       return { holiday: h, windowStart, perPerson };
     });
@@ -2837,7 +2864,7 @@ export default function Admin() {
       inPeriod,
       detail,
     };
-  }, [shifts, centerConfig?.holidays, payStart, payEnd]);
+  }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd]);
 
   // Update a user's hire date (used by the Sick days tab so the owner
   // can correct probation dates without going to Manage Staff).
@@ -4840,46 +4867,46 @@ export default function Admin() {
               {statDiagnostic.detail.map(d => {
                 const qualifiers = d.perPerson.filter(p => p.qualifies);
                 return (
-                  <div key={d.holiday.date} className="mt-2 rounded-lg bg-white border border-purple-100 p-3">
-                    <div className="text-sm font-semibold text-purple-900">
-                      {d.holiday.name || 'Holiday'} · {d.holiday.date}
-                      <span className="ml-2 text-xs font-normal text-gray-500">
-                        Pre-30-day window: {d.windowStart} → {d.holiday.date}
+                  <div key={d.holiday.date} className="mt-3 rounded-lg bg-white border border-purple-100 p-3">
+                    <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
+                      <div className="text-sm font-semibold text-purple-900">
+                        {d.holiday.name || 'Holiday'} · {d.holiday.date}
+                        <span className="ml-2 text-xs font-normal text-gray-500">
+                          window {d.windowStart} → {d.holiday.date}
+                        </span>
+                      </div>
+                      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${qualifiers.length ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                        {qualifiers.length} of {d.perPerson.length} qualify
                       </span>
                     </div>
-                    {qualifiers.length === 0 ? (
-                      <p className="mt-2 text-xs text-red-700">
-                        Nobody qualifies. <b>No person has 15+ shifts in the window above.</b>
-                        Most likely cause: April shifts aren't loaded yet (or weren't tagged with the right userName so they don't aggregate).
-                      </p>
+
+                    {d.perPerson.length === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No shifts found in this window.</p>
                     ) : (
-                      <p className="mt-2 text-xs text-emerald-700">
-                        <b>{qualifiers.length} qualifier{qualifiers.length === 1 ? '' : 's'}.</b> They should be getting stat pay — if not, hover the purple Stat badge on their row to see the breakdown.
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                        {d.perPerson.map(p => (
+                          <div key={p.name}
+                            className={`rounded-lg border px-2.5 py-2 ${p.qualifies ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
+                            <div className="flex items-center justify-between gap-1">
+                              <span className={`text-xs font-medium truncate ${p.qualifies ? 'text-emerald-900' : 'text-gray-700'}`} title={p.name}>{p.name}</span>
+                              {p.qualifies
+                                ? <Check size={13} className="shrink-0 text-emerald-600" />
+                                : <span className="shrink-0 text-[10px] text-gray-400">—</span>}
+                            </div>
+                            <div className="mt-1 flex items-baseline gap-1">
+                              <span className={`text-lg font-bold leading-none ${p.qualifies ? 'text-emerald-700' : 'text-gray-500'}`}>{p.count}</span>
+                              <span className="text-[10px] text-gray-400">/ 15 shifts</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {qualifiers.length === 0 && d.perPerson.length > 0 && (
+                      <p className="mt-2 text-xs text-red-700">
+                        Nobody hit 15+ shifts in this window — most likely the prior month's shifts aren't loaded yet.
                       </p>
                     )}
-                    <details className="mt-2">
-                      <summary className="text-xs text-purple-700 cursor-pointer">
-                        Show per-person shift counts ({d.perPerson.length} people)
-                      </summary>
-                      <table className="w-full text-xs mt-2">
-                        <thead>
-                          <tr className="text-gray-500">
-                            <th className="text-left px-2 py-1">Name</th>
-                            <th className="text-right px-2 py-1">Shifts in window</th>
-                            <th className="text-center px-2 py-1">15+ ?</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {d.perPerson.map(p => (
-                            <tr key={p.name} className={p.qualifies ? 'text-emerald-700' : 'text-gray-500'}>
-                              <td className="px-2 py-0.5">{p.name}</td>
-                              <td className="px-2 py-0.5 text-right font-mono">{p.count}</td>
-                              <td className="px-2 py-0.5 text-center">{p.qualifies ? '✓' : '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </details>
                   </div>
                 );
               })}
