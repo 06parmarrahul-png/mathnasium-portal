@@ -2957,12 +2957,20 @@ export default function Admin() {
       if (u?.displayName && u?.uid) { nameToUid[u.displayName] = u.uid; uidToName[u.uid] = u.displayName; }
     }
     const canonId = (s) => s.userId || nameToUid[s.userName] || s.userName;
+    // Exclude the same people the hourly payroll excludes — salaried staff
+    // (e.g. the Centre Director + Director of Education), volunteers, and
+    // anyone hidden from ops. Stat pay is an hourly-staff entitlement, so
+    // these roles shouldn't appear in the diagnostic or the Stat Pay tab.
+    const isExcluded = (name) =>
+      salaryStaff.has(name) || volunteerNames.has(name) || hiddenFromOps.has(name);
     const byPerson = {};
     for (const s of shifts) {
       if (!s.date) continue;
       const id = canonId(s);
       if (!id) continue;
-      if (!byPerson[id]) byPerson[id] = { name: uidToName[id] || s.userName || id, shifts: [] };
+      const dispName = uidToName[id] || s.userName || id;
+      if (isExcluded(dispName) || isExcluded(s.userName)) continue;
+      if (!byPerson[id]) byPerson[id] = { name: dispName, shifts: [] };
       byPerson[id].shifts.push(s);
     }
     const detail = inPeriod.map(h => {
@@ -2985,7 +2993,7 @@ export default function Admin() {
       inPeriod,
       detail,
     };
-  }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd]);
+  }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps]);
 
   // Roster shape for the Stat Pay sub-tab (mirrors sickDaysSummary). One row
   // per person, merged across every stat holiday in the period, with role
