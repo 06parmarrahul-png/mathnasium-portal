@@ -1499,39 +1499,42 @@ function StatPayTab({ holidays, rows }) {
             className="w-full rounded-md border border-gray-300 pl-8 pr-3 py-1.5 text-sm" />
         </div>
       </div>
-      {/* Total Stat Pay band — running totals for the current filter, plus
-          role / shift-count filters. Search stays in the header above. */}
-      <div className="px-5 py-3 border-b bg-gray-50 flex flex-wrap items-center gap-x-6 gap-y-3">
-        <div className="flex items-center gap-3">
-          <h4 className="text-base font-bold text-gray-900">Total Stat Pay</h4>
-          <span className="rounded-lg bg-purple-100 text-purple-800 px-3 py-1.5 text-base font-bold">{shownTotal.toFixed(2)}h total</span>
-          <span className="rounded-lg bg-emerald-100 text-emerald-800 px-3 py-1.5 text-base font-bold">{shownEligible} eligible</span>
-        </div>
-        <div className="flex items-center gap-3 ml-auto text-xs text-gray-600">
-          <label className="flex items-center gap-1">
-            Role
-            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
-              className="rounded border border-gray-300 px-2 py-1 text-xs">
-              <option value="all">All roles</option>
-              {roles.map(role => <option key={role} value={role}>{role}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1">
-            Shifts
-            <select value={minShifts} onChange={e => setMinShifts(Number(e.target.value))}
-              className="rounded border border-gray-300 px-2 py-1 text-xs">
-              <option value={0}>Any</option>
-              <option value={15}>15+ (eligible)</option>
-              <option value={10}>10+</option>
-              <option value={5}>5+</option>
-              <option value={1}>1+</option>
-            </select>
-          </label>
-        </div>
-      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+            {/* Totals + filters, each cell aligned directly over its column:
+                total hrs over "Stat hrs eligible", eligible count over
+                "Status", the role filter over "Role", the shift filter over
+                "Shifts in window". */}
+            <tr className="border-b border-gray-200">
+              <th className="px-4 py-2 text-left align-middle normal-case">
+                <span className="text-sm font-bold text-gray-900">Total Stat Pay</span>
+              </th>
+              <th className="px-4 py-2 text-left align-middle normal-case font-normal">
+                <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700">
+                  <option value="all">All roles</option>
+                  {roles.map(role => <option key={role} value={role}>{role}</option>)}
+                </select>
+              </th>
+              <th className="px-4 py-2 text-center align-middle normal-case font-normal">
+                <select value={minShifts} onChange={e => setMinShifts(Number(e.target.value))}
+                  className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-700">
+                  <option value={0}>Any</option>
+                  <option value={15}>15+ (eligible)</option>
+                  <option value={10}>10+</option>
+                  <option value={5}>5+</option>
+                  <option value={1}>1+</option>
+                </select>
+              </th>
+              <th className="px-4 py-2 text-center align-middle normal-case">
+                <span className="rounded-full bg-purple-100 text-purple-800 px-2 py-1 text-xs font-semibold">{shownTotal.toFixed(2)}h total</span>
+              </th>
+              <th className="px-4 py-2 text-left align-middle normal-case">
+                <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 text-xs font-semibold">{shownEligible} eligible</span>
+              </th>
+              {multi && <th className="px-4 py-2" />}
+            </tr>
             <tr>
               <th className="px-4 py-2 text-left">Staff</th>
               <th className="px-4 py-2 text-left">Role</th>
