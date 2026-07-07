@@ -3008,7 +3008,7 @@ export default function Admin() {
 
     // ── Sheet 2: Attendance (QuickBooks-shaped) ──
     const attendanceRows = [
-      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Stat Pay Hrs', 'Special Cases'],
+      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Stat Pay Hrs', 'Total Payable Hrs', 'Special Cases'],
     ];
     let totalHoursSum = 0;
     let employeesCount = 0;
@@ -3029,12 +3029,16 @@ export default function Admin() {
       const totalH = Math.round((person.payHours ?? person.totalHours ?? 0) * 100) / 100;
       const sickH = Math.round((person.sickHours || 0) * 100) / 100;
       const statH = Math.round((person.statHours || 0) * 100) / 100;
+      // Total payable = worked + stat (both paid at regular rate). Sick stays
+      // in its own column since it's filed under the separate sick budget.
+      const payableH = Math.round((totalH + statH) * 100) / 100;
       attendanceRows.push([
         `${person.name} (${abbrev})`,
         totalH || '',
         isVolunteer ? '' : 1,
         sickH || '',
         statH || '',
+        payableH || '',
         '', // Special Cases — left blank for manual fill
       ]);
       totalHoursSum += totalH;
@@ -3049,6 +3053,7 @@ export default function Admin() {
       employeesCount,
       Math.round(sickSum * 100) / 100 || '',
       Math.round(statSum * 100) / 100 || '',
+      Math.round((totalHoursSum + statSum) * 100) / 100 || '',
       '',
     ]);
 
@@ -3058,7 +3063,7 @@ export default function Admin() {
     const wsDetail     = XLSX.utils.aoa_to_sheet(detailRows);
     // Reasonable default column widths so the file opens looking right.
     wsAttendance['!cols'] = [
-      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 18 },
+      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 18 },
     ];
     wsDetail['!cols'] = [
       { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
