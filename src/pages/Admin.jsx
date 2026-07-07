@@ -2855,7 +2855,14 @@ export default function Admin() {
       const windowStart = minusDays(h.date, 30);
       const perPerson = Object.values(byPerson).map(p => {
         const relevant = p.shifts.filter(s => s.date >= windowStart && s.date < h.date);
-        return { name: p.name, count: relevant.length, qualifies: relevant.length >= 15 };
+        const count = relevant.length;
+        const qualifies = count >= 15;
+        // Stat-pay hours = BC ESA "average day": average hours per shift over
+        // the qualifying window (only paid when they hit 15+).
+        const statHours = qualifies
+          ? Math.round((relevant.reduce((sum, s) => sum + shiftHours(s), 0) / count) * 100) / 100
+          : 0;
+        return { name: p.name, count, qualifies, statHours };
       }).sort((a, b) => b.count - a.count);
       return { holiday: h, windowStart, perPerson };
     });
@@ -4897,6 +4904,12 @@ export default function Admin() {
                               <span className={`text-lg font-bold leading-none ${p.qualifies ? 'text-emerald-700' : 'text-gray-500'}`}>{p.count}</span>
                               <span className="text-[10px] text-gray-400">/ 15 shifts</span>
                             </div>
+                            {p.qualifies && (
+                              <div className="mt-1 flex items-baseline gap-1 border-t border-emerald-200 pt-1">
+                                <span className="text-xs font-semibold text-emerald-700">{p.statHours}h</span>
+                                <span className="text-[10px] text-gray-400">stat pay eligible</span>
+                              </div>
+                            )}
                           </div>
                         ))}
                       </div>
@@ -5167,24 +5180,29 @@ export default function Admin() {
                             <div className="text-xs text-gray-400">
                               {person.shifts.length - (person.sickCount || 0)} worked shift{person.shifts.length - (person.sickCount || 0) !== 1 ? 's' : ''}
                             </div>
-                            {(person.sickCount || 0) > 0 && (
-                              <div className="mt-1 text-xs font-semibold text-amber-700">
-                                <span className="rounded bg-amber-100 px-1.5 py-0.5">
-                                  Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
-                                </span>
-                              </div>
-                            )}
-                            {(person.statDays || 0) > 0 && (
-                              <div
-                                className="mt-1 text-xs font-semibold text-purple-700"
-                                title={(person.statEntries || []).map(e => `${e.name} (${e.date}): ${e.hours.toFixed(2)}h · ${e.basisShifts} shifts in prior 30d`).join('\n')}
-                              >
-                                <span className="rounded bg-purple-100 px-1.5 py-0.5">
-                                  Stat: {person.statHours.toFixed(2)}h · {person.statDays} day{person.statDays !== 1 ? 's' : ''}
-                                </span>
-                              </div>
-                            )}
                           </>
+                        )}
+                        {/* Sick + Stat badges render in BOTH views (normal AND
+                            after a Radius import). They used to live only in the
+                            non-Radius branch, so importing timesheets made the
+                            purple Stat badge vanish even though the pay was still
+                            owed. */}
+                        {(person.sickCount || 0) > 0 && (
+                          <div className="mt-1 text-xs font-semibold text-amber-700">
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5">
+                              Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        )}
+                        {(person.statDays || 0) > 0 && (
+                          <div
+                            className="mt-1 text-xs font-semibold text-purple-700"
+                            title={(person.statEntries || []).map(e => `${e.name} (${e.date}): ${e.hours.toFixed(2)}h · ${e.basisShifts} shifts in prior 30d`).join('\n')}
+                          >
+                            <span className="rounded bg-purple-100 px-1.5 py-0.5">
+                              Stat: {person.statHours.toFixed(2)}h · {person.statDays} day{person.statDays !== 1 ? 's' : ''}
+                            </span>
+                          </div>
                         )}
                       </div>
                     </div>
