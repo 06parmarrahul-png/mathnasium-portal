@@ -1510,8 +1510,7 @@ function StatPayTab({ holidays, rows }) {
           </thead>
           <tbody>
             {filtered.map(r => {
-              const best = r.perHoliday.reduce((mx, h) => (h.count > (mx?.count ?? -1) ? h : mx), null);
-              const shifts = best ? best.count : 0;
+              const shifts = r.shifts ?? 0;
               return (
                 <tr key={r.name} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
@@ -3020,12 +3019,19 @@ export default function Admin() {
       }
     }
     const rows = [...byName.values()]
-      .map(r => ({ ...r, totalStat: Math.round(r.totalStat * 100) / 100 }))
-      .sort((a, b) =>
-        (Number(b.qualifies) - Number(a.qualifies)) ||
-        (b.totalStat - a.totalStat) ||
-        a.name.localeCompare(b.name),
-      );
+      .map(r => ({
+        ...r,
+        totalStat: Math.round(r.totalStat * 100) / 100,
+        // Highest window shift count across the period's holidays — used to
+        // rank the not-yet-eligible staff by who's closest to the 15 mark.
+        shifts: r.perHoliday.reduce((mx, h) => Math.max(mx, h.count || 0), 0),
+      }))
+      .sort((a, b) => {
+        if (a.qualifies !== b.qualifies) return Number(b.qualifies) - Number(a.qualifies);
+        // Eligible: highest stat pay first. Not yet eligible: closest to 15 first.
+        if (a.qualifies) return (b.totalStat - a.totalStat) || a.name.localeCompare(b.name);
+        return (b.shifts - a.shifts) || a.name.localeCompare(b.name);
+      });
     return { holidays: statDiagnostic.inPeriod, rows };
   }, [statDiagnostic, payrollSummary, usersForCentre]);
 
@@ -5132,69 +5138,26 @@ export default function Admin() {
           {/* ── "This Period" sub-tab — wraps the original payroll UI ── */}
           {payrollSubtab === 'period' && (<>
 
-          {/* Stat-pay diagnostic — only renders if there's a holiday in
-              this pay period. Shows per-person shift count in the pre-30
-              window so we can see exactly why someone qualifies or not. */}
+          {/* Stat-pay heads-up — a compact signal when the selected pay
+              period includes a statutory holiday. The full per-person
+              breakdown now lives on the Stat Pay sub-tab, so this just flags
+              it and links across. */}
           {statDiagnostic && statDiagnostic.inPeriod.length > 0 && (
-            <div className="rounded-xl border border-purple-200 bg-purple-50/40 p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <Activity size={16} className="text-purple-700" />
-                <h4 className="font-bold text-purple-900 text-sm">
-                  Stat-pay diagnostic ({statDiagnostic.inPeriod.length} holiday{statDiagnostic.inPeriod.length === 1 ? '' : 's'} in this period)
-                </h4>
+            <div className="rounded-xl border border-purple-200 bg-purple-50 p-4 flex items-center gap-3 flex-wrap">
+              <div className="rounded-lg bg-purple-100 p-2 text-purple-700 shrink-0">
+                <Activity size={18} />
               </div>
-              {statDiagnostic.detail.map(d => {
-                const qualifiers = d.perPerson.filter(p => p.qualifies);
-                return (
-                  <div key={d.holiday.date} className="mt-3 rounded-lg bg-white border border-purple-100 p-3">
-                    <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
-                      <div className="text-sm font-semibold text-purple-900">
-                        {d.holiday.name || 'Holiday'} · {d.holiday.date}
-                        <span className="ml-2 text-xs font-normal text-gray-500">
-                          window {d.windowStart} → {d.holiday.date}
-                        </span>
-                      </div>
-                      <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-xs font-semibold ${qualifiers.length ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
-                        {qualifiers.length} of {d.perPerson.length} qualify
-                      </span>
-                    </div>
-
-                    {d.perPerson.length === 0 ? (
-                      <p className="text-xs text-gray-400 italic">No shifts found in this window.</p>
-                    ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                        {d.perPerson.map(p => (
-                          <div key={p.name}
-                            className={`rounded-lg border px-2.5 py-2 ${p.qualifies ? 'border-emerald-200 bg-emerald-50' : 'border-gray-200 bg-gray-50'}`}>
-                            <div className="flex items-center justify-between gap-1">
-                              <span className={`text-xs font-medium truncate ${p.qualifies ? 'text-emerald-900' : 'text-gray-700'}`} title={p.name}>{p.name}</span>
-                              {p.qualifies
-                                ? <Check size={13} className="shrink-0 text-emerald-600" />
-                                : <span className="shrink-0 text-[10px] text-gray-400">—</span>}
-                            </div>
-                            <div className="mt-1 flex items-baseline gap-1">
-                              <span className={`text-lg font-bold leading-none ${p.qualifies ? 'text-emerald-700' : 'text-gray-500'}`}>{p.count}</span>
-                              <span className="text-[10px] text-gray-400">/ 15 shifts</span>
-                            </div>
-                            {p.qualifies && (
-                              <div className="mt-1 flex items-baseline gap-1 border-t border-emerald-200 pt-1">
-                                <span className="text-xs font-semibold text-emerald-700">{p.statHours}h</span>
-                                <span className="text-[10px] text-gray-400">stat pay eligible</span>
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {qualifiers.length === 0 && d.perPerson.length > 0 && (
-                      <p className="mt-2 text-xs text-red-700">
-                        Nobody hit 15+ shifts in this window — most likely the prior month's shifts aren't loaded yet.
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
+              <div className="flex-1 min-w-0">
+                <h4 className="font-bold text-purple-900 text-sm">Heads up — stat pay this pay period</h4>
+                <p className="text-xs text-purple-700">
+                  Includes {statDiagnostic.inPeriod.map(h => `${h.name || 'a statutory holiday'} (${h.date})`).join(', ')}.
+                  {' '}{statPaySummary.rows.filter(r => r.qualifies).length} of {statPaySummary.rows.length} staff qualify — open the Stat Pay tab for the breakdown.
+                </p>
+              </div>
+              <button onClick={() => setPayrollSubtab('stat')}
+                className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition-colors">
+                View Stat Pay →
+              </button>
             </div>
           )}
 
