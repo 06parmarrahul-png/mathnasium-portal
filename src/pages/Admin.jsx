@@ -1454,6 +1454,108 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate }) {
   );
 }
 
+// Stat Pay roster — same shape as SickDaysTab, but for statutory-holiday
+// eligibility in the current pay period. One row per staffer: shifts in the
+// qualifying window, stat hours they'd be paid, and whether they qualify.
+function StatPayTab({ holidays, rows }) {
+  const [query, setQuery] = useState('');
+  const filtered = query
+    ? rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()))
+    : rows;
+
+  const eligibleCount = rows.filter(r => r.qualifies).length;
+  const notCount = rows.length - eligibleCount;
+  const totalStat = Math.round(rows.reduce((s, r) => s + (r.qualifies ? r.totalStat : 0), 0) * 100) / 100;
+  const multi = holidays.length > 1;
+  const subtitle = holidays.length === 0
+    ? 'No statutory holiday falls in this pay period.'
+    : holidays.map(h => `${h.name || 'Holiday'} · ${h.date}`).join('   ·   ');
+
+  return (
+    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b bg-purple-50/40">
+        <div className="flex flex-wrap items-center gap-3">
+          <Activity size={18} className="text-purple-700 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900">Stat Pay</h3>
+            <p className="text-xs text-gray-600">
+              {subtitle} — qualify at 15+ shifts in the 30 days before the holiday. Stat hours = average hours per qualifying shift (BC ESA).
+            </p>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 font-semibold">{eligibleCount} eligible</span>
+            <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-1 font-semibold">{notCount} not yet</span>
+            <span className="rounded-full bg-purple-100 text-purple-800 px-2 py-1 font-semibold">{totalStat.toFixed(2)}h total</span>
+          </div>
+        </div>
+        <div className="mt-3 relative">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            type="text" value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search staff…"
+            className="w-full rounded-md border border-gray-300 pl-8 pr-3 py-1.5 text-sm" />
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+            <tr>
+              <th className="px-4 py-2 text-left">Staff</th>
+              <th className="px-4 py-2 text-left">Role</th>
+              <th className="px-4 py-2 text-center">Shifts in window</th>
+              <th className="px-4 py-2 text-center">Stat hrs eligible</th>
+              <th className="px-4 py-2 text-left">Status</th>
+              {multi && <th className="px-4 py-2 text-left">Holidays</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(r => {
+              const best = r.perHoliday.reduce((mx, h) => (h.count > (mx?.count ?? -1) ? h : mx), null);
+              const shifts = best ? best.count : 0;
+              return (
+                <tr key={r.name} className="border-t border-gray-100 hover:bg-gray-50">
+                  <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
+                  <td className="px-4 py-2 text-xs text-gray-600">{r.role}</td>
+                  <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-emerald-700' : 'text-gray-400'}`}>
+                    {shifts}<span className="text-[10px] font-normal text-gray-400"> / 15</span>
+                  </td>
+                  <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-purple-700' : 'text-gray-300'}`}>
+                    {r.qualifies ? `${r.totalStat.toFixed(2)}h` : '—'}
+                  </td>
+                  <td className="px-4 py-2">
+                    {r.qualifies
+                      ? <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5 text-xs font-semibold">Eligible</span>
+                      : <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-0.5 text-xs font-semibold">Not eligible</span>}
+                  </td>
+                  {multi && (
+                    <td className="px-4 py-2 text-xs text-gray-600">
+                      {r.perHoliday.some(h => h.qualifies)
+                        ? r.perHoliday.filter(h => h.qualifies).map(h => (
+                            <span key={h.holiday.date} className="inline-block rounded bg-purple-50 border border-purple-200 px-1.5 py-0.5 mr-1 mb-1">
+                              {(h.holiday.name || 'Holiday')}: {h.statHours.toFixed(2)}h
+                            </span>
+                          ))
+                        : <span className="text-gray-300">— none —</span>}
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
+            {filtered.length === 0 && (
+              <tr><td colSpan={multi ? 6 : 5} className="px-4 py-8 text-center text-gray-500 text-sm">
+                {query ? `No staff match "${query}".` : 'No statutory holiday in this pay period.'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="px-5 py-3 text-[11px] text-gray-500 border-t bg-gray-50/50">
+        Stat hours are paid on top of worked hours. For the exact shift-by-shift breakdown behind each number, export payroll and open the "Stat Pay" sheet.
+      </p>
+    </div>
+  );
+}
+
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
@@ -2885,6 +2987,47 @@ export default function Admin() {
       detail,
     };
   }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd]);
+
+  // Roster shape for the Stat Pay sub-tab (mirrors sickDaysSummary). One row
+  // per person, merged across every stat holiday in the period, with role
+  // looked up from payroll / the centre roster.
+  const statPaySummary = useMemo(() => {
+    if (!statDiagnostic || statDiagnostic.inPeriod.length === 0) {
+      return { holidays: [], rows: [] };
+    }
+    const roleByName = new Map();
+    for (const p of payrollSummary) roleByName.set(p.name, p.role);
+    for (const u of usersForCentre) {
+      if (u.displayName && !roleByName.has(u.displayName)) {
+        roleByName.set(u.displayName, u.instructorType || 'Instructor');
+      }
+    }
+    const byName = new Map();
+    for (const d of statDiagnostic.detail) {
+      for (const p of d.perPerson) {
+        if (!byName.has(p.name)) {
+          byName.set(p.name, {
+            name: p.name,
+            role: roleByName.get(p.name) || 'Instructor',
+            perHoliday: [],
+            totalStat: 0,
+            qualifies: false,
+          });
+        }
+        const row = byName.get(p.name);
+        row.perHoliday.push({ holiday: d.holiday, count: p.count, qualifies: p.qualifies, statHours: p.statHours });
+        if (p.qualifies) { row.totalStat += p.statHours; row.qualifies = true; }
+      }
+    }
+    const rows = [...byName.values()]
+      .map(r => ({ ...r, totalStat: Math.round(r.totalStat * 100) / 100 }))
+      .sort((a, b) =>
+        (Number(b.qualifies) - Number(a.qualifies)) ||
+        (b.totalStat - a.totalStat) ||
+        a.name.localeCompare(b.name),
+      );
+    return { holidays: statDiagnostic.inPeriod, rows };
+  }, [statDiagnostic, payrollSummary, usersForCentre]);
 
   // Update a user's hire date (used by the Sick days tab so the owner
   // can correct probation dates without going to Manage Staff).
@@ -4955,7 +5098,25 @@ export default function Admin() {
                 {sickDaysSummary.reduce((s, p) => s + p.used, 0)}/{sickDaysSummary.length * SICK_DAYS_PER_YEAR}
               </span>
             </button>
+            <button onClick={() => setPayrollSubtab('stat')}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                payrollSubtab === 'stat'
+                  ? 'border-b-2 border-purple-600 text-purple-700 bg-white'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}>
+              <Activity size={16} /> Stat Pay
+              {statPaySummary.rows.some(r => r.qualifies) && (
+                <span className="rounded-full bg-purple-100 text-purple-700 text-[10px] px-1.5 py-0.5 font-bold">
+                  {statPaySummary.rows.filter(r => r.qualifies).length}
+                </span>
+              )}
+            </button>
           </div>
+
+          {/* ── Stat Pay sub-tab ──────────────────────────────────────── */}
+          {payrollSubtab === 'stat' && (
+            <StatPayTab holidays={statPaySummary.holidays} rows={statPaySummary.rows} />
+          )}
 
           {/* ── Sick Days sub-tab ─────────────────────────────────────── */}
           {payrollSubtab === 'sick' && (
