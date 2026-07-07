@@ -771,6 +771,14 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
     }
   }
 
+  // Distinct students scheduled on this side today (iCal + walk-ins, after
+  // moves), counted once even if a session spans multiple slots. Replaces
+  // sideTotal, which only knew the raw iCal roster and so missed
+  // walk-ins and any same-day additions.
+  const sideStudentIds = new Set();
+  for (const set of slotStudentsHere.values()) for (const id of set) sideStudentIds.add(id);
+  const sideTotal = sideStudentIds.size;
+
   // Per-row presence summary — drives the new "present/scheduled" display
   // and the now-dynamic `need` calc in SlotRow. We classify each
   // occupying student against the centre's current time so live no-show /
@@ -785,7 +793,12 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
       if (k === 'absent' || k === 'presumed-absent') absent++;
       if (checkIns[id]?.status) anyExplicit = true;
     }
-    const scheduled = row.counts?.[side] || 0;
+    // Scheduled = the number of students who actually OCCUPY this slot after
+    // moves, walk-ins, and multi-slot spanning — the same set `absent` is
+    // counted from. Using row.counts here (server iCal start-slot math) drifted
+    // out of sync the moment a student was moved or a longer session spilled
+    // into the next slot, which is what made the numbers look off.
+    const scheduled = ids.size;
     presenceByRow.set(row.slot, {
       scheduled,
       absent,
@@ -807,11 +820,11 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
       {/* Print-only big header — gives each printed page a clear "Friday, June 13 · High School" title */}
       <div className="hidden print:block px-3 pt-2 pb-1 border-b border-black">
         <div className="text-base font-bold">{dayLabel} · {title}</div>
-        <div className="text-xs text-gray-700">{data.totals[side]} total students · ratio 1:{ratio}</div>
+        <div className="text-xs text-gray-700">{sideTotal} total students · ratio 1:{ratio}</div>
       </div>
       <div className={`flex justify-between items-center px-4 py-2 text-white ${color} print:hidden`}>
         <span className="font-semibold">{title}</span>
-        <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{data.totals[side]} total</span>
+        <span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{sideTotal} total</span>
       </div>
       {/* Switched both sides to table-fixed + w-full so every column sizes
           to a fraction of the section's width instead of growing to fit
@@ -975,7 +988,12 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   // a student is marked no-show, "need" drops and the owner sees the
   // overstaffed signal in real time. Falls back to scheduled when
   // SideTable didn't pass a presence summary (defensive).
-  const scheduled = row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
+  // Prefer the authoritative per-slot occupancy computed in SideTable
+  // (spanning-, move-, and walk-in-aware). Fall back to the old local sum
+  // only if SideTable didn't pass a presence summary.
+  const scheduled = presence
+    ? presence.scheduled
+    : row.counts[side] + slotWalkIns.length + overflowWalkIns.length;
   const count = presence ? Math.max(0, scheduled - presence.absent) : scheduled;
   const showFraction = presence && presence.absent > 0;
   // addingWalkIn drives which "+ student" form is open. Values:
