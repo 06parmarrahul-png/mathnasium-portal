@@ -2726,7 +2726,7 @@ export default function Admin() {
       const personShifts = shiftsByPerson[pid] || [];
       person.statHours = 0;
       person.statDays = 0;
-      person.statEntries = []; // [{ date, name, hours, basisShifts }]
+      person.statEntries = []; // [{ date, name, hours, basisShifts, windowStart, totalHrs, shifts:[...] }]
       for (const h of statHolidays) {
         const windowStart = minusDays(h.date, 30);
         const relevant = personShifts.filter(s => s.date >= windowStart && s.date < h.date);
@@ -2740,6 +2740,19 @@ export default function Admin() {
           name: h.name || 'Statutory Holiday',
           hours: avg,
           basisShifts: relevant.length,
+          windowStart,
+          totalHrs: Math.round(totalHrs * 100) / 100,
+          // The exact shifts that qualified this person — the audit trail the
+          // Stat Pay export sheet lists so staff can sanity-check the math.
+          shifts: relevant
+            .slice()
+            .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+            .map(s => ({
+              date: s.date,
+              startTime: s.startTime || '',
+              endTime: s.endTime || '',
+              hours: Math.round(shiftHours(s) * 100) / 100,
+            })),
         });
       }
       person.statHours = Math.round(person.statHours * 100) / 100;
@@ -3057,6 +3070,44 @@ export default function Admin() {
       '',
     ]);
 
+    // ── Sheet 3: Stat Pay audit (only when the period has a stat holiday
+    // with qualifiers). A failsafe list of exactly which shifts made each
+    // person qualify, so staff can eyeball the average-day math by hand. ──
+    const anyStat = payrollSummary.some(p => (p.statEntries || []).length > 0);
+    const statRows = [];
+    if (anyStat) {
+      statRows.push(['Stat Pay Audit', `${payStart} to ${payEnd}`]);
+      statRows.push(['Qualify = 15+ shifts in the 30 days before the holiday. Stat pay hours = average hours per qualifying shift in that window.']);
+      statRows.push([]);
+      // Distinct holidays in play, chronological.
+      const holidayMap = new Map();
+      for (const p of payrollSummary) {
+        for (const e of (p.statEntries || [])) {
+          if (!holidayMap.has(e.date)) holidayMap.set(e.date, { date: e.date, name: e.name, windowStart: e.windowStart });
+        }
+      }
+      const holidays = [...holidayMap.values()].sort((a, b) => a.date.localeCompare(b.date));
+      for (const h of holidays) {
+        statRows.push([`${h.name} · ${h.date}`, `window ${h.windowStart} → ${h.date}`]);
+        const people = payrollSummary
+          .filter(p => (p.statEntries || []).some(e => e.date === h.date))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        for (const p of people) {
+          const e = p.statEntries.find(x => x.date === h.date);
+          statRows.push([]);
+          statRows.push([p.name, `${e.basisShifts} shifts`, `stat pay: ${e.hours.toFixed(2)}h`]);
+          statRows.push(['', 'Shift Date', 'Shift Time', 'Hours']);
+          for (const s of (e.shifts || [])) {
+            const t = (s.startTime && s.endTime) ? `${s.startTime} - ${s.endTime}` : '';
+            statRows.push(['', s.date, t, s.hours]);
+          }
+          statRows.push(['', '', `Total ${e.totalHrs}h ÷ ${e.basisShifts} shifts`, `avg ${e.hours.toFixed(2)}h`]);
+        }
+        statRows.push([]);
+        statRows.push([]);
+      }
+    }
+
     // ── Workbook assembly ──
     const wb = XLSX.utils.book_new();
     const wsAttendance = XLSX.utils.aoa_to_sheet(attendanceRows);
@@ -3073,6 +3124,12 @@ export default function Admin() {
     // sheet the owner actually files in QuickBooks).
     XLSX.utils.book_append_sheet(wb, wsAttendance, 'Attendance');
     XLSX.utils.book_append_sheet(wb, wsDetail,     'Detail');
+    // Stat Pay audit sheet only appears when the period actually has stat pay.
+    if (anyStat) {
+      const wsStat = XLSX.utils.aoa_to_sheet(statRows);
+      wsStat['!cols'] = [{ wch: 24 }, { wch: 16 }, { wch: 22 }, { wch: 12 }];
+      XLSX.utils.book_append_sheet(wb, wsStat, 'Stat Pay');
+    }
     XLSX.writeFile(wb, `payroll_${payStart}_to_${payEnd}.xlsx`);
   };
 
