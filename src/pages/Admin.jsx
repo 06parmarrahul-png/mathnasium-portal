@@ -1459,13 +1459,21 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate }) {
 // qualifying window, stat hours they'd be paid, and whether they qualify.
 function StatPayTab({ holidays, rows }) {
   const [query, setQuery] = useState('');
-  const filtered = query
-    ? rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()))
-    : rows;
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [minShifts, setMinShifts] = useState(0);
 
-  const eligibleCount = rows.filter(r => r.qualifies).length;
-  const notCount = rows.length - eligibleCount;
-  const totalStat = Math.round(rows.reduce((s, r) => s + (r.qualifies ? r.totalStat : 0), 0) * 100) / 100;
+  const roles = [...new Set(rows.map(r => r.role).filter(Boolean))].sort();
+  const filtered = rows.filter(r => {
+    if (query && !r.name.toLowerCase().includes(query.toLowerCase())) return false;
+    if (roleFilter !== 'all' && r.role !== roleFilter) return false;
+    if (minShifts > 0 && (r.shifts ?? 0) < minShifts) return false;
+    return true;
+  });
+
+  // Totals reflect the current filter — narrowing to a role shows that role's
+  // stat total; with no filters it's the whole period.
+  const shownEligible = filtered.filter(r => r.qualifies).length;
+  const shownTotal = Math.round(filtered.reduce((s, r) => s + (r.qualifies ? r.totalStat : 0), 0) * 100) / 100;
   const multi = holidays.length > 1;
   const subtitle = holidays.length === 0
     ? 'No statutory holiday falls in this pay period.'
@@ -1482,11 +1490,6 @@ function StatPayTab({ holidays, rows }) {
               {subtitle} — qualify at 15+ shifts in the 30 days before the holiday. Stat hours = average hours per qualifying shift (BC ESA).
             </p>
           </div>
-          <div className="flex items-center gap-2 text-xs">
-            <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 font-semibold">{eligibleCount} eligible</span>
-            <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-1 font-semibold">{notCount} not yet</span>
-            <span className="rounded-full bg-purple-100 text-purple-800 px-2 py-1 font-semibold">{totalStat.toFixed(2)}h total</span>
-          </div>
         </div>
         <div className="mt-3 relative">
           <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1494,6 +1497,36 @@ function StatPayTab({ holidays, rows }) {
             type="text" value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Search staff…"
             className="w-full rounded-md border border-gray-300 pl-8 pr-3 py-1.5 text-sm" />
+        </div>
+      </div>
+      {/* Total Stat Pay band — running totals for the current filter, plus
+          role / shift-count filters. Search stays in the header above. */}
+      <div className="px-5 py-3 border-b bg-gray-50 flex flex-wrap items-center gap-x-6 gap-y-3">
+        <div className="flex items-center gap-3">
+          <h4 className="text-base font-bold text-gray-900">Total Stat Pay</h4>
+          <span className="rounded-lg bg-purple-100 text-purple-800 px-3 py-1.5 text-base font-bold">{shownTotal.toFixed(2)}h total</span>
+          <span className="rounded-lg bg-emerald-100 text-emerald-800 px-3 py-1.5 text-base font-bold">{shownEligible} eligible</span>
+        </div>
+        <div className="flex items-center gap-3 ml-auto text-xs text-gray-600">
+          <label className="flex items-center gap-1">
+            Role
+            <select value={roleFilter} onChange={e => setRoleFilter(e.target.value)}
+              className="rounded border border-gray-300 px-2 py-1 text-xs">
+              <option value="all">All roles</option>
+              {roles.map(role => <option key={role} value={role}>{role}</option>)}
+            </select>
+          </label>
+          <label className="flex items-center gap-1">
+            Shifts
+            <select value={minShifts} onChange={e => setMinShifts(Number(e.target.value))}
+              className="rounded border border-gray-300 px-2 py-1 text-xs">
+              <option value={0}>Any</option>
+              <option value={15}>15+ (eligible)</option>
+              <option value={10}>10+</option>
+              <option value={5}>5+</option>
+              <option value={1}>1+</option>
+            </select>
+          </label>
         </div>
       </div>
       <div className="overflow-x-auto">
@@ -1542,7 +1575,7 @@ function StatPayTab({ holidays, rows }) {
             })}
             {filtered.length === 0 && (
               <tr><td colSpan={multi ? 6 : 5} className="px-4 py-8 text-center text-gray-500 text-sm">
-                {query ? `No staff match "${query}".` : 'No statutory holiday in this pay period.'}
+                {rows.length === 0 ? 'No statutory holiday in this pay period.' : 'No staff match the current filters.'}
               </td></tr>
             )}
           </tbody>
