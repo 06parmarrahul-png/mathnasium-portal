@@ -3008,11 +3008,12 @@ export default function Admin() {
 
     // ── Sheet 2: Attendance (QuickBooks-shaped) ──
     const attendanceRows = [
-      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Special Cases'],
+      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Stat Pay Hrs', 'Special Cases'],
     ];
     let totalHoursSum = 0;
     let employeesCount = 0;
     let sickSum = 0;
+    let statSum = 0;
     // Sort alphabetically by last name where possible — matches the
     // owner's existing template format.
     const lastNameKey = (n) => {
@@ -3027,16 +3028,19 @@ export default function Admin() {
       const isVolunteer = abbrev === 'V';
       const totalH = Math.round((person.payHours ?? person.totalHours ?? 0) * 100) / 100;
       const sickH = Math.round((person.sickHours || 0) * 100) / 100;
+      const statH = Math.round((person.statHours || 0) * 100) / 100;
       attendanceRows.push([
         `${person.name} (${abbrev})`,
         totalH || '',
         isVolunteer ? '' : 1,
         sickH || '',
+        statH || '',
         '', // Special Cases — left blank for manual fill
       ]);
       totalHoursSum += totalH;
       if (!isVolunteer) employeesCount += 1;
       sickSum += sickH;
+      statSum += statH;
     }
     attendanceRows.push([]);
     attendanceRows.push([
@@ -3044,6 +3048,7 @@ export default function Admin() {
       Math.round(totalHoursSum * 100) / 100,
       employeesCount,
       Math.round(sickSum * 100) / 100 || '',
+      Math.round(statSum * 100) / 100 || '',
       '',
     ]);
 
@@ -3053,7 +3058,7 @@ export default function Admin() {
     const wsDetail     = XLSX.utils.aoa_to_sheet(detailRows);
     // Reasonable default column widths so the file opens looking right.
     wsAttendance['!cols'] = [
-      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 18 },
+      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 18 },
     ];
     wsDetail['!cols'] = [
       { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
