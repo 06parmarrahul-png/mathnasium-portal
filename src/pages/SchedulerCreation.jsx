@@ -1447,7 +1447,7 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
           onChange={handleMovePick}
           defaultValue=""
           title="Move student to another slot"
-          className="ml-0.5 rounded border border-dashed border-gray-300 bg-white px-0.5 py-0 text-[10px] text-gray-400 hover:border-blue-400 hover:text-blue-600 print:hidden">
+          className="ml-0.5 w-6 shrink-0 appearance-none text-center rounded border border-dashed border-gray-300 bg-white px-0 py-0 text-[10px] text-gray-400 hover:border-blue-400 hover:text-blue-600 print:hidden">
           <option value="">↔</option>
           {s.isMoved && <option value="__CLEAR__">↺ Reset to original</option>}
           {slotPickerOptions
