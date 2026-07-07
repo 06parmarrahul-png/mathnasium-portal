@@ -3459,39 +3459,83 @@ export default function Admin() {
       };
 
       const usedRadiusIdx = new Set();
-      const shiftComparisons = person.shifts.map((s, sIdx) => {
-        // Candidate Radius rows: same date, not already consumed.
-        const candidates = radiusRows.filter(r => r.date === s.date && !usedRadiusIdx.has(r._idx));
-        let match = null;
-        if (candidates.length === 1) {
-          match = candidates[0];
-        } else if (candidates.length > 1) {
-          // Pick the candidate whose timeIn is nearest the shift's startTime.
-          const targetMin = toMinutes(s.startTime);
-          if (targetMin == null) {
-            match = candidates[0];
+      // Nearest-timeIn matcher among the unused Radius rows on a date.
+      const pickNearest = (candidates, targetMin) => {
+        if (candidates.length === 0) return null;
+        if (candidates.length === 1 || targetMin == null) return candidates[0];
+        let best = null, bestDelta = Infinity;
+        for (const c of candidates) {
+          const cm = toMinutes(c.timeIn);
+          if (cm == null) continue;
+          const d = Math.abs(cm - targetMin);
+          if (d < bestDelta) { bestDelta = d; best = c; }
+        }
+        return best || candidates[0];
+      };
+
+      // Group same-date shifts into contiguous BLOCKS. Two shifts join one
+      // block when the next starts at (or before) the previous one's end —
+      // i.e. back-to-back like Bri's Lead 11-3 + Host 3-7. A single Radius
+      // clock-in that spans a block is SHARED across its shifts (each gets a
+      // slice of the actual hours proportional to its scheduled hours)
+      // instead of matching one shift and flagging the rest "missing".
+      // Non-contiguous same-day shifts (a real gap → a separate clock-in,
+      // e.g. in-centre 3-5 + online 6-8) stay in their own block and match
+      // independently, so that case is unchanged.
+      const withIdx = person.shifts.map((s, sIdx) => ({
+        s, sIdx, startMin: toMinutes(s.startTime), endMin: toMinutes(s.endTime),
+      }));
+      const byShiftDate = new Map();
+      for (const it of withIdx) {
+        if (!byShiftDate.has(it.s.date)) byShiftDate.set(it.s.date, []);
+        byShiftDate.get(it.s.date).push(it);
+      }
+      const compByIdx = new Map();
+      for (const [d, items] of byShiftDate) {
+        items.sort((a, b) => (a.startMin ?? 0) - (b.startMin ?? 0));
+        const blocks = [];
+        for (const it of items) {
+          const last = blocks[blocks.length - 1];
+          const contiguous = last && it.startMin != null && last.endMin != null
+            && it.startMin <= last.endMin + 1;
+          if (contiguous) {
+            last.items.push(it);
+            last.endMin = Math.max(last.endMin, it.endMin ?? last.endMin);
+            last.schedHours += it.s.hours;
           } else {
-            let best = null, bestDelta = Infinity;
-            for (const c of candidates) {
-              const cm = toMinutes(c.timeIn);
-              if (cm == null) continue;
-              const d = Math.abs(cm - targetMin);
-              if (d < bestDelta) { bestDelta = d; best = c; }
-            }
-            match = best || candidates[0];
+            blocks.push({ date: d, items: [it], startMin: it.startMin, endMin: it.endMin, schedHours: it.s.hours });
           }
         }
-        if (match) usedRadiusIdx.add(match._idx);
-        const shiftDiff = match ? Math.round((match.actualHours - s.hours) * 100) / 100 : null;
-        return {
-          ...s,
-          actual: match || null,
-          shiftDiff,
-          shiftDiscrepancy: match ? Math.abs(shiftDiff) > 0.25 : false,
-          missingFromRadius: !match,
-          _shiftIdx: sIdx,
-        };
-      });
+        for (const block of blocks) {
+          const candidates = radiusRows.filter(r => r.date === block.date && !usedRadiusIdx.has(r._idx));
+          const match = pickNearest(candidates, block.startMin);
+          if (match) usedRadiusIdx.add(match._idx);
+          const schedH = block.schedHours || block.items.reduce((sum, it) => sum + it.s.hours, 0);
+          const shared = block.items.length > 1;
+          for (const it of block.items) {
+            const s = it.s;
+            let shareHours = null, shiftDiff = null, shiftDisc = false;
+            if (match) {
+              const frac = (shared && schedH > 0) ? (s.hours / schedH) : 1;
+              shareHours = Math.round(match.actualHours * frac * 100) / 100;
+              shiftDiff = Math.round((shareHours - s.hours) * 100) / 100;
+              shiftDisc = Math.abs(shiftDiff) > 0.25;
+            }
+            compByIdx.set(it.sIdx, {
+              ...s,
+              actual: match || null,
+              actualShareHours: shareHours,      // this shift's slice of a shared clock-in
+              sharedClockIn: shared && !!match,  // true when a clock-in covers >1 shift
+              shiftDiff,
+              shiftDiscrepancy: shiftDisc,
+              missingFromRadius: !match,
+              _shiftIdx: it.sIdx,
+            });
+          }
+        }
+      }
+      // Emit in the person's original shift order so the table row order is stable.
+      const shiftComparisons = person.shifts.map((s, sIdx) => compByIdx.get(sIdx));
 
       // Any Radius row not consumed by a shift above is genuinely unmatched
       // — these can be either an extra clock-in on a day that had a shift
@@ -5355,7 +5399,14 @@ export default function Admin() {
                               <td className="px-5 py-2.5 text-right font-semibold text-gray-800">{s.hours.toFixed(2)}h</td>
                               {hasRadius && (
                                 <td className="px-5 py-2.5 text-right font-semibold text-blue-700">
-                                  {s.missingFromRadius ? '–' : `${s.actual.actualHours.toFixed(2)}h`}
+                                  {s.missingFromRadius
+                                    ? '–'
+                                    : <>
+                                        {(s.actualShareHours != null ? s.actualShareHours : s.actual.actualHours).toFixed(2)}h
+                                        {s.sharedClockIn && (
+                                          <span className="ml-1 text-[10px] font-normal text-gray-400" title="One Radius clock-in covers back-to-back shifts — hours split across them.">shared</span>
+                                        )}
+                                      </>}
                                 </td>
                               )}
                               {/* Payroll Hours — single click to override.
