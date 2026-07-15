@@ -1,6 +1,9 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
-import { getFirestore, serverTimestamp } from 'firebase/firestore';
+import {
+  getFirestore, serverTimestamp,
+  collection, doc, query, where, getDocs, deleteDoc, writeBatch,
+} from 'firebase/firestore';
 import { getStorage } from 'firebase/storage';
 
 const firebaseConfig = {
@@ -20,3 +23,14 @@ export const db = getFirestore(app);
 // profile-pictures/{uid}/* path).
 export const storage = getStorage(app);
 export { serverTimestamp };
+
+// Owner-only escape hatch: expose Firestore + a few helpers on the
+// window so admin one-off scripts (bulk cleanup, migrations, purges)
+// can run from Chrome DevTools without needing the bundler. Nothing
+// here bypasses Firestore rules — auth still applies — so it's safe.
+if (typeof window !== 'undefined') {
+  window.__ratio = {
+    db, auth,
+    fs: { collection, doc, query, where, getDocs, deleteDoc, writeBatch },
+  };
+}
