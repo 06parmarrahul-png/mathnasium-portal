@@ -369,36 +369,61 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
           )}
 
           {mode === 'avail' && (() => {
-            const dow = date.getDay();
-            const isFri = dow === 5;
-            const isSat = dow === 6;
-
-            // First entry is the marquee "Full Day" option — literally the
-            // whole day (00:00–23:59). The admin can then schedule the
-            // instructor anywhere within that window. Rendered with a
-            // distinct style below as the obvious one-tap choice.
+            // Presets are derived from the day's EFFECTIVE instructional
+            // hours (dayDefault above) so summer-hours overrides for
+            // Tue/Thu in July/August automatically produce the correct
+            // options instead of the year-round 3-7pm defaults. That
+            // avoids instructors saving 3-7 on a day the centre now
+            // opens at 10 for summer.
             const fullDayLabel = 'Full Day';
-            const PRESETS = isClosedDay ? [] : isSat ? [
+            const fmtTime = (t) => {
+              // Turn "15:00" into "3:00 PM"
+              if (!t) return '';
+              const [hs, ms] = t.split(':');
+              let h = parseInt(hs, 10);
+              const m = parseInt(ms, 10);
+              const ampm = h >= 12 ? 'PM' : 'AM';
+              if (h > 12) h -= 12;
+              if (h === 0) h = 12;
+              return m === 0 ? `${h}:00 ${ampm}` : `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+            };
+            const addMin = (t, mins) => {
+              const [hs, ms] = t.split(':').map(n => parseInt(n, 10));
+              const total = hs * 60 + ms + mins;
+              const h = Math.floor(total / 60);
+              const m = total % 60;
+              return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+            };
+            // Build up to 6 realistic presets from the effective window:
+            // full range, arrive-30min-late, leave-30min-early, both,
+            // arrive-1hr-late, both-with-1hr-late-arrival. Dedupe on
+            // start/end so a short 3-hour day doesn't produce silly
+            // duplicates.
+            const s = dayDefault.start, e = dayDefault.end;
+            const rawPresets = [
+              { start: s,             end: e },
+              { start: addMin(s, 30), end: e },
+              { start: s,             end: addMin(e, -30) },
+              { start: addMin(s, 30), end: addMin(e, -30) },
+              { start: addMin(s, 60), end: e },
+              { start: addMin(s, 60), end: addMin(e, -30) },
+            ];
+            const seen = new Set();
+            const timePresets = rawPresets
+              .filter(p => {
+                const [ph, pm] = p.start.split(':').map(Number);
+                const [qh, qm] = p.end.split(':').map(Number);
+                // Drop presets that flipped past end (short summer days).
+                if (ph * 60 + pm >= qh * 60 + qm) return false;
+                const k = `${p.start}-${p.end}`;
+                if (seen.has(k)) return false;
+                seen.add(k);
+                return true;
+              })
+              .map(p => ({ ...p, label: `${fmtTime(p.start)} – ${fmtTime(p.end)}` }));
+            const PRESETS = isClosedDay ? [] : [
               { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
-              { label: '10:00 AM – 2:00 PM', start: '10:00', end: '14:00' },
-              { label: '10:30 AM – 2:00 PM', start: '10:30', end: '14:00' },
-              { label: '10:00 AM – 1:30 PM', start: '10:00', end: '13:30' },
-              { label: '10:30 AM – 1:30 PM', start: '10:30', end: '13:30' },
-            ] : isFri ? [
-              { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
-              { label: '3:00 PM – 6:00 PM', start: '15:00', end: '18:00' },
-              { label: '3:30 PM – 6:00 PM', start: '15:30', end: '18:00' },
-              { label: '3:00 PM – 5:30 PM', start: '15:00', end: '17:30' },
-              { label: '3:30 PM – 5:30 PM', start: '15:30', end: '17:30' },
-              { label: '4:00 PM – 6:00 PM', start: '16:00', end: '18:00' },
-            ] : [
-              { label: fullDayLabel, start: '00:00', end: '23:59', fullDay: true },
-              { label: '3:00 PM – 7:00 PM', start: '15:00', end: '19:00' },
-              { label: '3:30 PM – 7:00 PM', start: '15:30', end: '19:00' },
-              { label: '3:00 PM – 6:30 PM', start: '15:00', end: '18:30' },
-              { label: '3:30 PM – 6:30 PM', start: '15:30', end: '18:30' },
-              { label: '4:00 PM – 7:00 PM', start: '16:00', end: '19:00' },
-              { label: '4:00 PM – 6:30 PM', start: '16:00', end: '18:30' },
+              ...timePresets,
             ];
 
             return (
