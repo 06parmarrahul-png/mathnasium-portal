@@ -28,6 +28,7 @@ const NotificationPreferences   = lazy(() => import('./pages/NotificationPrefere
 const PlatformRevenue           = lazy(() => import('./pages/PlatformRevenue'));
 const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
 const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
+const SupplyDemand              = lazy(() => import('./pages/SupplyDemand'));
 const CenterSettings            = lazy(() => import('./pages/CenterSettings'));
 const AuditLogs                 = lazy(() => import('./pages/AuditLogs'));
 const AccountDetails            = lazy(() => import('./pages/AccountDetails'));
@@ -116,6 +117,7 @@ function AppRoutes() {
         <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics/:section" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
+        <Route path="/supply-demand" element={<ProtectedRoute><Layout><SupplyDemand /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />

@@ -11,7 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
-  UserPlus, FileBarChart,
+  UserPlus, FileBarChart, Activity,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -196,6 +196,7 @@ export default function Layout({ children }) {
   const intelligence = [];
   if (useOwnerLayout) {
     intelligence.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
+    intelligence.push({ to: '/supply-demand',    label: 'Supply & Demand',  icon: Activity });
     intelligence.push({ to: '/case-study',       label: 'Case Study',       icon: FileBarChart });
   }
 
