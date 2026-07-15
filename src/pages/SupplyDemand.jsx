@@ -52,8 +52,13 @@ function timeToMin(t) {
 }
 
 // Count how many instructors of the given side are on shift at each 30-min slot.
+// Also returns the set of unique instructor names so callers can show
+// "5 instructors booked" (unique headcount) rather than the sum of per-slot
+// counts (which would be inflated by 10× because each instructor covers
+// multiple slots).
 function computeSupply(shifts, subRoleMatchers) {
   const counts = new Array(SLOT_COUNT).fill(0);
+  const uniqueNames = new Set();
   const matchesSide = (s) => {
     const sub = (s.subRole || '').toLowerCase();
     return subRoleMatchers.some(m => sub === m.toLowerCase());
@@ -63,15 +68,17 @@ function computeSupply(shifts, subRoleMatchers) {
     const startMin = timeToMin(s.startTime);
     const endMin   = timeToMin(s.endTime);
     if (startMin == null || endMin == null) continue;
+    let touchedAnySlot = false;
     for (let i = 0; i < SLOT_COUNT; i++) {
       const slotStart = START_HOUR * 60 + i * SLOT_MIN;
       const slotEnd   = slotStart + SLOT_MIN;
       // Instructor counts as "on" the slot if their shift covers ≥ half of it.
       const overlap = Math.max(0, Math.min(endMin, slotEnd) - Math.max(startMin, slotStart));
-      if (overlap >= SLOT_MIN / 2) counts[i]++;
+      if (overlap >= SLOT_MIN / 2) { counts[i]++; touchedAnySlot = true; }
     }
+    if (touchedAnySlot) uniqueNames.add(s.userName || s.userId || 'unknown');
   }
-  return counts;
+  return { counts, uniqueNames };
 }
 
 // Per-slot classification. Mirrors Andy's logic:
@@ -181,15 +188,21 @@ export default function SupplyDemand() {
       }
       const ovMap = overrides[side.key] || {};
       const demand = baseDemand.map((v, i) => (i in ovMap ? ovMap[i] : v));
-      const supply = computeSupply(shifts, side.subRoles);
+      const { counts: supply, uniqueNames } = computeSupply(shifts, side.subRoles);
       const rows   = classifySlots(demand, supply, ratios[side.key]);
+      // Unique student count: sum of demand isn't quite right either
+      // (a 60-min appointment shows up in 2 slots), but iCal appts are
+      // stamped only once per booking in the API's `students` arrays.
+      // For a top-line "how busy is today" we sum, since each student
+      // usually only fills one 30-min slot at Langley.
       const stats = {
-        totalDemand:  demand.reduce((a, b) => a + b, 0),
-        totalSupply:  supply.reduce((a, b) => a + b, 0),
-        matchedCount: rows.filter(r => r.status === 'matched').length,
-        underCount:   rows.filter(r => r.status === 'understaffed').length,
-        overCount:    rows.filter(r => r.status === 'overstaffed').length,
-        impactStudents: rows
+        peakDemand:      Math.max(0, ...demand),
+        peakSupply:      Math.max(0, ...supply),
+        uniqueSupply:    uniqueNames.size,
+        matchedCount:    rows.filter(r => r.status === 'matched').length,
+        underCount:      rows.filter(r => r.status === 'understaffed').length,
+        overCount:       rows.filter(r => r.status === 'overstaffed').length,
+        impactStudents:  rows
           .filter(r => r.status === 'understaffed')
           .reduce((sum, r) => sum + Math.max(0, r.demand - r.capacity), 0),
       };
@@ -203,9 +216,15 @@ export default function SupplyDemand() {
   // supply we have, to serve this demand?" — informational, not a save.
   const matchDemand = useCallback((sideKey) => {
     if (!sideData) return;
-    const { totalDemand, totalSupply } = sideData[sideKey].stats;
-    if (totalSupply === 0) return;
-    const suggested = Math.max(1, Math.round((totalDemand / totalSupply) * 10) / 10);
+    const { demand, supply } = sideData[sideKey];
+    const totalD = demand.reduce((a, b) => a + b, 0);
+    // Use average supply during hours that have demand — using peak alone
+    // over-inflates the divisor when the last hour has 1 instructor and 0
+    // students.
+    const productiveSlots = demand.map((d, i) => d > 0 ? supply[i] : 0);
+    const avgSupply = productiveSlots.filter(v => v > 0).reduce((a, b) => a + b, 0) / Math.max(1, productiveSlots.filter(v => v > 0).length);
+    if (avgSupply === 0) return;
+    const suggested = Math.max(1, Math.round((totalD / demand.filter(d => d > 0).length / avgSupply) * 10) / 10);
     setRatios(r => ({ ...r, [sideKey]: suggested }));
   }, [sideData]);
 
@@ -276,6 +295,18 @@ export default function SupplyDemand() {
         </div>
       )}
 
+      {/* Plain-English "how to read this" panel — sits above the cards so
+          a new owner doesn't have to guess what the colours mean. */}
+      <div className="rounded-xl border border-blue-200 bg-blue-50/40 px-4 py-3 text-xs text-blue-900 leading-relaxed">
+        <p className="font-semibold mb-1">How to read this</p>
+        <p>
+          Each bar shows how many <b>students</b> are booked in that 30-min slot. The black line above it is your <b>capacity</b> — instructors on shift × forecast ratio.
+          {' '}<span className="text-emerald-700 font-semibold">Green</span> = capacity matches demand ·
+          {' '}<span className="text-red-700 font-semibold">Red</span> = short on staff (students beyond capacity) ·
+          {' '}<span className="text-amber-700 font-semibold">Amber</span> = over-staffed (paying for empty seats).
+        </p>
+      </div>
+
       {/* Per-side sections */}
       {sideData && SIDES.map(side => (
         <SideCard
@@ -297,14 +328,15 @@ export default function SupplyDemand() {
           <div className="grid gap-3 sm:grid-cols-3">
             {SIDES.map(side => {
               const s = sideData[side.key].stats;
+              const totalD = sideData[side.key].demand.reduce((a, b) => a + b, 0);
               return (
                 <div key={side.key} className={`rounded-xl border p-3 ${side.tint}`}>
                   <p className="text-xs font-semibold uppercase tracking-wide">{side.label}</p>
                   <p className="mt-1 text-lg font-bold">
-                    {s.totalSupply} instr · {s.totalDemand} students
+                    {s.uniqueSupply} instructor{s.uniqueSupply === 1 ? '' : 's'} · {totalD} student{totalD === 1 ? '' : 's'}
                   </p>
                   <p className="mt-1 text-xs opacity-70">
-                    {s.matchedCount} matched · {s.underCount} under · {s.overCount} over
+                    peak {s.peakDemand} students / {s.peakSupply} on shift · {s.matchedCount} matched · {s.underCount} short · {s.overCount} over
                   </p>
                 </div>
               );
@@ -412,19 +444,29 @@ function SideCard({ side, data, forecastRatio, onRatioChange, onOverrideChange, 
               ))}
             </tr>
             <tr className="border-b">
-              <td className="pr-2 text-left font-medium text-gray-700">Ratio Status</td>
-              {rows.map(r => (
-                <td key={r.i}>
-                  <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                    r.status === 'matched'      ? 'bg-emerald-100 text-emerald-700'
-                    : r.status === 'understaffed' ? 'bg-red-100 text-red-700'
-                    : 'bg-amber-100 text-amber-700'
-                  }`}>
-                    {r.status === 'matched' ? 'Matched'
-                      : `${Math.abs(r.overUnderRatio).toFixed(1)} ${r.status === 'understaffed' ? 'Under' : 'Over'}`}
-                  </span>
-                </td>
-              ))}
+              <td className="pr-2 text-left font-medium text-gray-700">Coverage</td>
+              {rows.map(r => {
+                // Convert the ratio-space diff into a human number:
+                // over = spare seats (capacity − demand), under = students
+                // beyond capacity (demand − capacity). Owners think in
+                // students, not "0.7 Over".
+                const spareSeats = Math.max(0, Math.round(r.capacity - r.demand));
+                const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
+                let label = 'Matched';
+                if (r.status === 'understaffed') label = `-${shortStudents} student${shortStudents === 1 ? '' : 's'}`;
+                else if (r.status === 'overstaffed') label = `+${spareSeats} seat${spareSeats === 1 ? '' : 's'}`;
+                return (
+                  <td key={r.i}>
+                    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap ${
+                      r.status === 'matched'      ? 'bg-emerald-100 text-emerald-700'
+                      : r.status === 'understaffed' ? 'bg-red-100 text-red-700'
+                      : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {label}
+                    </span>
+                  </td>
+                );
+              })}
             </tr>
             <tr>
               <td className="pr-2 text-left font-medium text-gray-500">Impact (# students)</td>
@@ -438,15 +480,21 @@ function SideCard({ side, data, forecastRatio, onRatioChange, onOverrideChange, 
         </table>
       </div>
 
-      {/* Summary strip */}
+      {/* Summary strip — uses the FIXED unique-instructor count now,
+          plus the total student count summed across slots. */}
       <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-600">
-        <span><b>{stats.totalDemand}</b> students · <b>{stats.totalSupply}</b> instructors booked</span>
-        <span className="text-emerald-700">{stats.matchedCount} matched</span>
-        <span className="text-red-700">{stats.underCount} under</span>
+        <span>
+          <b>{demand.reduce((a, b) => a + b, 0)}</b> student appointment{demand.reduce((a, b) => a + b, 0) === 1 ? '' : 's'} · <b>{stats.uniqueSupply}</b> instructor{stats.uniqueSupply === 1 ? '' : 's'} on shift today
+          {stats.peakSupply > 0 && (
+            <span className="text-gray-400"> (peak {stats.peakSupply} at once)</span>
+          )}
+        </span>
+        <span className="text-emerald-700">{stats.matchedCount} matched slots</span>
+        <span className="text-red-700">{stats.underCount} short</span>
         <span className="text-amber-700">{stats.overCount} over</span>
         {stats.impactStudents > 0 && (
           <span className="text-red-700 font-semibold">
-            ~{Math.round(stats.impactStudents)} students affected at ratio {forecastRatio}
+            ~{Math.round(stats.impactStudents)} students beyond capacity at ratio {forecastRatio}
           </span>
         )}
       </div>
