@@ -21,7 +21,7 @@ import { toast } from '../lib/notify';
  *     categorized by sub-role
  *
  * The instructor can pick any date, override demand cells (walk-ins that
- * haven't been booked yet), and adjust the target Forecast Ratio to see
+ * haven't been booked yet), and adjust the Target Ratio to see
  * ratio status per slot (Matched / X Under / X Over) and how many
  * students are affected in under-staffed windows.
  */
@@ -161,7 +161,7 @@ export default function SupplyDemand() {
   const [typical, setTypical] = useState({}); // dayName -> per-side avg
 
   // Load saved snapshot on date change. Populates both demand and supply
-  // overrides + forecast ratios if the owner has ever saved for this day.
+  // overrides + target ratios if the owner has ever saved for this day.
   useEffect(() => {
     let alive = true;
     setSnapshotDirty(false);
@@ -309,7 +309,7 @@ export default function SupplyDemand() {
     return out;
   }, [apptData, shifts, overrides, ratios]);
 
-  // Match Demand: bump the forecast ratio so today's supply exactly meets
+  // Match Demand: bump the target ratio so today's supply exactly meets
   // today's demand. Read as "what ratio would we need to be at, given the
   // supply we have, to serve this demand?" — informational, not a save.
   const matchDemand = useCallback((sideKey) => {
@@ -398,7 +398,7 @@ export default function SupplyDemand() {
       <div className="rounded-xl border border-blue-200 bg-blue-50/40 px-4 py-3 text-xs text-blue-900 leading-relaxed">
         <p className="font-semibold mb-1">How to read this</p>
         <p>
-          Each bar shows how many <b>students</b> are booked in that 30-min slot. The black line above it is your <b>capacity</b> — instructors on shift × forecast ratio.
+          Each bar shows how many <b>students</b> are booked in that 30-min slot. The black line above it is your <b>capacity</b> — instructors on shift × target ratio.
           {' '}<span className="text-emerald-700 font-semibold">Green</span> = capacity matches demand ·
           {' '}<span className="text-red-700 font-semibold">Red</span> = short on staff (students beyond capacity) ·
           {' '}<span className="text-amber-700 font-semibold">Amber</span> = over-staffed (paying for empty seats).
@@ -411,7 +411,7 @@ export default function SupplyDemand() {
       {sideData && (
         <div className="flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50/40 px-4 py-2.5">
           <p className="text-xs text-emerald-900">
-            <b>Saved snapshots</b> feed the auto-scheduler&apos;s staffing recommendations. Edit any Demand or Supply cell, tweak Forecast Ratios, then Save.
+            <b>Saved snapshots</b> feed the auto-scheduler&apos;s staffing recommendations. Edit any Demand or Supply cell, tweak Target Ratios, then Save.
             {lastSavedAt && !snapshotDirty && (
               <span className="ml-2 text-emerald-700 italic">Saved {format(lastSavedAt, 'h:mm a')}</span>
             )}
@@ -450,7 +450,7 @@ export default function SupplyDemand() {
 
       {/* Whole-Centre aggregate — adds EM + HS per slot into a single
           chart. Capacity uses a blended ratio: each side keeps its own
-          forecast ratio, so combined capacity = EMsupply×EMratio +
+          target ratio, so combined capacity = EMsupply×EMratio +
           HSsupply×HSratio. That's more accurate than picking one ratio,
           since HS students genuinely need less hand-holding than EM. */}
       {sideData && (
@@ -600,12 +600,12 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
         <div>
           <h2 className="text-base font-bold text-gray-900">{side.label} — Supply vs. Demand</h2>
           <p className="text-xs text-gray-500">
-            Demand: students booked · Supply: instructors on shift · Capacity: supply × forecast ratio
+            Demand: students booked · Supply: instructors on shift · Capacity: supply × target ratio
           </p>
         </div>
         <div className="flex items-center gap-2">
           <label className="text-xs font-medium text-gray-600">
-            Forecast Ratio
+            Target Ratio
             <input
               type="number"
               min={1}
@@ -640,7 +640,7 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
       {/* ── Slot Detail (editable) ─────────────────────────────────────
           Same rows as Andy's original tool: Demand and Staff (both
           editable inputs), plus a derived Supply row showing staff ×
-          forecast ratio so the owner can see capacity headroom at a
+          target ratio so the owner can see capacity headroom at a
           glance. Overridden cells are tinted purple. */}
       <div className="mt-5 border-t pt-4">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
@@ -782,7 +782,7 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
               </tr>
               <tr>
                 <td className="pr-2 text-left font-medium text-gray-700 whitespace-nowrap">
-                  Over/Under Ratio ((S−D)÷FR)
+                  Over/Under Ratio ((S−D)÷TR)
                 </td>
                 {rows.map(r => {
                   const val = forecastRatio > 0 ? (r.capacity - r.demand) / forecastRatio : 0;
@@ -816,7 +816,7 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
         </div>
         {stats.impactStudents > 0 && (
           <p className="mt-3 text-xs text-red-700 font-semibold">
-            ~{Math.round(stats.impactStudents)} students beyond capacity at forecast ratio {forecastRatio}
+            ~{Math.round(stats.impactStudents)} students beyond capacity at target ratio {forecastRatio}
           </p>
         )}
       </div>
