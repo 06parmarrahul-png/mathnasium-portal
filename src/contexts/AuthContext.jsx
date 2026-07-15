@@ -154,12 +154,34 @@ export function AuthProvider({ children }) {
   const isAdminAssistant   = role === 'admin_assistant';
   const isAdmin            = role === 'admin';   // distinct from owner (no center settings)
   const isInstructor       = role === 'instructor';
+  // Centre Directors and Directors of Education are top-of-org staff who
+  // run the centre day-to-day. Rahul asked for them to have the SAME
+  // access as the owner (see everything, edit everything) without
+  // wearing the owner label — that keeps the owner slot uniquely
+  // assigned to the person on the lease/franchise agreement while
+  // giving directors the tools they actually need.
+  //
+  // Detection: their staff title lives in centerConfig.fixedStaff keyed
+  // by displayName. We check both the modern `role` field there
+  // (matches FIXED_SCHEDULES semantics) and the legacy top-level
+  // instructorType so a director account created before the fixedStaff
+  // migration still passes.
+  const DIRECTOR_TITLES = new Set(['Center Director', 'Centre Director', 'Dir. of Education', 'Director of Education']);
+  const fixedStaffTitle = profile?.displayName
+    ? centerConfig?.fixedStaff?.[profile.displayName]?.role
+    : null;
+  const isDirector = (
+    DIRECTOR_TITLES.has(fixedStaffTitle) ||
+    DIRECTOR_TITLES.has(profile?.instructorType) ||
+    DIRECTOR_TITLES.has(profile?.centerMemberships?.[activeCenterId]?.instructorType)
+  );
+
   // True for any role that should see what the owner sees at the centre
-  // level (owner + AA + super-admin). DON'T use this for platformChat —
-  // that one is strictly owner+super_admin.
-  const isOwnerLike        = isOwner || isAdminAssistant || isSuperAdmin;
-  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
-  const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant;
+  // level (owner + AA + super-admin + directors). DON'T use this for
+  // platformChat — that one is strictly owner+super_admin.
+  const isOwnerLike        = isOwner || isAdminAssistant || isSuperAdmin || isDirector;
+  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdminAssistant || isAdmin || isDirector;
+  const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
   // Lead is an instructorType, not a top-level role. Check per-centre
   // first (centerMemberships[activeCenterId].instructorType) and fall
   // back to the legacy top-level instructorType field for accounts
@@ -322,6 +344,7 @@ export function AuthProvider({ children }) {
       role,
       isSuperAdmin,
       isOwner,
+      isDirector,
       isAdminAssistant,
       isOwnerLike,
       isAdmin,

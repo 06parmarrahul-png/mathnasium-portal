@@ -62,12 +62,28 @@ service cloud.firestore {
       return profileExists() && profile().role == 'admin_assistant';
     }
 
+    // Centre Directors and Directors of Education are top-of-org staff
+    // that Rahul wants to have full owner-equivalent access. Detection
+    // matches the client-side AuthContext: check the modern
+    // instructorType stamp (per-centre first, then legacy top-level).
+    // We DON'T look at centerConfig.fixedStaff here because that would
+    // require an extra get() per rule evaluation (Firestore has a
+    // limit) — clients set instructorType when they save the profile.
+    function isDirector() {
+      return profileExists() && (
+        profile().instructorType == 'Center Director'
+        || profile().instructorType == 'Centre Director'
+        || profile().instructorType == 'Dir. of Education'
+        || profile().instructorType == 'Director of Education'
+      );
+    }
+
     // True for any role that should be treated the same as the centre
     // owner for permission checks (centre config writes, user management,
     // shift management, etc.). NEVER use this for platformChat — that's
     // strictly isOwner() || isSuperAdmin().
     function isOwnerLike() {
-      return isOwner() || isAdminAssistant();
+      return isOwner() || isAdminAssistant() || isDirector();
     }
 
     function isAdmin() {
