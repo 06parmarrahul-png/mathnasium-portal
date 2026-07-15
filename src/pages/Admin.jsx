@@ -6023,8 +6023,48 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
       : MATRIX_DAYS;
   }, [centerConfig?.operatingDays]);
   const [savingDays, setSavingDays] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const perDay = schedConfig.perDay || {};
+
+  // Load recommended min/max per weekday from saved demand snapshots.
+  // Uses the last ~8 weeks of Supply & Demand data — averaged per
+  // weekday, converted into instructors needed at the target ratio.
+  const loadFromHistory = async () => {
+    if (!activeCenterId) return;
+    setLoadingHistory(true);
+    try {
+      const [{ computeTypicalDemand, recommendedStaffFromTypical }] = await Promise.all([
+        import('../lib/demand-snapshots'),
+      ]);
+      const typical = await computeTypicalDemand(activeCenterId);
+      // Merge suggestions into perDay for every weekday that has data.
+      let touched = 0;
+      setSchedConfig(c => {
+        const nextPerDay = { ...(c.perDay || {}) };
+        for (const day of MATRIX_DAYS) {
+          const t = typical[day];
+          if (!t) continue;
+          const r = recommendedStaffFromTypical(t);
+          if (r.recommendedMin === 0 && r.recommendedMax === 0) continue;
+          nextPerDay[day] = {
+            ...(nextPerDay[day] || {}),
+            min: r.recommendedMin,
+            max: r.recommendedMax,
+          };
+          touched++;
+        }
+        return { ...c, perDay: nextPerDay };
+      });
+      if (touched === 0) toast.error('No saved demand history yet — open Supply & Demand and save a few days first.');
+      else toast.success(`Loaded staffing from ${touched} weekday${touched === 1 ? '' : 's'} of history`);
+    } catch (err) {
+      console.error('[loadFromHistory] failed:', err);
+      toast.error('Could not load history');
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   // Toggle a weekday open/closed in centerConfig.operatingDays.
   // Persists immediately — there's no separate Save button — because
@@ -6078,7 +6118,17 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
             Blank cells use the defaults above. Uncheck a day to mark the centre closed.
           </p>
         </div>
-        {savingDays && <span className="text-xs text-purple-600 italic">Saving…</span>}
+        <div className="flex items-center gap-2">
+          {savingDays && <span className="text-xs text-purple-600 italic">Saving…</span>}
+          <button
+            onClick={loadFromHistory}
+            disabled={loadingHistory}
+            title="Fill Centre Min/Max from the average demand of your saved Supply & Demand snapshots"
+            className="inline-flex items-center gap-1 rounded-md border border-purple-300 bg-white px-2.5 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-50 disabled:opacity-50"
+          >
+            {loadingHistory ? '…' : '⟲'} Load from history
+          </button>
+        </div>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-xs">

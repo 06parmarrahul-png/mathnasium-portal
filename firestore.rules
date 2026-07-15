@@ -140,6 +140,16 @@ service cloud.firestore {
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
       }
 
+      // ─── Demand snapshots (Supply & Demand override history) ────────
+      // One doc per date holding the owner's saved demand + supply
+      // overrides for that day. Read is signed-in (harmless numbers —
+      // no PII). Write is owner-like only since it feeds into the
+      // auto-scheduler's staffing recommendations.
+      match /demandSnapshots/{dateId} {
+        allow read:  if isSignedIn();
+        allow write: if isOwnerLike() || isSuperAdmin();
+      }
+
       // ─── Leads (the CRM funnel) ──────────────────────────────────────
       // Leads carry parent contact info (email, phone) the same way the
       // top-level centerIntakes collection does. We deliberately keep
