@@ -321,36 +321,129 @@ export default function SupplyDemand() {
         />
       ))}
 
-      {/* Combined whole-centre summary */}
+      {/* Whole-Centre aggregate — adds EM + HS per slot into a single
+          chart. Capacity uses a blended ratio: each side keeps its own
+          forecast ratio, so combined capacity = EMsupply×EMratio +
+          HSsupply×HSratio. That's more accurate than picking one ratio,
+          since HS students genuinely need less hand-holding than EM. */}
       {sideData && (
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <h2 className="text-base font-bold text-gray-900 mb-3">Whole Centre — {format(new Date(date + 'T00:00:00'), 'EEE MMM d')}</h2>
-          <div className="grid gap-3 sm:grid-cols-3">
-            {SIDES.map(side => {
-              const s = sideData[side.key].stats;
-              const totalD = sideData[side.key].demand.reduce((a, b) => a + b, 0);
-              return (
-                <div key={side.key} className={`rounded-xl border p-3 ${side.tint}`}>
-                  <p className="text-xs font-semibold uppercase tracking-wide">{side.label}</p>
-                  <p className="mt-1 text-lg font-bold">
-                    {s.uniqueSupply} instructor{s.uniqueSupply === 1 ? '' : 's'} · {totalD} student{totalD === 1 ? '' : 's'}
-                  </p>
-                  <p className="mt-1 text-xs opacity-70">
-                    peak {s.peakDemand} students / {s.peakSupply} on shift · {s.matchedCount} matched · {s.underCount} short · {s.overCount} over
-                  </p>
-                </div>
-              );
-            })}
-            <div className="rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">Students affected</p>
-              <p className="mt-1 text-lg font-bold text-gray-900">
-                {Math.round((sideData.EM.stats.impactStudents + sideData.HS.stats.impactStudents) * 10) / 10}
-              </p>
-              <p className="mt-1 text-xs text-gray-500">in understaffed slots at your target ratio</p>
-            </div>
-          </div>
-        </div>
+        <CombinedCard
+          emData={sideData.EM}
+          hsData={sideData.HS}
+          emRatio={ratios.EM}
+          hsRatio={ratios.HS}
+          dateLabel={format(new Date(date + 'T00:00:00'), 'EEE MMM d')}
+        />
       )}
+    </div>
+  );
+}
+
+// ─── Whole-Centre aggregate ─────────────────────────────────────────────
+
+function CombinedCard({ emData, hsData, emRatio, hsRatio, dateLabel }) {
+  const combined = useMemo(() => {
+    const demand = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.demand[i] + hsData.demand[i]);
+    const supply = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.supply[i] + hsData.supply[i]);
+    // Blended capacity per slot — each side's supply weighted by its own
+    // target ratio, then summed. This is honest math; averaging the two
+    // ratios first would double-count if one side has zero supply.
+    const capacity = new Array(SLOT_COUNT).fill(0).map((_, i) =>
+      emData.supply[i] * emRatio + hsData.supply[i] * hsRatio,
+    );
+    const rows = demand.map((d, i) => {
+      const c = capacity[i];
+      const diff = c - d;
+      const abs = Math.abs(diff);
+      let status = 'matched';
+      // Threshold in students: within 1 student of capacity = matched.
+      if (abs >= 1) status = c > d ? 'overstaffed' : 'understaffed';
+      return { i, demand: d, supply: supply[i], capacity: c, overUnderRatio: diff, status };
+    });
+    const totalDemand = demand.reduce((a, b) => a + b, 0);
+    const uniqueSupply = emData.stats.uniqueSupply + hsData.stats.uniqueSupply;
+    const peakDemand = Math.max(0, ...demand);
+    const peakSupply = Math.max(0, ...supply);
+    const impactStudents = rows
+      .filter(r => r.status === 'understaffed')
+      .reduce((sum, r) => sum + Math.max(0, r.demand - r.capacity), 0);
+    return { demand, supply, capacity, rows, totalDemand, uniqueSupply, peakDemand, peakSupply, impactStudents };
+  }, [emData, hsData, emRatio, hsRatio]);
+
+  const maxY = Math.max(1, ...combined.demand, ...combined.capacity) * 1.1;
+
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-3">
+        <h2 className="text-base font-bold text-gray-900">Whole Centre — {dateLabel}</h2>
+        <p className="text-xs text-gray-500">
+          Elementary + High School combined. Capacity is blended: EM supply × {emRatio} + HS supply × {hsRatio}.
+        </p>
+      </div>
+
+      {/* Same chart component the per-side cards use — blended ratio is
+          passed just for the legend label. */}
+      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} forecastRatio={`${emRatio}/${hsRatio}`} />
+
+      <div className="mt-4 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-gray-500 border-b">
+              <th className="py-1.5 pr-2 font-medium">Slot</th>
+              {combined.rows.map(r => (
+                <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i)}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="[&_td]:py-1 [&_td]:px-1 [&_td]:text-center">
+            <tr className="border-b">
+              <td className="pr-2 text-left font-medium text-gray-700">Students (EM + HS)</td>
+              {combined.rows.map(r => <td key={r.i} className="font-semibold">{r.demand}</td>)}
+            </tr>
+            <tr className="border-b bg-gray-50/50">
+              <td className="pr-2 text-left font-medium text-gray-700">Instructors</td>
+              {combined.rows.map(r => <td key={r.i} className="font-semibold text-gray-800">{r.supply}</td>)}
+            </tr>
+            <tr className="border-b">
+              <td className="pr-2 text-left font-medium text-gray-500">Blended Capacity</td>
+              {combined.rows.map(r => <td key={r.i} className="text-gray-500">{Math.round(r.capacity)}</td>)}
+            </tr>
+            <tr>
+              <td className="pr-2 text-left font-medium text-gray-700">Coverage</td>
+              {combined.rows.map(r => {
+                const spareSeats = Math.max(0, Math.round(r.capacity - r.demand));
+                const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
+                let label = 'Matched';
+                if (r.status === 'understaffed') label = `-${shortStudents} student${shortStudents === 1 ? '' : 's'}`;
+                else if (r.status === 'overstaffed') label = `+${spareSeats} seat${spareSeats === 1 ? '' : 's'}`;
+                return (
+                  <td key={r.i}>
+                    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap ${
+                      r.status === 'matched'      ? 'bg-emerald-100 text-emerald-700'
+                      : r.status === 'understaffed' ? 'bg-red-100 text-red-700'
+                      : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {label}
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="mt-3 flex flex-wrap gap-3 text-xs text-gray-600">
+        <span>
+          <b>{combined.totalDemand}</b> student appointment{combined.totalDemand === 1 ? '' : 's'} · <b>{combined.uniqueSupply}</b> instructors on shift today
+          {combined.peakSupply > 0 && <span className="text-gray-400"> (peak {combined.peakSupply} at once)</span>}
+        </span>
+        {combined.impactStudents > 0 && (
+          <span className="text-red-700 font-semibold">
+            ~{Math.round(combined.impactStudents)} students beyond blended capacity
+          </span>
+        )}
+      </div>
     </div>
   );
 }
