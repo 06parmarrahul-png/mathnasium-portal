@@ -63,15 +63,16 @@ service cloud.firestore {
     }
 
     // Centre Directors and Directors of Education are top-of-org staff
-    // that Rahul wants to have full owner-equivalent access. Detection
-    // matches the client-side AuthContext: check the modern
-    // instructorType stamp (per-centre first, then legacy top-level).
+    // with full owner-equivalent access. Rules can match on ANY of:
+    //   - profile.role == 'director'  (first-class role — easiest to set)
+    //   - profile.instructorType matches a director title
     // We DON'T look at centerConfig.fixedStaff here because that would
-    // require an extra get() per rule evaluation (Firestore has a
-    // limit) — clients set instructorType when they save the profile.
+    // require an extra get() per evaluation (Firestore limit). Clients
+    // set instructorType when saving the profile.
     function isDirector() {
       return profileExists() && (
-        profile().instructorType == 'Center Director'
+        profile().role == 'director'
+        || profile().instructorType == 'Center Director'
         || profile().instructorType == 'Centre Director'
         || profile().instructorType == 'Dir. of Education'
         || profile().instructorType == 'Director of Education'

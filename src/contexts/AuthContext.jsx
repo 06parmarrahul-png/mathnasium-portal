@@ -166,14 +166,31 @@ export function AuthProvider({ children }) {
   // (matches FIXED_SCHEDULES semantics) and the legacy top-level
   // instructorType so a director account created before the fixedStaff
   // migration still passes.
-  const DIRECTOR_TITLES = new Set(['Center Director', 'Centre Director', 'Dir. of Education', 'Director of Education']);
+  // Director detection is intentionally permissive — matches ANY of:
+  //   1. profile.role === 'director'  (first-class role, easiest path)
+  //   2. profile.instructorType is a director title (per-centre or legacy)
+  //   3. centerConfig.fixedStaff[displayName].role is a director title
+  //      (case-insensitive so 'center director' vs 'Center Director'
+  //      doesn't matter)
+  // Any one of these = full owner-equivalent access.
+  const DIRECTOR_TITLES = new Set([
+    'Center Director', 'Centre Director',
+    'Dir. of Education', 'Director of Education',
+  ]);
+  const matchesDirectorTitle = (v) => {
+    if (!v || typeof v !== 'string') return false;
+    const n = v.trim().toLowerCase();
+    for (const t of DIRECTOR_TITLES) if (t.toLowerCase() === n) return true;
+    return false;
+  };
   const fixedStaffTitle = profile?.displayName
     ? centerConfig?.fixedStaff?.[profile.displayName]?.role
     : null;
   const isDirector = (
-    DIRECTOR_TITLES.has(fixedStaffTitle) ||
-    DIRECTOR_TITLES.has(profile?.instructorType) ||
-    DIRECTOR_TITLES.has(profile?.centerMemberships?.[activeCenterId]?.instructorType)
+    role === 'director' ||
+    matchesDirectorTitle(fixedStaffTitle) ||
+    matchesDirectorTitle(profile?.instructorType) ||
+    matchesDirectorTitle(profile?.centerMemberships?.[activeCenterId]?.instructorType)
   );
 
   // True for any role that should see what the owner sees at the centre
