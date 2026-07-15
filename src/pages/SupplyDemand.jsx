@@ -637,6 +637,78 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
       {/* Bar chart */}
       <Chart demand={demand} supply={supply} rows={rows} maxY={maxY} forecastRatio={forecastRatio} accent={side.accent} />
 
+      {/* ── RATIO STATUS + IMPACT ──────────────────────────────────────
+          Directly under the chart, exactly like Andy's boss's tool:
+          per-slot coloured boxes (Matched green, X.X Over pink, X.X
+          Under orange) with a matching "# of Students Affected" row.
+          Uses a single wide table so every cell aligns column-for-
+          column with the chart bars above. */}
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
+          <colgroup>
+            <col style={{ width: 90 }} />
+            {rows.map(r => <col key={r.i} />)}
+          </colgroup>
+          <thead>
+            <tr className="text-[10px] uppercase tracking-wide text-gray-500">
+              <th className="text-left pb-1 pr-2 font-bold">Slot</th>
+              {rows.map(r => (
+                <th key={r.i} className="text-center pb-1 font-medium">{slotLabel(r.i).toUpperCase().replace('AM', 'AM').replace('PM', 'PM')}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {/* RATIO STATUS row — one full-width coloured pill per slot.
+                Values format: "Matched" or "0.5 Over" / "0.5 Under" —
+                the signed decimal is (capacity − demand) ÷ target ratio,
+                capped to one decimal place. */}
+            <tr>
+              <td className="pr-2 py-2 text-left align-top">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Ratio Status</div>
+              </td>
+              {rows.map(r => {
+                const val = forecastRatio > 0 ? (r.capacity - r.demand) / forecastRatio : 0;
+                const abs = Math.abs(val).toFixed(1);
+                let label = 'Matched';
+                if (r.status === 'overstaffed')      label = `${abs} Over`;
+                else if (r.status === 'understaffed') label = `${abs} Under`;
+                const cls = r.status === 'matched'
+                  ? 'bg-emerald-200/70 text-emerald-900'
+                  : r.status === 'understaffed'
+                    ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                    : 'bg-red-100 text-red-700 border border-red-200';
+                return (
+                  <td key={r.i} className="p-0 align-middle">
+                    <div className={`rounded-md py-2 text-center text-xs font-semibold ${cls}`}>
+                      {label}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+            {/* IMPACT row — students beyond capacity in understaffed
+                slots. Non-understaffed slots show "—" so the row reads
+                as a comparison, not a data table. */}
+            <tr>
+              <td className="pr-2 py-2 text-left align-top">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Impact</div>
+                <div className="text-[9px] font-normal text-gray-500 leading-tight"># of<br/>Students<br/>Affected</div>
+              </td>
+              {rows.map(r => {
+                const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
+                return (
+                  <td key={r.i} className="text-center align-middle py-2">
+                    {r.status === 'understaffed' && shortStudents > 0
+                      ? <span className="text-orange-600 font-bold text-base">{shortStudents}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
       {/* ── Slot Detail (editable) ─────────────────────────────────────
           Same rows as Andy's original tool: Demand and Staff (both
           editable inputs), plus a derived Supply row showing staff ×
@@ -656,12 +728,16 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
         </div>
       </div>
       <div className="overflow-x-auto">
-        <table className="w-full text-xs">
+        <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
+          <colgroup>
+            <col style={{ width: 90 }} />
+            {rows.map(r => <col key={r.i} />)}
+          </colgroup>
           <thead>
             <tr className="text-left text-gray-500 border-b">
               <th className="py-1.5 pr-2 font-medium">Slot</th>
               {rows.map(r => (
-                <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i)}</th>
+                <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i).toUpperCase()}</th>
               ))}
             </tr>
           </thead>
@@ -762,12 +838,16 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
       <div className="mt-5 border-t pt-4">
         <h3 className="text-sm font-bold text-gray-900 mb-3">Ratio Analysis</h3>
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
+            <colgroup>
+              <col style={{ width: 180 }} />
+              {rows.map(r => <col key={r.i} />)}
+            </colgroup>
             <thead>
               <tr className="text-left text-gray-500 border-b">
                 <th className="py-1.5 pr-2 font-medium">Slot</th>
                 {rows.map(r => (
-                  <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i)}</th>
+                  <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i).toUpperCase()}</th>
                 ))}
               </tr>
             </thead>
