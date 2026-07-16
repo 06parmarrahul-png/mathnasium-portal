@@ -2176,15 +2176,32 @@ export default function Admin() {
       .filter(d => isOperatingDay(d, centerConfig)),
   [weekStart, centerConfig]);
 
-  const totalAssignedHours = useMemo(() => {
+  const { totalAssignedHours, volunteerHoursThisWeek } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
-    // Includes drafts — admin's header total is "planned hours this week",
-    // not "hours instructors have been told about".
-    return shifts
-      .filter(s => s.date >= ws && s.date <= we)
-      .reduce((sum, s) => sum + shiftHours(s), 0);
-  }, [shifts, weekStart]);
+    // Set of volunteer user IDs so per-shift lookup is O(1).
+    const volunteerIds = new Set(
+      usersForCentre.filter(u => u.isVolunteer === true).map(u => u.uid),
+    );
+    const volunteerNames = new Set(
+      usersForCentre.filter(u => u.isVolunteer === true).map(u => u.displayName).filter(Boolean),
+    );
+    let paid = 0;
+    let volunteer = 0;
+    // Includes drafts — the header total is "planned hours this week",
+    // not "hours instructors have been told about". Volunteer hours are
+    // TRACKED separately so the paid total reflects what actually
+    // costs money.
+    for (const s of shifts) {
+      if (s.date < ws || s.date > we) continue;
+      const hrs = shiftHours(s);
+      const isVolunteer = (s.userId && volunteerIds.has(s.userId))
+        || (s.userName && volunteerNames.has(s.userName));
+      if (isVolunteer) volunteer += hrs;
+      else paid += hrs;
+    }
+    return { totalAssignedHours: paid, volunteerHoursThisWeek: volunteer };
+  }, [shifts, weekStart, usersForCentre]);
 
   // Auto-scheduler
   const handleGenerate = async () => {
@@ -3931,9 +3948,27 @@ export default function Admin() {
                   {format(weekStart, 'MMM d')} – {format(addDays(weekStart, 6), 'MMM d, yyyy')}
                 </span>
               </div>
-              <span className="text-xs text-gray-500">
-                Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500">
+                  Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
+                  <span className="ml-1 text-gray-400">(paid)</span>
+                </span>
+                {/* Volunteer hours are tracked separately — they don't
+                    hit payroll but the owner still needs to see them
+                    for insurance / centre credit / hours-worked
+                    records. Chip only appears when a volunteer has
+                    hours this week so it stays out of the way when
+                    the week is all-paid staff. */}
+                {volunteerHoursThisWeek > 0 && (
+                  <span
+                    title="Volunteer hours are tracked but excluded from the paid total and from payroll."
+                    className="inline-flex items-center gap-1 rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-800"
+                  >
+                    <HandHeart size={11} />
+                    {Math.round(volunteerHoursThisWeek * 10) / 10} volunteer hrs
+                  </span>
+                )}
+              </div>
               {/* Export Schedule — opens the browser's print dialog with
                   print CSS that hides chrome + sidebar. Owner picks
                   "Save as PDF" from the destination dropdown to get a
