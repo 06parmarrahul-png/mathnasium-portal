@@ -376,30 +376,43 @@ export default function SupplyDemand() {
   const sideData = useMemo(() => {
     if (!apptData) return null;
     const out = {};
-    // Build no-show / cancellation adjustments per slot per side from
-    // check-ins. Then also build walk-in additions per slot per side.
-    // Applied on top of the Acuity base demand. Indexing is by
-    // dayWindow slot index, but we look up the API's slots by KEY
-    // (HH:MM) so a summer 10am–2pm day maps API slots that start at
-    // 10:00 correctly instead of assuming they start at 3pm.
+    // Compute demand per slot CLIENT-SIDE from each student's
+    // duration, not from the API's per-slot count field. A 60-min
+    // booking counts for 2 slots (start + start+30), a 90-min for 3,
+    // etc. The API only puts each student's card in its FIRST slot,
+    // so per-slot counts alone would miss rollover. Client-side we
+    // fan each card out to every slot its duration covers — which
+    // also fixes the expand view (was showing 0 for later slots).
+    const bookedBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
     const noShowsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
     const walkInsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
-    const apiSlotsByKey = new Map();
+    // Fan out each student (from any source slot's students bucket)
+    // to every dayWindow slot it overlaps. Uses the student's `start`
+    // ISO datetime to anchor, and `duration` (minutes) to fan.
+    // Default duration = 60 min if unset (Acuity's typical booking).
     for (const row of (apptData.slots || [])) {
-      if (row?.slot) apiSlotsByKey.set(row.slot, row);
-    }
-    for (let i = 0; i < SLOT_COUNT; i++) {
-      const key = dayWindow.slotKeys[i];
-      const apiRow = apiSlotsByKey.get(key);
-      if (!apiRow) continue;
       for (const sideKey of ['EM', 'HS']) {
-        const bucket = apiRow.students?.[sideKey];
+        const bucket = row?.students?.[sideKey];
         if (!bucket) continue;
         const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
         for (const student of all) {
-          const sKey = student.id || student.uniqueId;
-          const status = checkIns[sKey]?.status;
-          if (status === 'noshow' || status === 'cancel') noShowsBySide[sideKey][i]++;
+          const dur = Number(student.duration) > 0 ? Number(student.duration) : 60;
+          const slotsSpan = Math.max(1, Math.round(dur / SLOT_MIN));
+          // First slot idx = position of the source row's `row.slot`
+          // key in dayWindow's slotKeys. If the source slot starts
+          // before the day window (e.g. 9am booking on a 10-slot day),
+          // fall back to using the first covered slot inside the window.
+          const [rowH, rowM] = row.slot.split(':').map(Number);
+          const rowStartMin = rowH * 60 + rowM;
+          for (let k = 0; k < slotsSpan; k++) {
+            const covered = rowStartMin + k * SLOT_MIN;
+            const idx = Math.round((covered - dayWindow.startMin) / SLOT_MIN);
+            if (idx < 0 || idx >= SLOT_COUNT) continue;
+            bookedBySide[sideKey][idx]++;
+            const sKey = student.id || student.uniqueId;
+            const status = checkIns[sKey]?.status;
+            if (status === 'noshow' || status === 'cancel') noShowsBySide[sideKey][idx]++;
+          }
         }
       }
     }
@@ -413,9 +426,7 @@ export default function SupplyDemand() {
     for (const side of SIDES) {
       const baseDemand = new Array(SLOT_COUNT).fill(0);
       for (let i = 0; i < SLOT_COUNT; i++) {
-        const key = dayWindow.slotKeys[i];
-        const apiRow = apiSlotsByKey.get(key);
-        const booked  = apiRow?.counts?.[side.key] || 0;
+        const booked  = bookedBySide[side.key][i] || 0;
         const noShow  = noShowsBySide[side.key][i] || 0;
         const walkIn  = walkInsBySide[side.key][i] || 0;
         baseDemand[i] = Math.max(0, booked - noShow + walkIn);
@@ -644,14 +655,46 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
   // walk-in), with no-shows called out.
   const slotRoster = useMemo(() => {
     if (!expanded) return null;
-    const apiByKey = new Map();
-    for (const row of (apptData?.slots || [])) if (row?.slot) apiByKey.set(row.slot, row);
-    const walkInsBySlotSide = new Map(); // "HH:MM|EM" -> [names]
+    // Build per-slot demand rosters by walking every source slot's
+    // students and fanning each out across its full duration, same
+    // math as the counts above. Without this, a 60-min booking at
+    // 3pm would only appear in the 3pm bucket and the 3:30 slot
+    // would show "0 students" even though the kid is still there.
+    const bySlotSide = new Map(); // "slotKey|sideKey" -> [{name, source, status}]
+    const push = (slotKey, sideKey, entry) => {
+      const k = `${slotKey}|${sideKey}`;
+      if (!bySlotSide.has(k)) bySlotSide.set(k, []);
+      bySlotSide.get(k).push(entry);
+    };
+    for (const row of (apptData?.slots || [])) {
+      for (const sideKey of ['EM', 'HS']) {
+        const bucket = row?.students?.[sideKey];
+        if (!bucket) continue;
+        const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
+        for (const student of all) {
+          const dur = Number(student.duration) > 0 ? Number(student.duration) : 60;
+          const slotsSpan = Math.max(1, Math.round(dur / 30));
+          const [rowH, rowM] = row.slot.split(':').map(Number);
+          const rowStartMin = rowH * 60 + rowM;
+          const key = student.id || student.uniqueId;
+          const status = checkIns[key]?.status || null;
+          for (let k = 0; k < slotsSpan; k++) {
+            const covered = rowStartMin + k * 30;
+            const idx = Math.round((covered - startMin) / 30);
+            if (idx < 0 || idx >= dayWindow.slotCount) continue;
+            const slotKey = dayWindow.slotKeys[idx];
+            push(slotKey, sideKey, {
+              name: student.name || student.displayName || 'Unknown',
+              source: k === 0 ? 'Acuity' : `Acuity (rollover · ${dur}min)`,
+              status,
+            });
+          }
+        }
+      }
+    }
     for (const w of walkIns) {
       if (!w?.slot || !w?.side) continue;
-      const key = `${w.slot}|${w.side}`;
-      if (!walkInsBySlotSide.has(key)) walkInsBySlotSide.set(key, []);
-      walkInsBySlotSide.get(key).push(w.name || 'Walk-in');
+      push(w.slot, w.side, { name: w.name || 'Walk-in', source: 'Walk-in', status: null });
     }
     const timeToMin = (t) => {
       if (!t) return null;
@@ -661,27 +704,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
     return dayWindow.slotKeys.map((slotKey, i) => {
       const slotStart = startMin + i * 30;
       const slotEnd = slotStart + 30;
-      const apiRow = apiByKey.get(slotKey);
-      // Demand — split by side, tag source + status.
-      const buildDemand = (sideKey) => {
-        const bucket = apiRow?.students?.[sideKey];
-        const acuity = [
-          ...((bucket?.onHour) || []),
-          ...((bucket?.halfHour) || []),
-        ].map(s => {
-          const key = s.id || s.uniqueId;
-          const status = checkIns[key]?.status;
-          return {
-            name: s.name || s.displayName || 'Unknown',
-            source: 'Acuity',
-            status,
-          };
-        });
-        const wIns = (walkInsBySlotSide.get(`${slotKey}|${sideKey}`) || []).map(name => ({
-          name, source: 'Walk-in', status: null,
-        }));
-        return [...acuity, ...wIns];
-      };
+      const buildDemand = (sideKey) => bySlotSide.get(`${slotKey}|${sideKey}`) || [];
       // Supply — instructors whose shift covers ≥ half the slot.
       const supply = [];
       for (const s of shifts) {
