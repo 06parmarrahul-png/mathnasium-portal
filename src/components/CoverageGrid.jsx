@@ -95,21 +95,52 @@ function parseShift(str) {
   return { startMins: norm(parts[0]), endMins: norm(parts[1]) };
 }
 
-// 3-tier ordering for Today's Snapshot:
+// 4-tier ordering for Today's Snapshot:
 //   0 = Important staff (Hosts + Management — Manager, Director, Admin, etc.)
 //       These run the centre; they should sit at the top of the grid.
 //   1 = Online instructors — bars only, don't count toward teaching ratio.
 //   2 = In-centre instructors (Instructor + Lead) — the teaching workforce.
-// Bold dividers separate the three groups in the rendered table.
+//   3 = Volunteers — unpaid contributors, tracked separately below the
+//       paid roster. Volunteer flag comes from the shift entry itself
+//       (per-centre isVolunteer), so a volunteer with a shift tagged
+//       Elementary still lands in the volunteer tier, not with paid EM.
+// Bold dividers separate the four groups in the rendered table.
 //
 // Checks BOTH role and subRole because most centres tag online staff as
 // role:'Instructor' + subRole:'Online' rather than role:'Online Instructor'.
-const rolePriority = (role, subRole) => {
+const rolePriority = (role, subRole, isVolunteer) => {
+  if (isVolunteer) return 3;
   if (role === 'Online Instructor' || subRole === 'Online') return 1;
   if (role === 'Instructor' || role === 'Lead')             return 2;
   // Everything else (Host, Manager, Director, Admin, Director of Education,
   // Centre Director, …) is "important staff".
   return 0;
+};
+
+// Sub-ordering WITHIN each tier — matches the exact stacking the boss
+// wanted:
+//   Tier 0 (management): CD → Dir. Ed → Manager → Admin Assistant → Host
+//   Tier 1 (online):     alphabetical
+//   Tier 2 (in-centre):  Lead → Highschool → Elementary
+//   Tier 3 (volunteers): alphabetical
+// Anything unrecognised falls to the bottom of its tier so a new role
+// added later doesn't hide.
+const subPriorityInTier = (tier, role, subRole) => {
+  if (tier === 0) {
+    if (role === 'Center Director' || role === 'Centre Director')          return 0;
+    if (role === 'Dir. of Education' || role === 'Director of Education')  return 1;
+    if (role === 'Manager')                                                return 2;
+    if (role === 'Admin Assistant' || role === 'admin_assistant')          return 3;
+    if (role === 'Host')                                                   return 4;
+    return 5;
+  }
+  if (tier === 2) {
+    if (role === 'Lead')                                                   return 0;
+    if (subRole === 'Highschool' || subRole === 'High School')             return 1;
+    if (subRole === 'Elementary')                                          return 2;
+    return 3;
+  }
+  return 0; // tiers 1 + 3 fall through to alphabetical only
 };
 
 export default function CoverageGrid({ day, centerConfig }) {
@@ -126,31 +157,39 @@ export default function CoverageGrid({ day, centerConfig }) {
   const entries = useMemo(() => {
     if (Array.isArray(day.shiftEntries) && day.shiftEntries.length > 0) {
       return day.shiftEntries.map((e, i) => ({
-        key:       e.key || `${e.name}|${i}`,
-        name:      e.name,
-        role:      e.role || 'Instructor',
-        subRole:   e.subRole,
-        shiftTime: e.shiftTime,
-        sickPay:   !!e.sickPay,
+        key:         e.key || `${e.name}|${i}`,
+        name:        e.name,
+        role:        e.role || 'Instructor',
+        subRole:     e.subRole,
+        shiftTime:   e.shiftTime,
+        sickPay:     !!e.sickPay,
+        noShow:      !!e.noShow,
+        isVolunteer: !!e.isVolunteer,
       }));
     }
     return (day.assignedEmployees || []).map((name, i) => ({
-      key:       `${name}|${i}`,
+      key:         `${name}|${i}`,
       name,
-      role:      day.roles?.[name] || 'Instructor',
-      subRole:   day.subRoles?.[name],
-      shiftTime: day.shiftTimes?.[name],
-      sickPay:   !!day.sickPay?.[name],
+      role:        day.roles?.[name] || 'Instructor',
+      subRole:     day.subRoles?.[name],
+      shiftTime:   day.shiftTimes?.[name],
+      sickPay:     !!day.sickPay?.[name],
+      noShow:      !!day.noShow?.[name],
+      isVolunteer: false,
     }));
-  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay]);
+  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay, day.noShow]);
 
-  // Sort by tier, then by name within tier. Two entries for the same
-  // person stay adjacent (same name, same tier) but each shows its own
-  // role badge + bar.
+  // Sort by tier → sub-priority within tier → alphabetical by name.
+  // Two entries for the same person stay adjacent when they share tier
+  // and sub-priority (each still shows its own role badge + bar).
   const sortedEntries = useMemo(() => {
     return [...entries].sort((a, b) => {
-      const dp = rolePriority(a.role, a.subRole) - rolePriority(b.role, b.subRole);
-      if (dp !== 0) return dp;
+      const at = rolePriority(a.role, a.subRole, a.isVolunteer);
+      const bt = rolePriority(b.role, b.subRole, b.isVolunteer);
+      if (at !== bt) return at - bt;
+      const asp = subPriorityInTier(at, a.role, a.subRole);
+      const bsp = subPriorityInTier(bt, b.role, b.subRole);
+      if (asp !== bsp) return asp - bsp;
       return a.name.localeCompare(b.name);
     });
   }, [entries]);
@@ -260,31 +299,39 @@ export default function CoverageGrid({ day, centerConfig }) {
           </thead>
           <tbody>
             {sortedEntries.map((entry, idx) => {
-              const { name, role, subRole, shiftTime, sickPay: isSick } = entry;
+              const { name, role, subRole, shiftTime, sickPay: isSick, noShow: isNoShow, isVolunteer } = entry;
               const shift = shiftByKey[entry.key];
-              // Bold dividers between the three tiers so the staff list
-              // reads "important staff → online → in-centre instructors"
+              // Bold dividers between the four tiers so the staff list
+              // reads "important staff → online → in-centre → volunteers"
               // at a glance. Insert a section header before the FIRST
               // row of each tier whose priority is new.
-              const myPriority = rolePriority(role, subRole);
+              const myPriority = rolePriority(role, subRole, isVolunteer);
               const prevPriority = idx === 0
                 ? -1
-                : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole);
+                : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole, sortedEntries[idx - 1].isVolunteer);
               const isFirstOfTier = myPriority !== prevPriority;
               const tierLabel = myPriority === 0 ? 'Hosts & Management'
                               : myPriority === 1 ? 'Online Instructors'
-                              : 'In-Centre Instructors';
+                              : myPriority === 2 ? 'In-Centre Instructors'
+                              : 'Volunteers';
               const colspan = 1 + slots.length;
-              // Derive a single clean assignment label per shift ("Manager",
-              // "Highschool Instructor", "Host", "Online Instructor", etc.)
-              // and use the centre's assignment-colour palette so BOTH the
-              // bar AND the badge use the role's colour — matches the chip
-              // on the right of each row.
+              // Colour precedence: Sick > No-Show > Volunteer > assignment.
+              // Same palette used on the Manage Staff Schedule grid so the
+              // two surfaces stay visually consistent.
               const assignment = assignmentFor({ role, subRole });
-              const roleBg = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
+              const roleBg = isSick      ? '#7f1d1d'
+                          : isNoShow    ? '#374151'
+                          : isVolunteer ? '#0284c7'
+                          : assignmentColorHex(assignment, centerConfig);
               const roleText = contrastText(roleBg);
-              const badgeLabel = isSick ? 'SICK' : assignmentShort(assignment);
-              const badgeTooltip = isSick ? `${assignment} · Sick Pay` : assignment;
+              const badgeLabel = isSick ? 'SICK'
+                : isNoShow ? 'NO-SHOW'
+                : isVolunteer ? 'VOLUNTEER'
+                : assignmentShort(assignment);
+              const badgeTooltip = isSick ? `${assignment} · Sick Pay`
+                : isNoShow ? `${assignment} · No-Show`
+                : isVolunteer ? `${assignment} · Volunteer`
+                : assignment;
               // Flag rows where the same person has another entry on the
               // day — gives an at-a-glance "this is one of two shifts for
               // this person today" cue so it doesn't look like a duplicate.

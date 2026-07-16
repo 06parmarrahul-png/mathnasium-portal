@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { format } from 'date-fns';
-import { Calendar } from 'lucide-react';
+import { Calendar, HandHeart } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { resolveUserForCenter } from '../lib/centerMembership';
 import CoverageGrid from './CoverageGrid';
 
 /**
@@ -66,6 +67,27 @@ export default function TodaysSnapshot() {
     )
   ), [todayStr, activeCenterId]);
 
+  // Users subscription — needed to know which shifts belong to a
+  // volunteer. Volunteer flag is per-centre so we resolve against the
+  // active centre before reading isVolunteer.
+  const [users, setUsers] = useState([]);
+  useEffect(() => {
+    if (!activeCenterId) return;
+    return onSnapshot(
+      query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
+      snap => setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
+    );
+  }, [activeCenterId]);
+
+  const volunteerNames = useMemo(() => {
+    const set = new Set();
+    for (const u of users) {
+      const resolved = resolveUserForCenter(u, activeCenterId);
+      if (resolved.isVolunteer === true && resolved.displayName) set.add(resolved.displayName);
+    }
+    return set;
+  }, [users, activeCenterId]);
+
   // Build the day-shaped object that CoverageGrid expects. We pass
   // per-SHIFT entries (not name-keyed maps) so one person scheduled in
   // two roles on the same day — e.g. LEAD 11–3 covering for the owner,
@@ -78,12 +100,14 @@ export default function TodaysSnapshot() {
       const name = s.userName;
       if (!name || !s.startTime || !s.endTime) continue;
       shiftEntries.push({
-        key:       s.id,
+        key:         s.id,
         name,
-        role:      s.role || 'Instructor',
-        subRole:   s.subRole,
-        shiftTime: `${s.startTime} - ${s.endTime}`,
-        sickPay:   !!s.sickPay,
+        role:        s.role || 'Instructor',
+        subRole:     s.subRole,
+        shiftTime:   `${s.startTime} - ${s.endTime}`,
+        sickPay:     !!s.sickPay,
+        noShow:      !!s.noShow,
+        isVolunteer: volunteerNames.has(name),
       });
     }
     return {
@@ -92,7 +116,16 @@ export default function TodaysSnapshot() {
       dayNumber: now.getDate(),
       shiftEntries,
     };
-  }, [shifts, todayStr, dayOfWeek, now]);
+  }, [shifts, todayStr, dayOfWeek, now, volunteerNames]);
+
+  // Volunteers on the day → banner + count for the header.
+  const volunteersToday = useMemo(() => {
+    const names = new Set();
+    for (const e of dayData.shiftEntries) {
+      if (e.isVolunteer) names.add(e.name);
+    }
+    return Array.from(names);
+  }, [dayData.shiftEntries]);
 
   // Stats — counted per SHIFT, not per person, because each shift is
   // distinct work. (A teacher pulling both a LEAD and a HOST shift today
@@ -171,6 +204,23 @@ export default function TodaysSnapshot() {
               tone="emerald"
             />
           </div>
+
+          {/* Volunteer banner — surfaces today's unpaid contributors so
+              the owner knows the on-floor count includes free help.
+              Volunteer hours don't count in payroll totals or the
+              paid-coverage numbers. */}
+          {volunteersToday.length > 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-sky-200 bg-sky-50/60 px-3 py-2 text-xs">
+              <HandHeart size={14} className="text-sky-600 mt-0.5 shrink-0" />
+              <div>
+                <span className="font-semibold text-sky-900">
+                  {volunteersToday.length} volunteer{volunteersToday.length === 1 ? '' : 's'} today
+                </span>
+                <span className="text-sky-700"> — {volunteersToday.join(', ')}. </span>
+                <span className="text-sky-600/80 italic">Not counted in paid coverage.</span>
+              </div>
+            </div>
+          )}
 
           {/* Coverage grid (reuses the auto-scheduler component) */}
           <CoverageGrid day={dayData} centerConfig={centerConfig} />
