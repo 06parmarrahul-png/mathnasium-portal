@@ -2179,7 +2179,12 @@ export default function Admin() {
   const { totalAssignedHours, volunteerHoursThisWeek } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
-    // Set of volunteer user IDs so per-shift lookup is O(1).
+    // Only volunteers are pulled out of the schedule total — everyone
+    // else (paid hourly instructors, salary staff like Vinod/Neeru,
+    // owners) counts toward "planned hours this week" so the owner
+    // can see the full picture of who's on the floor. Payroll is a
+    // separate concern handled by the Payroll tab, which excludes
+    // owners + salary staff independently.
     const volunteerIds = new Set(
       usersForCentre.filter(u => u.isVolunteer === true).map(u => u.uid),
     );
@@ -2188,17 +2193,13 @@ export default function Admin() {
     );
     let paid = 0;
     let volunteer = 0;
-    // Includes drafts — the header total is "planned hours this week",
-    // not "hours instructors have been told about". Volunteer hours are
-    // TRACKED separately so the paid total reflects what actually
-    // costs money.
     for (const s of shifts) {
       if (s.date < ws || s.date > we) continue;
       const hrs = shiftHours(s);
       const isVolunteer = (s.userId && volunteerIds.has(s.userId))
         || (s.userName && volunteerNames.has(s.userName));
       if (isVolunteer) volunteer += hrs;
-      else paid += hrs;
+      else             paid      += hrs;
     }
     return { totalAssignedHours: paid, volunteerHoursThisWeek: volunteer };
   }, [shifts, weekStart, usersForCentre]);
@@ -3951,14 +3952,14 @@ export default function Admin() {
               <div className="flex items-center gap-3">
                 <span className="text-xs text-gray-500">
                   Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
-                  <span className="ml-1 text-gray-400">(paid)</span>
                 </span>
-                {/* Volunteer hours are tracked separately — they don't
-                    hit payroll but the owner still needs to see them
-                    for insurance / centre credit / hours-worked
-                    records. Chip only appears when a volunteer has
-                    hours this week so it stays out of the way when
-                    the week is all-paid staff. */}
+                {/* Volunteer hours tracked separately — see them for
+                    records, but excluded from the total since they
+                    don't cost anything. Salary staff (Vinod / Neeru)
+                    are NOT split out — their hours land in the total
+                    like everyone else because they're still coverage
+                    that matters for planning. Payroll excludes them
+                    independently via the salaryStaff config. */}
                 {volunteerHoursThisWeek > 0 && (
                   <span
                     title="Volunteer hours are tracked but excluded from the paid total and from payroll."
