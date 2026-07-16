@@ -354,6 +354,11 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   // on the schedule (so we have a record) but the payroll tab reports it
   // under a separate "Sick" column instead of regular worked hours.
   const [sickPay, setSickPay] = useState(!!shift.sickPay);
+  // No-Show flag — instructor was scheduled but didn't come in and it's
+  // NOT a sick day. Unpaid. Stays on the schedule so we have a record
+  // that they were originally assigned, but excluded from payroll and
+  // from the day's paid-hours total. Mutually exclusive with sickPay.
+  const [noShow, setNoShow] = useState(!!shift.noShow);
 
   return (
     <Modal
@@ -422,10 +427,32 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
             <input
               type="checkbox"
               checked={sickPay}
-              onChange={e => setSickPay(e.target.checked)}
+              onChange={e => { setSickPay(e.target.checked); if (e.target.checked) setNoShow(false); }}
               className="peer sr-only"
             />
             <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-amber-500 peer-checked:after:translate-x-full peer-checked:after:border-white" />
+          </div>
+        </label>
+
+        {/* No-Show toggle — instructor was scheduled but didn't show up
+            AND isn't calling in sick. Shift stays on the record so we
+            can see what they were originally assigned, but hours are
+            zeroed for payroll and pulled from the day's paid total. */}
+        <label className="flex items-start justify-between gap-3 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 cursor-pointer">
+          <div className="pr-3">
+            <p className="text-xs font-semibold text-gray-900">No-Show</p>
+            <p className="text-xs text-gray-600 mt-0.5">
+              Instructor didn&apos;t come in. Unpaid — subtracts from the day&apos;s hours but keeps the shift on the record.
+            </p>
+          </div>
+          <div className="relative inline-flex shrink-0 mt-0.5">
+            <input
+              type="checkbox"
+              checked={noShow}
+              onChange={e => { setNoShow(e.target.checked); if (e.target.checked) setSickPay(false); }}
+              className="peer sr-only"
+            />
+            <div className="peer h-5 w-9 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-4 after:w-4 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white" />
           </div>
         </label>
 
@@ -446,7 +473,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
         )}
 
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay, noShow })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -2154,10 +2181,11 @@ export default function Admin() {
     } catch { /* notify optional */ }
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay }) => {
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay, noShow }) => {
     await updateDoc(doc(db, 'shifts', editShiftModal.id), {
       startTime, endTime, role, shiftType, subRole,
       sickPay: !!sickPay,
+      noShow:  !!noShow,
     });
     setEditShiftModal(null);
   };
@@ -2215,6 +2243,11 @@ export default function Admin() {
     let volunteer = 0;
     for (const s of shifts) {
       if (s.date < ws || s.date > we) continue;
+      // No-show shifts are unpaid — subtract from the day's hours by
+      // simply not counting them. Sick still counts toward the planning
+      // total (they were scheduled and paid), it's just tracked
+      // separately downstream in Payroll.
+      if (s.noShow === true) continue;
       const hrs = shiftHours(s);
       const isVolunteer = (s.userId && volunteerIds.has(s.userId))
         || (s.userName && volunteerNames.has(s.userName));
@@ -2818,15 +2851,23 @@ export default function Admin() {
         };
       }
       const hrs = shiftHours(s);
-      const isSick = !!s.sickPay;
+      const isSick   = !!s.sickPay;
+      const isNoShow = !!s.noShow;
       // payHoursOverride is a per-shift owner override. When unset, pay
       // matches scheduled (the centre's default — "we pay what we
       // scheduled"). When set (via double-click on the Pay h cell), the
       // override wins and the diff between scheduled and paid is
       // intentional (early leave / stayed late / negotiated time).
-      const payHrs = (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
-        ? s.payHoursOverride
-        : hrs;
+      //
+      // No-show forces payHrs to 0 regardless of any override — the
+      // instructor didn't come in, they don't get paid. The scheduled
+      // hours stay visible in the row so we can see they WERE
+      // originally assigned.
+      const payHrs = isNoShow
+        ? 0
+        : (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
+          ? s.payHoursOverride
+          : hrs;
       byPerson[key].shifts.push({
         date: s.date,
         startTime: s.startTime,
@@ -2840,6 +2881,7 @@ export default function Admin() {
         payrollResolved: s.payrollResolved === true,
         shiftId: s.id,
         sick: isSick,
+        noShow: isNoShow,
       });
       if (isSick) {
         byPerson[key].sickHours += hrs;
@@ -4267,12 +4309,17 @@ export default function Admin() {
                                   see what's planned vs committed. */}
                               {dayShifts.map(s => {
                                 const assignment = assignmentFor(s);
-                                // Sick Pay overrides the assignment palette
-                                // with deep burgundy so admins can scan the
-                                // grid and immediately see who called in sick.
-                                const isSick = !!s.sickPay;
-                                const isDraft = s.status === 'draft';
-                                const bg   = isSick ? '#7f1d1d' : assignmentColorHex(assignment, centerConfig);
+                                // Sick Pay overrides the palette with deep
+                                // burgundy; No-Show uses slate gray so admins
+                                // can scan the grid and see each state at a
+                                // glance. Mutually exclusive — a shift can be
+                                // sick OR no-show, not both.
+                                const isSick   = !!s.sickPay;
+                                const isNoShow = !!s.noShow;
+                                const isDraft  = s.status === 'draft';
+                                const bg = isSick    ? '#7f1d1d'
+                                        : isNoShow  ? '#374151'
+                                        : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
                                 const hrsDisplay = isNaN(hrs) || hrs <= 0 ? '' : `${Math.round(hrs * 10) / 10}h`;
@@ -4285,7 +4332,9 @@ export default function Admin() {
                                 // whom "online" is already implied). Full text
                                 // lives in the hover tooltip.
                                 const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
-                                const compactLabel = isSick ? 'SICK' : assignmentShort(assignment);
+                                const compactLabel = isSick ? 'SICK'
+                                  : isNoShow ? 'NO-SHOW'
+                                  : assignmentShort(assignment);
                                 // Diagonal stripes via repeating-linear-gradient.
                                 // Layered on top of the base color so the assignment
                                 // colour is still legible underneath.
