@@ -54,15 +54,36 @@ function timeToMin(t) {
   return h * 60 + m;
 }
 
-// Count how many instructors of the given side are actually AVAILABLE
-// to help students at each 30-min slot. Exclusions:
-//   - draft / cancelled shifts (not confirmed to happen)
-//   - sick shifts (sickPay=true — instructor didn't actually work)
-//   - online-role shifts (S&D is in-centre coverage; Online is its
-//     own supply pool and doesn't help in-centre students)
-// Also returns the set of unique instructor names so callers can show
-// a real headcount ("5 instructors booked") rather than the sum of
-// per-slot counts (inflated by 10× since each shift covers many slots).
+// "On the floor" filter — matches Student Scheduler's meaning of
+// supply: someone teaching in-centre students right now.
+//
+// The distinction that matters: SHIFT TYPE, not instructor capability.
+// An instructor whose profile subRole is 'Online' can still take an
+// in-centre shift — their SHIFT is what tells us whether they're
+// helping in-centre students. So we check s.role (which the auto-
+// scheduler stamps as 'Online Instructor' for online shifts and as
+// Instructor/Lead/Manager for centre shifts), NOT s.subRole.
+//
+// Include roles: Instructor / Lead / Manager  (all teach or float the floor)
+// Exclude:
+//   - role 'Online Instructor'  (the SHIFT is online, not in-centre)
+//   - role 'Host'                (front-of-house, doesn't teach unless promoted)
+//   - role 'Center Director', 'Dir. of Education', 'Admin'  (off-floor)
+//   - draft / cancelled shifts, and sickPay=true days
+// The matchesSide check in computeSupply further narrows to shifts
+// whose subRole is Elementary or Highschool (the shift's assignment).
+const ON_FLOOR_ROLES = new Set(['Instructor', 'Lead', 'Manager']);
+
+function isOnFloor(s) {
+  if (s.status === 'draft' || s.status === 'cancelled') return false;
+  if (s.sickPay === true) return false;
+  // If the shift has an explicit role, honour our whitelist. If it
+  // doesn't (legacy shifts pre-migration), default-allow so we don't
+  // silently drop legit instructors.
+  if (s.role && !ON_FLOOR_ROLES.has(s.role)) return false;
+  return true;
+}
+
 function computeSupply(shifts, subRoleMatchers) {
   const counts = new Array(SLOT_COUNT).fill(0);
   const uniqueNames = new Set();
@@ -71,11 +92,7 @@ function computeSupply(shifts, subRoleMatchers) {
     return subRoleMatchers.some(m => sub === m.toLowerCase());
   };
   for (const s of shifts) {
-    if (s.status === 'draft' || s.status === 'cancelled') continue;
-    if (s.sickPay === true) continue;
-    // Online instructors — check both the role and the subRole tag
-    // since the two are set independently by the auto-scheduler.
-    if (s.role === 'Online Instructor' || (s.subRole || '').toLowerCase() === 'online') continue;
+    if (!isOnFloor(s)) continue;
     if (!matchesSide(s)) continue;
     const startMin = timeToMin(s.startTime);
     const endMin   = timeToMin(s.endTime);
@@ -91,6 +108,20 @@ function computeSupply(shifts, subRoleMatchers) {
     if (touchedAnySlot) uniqueNames.add(s.userName || s.userId || 'unknown');
   }
   return { counts, uniqueNames };
+}
+
+// Union of unique instructor names actually on the floor for the day
+// (across both EM and HS). Prevents the Whole Centre "Total Staff"
+// tile from double-counting instructors who covered both sides.
+function computeUniqueOnFloor(shifts) {
+  const names = new Set();
+  for (const s of shifts) {
+    if (!isOnFloor(s)) continue;
+    const sub = (s.subRole || '').toLowerCase();
+    if (sub !== 'elementary' && sub !== 'highschool' && sub !== 'high school') continue;
+    if (s.userName || s.userId) names.add(s.userName || s.userId);
+  }
+  return names;
 }
 
 // Per-slot classification. Mirrors Andy's logic:
@@ -128,6 +159,37 @@ export default function SupplyDemand() {
       where('date', '==', date),
     );
     return onSnapshot(q, snap => setShifts(snap.docs.map(d => d.data())));
+  }, [activeCenterId, date]);
+
+  // Live check-ins for real-time demand — Student Scheduler stamps
+  // status='noshow' / 'cancel' when a student doesn't turn up, and
+  // status='in' / 'late' when they arrive. We subtract no-shows and
+  // cancellations from the base Acuity demand so the numbers reflect
+  // what actually happened, not just what was booked.
+  const [checkIns, setCheckIns] = useState({});
+  useEffect(() => {
+    if (!activeCenterId || !date) return;
+    return onSnapshot(
+      collection(db, 'centers', activeCenterId, 'schedulerCheckIns', date, 'students'),
+      snap => {
+        const map = {};
+        snap.forEach(d => { map[d.id] = d.data(); });
+        setCheckIns(map);
+      },
+      () => setCheckIns({}),
+    );
+  }, [activeCenterId, date]);
+
+  // Live walk-ins — students added on the day who don't have an
+  // Acuity appointment. Same source the Student Scheduler reads.
+  const [walkIns, setWalkIns] = useState([]);
+  useEffect(() => {
+    if (!activeCenterId || !date) return;
+    return onSnapshot(
+      collection(db, 'centers', activeCenterId, 'walkIns', date, 'entries'),
+      snap => setWalkIns(snap.docs.map(d => d.data())),
+      () => setWalkIns([]),
+    );
   }, [activeCenterId, date]);
 
   // Fetch the appointments for the selected date. Same endpoint the
@@ -273,14 +335,43 @@ export default function SupplyDemand() {
   const sideData = useMemo(() => {
     if (!apptData) return null;
     const out = {};
+    // Build no-show / cancellation adjustments per slot per side from
+    // check-ins. Then also build walk-in additions per slot per side.
+    // Applied on top of the Acuity base demand.
+    const noShowsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
+    const walkInsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
+    // Walk through the API's students arrays to know which student
+    // belongs to which slot + side, then decrement no-shows.
+    const slots = apptData.slots || [];
+    for (let i = 0; i < Math.min(SLOT_COUNT, slots.length); i++) {
+      for (const sideKey of ['EM', 'HS']) {
+        const bucket = slots[i]?.students?.[sideKey];
+        if (!bucket) continue;
+        const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
+        for (const student of all) {
+          const key = student.id || student.uniqueId;
+          const status = checkIns[key]?.status;
+          if (status === 'noshow' || status === 'cancel') noShowsBySide[sideKey][i]++;
+        }
+      }
+    }
+    for (const w of walkIns) {
+      if (!w?.slot || !w?.side) continue;
+      // Walk-in slot is stored as "HH:MM"; convert to our slot index.
+      const [wh, wm] = w.slot.split(':').map(Number);
+      const slotIdx = ((wh * 60 + wm) - START_HOUR * 60) / SLOT_MIN;
+      if (slotIdx < 0 || slotIdx >= SLOT_COUNT) continue;
+      // Walk-in side is HS/EM/Online — only in-centre counts.
+      if (w.side === 'HS' || w.side === 'EM') walkInsBySide[w.side][slotIdx]++;
+    }
     for (const side of SIDES) {
       const baseDemand = new Array(SLOT_COUNT).fill(0);
-      const slots = apptData.slots || [];
-      // Slots from the API start at APPT_START_HOUR (server-side constant).
-      // We assume it matches START_HOUR; if not, first-slot alignment will
-      // just be off by an offset — visible to the owner and easy to spot.
       for (let i = 0; i < Math.min(SLOT_COUNT, slots.length); i++) {
-        baseDemand[i] = slots[i]?.counts?.[side.key] || 0;
+        const booked  = slots[i]?.counts?.[side.key] || 0;
+        const noShow  = noShowsBySide[side.key][i] || 0;
+        const walkIn  = walkInsBySide[side.key][i] || 0;
+        // Effective demand = booked − no-shows − cancellations + walk-ins.
+        baseDemand[i] = Math.max(0, booked - noShow + walkIn);
       }
       const sideOv = overrides[side.key] || { demand: {}, supply: {} };
       const demandOv = sideOv.demand || {};
@@ -315,8 +406,12 @@ export default function SupplyDemand() {
         supplyOverriddenSlots: new Set(Object.keys(supplyOv).map(Number)),
       };
     }
+    // Attach the day-wide union of instructor names — Whole Centre
+    // card reads this instead of summing per-side counts (which
+    // double-counts anyone who covered both sides).
+    out._uniqueOnFloor = computeUniqueOnFloor(shifts);
     return out;
-  }, [apptData, shifts, overrides, ratios]);
+  }, [apptData, shifts, overrides, ratios, checkIns, walkIns]);
 
   // Match Demand: for each slot, fill Staff to the minimum needed to
   // hit the target ratio — i.e. staff = ceil(demand ÷ target ratio).
@@ -472,6 +567,7 @@ export default function SupplyDemand() {
         <CombinedCard
           emData={sideData.EM}
           hsData={sideData.HS}
+          uniqueOnFloor={sideData._uniqueOnFloor}
           emRatio={ratios.EM}
           hsRatio={ratios.HS}
           dateLabel={format(new Date(date + 'T00:00:00'), 'EEE MMM d')}
@@ -483,7 +579,7 @@ export default function SupplyDemand() {
 
 // ─── Whole-Centre aggregate ─────────────────────────────────────────────
 
-function CombinedCard({ emData, hsData, emRatio, hsRatio, dateLabel }) {
+function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLabel }) {
   const combined = useMemo(() => {
     const demand = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.demand[i] + hsData.demand[i]);
     const supply = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.supply[i] + hsData.supply[i]);
@@ -503,14 +599,16 @@ function CombinedCard({ emData, hsData, emRatio, hsRatio, dateLabel }) {
       return { i, demand: d, supply: supply[i], capacity: c, overUnderRatio: diff, status };
     });
     const totalDemand = demand.reduce((a, b) => a + b, 0);
-    const uniqueSupply = emData.stats.uniqueSupply + hsData.stats.uniqueSupply;
+    // Use the pre-computed day-wide union so instructors who cover
+    // both EM and HS are only counted once.
+    const uniqueSupply = uniqueOnFloor?.size ?? (emData.stats.uniqueSupply + hsData.stats.uniqueSupply);
     const peakDemand = Math.max(0, ...demand);
     const peakSupply = Math.max(0, ...supply);
     const impactStudents = rows
       .filter(r => r.status === 'understaffed')
       .reduce((sum, r) => sum + Math.max(0, r.demand - r.capacity), 0);
     return { demand, supply, capacity, rows, totalDemand, uniqueSupply, peakDemand, peakSupply, impactStudents };
-  }, [emData, hsData, emRatio, hsRatio]);
+  }, [emData, hsData, emRatio, hsRatio, uniqueOnFloor]);
 
   const maxY = Math.max(1, ...combined.demand, ...combined.capacity) * 1.1;
 
