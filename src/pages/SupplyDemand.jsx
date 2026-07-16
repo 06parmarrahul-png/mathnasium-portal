@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
+import { resolveInstructionalHours } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 
 /**
@@ -26,10 +27,12 @@ import { toast } from '../lib/notify';
  * students are affected in under-staffed windows.
  */
 
-// 30-minute slots covering 3pm-8pm (10 slots). Same window as Andy's tool
-// and Ratio's Student Scheduler.
-const START_HOUR = 15;
-const SLOT_COUNT = 10;
+// 30-minute slot resolution. The WINDOW (start hour + slot count) is
+// no longer hard-coded — it comes from the centre's instructional
+// hours for the selected day (which honours summer overrides). Andy's
+// original 3-7pm was baked in; Ratio now honours whatever hours are
+// live so summer Tue/Thu (10am–2pm) renders as 8 slots starting at
+// 10am instead of 10 slots starting at 3pm.
 const SLOT_MIN = 30;
 
 const SIDES = [
@@ -37,13 +40,36 @@ const SIDES = [
   { key: 'HS', label: 'High School', subRoles: ['Highschool', 'High School'], defaultRatio: 4, accent: 'bg-blue-500',    tint: 'bg-blue-50 border-blue-200 text-blue-700' },
 ];
 
-function slotLabel(i) {
-  const totalMin = START_HOUR * 60 + i * SLOT_MIN;
+// Build the day's slot window from a `{ start, end }` hours object.
+// Returns startMin, slotCount, plus a slotKeys array so we can match
+// API-returned slots by their "HH:MM" key rather than by index.
+function buildDayWindow(hours) {
+  const parse = (t) => {
+    const [h, m] = (t || '15:00').split(':').map(n => parseInt(n, 10));
+    return h * 60 + m;
+  };
+  const startMin = parse(hours?.start || '15:00');
+  const endMin   = parse(hours?.end || '20:00');
+  const slotCount = Math.max(1, Math.ceil((endMin - startMin) / SLOT_MIN));
+  const slotKeys = [];
+  for (let i = 0; i < slotCount; i++) {
+    const t = startMin + i * SLOT_MIN;
+    const h = Math.floor(t / 60);
+    const m = t % 60;
+    slotKeys.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+  }
+  return { startMin, slotCount, slotKeys };
+}
+
+function slotLabelFromMin(totalMin) {
   const h24 = Math.floor(totalMin / 60);
   const m = totalMin % 60;
   const ampm = h24 >= 12 ? 'PM' : 'AM';
   let h = h24 % 12; if (h === 0) h = 12;
   return `${h}:${String(m).padStart(2, '0')}${ampm}`;
+}
+function slotLabelForIndex(startMin, i) {
+  return slotLabelFromMin(startMin + i * SLOT_MIN);
 }
 
 // Minutes since midnight → shift.startTime "HH:MM" helper.
@@ -84,8 +110,9 @@ function isOnFloor(s) {
   return true;
 }
 
-function computeSupply(shifts, subRoleMatchers) {
-  const counts = new Array(SLOT_COUNT).fill(0);
+function computeSupply(shifts, subRoleMatchers, dayWindow) {
+  const { startMin: winStart, slotCount } = dayWindow;
+  const counts = new Array(slotCount).fill(0);
   const uniqueNames = new Set();
   const matchesSide = (s) => {
     const sub = (s.subRole || '').toLowerCase();
@@ -98,10 +125,9 @@ function computeSupply(shifts, subRoleMatchers) {
     const endMin   = timeToMin(s.endTime);
     if (startMin == null || endMin == null) continue;
     let touchedAnySlot = false;
-    for (let i = 0; i < SLOT_COUNT; i++) {
-      const slotStart = START_HOUR * 60 + i * SLOT_MIN;
+    for (let i = 0; i < slotCount; i++) {
+      const slotStart = winStart + i * SLOT_MIN;
       const slotEnd   = slotStart + SLOT_MIN;
-      // Instructor counts as "on" the slot if their shift covers ≥ half of it.
       const overlap = Math.max(0, Math.min(endMin, slotEnd) - Math.max(startMin, slotStart));
       if (overlap >= SLOT_MIN / 2) { counts[i]++; touchedAnySlot = true; }
     }
@@ -113,7 +139,8 @@ function computeSupply(shifts, subRoleMatchers) {
 // Union of unique instructor names actually on the floor for the day
 // (across both EM and HS). Prevents the Whole Centre "Total Staff"
 // tile from double-counting instructors who covered both sides.
-function computeUniqueOnFloor(shifts) {
+// eslint-disable-next-line no-unused-vars
+function computeUniqueOnFloor(shifts, dayWindow) {
   const names = new Set();
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
@@ -143,11 +170,25 @@ function classifySlots(demand, supply, forecastRatio) {
 }
 
 export default function SupplyDemand() {
-  const { activeCenterId, canSeeCenterSettings } = useAuth();
+  const { activeCenterId, centerConfig, canSeeCenterSettings } = useAuth();
   const [date, setDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [apptData, setApptData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
+
+  // Day window comes from the centre's instructional hours for THIS
+  // date. `resolveInstructionalHours` honours summer overrides, so
+  // summer Tue/Thu automatically render as 10am–2pm slots. The rest
+  // of the file reads slotCount / startMin from here instead of
+  // hard-coded constants.
+  const dayWindow = useMemo(() => {
+    const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+    const d = new Date(date + 'T12:00:00');
+    const dayName = DOW[d.getDay()];
+    const hours = resolveInstructionalHours(centerConfig, d)?.[dayName];
+    return buildDayWindow(hours);
+  }, [date, centerConfig]);
+  const SLOT_COUNT = dayWindow.slotCount;
 
   // Live shifts for the selected date.
   const [shifts, setShifts] = useState([]);
@@ -337,47 +378,53 @@ export default function SupplyDemand() {
     const out = {};
     // Build no-show / cancellation adjustments per slot per side from
     // check-ins. Then also build walk-in additions per slot per side.
-    // Applied on top of the Acuity base demand.
+    // Applied on top of the Acuity base demand. Indexing is by
+    // dayWindow slot index, but we look up the API's slots by KEY
+    // (HH:MM) so a summer 10am–2pm day maps API slots that start at
+    // 10:00 correctly instead of assuming they start at 3pm.
     const noShowsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
     const walkInsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
-    // Walk through the API's students arrays to know which student
-    // belongs to which slot + side, then decrement no-shows.
-    const slots = apptData.slots || [];
-    for (let i = 0; i < Math.min(SLOT_COUNT, slots.length); i++) {
+    const apiSlotsByKey = new Map();
+    for (const row of (apptData.slots || [])) {
+      if (row?.slot) apiSlotsByKey.set(row.slot, row);
+    }
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const key = dayWindow.slotKeys[i];
+      const apiRow = apiSlotsByKey.get(key);
+      if (!apiRow) continue;
       for (const sideKey of ['EM', 'HS']) {
-        const bucket = slots[i]?.students?.[sideKey];
+        const bucket = apiRow.students?.[sideKey];
         if (!bucket) continue;
         const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
         for (const student of all) {
-          const key = student.id || student.uniqueId;
-          const status = checkIns[key]?.status;
+          const sKey = student.id || student.uniqueId;
+          const status = checkIns[sKey]?.status;
           if (status === 'noshow' || status === 'cancel') noShowsBySide[sideKey][i]++;
         }
       }
     }
     for (const w of walkIns) {
       if (!w?.slot || !w?.side) continue;
-      // Walk-in slot is stored as "HH:MM"; convert to our slot index.
       const [wh, wm] = w.slot.split(':').map(Number);
-      const slotIdx = ((wh * 60 + wm) - START_HOUR * 60) / SLOT_MIN;
+      const slotIdx = ((wh * 60 + wm) - dayWindow.startMin) / SLOT_MIN;
       if (slotIdx < 0 || slotIdx >= SLOT_COUNT) continue;
-      // Walk-in side is HS/EM/Online — only in-centre counts.
       if (w.side === 'HS' || w.side === 'EM') walkInsBySide[w.side][slotIdx]++;
     }
     for (const side of SIDES) {
       const baseDemand = new Array(SLOT_COUNT).fill(0);
-      for (let i = 0; i < Math.min(SLOT_COUNT, slots.length); i++) {
-        const booked  = slots[i]?.counts?.[side.key] || 0;
+      for (let i = 0; i < SLOT_COUNT; i++) {
+        const key = dayWindow.slotKeys[i];
+        const apiRow = apiSlotsByKey.get(key);
+        const booked  = apiRow?.counts?.[side.key] || 0;
         const noShow  = noShowsBySide[side.key][i] || 0;
         const walkIn  = walkInsBySide[side.key][i] || 0;
-        // Effective demand = booked − no-shows − cancellations + walk-ins.
         baseDemand[i] = Math.max(0, booked - noShow + walkIn);
       }
       const sideOv = overrides[side.key] || { demand: {}, supply: {} };
       const demandOv = sideOv.demand || {};
       const supplyOv = sideOv.supply || {};
       const demand = baseDemand.map((v, i) => (i in demandOv ? demandOv[i] : v));
-      const { counts: supplyLive, uniqueNames } = computeSupply(shifts, side.subRoles);
+      const { counts: supplyLive, uniqueNames } = computeSupply(shifts, side.subRoles, dayWindow);
       // Merge supply overrides on top of live per-slot counts. Overrides
       // are useful when a shift covers the slot but the instructor isn't
       // actually helping students there (prep time, etc.), or vice versa.
@@ -409,9 +456,9 @@ export default function SupplyDemand() {
     // Attach the day-wide union of instructor names — Whole Centre
     // card reads this instead of summing per-side counts (which
     // double-counts anyone who covered both sides).
-    out._uniqueOnFloor = computeUniqueOnFloor(shifts);
+    out._uniqueOnFloor = computeUniqueOnFloor(shifts, dayWindow);
     return out;
-  }, [apptData, shifts, overrides, ratios, checkIns, walkIns]);
+  }, [apptData, shifts, overrides, ratios, checkIns, walkIns, dayWindow, SLOT_COUNT]);
 
   // Match Demand: for each slot, fill Staff to the minimum needed to
   // hit the target ratio — i.e. staff = ceil(demand ÷ target ratio).
@@ -547,6 +594,7 @@ export default function SupplyDemand() {
           key={side.key}
           side={side}
           data={sideData[side.key]}
+          dayWindow={dayWindow}
           typical={typical[new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' })]?.[side.key]}
           weekdayLabel={new Date(date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' })}
           forecastRatio={ratios[side.key]}
@@ -568,6 +616,7 @@ export default function SupplyDemand() {
           emData={sideData.EM}
           hsData={sideData.HS}
           uniqueOnFloor={sideData._uniqueOnFloor}
+          dayWindow={dayWindow}
           emRatio={ratios.EM}
           hsRatio={ratios.HS}
           dateLabel={format(new Date(date + 'T00:00:00'), 'EEE MMM d')}
@@ -579,7 +628,10 @@ export default function SupplyDemand() {
 
 // ─── Whole-Centre aggregate ─────────────────────────────────────────────
 
-function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLabel }) {
+function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRatio, dateLabel }) {
+  const SLOT_COUNT = dayWindow?.slotCount || emData?.demand?.length || 10;
+  const startMin = dayWindow?.startMin || 15 * 60;
+  const slotLabel = (i) => slotLabelForIndex(startMin, i);
   const combined = useMemo(() => {
     const demand = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.demand[i] + hsData.demand[i]);
     const supply = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.supply[i] + hsData.supply[i]);
@@ -608,7 +660,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLab
       .filter(r => r.status === 'understaffed')
       .reduce((sum, r) => sum + Math.max(0, r.demand - r.capacity), 0);
     return { demand, supply, capacity, rows, totalDemand, uniqueSupply, peakDemand, peakSupply, impactStudents };
-  }, [emData, hsData, emRatio, hsRatio, uniqueOnFloor]);
+  }, [emData, hsData, emRatio, hsRatio, uniqueOnFloor, SLOT_COUNT]);
 
   const maxY = Math.max(1, ...combined.demand, ...combined.capacity) * 1.1;
 
@@ -622,7 +674,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLab
       </div>
 
       {/* Same chart component the per-side cards use. */}
-      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} />
+      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} forecastRatio={Math.max(emRatio, hsRatio)} slotLabel={slotLabel} />
 
       {/* ── RATIO STATUS + IMPACT ─────────────────────────────────────
           Same column-aligned layout as the EM/HS cards. Uses blended
@@ -757,7 +809,10 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLab
 
 // ─── Section card ────────────────────────────────────────────────────────
 
-function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand }) {
+function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand }) {
+  const startMin = dayWindow?.startMin || 15 * 60;
+  const slotLabel = (i) => slotLabelForIndex(startMin, i);
+  const slotCount = dayWindow?.slotCount || data?.demand?.length || 10;
   const { demand, supply, rows, stats, hasOverrides, demandOverriddenSlots, supplyOverriddenSlots } = data;
   const maxY = Math.max(1, ...demand, ...supply.map(s => s * forecastRatio)) * 1.1;
   const typicalDemand = typical?.demand || null;
@@ -815,7 +870,7 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
       </div>
 
       {/* Bar chart */}
-      <Chart demand={demand} supply={supply} rows={rows} maxY={maxY} forecastRatio={forecastRatio} accent={side.accent} />
+      <Chart demand={demand} rows={rows} maxY={maxY} forecastRatio={forecastRatio} slotLabel={slotLabel} />
 
       {/* ── RATIO STATUS + IMPACT ──────────────────────────────────────
           Directly under the chart, exactly like Andy's boss's tool:
@@ -1026,9 +1081,9 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
           <StatBox label="Total Staff"           value={`${stats.uniqueSupply} instructor${stats.uniqueSupply === 1 ? '' : 's'}`} sub={peakStaff > 0 ? `peak ${peakStaff}` : ''} />
           <StatBox label="Total Supply Capacity" value={`${totalCapacity.toFixed(0)} students`} />
           <StatBox label="Avg Ratio Actual"      value={avgRatio > 0 ? `${avgRatio.toFixed(2)}:1` : '—'} />
-          <StatBox label="Matched Slots"         value={`${stats.matchedCount} / ${SLOT_COUNT}`} tone="good" />
-          <StatBox label="Understaffed Slots"    value={`${stats.underCount} / ${SLOT_COUNT}`} tone={stats.underCount > 0 ? 'bad' : 'neutral'} />
-          <StatBox label="Overstaffed Slots"     value={`${stats.overCount} / ${SLOT_COUNT}`} tone={stats.overCount > 2 ? 'warn' : 'neutral'} />
+          <StatBox label="Matched Slots"         value={`${stats.matchedCount} / ${slotCount}`} tone="good" />
+          <StatBox label="Understaffed Slots"    value={`${stats.underCount} / ${slotCount}`} tone={stats.underCount > 0 ? 'bad' : 'neutral'} />
+          <StatBox label="Overstaffed Slots"     value={`${stats.overCount} / ${slotCount}`} tone={stats.overCount > 2 ? 'warn' : 'neutral'} />
         </div>
         {stats.impactStudents > 0 && (
           <p className="mt-3 text-xs text-red-700 font-semibold">
@@ -1062,15 +1117,7 @@ function StatBox({ label, value, sub, tone }) {
 // can't meet demand at the target ratio. Compact so we can fit 10 slots in
 // a single row without horizontal scroll on desktop.
 
-function Chart({ demand, rows, maxY }) {
-  // Andy's boss-approved style:
-  //   - Bar total height = max(demand, capacity)
-  //   - Solid GREEN portion   = min(demand, capacity) — students being served
-  //   - PINK portion above    = extra capacity when overstaffed
-  //   - TAN portion above     = students beyond capacity when understaffed
-  //   - Coloured horizontal line at capacity level:
-  //       dark green = matched, orange = understaffed, red = overstaffed
-  //   - Number label = demand value (what most owners care about)
+function Chart({ demand, rows, maxY, forecastRatio, slotLabel }) {
   const W = 780, H = 260, PADL = 40, PADB = 32, PADT = 14, PADR = 12;
   const chartW = W - PADL - PADR;
   const chartH = H - PADT - PADB;
@@ -1078,10 +1125,16 @@ function Chart({ demand, rows, maxY }) {
   const groupW = chartW / demand.length;
   const yScale = (v) => PADT + chartH - (v / maxY) * chartH;
 
-  const yTicks = 7;
-  const rawStep = maxY / yTicks;
-  const niceSteps = [1, 2, 4, 5, 10, 20, 50];
-  const tickStep = niceSteps.find(s => s >= rawStep) || Math.ceil(rawStep);
+  // Y-axis step = target ratio. So a ratio of 3 gives ticks at 3, 6,
+  // 9, … and a ratio of 4 gives 4, 8, 12, …. Each tick = "one more
+  // instructor's worth of capacity", which is the language owners
+  // actually think in. Aim for ~6-8 visible ticks; if the target
+  // ratio is high enough that a plain step overshoots (e.g. ratio
+  // 10 with maxY 12), fall back to that ratio value.
+  const baseStep = Math.max(1, Math.round(Number(forecastRatio) || 1));
+  const targetTicks = 6;
+  let tickStep = baseStep;
+  while (maxY / tickStep > targetTicks + 2) tickStep += baseStep;
 
   const GREEN_FILL = '#a7d5a3';   // demand-served (light green)
   const OVER_FILL  = '#f8c9c9';   // extra capacity (pink)
@@ -1097,7 +1150,7 @@ function Chart({ demand, rows, maxY }) {
         Students
       </text>
       {/* Y grid + labels */}
-      {Array.from({ length: yTicks + 1 }, (_, i) => {
+      {Array.from({ length: Math.ceil(maxY / tickStep) + 1 }, (_, i) => {
         const val = i * tickStep;
         if (val > maxY + tickStep) return null;
         const y = yScale(val);
