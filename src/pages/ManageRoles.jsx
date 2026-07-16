@@ -133,7 +133,16 @@ export default function ManageRoles() {
       })
       .sort((a, b) => {
         // Surface elevated roles at the top so they're easy to find.
-        const order = { super_admin: 0, owner: 1, admin_assistant: 2, admin: 3, instructor: 4 };
+        // Order: Enterprise → Owner → Director → Admin Assistant → Admin
+        //        → Instructor → unknown. Alphabetical within each tier.
+        const order = {
+          super_admin: 0,
+          owner: 1,
+          director: 2,
+          admin_assistant: 3,
+          admin: 4,
+          instructor: 5,
+        };
         const ra = order[a.role] ?? 9;
         const rb = order[b.role] ?? 9;
         if (ra !== rb) return ra - rb;
