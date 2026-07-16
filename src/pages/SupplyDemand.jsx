@@ -54,11 +54,15 @@ function timeToMin(t) {
   return h * 60 + m;
 }
 
-// Count how many instructors of the given side are on shift at each 30-min slot.
+// Count how many instructors of the given side are actually AVAILABLE
+// to help students at each 30-min slot. Exclusions:
+//   - draft / cancelled shifts (not confirmed to happen)
+//   - sick shifts (sickPay=true — instructor didn't actually work)
+//   - online-role shifts (S&D is in-centre coverage; Online is its
+//     own supply pool and doesn't help in-centre students)
 // Also returns the set of unique instructor names so callers can show
-// "5 instructors booked" (unique headcount) rather than the sum of per-slot
-// counts (which would be inflated by 10× because each instructor covers
-// multiple slots).
+// a real headcount ("5 instructors booked") rather than the sum of
+// per-slot counts (inflated by 10× since each shift covers many slots).
 function computeSupply(shifts, subRoleMatchers) {
   const counts = new Array(SLOT_COUNT).fill(0);
   const uniqueNames = new Set();
@@ -67,6 +71,11 @@ function computeSupply(shifts, subRoleMatchers) {
     return subRoleMatchers.some(m => sub === m.toLowerCase());
   };
   for (const s of shifts) {
+    if (s.status === 'draft' || s.status === 'cancelled') continue;
+    if (s.sickPay === true) continue;
+    // Online instructors — check both the role and the subRole tag
+    // since the two are set independently by the auto-scheduler.
+    if (s.role === 'Online Instructor' || (s.subRole || '').toLowerCase() === 'online') continue;
     if (!matchesSide(s)) continue;
     const startMin = timeToMin(s.startTime);
     const endMin   = timeToMin(s.endTime);
@@ -309,22 +318,28 @@ export default function SupplyDemand() {
     return out;
   }, [apptData, shifts, overrides, ratios]);
 
-  // Match Demand: bump the target ratio so today's supply exactly meets
-  // today's demand. Read as "what ratio would we need to be at, given the
-  // supply we have, to serve this demand?" — informational, not a save.
+  // Match Demand: for each slot, fill Staff to the minimum needed to
+  // hit the target ratio — i.e. staff = ceil(demand ÷ target ratio).
+  // This matches Andy's original tool. It writes into the SUPPLY
+  // override map so the change is treated as a manual edit (purple
+  // highlight, saved with snapshot). Ratio stays where the owner set
+  // it — they picked the target for a reason.
   const matchDemand = useCallback((sideKey) => {
     if (!sideData) return;
-    const { demand, supply } = sideData[sideKey];
-    const totalD = demand.reduce((a, b) => a + b, 0);
-    // Use average supply during hours that have demand — using peak alone
-    // over-inflates the divisor when the last hour has 1 instructor and 0
-    // students.
-    const productiveSlots = demand.map((d, i) => d > 0 ? supply[i] : 0);
-    const avgSupply = productiveSlots.filter(v => v > 0).reduce((a, b) => a + b, 0) / Math.max(1, productiveSlots.filter(v => v > 0).length);
-    if (avgSupply === 0) return;
-    const suggested = Math.max(1, Math.round((totalD / demand.filter(d => d > 0).length / avgSupply) * 10) / 10);
-    setRatios(r => ({ ...r, [sideKey]: suggested }));
-  }, [sideData]);
+    const { demand } = sideData[sideKey];
+    const ratio = Number(ratios[sideKey]) || 1;
+    setSnapshotDirty(true);
+    setOverrides(prev => {
+      const nextSide = { ...prev[sideKey] };
+      const nextSupply = { ...(nextSide.supply || {}) };
+      for (let i = 0; i < demand.length; i++) {
+        const needed = Math.ceil(demand[i] / ratio);
+        nextSupply[i] = needed;
+      }
+      nextSide.supply = nextSupply;
+      return { ...prev, [sideKey]: nextSide };
+    });
+  }, [sideData, ratios]);
 
   if (!canSeeCenterSettings) {
     return (
