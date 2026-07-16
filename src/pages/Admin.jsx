@@ -4104,8 +4104,11 @@ export default function Admin() {
                       // Include drafts in the planned-hours header so admin sees
                       // the full scheduled picture; visual stripes on the cells
                       // already mark which ones are draft vs published.
+                      // No-show shifts are excluded (they didn't happen) so
+                      // the per-day total matches the payroll reality — same
+                      // rule the weekly Total assigned uses.
                       const dayTotalHrs = shifts
-                        .filter(s => s.date === ds && portalNames.has(s.userName))
+                        .filter(s => s.date === ds && portalNames.has(s.userName) && s.noShow !== true)
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       const headerBg = holiday
@@ -4189,10 +4192,11 @@ export default function Admin() {
                   {approvedUsers.map(u => {
                     // Per-instructor weekly hours include drafts — admin needs
                     // the full planned total when deciding fairness. Stripes on
-                    // the cells already mark drafts vs published.
+                    // the cells already mark drafts vs published. No-show
+                    // shifts are excluded (they didn't happen).
                     const totalHrs = weekDays.reduce((sum, d) => {
                       const ds = format(d, 'yyyy-MM-dd');
-                      return sum + shifts.filter(s => s.userId === u.uid && s.date === ds)
+                      return sum + shifts.filter(s => s.userId === u.uid && s.date === ds && s.noShow !== true)
                         .reduce((s2, sh) => s2 + shiftHours(sh), 0);
                     }, 0);
                     const displayHrs = isNaN(totalHrs) ? 0 : Math.round(totalHrs * 10) / 10;
@@ -4395,7 +4399,11 @@ export default function Admin() {
                       const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
                       const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
-                      const hrs = dayShiftsPortal.reduce((sum, s) => sum + shiftHours(s), 0);
+                      // Exclude no-show shifts from the day's total hours
+                      // so this footer matches the header + the weekly total.
+                      const hrs = dayShiftsPortal
+                        .filter(s => s.noShow !== true)
+                        .reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
                       return (
                         <td key={ds} className="text-center py-2 text-xs text-gray-500">
