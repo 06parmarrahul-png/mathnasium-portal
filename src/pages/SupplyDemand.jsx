@@ -621,53 +621,120 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, emRatio, hsRatio, dateLab
         </p>
       </div>
 
-      {/* Same chart component the per-side cards use — blended ratio is
-          passed just for the legend label. */}
-      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} forecastRatio={`${emRatio}/${hsRatio}`} />
+      {/* Same chart component the per-side cards use. */}
+      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} />
 
-      <div className="mt-4 overflow-x-auto">
-        <table className="w-full text-xs">
+      {/* ── RATIO STATUS + IMPACT ─────────────────────────────────────
+          Same column-aligned layout as the EM/HS cards. Uses blended
+          capacity per slot (EM×emRatio + HS×hsRatio) so the status
+          reflects the reality that EM and HS have different target
+          ratios. Coverage labels shown as ± seats / students. */}
+      <div className="mt-5 overflow-x-auto">
+        <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
+          <colgroup>
+            <col style={{ width: 90 }} />
+            {combined.rows.map(r => <col key={r.i} />)}
+          </colgroup>
           <thead>
-            <tr className="text-left text-gray-500 border-b">
-              <th className="py-1.5 pr-2 font-medium">Slot</th>
+            <tr className="text-[10px] uppercase tracking-wide text-gray-500">
+              <th className="text-left pb-1 pr-2 font-bold">Slot</th>
               {combined.rows.map(r => (
-                <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i)}</th>
+                <th key={r.i} className="text-center pb-1 font-medium">{slotLabel(r.i).toUpperCase()}</th>
               ))}
             </tr>
           </thead>
-          <tbody className="[&_td]:py-1 [&_td]:px-1 [&_td]:text-center">
-            <tr className="border-b">
-              <td className="pr-2 text-left font-medium text-gray-700">Students (EM + HS)</td>
-              {combined.rows.map(r => <td key={r.i} className="font-semibold">{r.demand}</td>)}
-            </tr>
-            <tr className="border-b bg-gray-50/50">
-              <td className="pr-2 text-left font-medium text-gray-700">Instructors</td>
-              {combined.rows.map(r => <td key={r.i} className="font-semibold text-gray-800">{r.supply}</td>)}
-            </tr>
-            <tr className="border-b">
-              <td className="pr-2 text-left font-medium text-gray-500">Blended Capacity</td>
-              {combined.rows.map(r => <td key={r.i} className="text-gray-500">{Math.round(r.capacity)}</td>)}
-            </tr>
+          <tbody>
             <tr>
-              <td className="pr-2 text-left font-medium text-gray-700">Coverage</td>
+              <td className="pr-2 py-2 text-left align-top">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Ratio Status</div>
+              </td>
               {combined.rows.map(r => {
                 const spareSeats = Math.max(0, Math.round(r.capacity - r.demand));
                 const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
                 let label = 'Matched';
                 if (r.status === 'understaffed') label = `-${shortStudents} student${shortStudents === 1 ? '' : 's'}`;
                 else if (r.status === 'overstaffed') label = `+${spareSeats} seat${spareSeats === 1 ? '' : 's'}`;
+                const cls = r.status === 'matched'
+                  ? 'bg-emerald-200/70 text-emerald-900'
+                  : r.status === 'understaffed'
+                    ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                    : 'bg-red-100 text-red-700 border border-red-200';
                 return (
-                  <td key={r.i}>
-                    <span className={`inline-block rounded-full px-1.5 py-0.5 text-[10px] font-semibold whitespace-nowrap ${
-                      r.status === 'matched'      ? 'bg-emerald-100 text-emerald-700'
-                      : r.status === 'understaffed' ? 'bg-red-100 text-red-700'
-                      : 'bg-amber-100 text-amber-700'
-                    }`}>
-                      {label}
-                    </span>
+                  <td key={r.i} className="p-0 align-middle">
+                    <div className={`rounded-md py-2 text-center text-xs font-semibold ${cls}`}>{label}</div>
                   </td>
                 );
               })}
+            </tr>
+            <tr>
+              <td className="pr-2 py-2 text-left align-top">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Impact</div>
+                <div className="text-[9px] font-normal text-gray-500 leading-tight"># of<br/>Students<br/>Affected</div>
+              </td>
+              {combined.rows.map(r => {
+                const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
+                return (
+                  <td key={r.i} className="text-center align-middle py-2">
+                    {r.status === 'understaffed' && shortStudents > 0
+                      ? <span className="text-orange-600 font-bold text-base">{shortStudents}</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
+                );
+              })}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Slot Detail (read-only for the aggregate) ─────────────────
+          Same layout as the EM/HS cards' Slot Detail but the rows are
+          derived (Demand = EM+HS demand, Staff = EM+HS staff, Supply
+          = blended capacity) so they aren't editable — go to the
+          per-side card to tweak individual cells. */}
+      <div className="mt-5 border-t pt-4">
+        <h3 className="text-sm font-bold text-gray-900 mb-3">Slot Detail (blended, read-only)</h3>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
+          <colgroup>
+            <col style={{ width: 90 }} />
+            {combined.rows.map(r => <col key={r.i} />)}
+          </colgroup>
+          <thead>
+            <tr className="text-left text-gray-500 border-b">
+              <th className="py-1.5 pr-2 font-medium">Slot</th>
+              {combined.rows.map(r => (
+                <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i).toUpperCase()}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="[&_td]:py-1 [&_td]:px-1 [&_td]:text-center">
+            <tr className="border-b">
+              <td className="pr-3 py-1.5 text-left align-top">
+                <div className="font-bold text-emerald-700 text-xs uppercase tracking-wide">Demand</div>
+                <div className="text-[10px] font-normal text-gray-500"># of Students</div>
+              </td>
+              {combined.rows.map(r => (
+                <td key={r.i} className="text-sm font-medium text-gray-800">{r.demand}</td>
+              ))}
+            </tr>
+            <tr className="border-b">
+              <td className="pr-3 py-1.5 text-left align-top">
+                <div className="font-bold text-gray-700 text-xs uppercase tracking-wide">Staff</div>
+                <div className="text-[10px] font-normal text-gray-500"># of Staff</div>
+              </td>
+              {combined.rows.map(r => (
+                <td key={r.i} className="text-sm font-medium text-gray-800">{r.supply}</td>
+              ))}
+            </tr>
+            <tr className="border-b">
+              <td className="pr-3 py-2 text-left align-top">
+                <div className="font-bold text-emerald-700 text-xs uppercase tracking-wide">Supply</div>
+                <div className="text-[10px] font-normal text-gray-500">Blended Capacity</div>
+              </td>
+              {combined.rows.map(r => (
+                <td key={r.i} className="text-sm font-semibold text-gray-800">{r.capacity.toFixed(1)}</td>
+              ))}
             </tr>
           </tbody>
         </table>
@@ -945,54 +1012,10 @@ function SideCard({ side, data, typical, weekdayLabel, forecastRatio, onRatioCha
         </table>
       </div>
 
-      {/* ── Ratio Analysis ─────────────────────────────────────────────
-          Mirrors the boss's tool: shows the raw math per slot so an
-          analyst can see WHY a slot classified as over/under. */}
-      <div className="mt-5 border-t pt-4">
-        <h3 className="text-sm font-bold text-gray-900 mb-3">Ratio Analysis</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
-            <colgroup>
-              <col style={{ width: 180 }} />
-              {rows.map(r => <col key={r.i} />)}
-            </colgroup>
-            <thead>
-              <tr className="text-left text-gray-500 border-b">
-                <th className="py-1.5 pr-2 font-medium">Slot</th>
-                {rows.map(r => (
-                  <th key={r.i} className="py-1.5 px-1 font-medium text-center whitespace-nowrap">{slotLabel(r.i).toUpperCase()}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="[&_td]:py-1 [&_td]:px-1 [&_td]:text-center">
-              <tr className="border-b">
-                <td className="pr-2 text-left font-medium text-gray-700">Ratio Actual (D÷Staff)</td>
-                {rows.map(r => (
-                  <td key={r.i} className="text-gray-800">
-                    {r.supply > 0 ? (r.demand / r.supply).toFixed(2) : '—'}
-                  </td>
-                ))}
-              </tr>
-              <tr>
-                <td className="pr-2 text-left font-medium text-gray-700 whitespace-nowrap">
-                  Over/Under Ratio ((S−D)÷TR)
-                </td>
-                {rows.map(r => {
-                  const val = forecastRatio > 0 ? (r.capacity - r.demand) / forecastRatio : 0;
-                  const color = r.status === 'matched' ? 'text-emerald-700'
-                             : r.status === 'understaffed' ? 'text-orange-600'
-                             : 'text-red-600';
-                  return (
-                    <td key={r.i} className={`font-semibold ${color}`}>
-                      {val >= 0 ? '+' : ''}{val.toFixed(2)}
-                    </td>
-                  );
-                })}
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {/* (Removed) Ratio Analysis section — the RATIO STATUS pill row
+          above already conveys per-slot status in plain English. The
+          raw D÷Staff and (S−D)÷TR numbers were more noise than signal
+          for owners, so they've been dropped. */}
 
       {/* ── Shift Statistics — 6 stat boxes matching the boss's layout ── */}
       <div className="mt-5 border-t pt-4">
