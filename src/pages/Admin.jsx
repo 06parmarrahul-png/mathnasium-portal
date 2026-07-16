@@ -4104,11 +4104,17 @@ export default function Admin() {
                       // Include drafts in the planned-hours header so admin sees
                       // the full scheduled picture; visual stripes on the cells
                       // already mark which ones are draft vs published.
-                      // No-show shifts are excluded (they didn't happen) so
-                      // the per-day total matches the payroll reality — same
-                      // rule the weekly Total assigned uses.
+                      // No-show shifts are excluded (they didn't happen).
+                      // Volunteer shifts are excluded too — they're tracked
+                      // in the header's separate volunteer-hours chip and
+                      // don't count toward paid planning coverage.
                       const dayTotalHrs = shifts
-                        .filter(s => s.date === ds && portalNames.has(s.userName) && s.noShow !== true)
+                        .filter(s =>
+                          s.date === ds
+                          && portalNames.has(s.userName)
+                          && s.noShow !== true
+                          && !volunteerNames.has(s.userName)
+                        )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
                       const headerBg = holiday
@@ -4193,8 +4199,12 @@ export default function Admin() {
                     // Per-instructor weekly hours include drafts — admin needs
                     // the full planned total when deciding fairness. Stripes on
                     // the cells already mark drafts vs published. No-show
-                    // shifts are excluded (they didn't happen).
-                    const totalHrs = weekDays.reduce((sum, d) => {
+                    // shifts are excluded (they didn't happen). Volunteers
+                    // show 0 here so their row reflects that volunteer
+                    // hours aren't counted toward paid coverage — actual
+                    // hours worked live on the volunteer chip up top.
+                    const isVolunteerRow = u.isVolunteer === true;
+                    const totalHrs = isVolunteerRow ? 0 : weekDays.reduce((sum, d) => {
                       const ds = format(d, 'yyyy-MM-dd');
                       return sum + shifts.filter(s => s.userId === u.uid && s.date === ds && s.noShow !== true)
                         .reduce((s2, sh) => s2 + shiftHours(sh), 0);
@@ -4313,16 +4323,24 @@ export default function Admin() {
                                   see what's planned vs committed. */}
                               {dayShifts.map(s => {
                                 const assignment = assignmentFor(s);
-                                // Sick Pay overrides the palette with deep
-                                // burgundy; No-Show uses slate gray so admins
-                                // can scan the grid and see each state at a
-                                // glance. Mutually exclusive — a shift can be
-                                // sick OR no-show, not both.
-                                const isSick   = !!s.sickPay;
-                                const isNoShow = !!s.noShow;
-                                const isDraft  = s.status === 'draft';
-                                const bg = isSick    ? '#7f1d1d'
-                                        : isNoShow  ? '#374151'
+                                // Colour precedence: Sick > No-Show >
+                                // Volunteer > assignment palette. Sick
+                                // = burgundy, No-Show = slate, Volunteer
+                                // = sky blue (matches the volunteer chip
+                                // in the header and the HandHeart icon
+                                // used elsewhere). Any of them is
+                                // mutually exclusive at rendering time
+                                // even though the underlying fields are
+                                // independent flags — the visual reads
+                                // as the single most important thing
+                                // going on with that shift.
+                                const isSick      = !!s.sickPay;
+                                const isNoShow    = !!s.noShow;
+                                const isVolunteer = s.userName && volunteerNames.has(s.userName);
+                                const isDraft     = s.status === 'draft';
+                                const bg = isSick      ? '#7f1d1d'
+                                        : isNoShow    ? '#374151'
+                                        : isVolunteer ? '#0284c7'   // sky-600
                                         : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
@@ -4330,14 +4348,10 @@ export default function Admin() {
                                 const where = s.shiftType === 'Online' ? 'Online'
                                   : s.shiftType === 'Both' ? 'In-Centre + Online'
                                   : 'In-Centre';
-                                // Compact label: short assignment name, plus a
-                                // location flag only when it's not the usual
-                                // in-centre (and not an online instructor, for
-                                // whom "online" is already implied). Full text
-                                // lives in the hover tooltip.
                                 const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
                                 const compactLabel = isSick ? 'SICK'
                                   : isNoShow ? 'NO-SHOW'
+                                  : isVolunteer ? 'VOLUNTEER'
                                   : assignmentShort(assignment);
                                 // Diagonal stripes via repeating-linear-gradient.
                                 // Layered on top of the base color so the assignment
@@ -4399,10 +4413,12 @@ export default function Admin() {
                       const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
                       const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
-                      // Exclude no-show shifts from the day's total hours
-                      // so this footer matches the header + the weekly total.
+                      // Exclude no-show + volunteer shifts from the day's
+                      // total hours so this footer matches the header +
+                      // the weekly Total assigned. Volunteer hours are
+                      // tracked separately in the header chip.
                       const hrs = dayShiftsPortal
-                        .filter(s => s.noShow !== true)
+                        .filter(s => s.noShow !== true && !volunteerNames.has(s.userName))
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
                       return (
