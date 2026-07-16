@@ -70,9 +70,12 @@ export default function ProtectedRoute({ children, requireOwner = false, require
   }
 
   const role = profile.role;
-  // admin_assistant is owner-equivalent for centre-level access.
+  // admin_assistant + director are both owner-equivalent for centre-
+  // level access. Director keeps a distinct label but has the same
+  // read/write reach as an owner across every gated route.
   const canSeeAdminPanel = role === 'admin'
     || role === 'admin_assistant'
+    || role === 'director'
     || role === 'owner'
     || role === 'super_admin';
 
