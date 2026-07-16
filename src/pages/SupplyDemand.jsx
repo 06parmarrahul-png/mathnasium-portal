@@ -620,6 +620,10 @@ export default function SupplyDemand() {
           emRatio={ratios.EM}
           hsRatio={ratios.HS}
           dateLabel={format(new Date(date + 'T00:00:00'), 'EEE MMM d')}
+          shifts={shifts}
+          apptData={apptData}
+          checkIns={checkIns}
+          walkIns={walkIns}
         />
       )}
     </div>
@@ -628,10 +632,86 @@ export default function SupplyDemand() {
 
 // ─── Whole-Centre aggregate ─────────────────────────────────────────────
 
-function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRatio, dateLabel }) {
+function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRatio, dateLabel, shifts = [], apptData, checkIns = {}, walkIns = [] }) {
   const SLOT_COUNT = dayWindow?.slotCount || emData?.demand?.length || 10;
   const startMin = dayWindow?.startMin || 15 * 60;
   const slotLabel = (i) => slotLabelForIndex(startMin, i);
+  const [expanded, setExpanded] = useState(false);
+
+  // Per-slot roster — used by the "Show slot detail" expand panel so
+  // the owner can cross-check each number against the actual people
+  // it came from. Broken down by side and by data source (Acuity vs
+  // walk-in), with no-shows called out.
+  const slotRoster = useMemo(() => {
+    if (!expanded) return null;
+    const apiByKey = new Map();
+    for (const row of (apptData?.slots || [])) if (row?.slot) apiByKey.set(row.slot, row);
+    const walkInsBySlotSide = new Map(); // "HH:MM|EM" -> [names]
+    for (const w of walkIns) {
+      if (!w?.slot || !w?.side) continue;
+      const key = `${w.slot}|${w.side}`;
+      if (!walkInsBySlotSide.has(key)) walkInsBySlotSide.set(key, []);
+      walkInsBySlotSide.get(key).push(w.name || 'Walk-in');
+    }
+    const timeToMin = (t) => {
+      if (!t) return null;
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    return dayWindow.slotKeys.map((slotKey, i) => {
+      const slotStart = startMin + i * 30;
+      const slotEnd = slotStart + 30;
+      const apiRow = apiByKey.get(slotKey);
+      // Demand — split by side, tag source + status.
+      const buildDemand = (sideKey) => {
+        const bucket = apiRow?.students?.[sideKey];
+        const acuity = [
+          ...((bucket?.onHour) || []),
+          ...((bucket?.halfHour) || []),
+        ].map(s => {
+          const key = s.id || s.uniqueId;
+          const status = checkIns[key]?.status;
+          return {
+            name: s.name || s.displayName || 'Unknown',
+            source: 'Acuity',
+            status,
+          };
+        });
+        const wIns = (walkInsBySlotSide.get(`${slotKey}|${sideKey}`) || []).map(name => ({
+          name, source: 'Walk-in', status: null,
+        }));
+        return [...acuity, ...wIns];
+      };
+      // Supply — instructors whose shift covers ≥ half the slot.
+      const supply = [];
+      for (const s of shifts) {
+        if (!isOnFloor(s)) continue;
+        const sub = (s.subRole || '').toLowerCase();
+        if (sub !== 'elementary' && sub !== 'highschool' && sub !== 'high school') continue;
+        const sStart = timeToMin(s.startTime);
+        const sEnd   = timeToMin(s.endTime);
+        if (sStart == null || sEnd == null) continue;
+        const overlap = Math.max(0, Math.min(sEnd, slotEnd) - Math.max(sStart, slotStart));
+        if (overlap < 15) continue;
+        supply.push({
+          name: s.userName || 'Unknown',
+          side: sub === 'elementary' ? 'EM' : 'HS',
+          role: s.role || 'Instructor',
+        });
+      }
+      supply.sort((a, b) => a.name.localeCompare(b.name));
+      return {
+        slotKey,
+        label: slotLabel(i),
+        em: buildDemand('EM'),
+        hs: buildDemand('HS'),
+        supply,
+      };
+    });
+    // slotLabel is a plain closure over startMin (already a dep) so
+    // no need to include it separately.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, apptData, checkIns, walkIns, shifts, dayWindow, startMin]);
   const combined = useMemo(() => {
     const demand = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.demand[i] + hsData.demand[i]);
     const supply = new Array(SLOT_COUNT).fill(0).map((_, i) => emData.supply[i] + hsData.supply[i]);
@@ -803,6 +883,126 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
           </span>
         )}
       </div>
+
+      {/* Expand toggle — reveals the actual names behind every slot's
+          Demand and Supply numbers so the owner can cross-check
+          against reality (Acuity roster, in-centre floor). Data
+          source is tagged per student so a bad Acuity sync or a
+          missing walk-in gets caught the moment you look at it. */}
+      <div className="mt-4 border-t pt-3">
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          {expanded ? '▾ Hide slot detail' : '▸ Show slot detail (who\'s in each number)'}
+        </button>
+      </div>
+
+      {expanded && slotRoster && (
+        <div className="mt-4 space-y-3">
+          {slotRoster.map(slot => {
+            const emCount = slot.em.length;
+            const hsCount = slot.hs.length;
+            const supplyEm = slot.supply.filter(x => x.side === 'EM');
+            const supplyHs = slot.supply.filter(x => x.side === 'HS');
+            const totalDemand = emCount + hsCount;
+            const totalSupply = slot.supply.length;
+            if (totalDemand === 0 && totalSupply === 0) return null;
+            return (
+              <div key={slot.slotKey} className="rounded-lg border border-gray-200 bg-gray-50/40 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-gray-800">{slot.label}</span>
+                  <span className="text-[10px] text-gray-500">
+                    {totalDemand} student{totalDemand === 1 ? '' : 's'} · {totalSupply} instructor{totalSupply === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  {/* Demand */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 mb-1">Demand ({totalDemand})</p>
+                    {totalDemand === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No students booked.</p>
+                    ) : (
+                      <>
+                        {emCount > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {emCount}</p>
+                            <ul className="space-y-0.5">
+                              {slot.em.map((s, idx) => (
+                                <li key={idx} className={`text-xs ${s.status === 'noshow' || s.status === 'cancel' ? 'line-through text-red-600' : 'text-gray-700'}`}>
+                                  {s.name}
+                                  <span className="ml-1 text-[10px] text-gray-400">· {s.source}</span>
+                                  {s.status === 'noshow' && <span className="ml-1 text-[10px] font-semibold text-red-600">no-show</span>}
+                                  {s.status === 'cancel' && <span className="ml-1 text-[10px] font-semibold text-red-600">cancelled</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {hsCount > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {hsCount}</p>
+                            <ul className="space-y-0.5">
+                              {slot.hs.map((s, idx) => (
+                                <li key={idx} className={`text-xs ${s.status === 'noshow' || s.status === 'cancel' ? 'line-through text-red-600' : 'text-gray-700'}`}>
+                                  {s.name}
+                                  <span className="ml-1 text-[10px] text-gray-400">· {s.source}</span>
+                                  {s.status === 'noshow' && <span className="ml-1 text-[10px] font-semibold text-red-600">no-show</span>}
+                                  {s.status === 'cancel' && <span className="ml-1 text-[10px] font-semibold text-red-600">cancelled</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {/* Supply */}
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-purple-700 mb-1">Supply ({totalSupply})</p>
+                    {totalSupply === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No instructors on floor.</p>
+                    ) : (
+                      <>
+                        {supplyEm.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {supplyEm.length}</p>
+                            <ul className="space-y-0.5">
+                              {supplyEm.map((s, idx) => (
+                                <li key={idx} className="text-xs text-gray-700">
+                                  {s.name}
+                                  {s.role && s.role !== 'Instructor' && (
+                                    <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        {supplyHs.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {supplyHs.length}</p>
+                            <ul className="space-y-0.5">
+                              {supplyHs.map((s, idx) => (
+                                <li key={idx} className="text-xs text-gray-700">
+                                  {s.name}
+                                  {s.role && s.role !== 'Instructor' && (
+                                    <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
