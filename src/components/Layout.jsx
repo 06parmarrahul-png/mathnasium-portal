@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
+  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -123,7 +123,10 @@ export default function Layout({ children }) {
   //   admin_asst. → owner-style layout (they ARE owner-equivalent for ops).
   //   owner       → owner-style layout.
   //   super_admin → original layout + ENTERPRISE.
-  const useOwnerLayout = isOwner || isAdminAssistant;
+  // Directors get the full owner-style sidebar (Growth, Supply,
+  // Intelligence, Centre) — they run the centre and need the same
+  // navigation as an owner, just with a different label.
+  const useOwnerLayout = isOwner || isAdminAssistant || isDirector;
 
   // ─── GENERAL (both layouts share this) ─────────────────────────────
   const general = [
