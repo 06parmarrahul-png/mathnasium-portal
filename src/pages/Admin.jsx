@@ -1757,12 +1757,32 @@ export default function Admin() {
   // sets the flag on its user doc — once the flag is set the name match
   // becomes irrelevant.
   // Admin Assistants show up in the staff list — they get scheduled and
-  // appear on payroll like anyone else. Only true Owners and super-admins
-  // are hidden from operational surfaces.
-  const isVisibleStaff = (u) =>
-    u && u.role !== 'owner' && u.role !== 'super_admin'
-      && u.internal !== true
-      && u.displayName !== 'Admin Team';
+  // appear on payroll like anyone else. Owners and super-admins are
+  // hidden from operational surfaces BY DEFAULT — with one exception:
+  // if the owner is also listed as fixedStaff (e.g. Vinod as Center
+  // Director) they still need to appear on the schedule grid so their
+  // shifts render. Payroll exclusion is handled separately below.
+  const fixedStaffNamesForVisibility = useMemo(
+    () => new Set(Object.keys(centerConfig?.fixedStaff || {})),
+    [centerConfig?.fixedStaff],
+  );
+  const isVisibleStaff = (u) => {
+    if (!u) return false;
+    if (u.internal === true) return false;
+    if (u.displayName === 'Admin Team') return false;
+    // Owner / super-admin are hidden from the schedule roster by
+    // default. Director is owner-EQUIVALENT for permissions but still
+    // needs to appear on the schedule (they run the floor). So
+    // directors show unconditionally; owners / super-admins only
+    // show when they're also listed as fixed staff (defensive
+    // fallback in case someone promotes a working staffer to owner).
+    if (u.role === 'director') return true;
+    const hidden = u.role === 'owner' || u.role === 'super_admin';
+    if (hidden) {
+      return u.displayName && fixedStaffNamesForVisibility.has(u.displayName);
+    }
+    return true;
+  };
 
   // Resolve every user against the active centre so per-centre fields
   // (instructorType, priority, subRoles, guaranteed, approved, etc.)
@@ -2740,13 +2760,14 @@ export default function Admin() {
     return set;
   }, [usersForCentre]);
 
-  // Owners, super-admins, and the shared "Admin Team" account never belong
-  // on payroll either — keep their names out by display name (which is what
-  // shifts reference).
+  // Owners, super-admins, directors, and the shared "Admin Team" account
+  // never belong on payroll — keep their names out by display name (which
+  // is what shifts reference). Directors are salaried like owners so
+  // the same exclusion applies.
   const hiddenFromOps = useMemo(() => {
     const set = new Set();
     for (const u of users) {
-      const hidden = u.role === 'owner' || u.role === 'super_admin'
+      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
         || u.internal === true
         || u.displayName === 'Admin Team';
       if (hidden && u.displayName) set.add(u.displayName);
@@ -6868,7 +6889,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   }
   const _payHiddenFromOps = new Set();
   for (const u of users) {
-    const hidden = u.role === 'owner' || u.role === 'super_admin'
+    const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
       || u.internal === true
       || u.displayName === 'Admin Team';
     if (hidden && u.displayName) _payHiddenFromOps.add(u.displayName);

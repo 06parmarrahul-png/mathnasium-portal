@@ -37,6 +37,7 @@ import {
 const ROLE_LABELS = {
   super_admin:     'Enterprise',
   owner:           'Owner',
+  director:        'Director',
   admin_assistant: 'Admin Assistant',
   admin:           'Admin',
   instructor:      'Instructor',
@@ -45,8 +46,11 @@ const ROLE_LABELS = {
 const ROLE_COLORS = {
   super_admin:     'bg-purple-100 text-purple-700 border-purple-200',
   owner:           'bg-red-100 text-red-700 border-red-200',
-  // Admin Assistant gets owner-level access but is not in Owner Chat,
-  // so it gets its own teal palette to signal "owner-like but distinct".
+  // Director gets owner-level permissions but keeps a distinct label
+  // (used for Centre Directors + Directors of Education). Amber
+  // palette so it reads as "senior staff" without co-opting owner
+  // red or admin-assistant teal.
+  director:        'bg-amber-100 text-amber-700 border-amber-200',
   admin_assistant: 'bg-teal-100 text-teal-700 border-teal-200',
   admin:           'bg-emerald-100 text-emerald-700 border-emerald-200',
   instructor:      'bg-gray-100 text-gray-600 border-gray-200',
@@ -182,6 +186,16 @@ export default function ManageRoles() {
       setModal({ mode: 'set_then_promote', user, targetRole: 'admin_assistant' });
     } else {
       setModal({ mode: 'promote', user, targetRole: 'admin_assistant' });
+    }
+  };
+  // Director = full owner-equivalent permissions but label stays as
+  // "Director" (used for Centre Directors / Directors of Education).
+  // Requires the same 4-digit code as the other elevated roles.
+  const handlePromoteToDirector = (user) => {
+    if (!codeMeta.hasCode) {
+      setModal({ mode: 'set_then_promote', user, targetRole: 'director' });
+    } else {
+      setModal({ mode: 'promote', user, targetRole: 'director' });
     }
   };
   const handleDemoteAdminAssistant = async (user) => {
@@ -452,6 +466,13 @@ export default function ManageRoles() {
                               → Admin
                             </button>
                           )}
+                          <button
+                            onClick={() => handlePromoteToDirector(u)}
+                            className="flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                            title="Director has full owner-equivalent access (Centre Director, Dir. of Education) but the label stays as Director. Excluded from payroll and auto-scheduler; still appears on the schedule via fixedStaff. Requires the 4-digit code."
+                          >
+                            <Lock size={11} /> → Director
+                          </button>
                           <button
                             onClick={() => handlePromoteToAdminAssistant(u)}
                             className="flex items-center gap-1 rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
