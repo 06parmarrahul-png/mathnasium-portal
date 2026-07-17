@@ -35,9 +35,25 @@ import { toast } from '../lib/notify';
 // 10am instead of 10 slots starting at 3pm.
 const SLOT_MIN = 30;
 
+// One aggregate side that captures every in-centre student and every
+// on-floor instructor. Elementary and High School still tracked
+// SEPARATELY internally so the expand-slot-detail can show the
+// breakdown for cross-checking against Acuity — but the top-level
+// numbers are combined so the owner sees a single Centre-wide picture.
 const SIDES = [
-  { key: 'EM', label: 'Elementary',  subRoles: ['Elementary'],             defaultRatio: 3, accent: 'bg-emerald-500', tint: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
-  { key: 'HS', label: 'High School', subRoles: ['Highschool', 'High School'], defaultRatio: 4, accent: 'bg-blue-500',    tint: 'bg-blue-50 border-blue-200 text-blue-700' },
+  {
+    key: 'ALL',
+    label: 'Centre',
+    subRoles: ['Elementary', 'Highschool', 'High School'],
+    defaultRatio: 3,
+    accent: 'bg-emerald-500',
+    tint: 'bg-emerald-50 border-emerald-200 text-emerald-700',
+  },
+];
+// Sub-tracks used only for the expand view (source cross-check).
+const SUB_TRACKS = [
+  { key: 'EM', label: 'Elementary' },
+  { key: 'HS', label: 'High School' },
 ];
 
 // Build the day's slot window from a `{ start, end }` hours object.
@@ -263,10 +279,9 @@ export default function SupplyDemand() {
   // exists). Cell value undefined = "use live number" (Acuity for
   // demand, shifts for supply). Cell value set = "owner said this".
   const [overrides, setOverrides] = useState({
-    EM: { demand: {}, supply: {} },
-    HS: { demand: {}, supply: {} },
+    ALL: { demand: {}, supply: {} },
   });
-  const [ratios, setRatios] = useState({ EM: 3, HS: 4 });
+  const [ratios, setRatios] = useState({ ALL: 3 });
   const [snapshotDirty, setSnapshotDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);
@@ -283,24 +298,29 @@ export default function SupplyDemand() {
       const snap = await getSnapshot(activeCenterId, date);
       if (!alive) return;
       if (!snap) {
-        // No saved override → reset to empty; live numbers will fill in.
-        setOverrides({ EM: { demand: {}, supply: {} }, HS: { demand: {}, supply: {} } });
+        setOverrides({ ALL: { demand: {}, supply: {} } });
         return;
       }
-      // Convert saved arrays back into slotIdx→value maps so cells
-      // downstream still know which are user-set vs. live-derived.
+      // Migration: legacy snapshots stored EM+HS separately. Sum them
+      // into a single ALL bucket if that's all we've got.
       const rebuild = (arr) => Object.fromEntries(
-        arr.map((v, i) => [i, v]).filter(([, v]) => v != null && v !== 0),
+        (arr || []).map((v, i) => [i, v]).filter(([, v]) => v != null && v !== 0),
       );
-      setOverrides({
-        EM: { demand: rebuild(snap.EM.demand), supply: rebuild(snap.EM.supply) },
-        HS: { demand: rebuild(snap.HS.demand), supply: rebuild(snap.HS.supply) },
-      });
-      if (snap.EM.forecastRatio || snap.HS.forecastRatio) {
-        setRatios(r => ({
-          EM: snap.EM.forecastRatio || r.EM,
-          HS: snap.HS.forecastRatio || r.HS,
-        }));
+      if (snap.ALL) {
+        setOverrides({ ALL: { demand: rebuild(snap.ALL.demand), supply: rebuild(snap.ALL.supply) } });
+        if (snap.ALL.forecastRatio) setRatios(r => ({ ALL: snap.ALL.forecastRatio || r.ALL }));
+      } else {
+        // Legacy — combine EM+HS if present.
+        const combined = { demand: {}, supply: {} };
+        for (const side of ['EM', 'HS']) {
+          for (const [i, v] of Object.entries(rebuild(snap[side]?.demand))) {
+            combined.demand[i] = (combined.demand[i] || 0) + Number(v);
+          }
+          for (const [i, v] of Object.entries(rebuild(snap[side]?.supply))) {
+            combined.supply[i] = (combined.supply[i] || 0) + Number(v);
+          }
+        }
+        setOverrides({ ALL: combined });
       }
     })();
     return () => { alive = false; };
@@ -344,18 +364,14 @@ export default function SupplyDemand() {
     if (!activeCenterId) return;
     setSaving(true);
     try {
-      const build = (sideKey) => {
-        const sd = sideData?.[sideKey];
-        if (!sd) return null;
-        return {
-          demand: sd.demand.slice(0, SLOT_COUNT),
-          supply: sd.supply.slice(0, SLOT_COUNT),
-          forecastRatio: Number(ratios[sideKey]) || null,
-        };
-      };
+      const sd = sideData?.ALL;
+      const payload = sd ? {
+        demand: sd.demand.slice(0, SLOT_COUNT),
+        supply: sd.supply.slice(0, SLOT_COUNT),
+        forecastRatio: Number(ratios.ALL) || null,
+      } : null;
       await saveSnapshot(activeCenterId, date, {
-        EM: build('EM'),
-        HS: build('HS'),
+        ALL: payload,
         updatedBy: auth.currentUser?.uid,
       });
       setSnapshotDirty(false);
@@ -381,8 +397,12 @@ export default function SupplyDemand() {
     // booking counts for 2 slots (start + start+30), a 90-min for 3,
     // etc. The API only puts each student's card in its FIRST slot,
     // so per-slot counts alone would miss rollover. Client-side we
-    // fan each card out to every slot its duration covers — which
-    // also fixes the expand view (was showing 0 for later slots).
+    // fan each card out to every slot its duration covers.
+    //
+    // Tracks EM/HS separately even though the top-level render
+    // aggregates them — the expand-slot-detail panel needs the
+    // breakdown so an owner can eyeball which category a number
+    // came from when cross-checking Acuity.
     const bookedBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
     const noShowsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
     const walkInsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
@@ -423,13 +443,26 @@ export default function SupplyDemand() {
       if (slotIdx < 0 || slotIdx >= SLOT_COUNT) continue;
       if (w.side === 'HS' || w.side === 'EM') walkInsBySide[w.side][slotIdx]++;
     }
+    // Aggregate — one side that captures every EM + HS student and
+    // every on-floor instructor. We still compute per-side arrays
+    // above so the expand view can render the breakdown, but the
+    // top-level side rendered here uses the sums.
     for (const side of SIDES) {
       const baseDemand = new Array(SLOT_COUNT).fill(0);
+      // Per-side arrays for the expand view.
+      const perTrack = {
+        EM: new Array(SLOT_COUNT).fill(0),
+        HS: new Array(SLOT_COUNT).fill(0),
+      };
       for (let i = 0; i < SLOT_COUNT; i++) {
-        const booked  = bookedBySide[side.key][i] || 0;
-        const noShow  = noShowsBySide[side.key][i] || 0;
-        const walkIn  = walkInsBySide[side.key][i] || 0;
-        baseDemand[i] = Math.max(0, booked - noShow + walkIn);
+        for (const t of ['EM', 'HS']) {
+          const booked = bookedBySide[t][i] || 0;
+          const noShow = noShowsBySide[t][i] || 0;
+          const walkIn = walkInsBySide[t][i] || 0;
+          const eff = Math.max(0, booked - noShow + walkIn);
+          perTrack[t][i] = eff;
+          baseDemand[i] += eff;
+        }
       }
       const sideOv = overrides[side.key] || { demand: {}, supply: {} };
       const demandOv = sideOv.demand || {};
@@ -462,6 +495,8 @@ export default function SupplyDemand() {
         hasOverrides: Object.keys(demandOv).length + Object.keys(supplyOv).length > 0,
         demandOverriddenSlots: new Set(Object.keys(demandOv).map(Number)),
         supplyOverriddenSlots: new Set(Object.keys(supplyOv).map(Number)),
+        // Per-track breakdown for the expand-slot-detail panel.
+        perTrack,
       };
     }
     // Attach the day-wide union of instructor names — Whole Centre
@@ -599,7 +634,9 @@ export default function SupplyDemand() {
         </div>
       )}
 
-      {/* Per-side sections */}
+      {/* Single centre-wide card. EM and HS are still tracked
+          internally (perTrack in sideData) so the expand-slot-detail
+          panel can show the source breakdown for cross-checking. */}
       {sideData && SIDES.map(side => (
         <SideCard
           key={side.key}
@@ -614,29 +651,12 @@ export default function SupplyDemand() {
           onSupplyChange={(idx, v) => setOverride(side.key, 'supply', idx, v)}
           onResetOverrides={() => resetOverrides(side.key)}
           onMatchDemand={() => matchDemand(side.key)}
-        />
-      ))}
-
-      {/* Whole-Centre aggregate — adds EM + HS per slot into a single
-          chart. Capacity uses a blended ratio: each side keeps its own
-          target ratio, so combined capacity = EMsupply×EMratio +
-          HSsupply×HSratio. That's more accurate than picking one ratio,
-          since HS students genuinely need less hand-holding than EM. */}
-      {sideData && (
-        <CombinedCard
-          emData={sideData.EM}
-          hsData={sideData.HS}
-          uniqueOnFloor={sideData._uniqueOnFloor}
-          dayWindow={dayWindow}
-          emRatio={ratios.EM}
-          hsRatio={ratios.HS}
-          dateLabel={format(new Date(date + 'T00:00:00'), 'EEE MMM d')}
           shifts={shifts}
           apptData={apptData}
           checkIns={checkIns}
           walkIns={walkIns}
         />
-      )}
+      ))}
     </div>
   );
 }
@@ -1032,11 +1052,91 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
 
 // ─── Section card ────────────────────────────────────────────────────────
 
-function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand }) {
+function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand, shifts = [], apptData, checkIns = {}, walkIns = [] }) {
   const startMin = dayWindow?.startMin || 15 * 60;
   const slotLabel = (i) => slotLabelForIndex(startMin, i);
   const slotCount = dayWindow?.slotCount || data?.demand?.length || 10;
   const { demand, supply, rows, stats, hasOverrides, demandOverriddenSlots, supplyOverriddenSlots } = data;
+
+  // Expand-slot-detail — per-slot breakdown of exactly who's in each
+  // Demand and Supply number, split into EM / HS so the owner can
+  // spot-check against Acuity and the schedule. Same math the top-
+  // level demand uses (duration fan-out) so a 60-min booking shows
+  // up in every slot it covers.
+  const [expanded, setExpanded] = useState(false);
+  const slotRoster = useMemo(() => {
+    if (!expanded) return null;
+    const bySlotSide = new Map();
+    const push = (slotKey, sideKey, entry) => {
+      const k = `${slotKey}|${sideKey}`;
+      if (!bySlotSide.has(k)) bySlotSide.set(k, []);
+      bySlotSide.get(k).push(entry);
+    };
+    for (const row of (apptData?.slots || [])) {
+      for (const sideKey of ['EM', 'HS']) {
+        const bucket = row?.students?.[sideKey];
+        if (!bucket) continue;
+        const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
+        for (const student of all) {
+          const dur = Number(student.duration) > 0 ? Number(student.duration) : 60;
+          const slotsSpan = Math.max(1, Math.round(dur / 30));
+          const [rowH, rowM] = row.slot.split(':').map(Number);
+          const rowStartMin = rowH * 60 + rowM;
+          const key = student.id || student.uniqueId;
+          const status = checkIns[key]?.status || null;
+          for (let k = 0; k < slotsSpan; k++) {
+            const covered = rowStartMin + k * 30;
+            const idx = Math.round((covered - startMin) / 30);
+            if (idx < 0 || idx >= (dayWindow?.slotCount || 0)) continue;
+            const slotKey = dayWindow.slotKeys[idx];
+            push(slotKey, sideKey, {
+              name: student.name || student.displayName || 'Unknown',
+              source: k === 0 ? 'Acuity' : `Acuity (rollover · ${dur}min)`,
+              status,
+            });
+          }
+        }
+      }
+    }
+    for (const w of walkIns) {
+      if (!w?.slot || !w?.side) continue;
+      push(w.slot, w.side, { name: w.name || 'Walk-in', source: 'Walk-in', status: null });
+    }
+    const timeToMinLocal = (t) => {
+      if (!t) return null;
+      const [h, m] = t.split(':').map(Number);
+      return h * 60 + m;
+    };
+    return (dayWindow?.slotKeys || []).map((slotKey, i) => {
+      const sStart = startMin + i * 30;
+      const sEnd = sStart + 30;
+      const em = bySlotSide.get(`${slotKey}|EM`) || [];
+      const hs = bySlotSide.get(`${slotKey}|HS`) || [];
+      // Supply per slot, split by shift's subRole.
+      const supplyEm = [];
+      const supplyHs = [];
+      for (const s of shifts) {
+        if (!isOnFloor(s)) continue;
+        const sub = (s.subRole || '').toLowerCase();
+        const isEm = sub === 'elementary';
+        const isHs = sub === 'highschool' || sub === 'high school';
+        if (!isEm && !isHs) continue;
+        const st = timeToMinLocal(s.startTime);
+        const en = timeToMinLocal(s.endTime);
+        if (st == null || en == null) continue;
+        const overlap = Math.max(0, Math.min(en, sEnd) - Math.max(st, sStart));
+        if (overlap < 15) continue;
+        (isEm ? supplyEm : supplyHs).push({
+          name: s.userName || 'Unknown',
+          role: s.role || 'Instructor',
+        });
+      }
+      supplyEm.sort((a, b) => a.name.localeCompare(b.name));
+      supplyHs.sort((a, b) => a.name.localeCompare(b.name));
+      return { slotKey, label: slotLabel(i), em, hs, supplyEm, supplyHs };
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, apptData, checkIns, walkIns, shifts, dayWindow, startMin]);
   const maxY = Math.max(1, ...demand, ...supply.map(s => s * forecastRatio)) * 1.1;
   const typicalDemand = typical?.demand || null;
   const typicalSamples = typical?.samples || 0;
@@ -1314,6 +1414,108 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
           </p>
         )}
       </div>
+
+      {/* Expand toggle — reveals the actual names behind every slot's
+          Demand + Supply numbers, split into Elementary / High School
+          so an owner can cross-check against Acuity + the schedule. */}
+      <div className="mt-5 border-t pt-3">
+        <button
+          onClick={() => setExpanded(v => !v)}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+        >
+          {expanded ? '▾ Hide slot detail' : '▸ Show slot detail (who\'s in each number)'}
+        </button>
+      </div>
+
+      {expanded && slotRoster && (
+        <div className="mt-4 space-y-3">
+          {slotRoster.map(slot => {
+            const emCount = slot.em.length;
+            const hsCount = slot.hs.length;
+            const totalDemand = emCount + hsCount;
+            const totalSupply = slot.supplyEm.length + slot.supplyHs.length;
+            if (totalDemand === 0 && totalSupply === 0) return null;
+            const renderList = (list) => (
+              <ul className="space-y-0.5">
+                {list.map((s, idx) => (
+                  <li key={idx} className={`text-xs ${s.status === 'noshow' || s.status === 'cancel' ? 'line-through text-red-600' : 'text-gray-700'}`}>
+                    {s.name}
+                    <span className="ml-1 text-[10px] text-gray-400">· {s.source}</span>
+                    {s.status === 'noshow' && <span className="ml-1 text-[10px] font-semibold text-red-600">no-show</span>}
+                    {s.status === 'cancel' && <span className="ml-1 text-[10px] font-semibold text-red-600">cancelled</span>}
+                  </li>
+                ))}
+              </ul>
+            );
+            const renderStaff = (list) => (
+              <ul className="space-y-0.5">
+                {list.map((s, idx) => (
+                  <li key={idx} className="text-xs text-gray-700">
+                    {s.name}
+                    {s.role && s.role !== 'Instructor' && (
+                      <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            );
+            return (
+              <div key={slot.slotKey} className="rounded-lg border border-gray-200 bg-gray-50/40 p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-bold text-gray-800">{slot.label}</span>
+                  <span className="text-[10px] text-gray-500">
+                    {totalDemand} student{totalDemand === 1 ? '' : 's'} · {totalSupply} instructor{totalSupply === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700 mb-1">Demand ({totalDemand})</p>
+                    {totalDemand === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No students booked.</p>
+                    ) : (
+                      <>
+                        {emCount > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {emCount}</p>
+                            {renderList(slot.em)}
+                          </div>
+                        )}
+                        {hsCount > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {hsCount}</p>
+                            {renderList(slot.hs)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-purple-700 mb-1">Supply ({totalSupply})</p>
+                    {totalSupply === 0 ? (
+                      <p className="text-xs text-gray-400 italic">No instructors on floor.</p>
+                    ) : (
+                      <>
+                        {slot.supplyEm.length > 0 && (
+                          <div className="mb-2">
+                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {slot.supplyEm.length}</p>
+                            {renderStaff(slot.supplyEm)}
+                          </div>
+                        )}
+                        {slot.supplyHs.length > 0 && (
+                          <div>
+                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {slot.supplyHs.length}</p>
+                            {renderStaff(slot.supplyHs)}
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
