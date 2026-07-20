@@ -1157,6 +1157,10 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
         if (st == null || en == null) continue;
         const overlap = Math.max(0, Math.min(en, sEnd) - Math.max(st, sStart));
         if (overlap < 15) continue;
+        // Match the headline supply/graph: no Leads/Managers in the
+        // opening slot, no Managers in the closing slot. Keeps this
+        // roster (and its "N instructors" count) in sync with the bars.
+        if (!countsAsFloorSupply(s.role, i, dayWindow?.slotCount ?? 0)) continue;
         (isEm ? supplyEm : supplyHs).push({
           name: s.userName || 'Unknown',
           role: s.role || 'Instructor',
