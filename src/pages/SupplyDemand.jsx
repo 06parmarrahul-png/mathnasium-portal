@@ -126,6 +126,29 @@ function isOnFloor(s) {
   return true;
 }
 
+// Opening / closing coverage carve-out.
+//
+// Leads and Managers run the open — huddle, setup, cash/float, unlocking
+// the door — during the FIRST 30-minute slot, so they aren't on the
+// teaching floor then. Managers run the close — cash-out, lock-up — during
+// the LAST 30-minute slot. Counting them as teaching supply in those
+// windows overstates coverage and makes the ratio look better than it is.
+//
+// Rule (applied per slot, by the shift's role):
+//   - First slot  (slotIdx === 0):            exclude Lead AND Manager
+//   - Last slot   (slotIdx === slotCount-1):  exclude Manager only
+//   - Every slot in between:                  count all on-floor roles
+//
+// Instructors are never carved out. A single-slot day collapses to the
+// first-slot rule (the stricter one), which is the intended behaviour.
+// Returns true when the role should count toward supply for that slot.
+function countsAsFloorSupply(role, slotIdx, slotCount) {
+  const r = role || 'Instructor';
+  if (slotIdx === 0 && (r === 'Lead' || r === 'Manager')) return false;
+  if (slotIdx === slotCount - 1 && r === 'Manager') return false;
+  return true;
+}
+
 function computeSupply(shifts, subRoleMatchers, dayWindow) {
   const { startMin: winStart, slotCount } = dayWindow;
   const counts = new Array(slotCount).fill(0);
@@ -145,7 +168,11 @@ function computeSupply(shifts, subRoleMatchers, dayWindow) {
       const slotStart = winStart + i * SLOT_MIN;
       const slotEnd   = slotStart + SLOT_MIN;
       const overlap = Math.max(0, Math.min(endMin, slotEnd) - Math.max(startMin, slotStart));
-      if (overlap >= SLOT_MIN / 2) { counts[i]++; touchedAnySlot = true; }
+      if (overlap < SLOT_MIN / 2) continue;
+      // Leads/Managers don't count as floor supply during the open;
+      // Managers don't count during the close. See countsAsFloorSupply.
+      if (!countsAsFloorSupply(s.role, i, slotCount)) continue;
+      counts[i]++; touchedAnySlot = true;
     }
     if (touchedAnySlot) uniqueNames.add(s.userName || s.userId || 'unknown');
   }
@@ -736,6 +763,10 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
         if (sStart == null || sEnd == null) continue;
         const overlap = Math.max(0, Math.min(sEnd, slotEnd) - Math.max(sStart, slotStart));
         if (overlap < 15) continue;
+        // Mirror the headline supply count: no Leads/Managers in the
+        // opening slot, no Managers in the closing slot, so the expanded
+        // roster always matches the number above it.
+        if (!countsAsFloorSupply(s.role, i, dayWindow.slotCount)) continue;
         supply.push({
           name: s.userName || 'Unknown',
           side: sub === 'elementary' ? 'EM' : 'HS',
