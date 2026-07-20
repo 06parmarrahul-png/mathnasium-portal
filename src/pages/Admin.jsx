@@ -2829,15 +2829,31 @@ export default function Admin() {
     // shift count) based on its sickPay flag. Worked totals stay the
     // headline figure; sick totals show as a separate column so payroll
     // can pay them out under the sick-pay budget line.
+    // Normalize a display name so grouping is robust to trailing
+    // whitespace, capitalization, and repeated spaces. Two shifts
+    // with userName "Benjamin Gong" and "benjamin gong " must
+    // resolve to the same person or payroll will show them as two
+    // separate rows (and double-count on export).
+    const normName = (n) => (n || '').trim().toLowerCase().replace(/\s+/g, ' ');
     for (const s of periodShifts) {
-      const key = s.userName || s.userId;
+      // usersForCentre hoists the per-centre instructorType so payroll
+      // shows "Host" vs "Instructor" based on what they did AT THIS
+      // CENTRE, not whatever they happen to be at another one.
+      // Resolve by uid first (stable), fall back to case-insensitive
+      // name match so a shift missing userId still groups correctly.
+      const user = usersForCentre.find(u =>
+        (s.userId && u.uid === s.userId) ||
+        normName(u.displayName) === normName(s.userName),
+      );
+      // Grouping key prefers the resolved user's uid (guaranteed
+      // unique per person) so two shifts with slightly different
+      // name spellings both land in the same bucket.
+      const key = user?.uid || normName(s.userName) || s.userId || 'unknown';
       if (!byPerson[key]) {
-        // usersForCentre hoists the per-centre instructorType so payroll
-        // shows "Host" vs "Instructor" based on what they did AT THIS
-        // CENTRE, not whatever they happen to be at another one.
-        const user = usersForCentre.find(u => u.displayName === s.userName || u.uid === s.userId);
         byPerson[key] = {
-          name: s.userName || key,
+          // Canonicalise name from the resolved user doc — falls back
+          // to whatever the shift stamped if there's no user match.
+          name: user?.displayName || s.userName || key,
           userId: user?.uid || s.userId || null,
           role: s.role || user?.instructorType || 'Instructor',
           shifts: [],

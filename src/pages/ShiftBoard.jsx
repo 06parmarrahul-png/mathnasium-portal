@@ -435,6 +435,19 @@ export default function ShiftBoard() {
       toast.error('You don\'t have the right teaching sub-role to take this shift.');
       return;
     }
+    // 15-minute grace period so the poster has time to retract without
+    // someone else snapping it up first. Only the poster can delete
+    // during this window (delete permission already checks userId).
+    const GRACE_MS = 15 * 60 * 1000;
+    const postedAtMs = swap.createdAt?.toMillis?.()
+      ?? (swap.createdAt?.seconds ? swap.createdAt.seconds * 1000 : 0);
+    if (postedAtMs > 0 && (Date.now() - postedAtMs) < GRACE_MS) {
+      const secsLeft = Math.ceil((GRACE_MS - (Date.now() - postedAtMs)) / 1000);
+      const mins = Math.floor(secsLeft / 60);
+      const secs = secsLeft % 60;
+      toast.error(`This swap was just posted. Available to take in ${mins}m ${String(secs).padStart(2, '0')}s (15-min grace period so the poster can retract).`);
+      return;
+    }
     try {
       await runTransaction(db, async (tx) => {
         // Firestore rule: ALL reads must happen BEFORE any writes inside
