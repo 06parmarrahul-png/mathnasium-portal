@@ -322,9 +322,20 @@ service cloud.firestore {
       allow read: if isSignedIn();
       // Create: must be your own.
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      // Update / delete: yours, or anyone who manages staff (admin / owner / super-admin)
-      // approves or denies the request.
-      allow update, delete: if isSignedIn() && (
+      // Update: managers (admin / owner / super-admin) can approve, deny or
+      // amend anything. The instructor who owns the request may edit it ONLY
+      // while it is still pending, and may not change its status (no
+      // self-approving, and once approved/denied it is locked).
+      allow update: if isSignedIn() && (
+        isOwnerLike() || isSuperAdmin() || isAdmin() || (
+          resource.data.userId == request.auth.uid
+          && resource.data.status == 'pending'
+          && request.resource.data.status == 'pending'
+          && request.resource.data.userId == request.auth.uid
+        )
+      );
+      // Delete: the owner can withdraw their request; managers can remove any.
+      allow delete: if isSignedIn() && (
         resource.data.userId == request.auth.uid || isOwnerLike() || isSuperAdmin() || isAdmin()
       );
     }

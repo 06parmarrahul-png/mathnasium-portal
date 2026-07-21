@@ -6038,6 +6038,14 @@ export default function Admin() {
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusColors[req.status] || statusColors.pending}`}>
                             {req.status?.charAt(0).toUpperCase() + req.status?.slice(1)}
                           </span>
+                          {req.edited && (
+                            <span
+                              className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700"
+                              title="The instructor edited this request after submitting it"
+                            >
+                              Edited
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5 text-sm text-gray-600 mb-2">
                           <CalendarRange size={14} className="text-gray-400" />
@@ -6050,6 +6058,11 @@ export default function Admin() {
                         {req.createdAt?.seconds && (
                           <p className="mt-2 text-xs text-gray-400">
                             Submitted {new Date(req.createdAt.seconds * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                          </p>
+                        )}
+                        {req.edited && req.editedAt?.seconds && (
+                          <p className="text-xs text-amber-600 font-medium">
+                            Edited by instructor {new Date(req.editedAt.seconds * 1000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                           </p>
                         )}
                       </div>

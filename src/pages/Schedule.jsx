@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
   query, where, orderBy, runTransaction, setDoc, writeBatch,
-  getDocs,
+  getDocs, updateDoc,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -1121,6 +1121,10 @@ export default function Schedule() {
   const [shifts, setShifts] = useState([]);
   const [openShifts, setOpenShifts] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
+  // Inline edit state for a PENDING time-off request. null = not editing.
+  // Holds a working copy so the instructor can tweak dates/reason before
+  // saving; approved/denied requests can never enter this state.
+  const [editTO, setEditTO] = useState(null); // { id, startDate, endDate, reason, error, saving }
 
   // ── Firestore listeners — all scoped to the active center and
   //    bounded by a sliding date window so reads don't scale with
@@ -1388,6 +1392,49 @@ export default function Schedule() {
     });
     setSelectedDate(null);
     toast.success('Time off request submitted! The admin team will review it.');
+  };
+
+  // Edit a PENDING time-off request in place. Guarded to pending only —
+  // an approved/denied request is locked. Stamps `edited`/`editedAt` so
+  // the admin review screen can flag that the instructor changed it after
+  // submitting.
+  const handleUpdateTimeOff = async () => {
+    if (!editTO) return;
+    const { id, startDate, endDate, reason } = editTO;
+    if (!startDate || !endDate) {
+      setEditTO(e => ({ ...e, error: 'Pick both a start and end date.' }));
+      return;
+    }
+    if (endDate < startDate) {
+      setEditTO(e => ({ ...e, error: 'End date can’t be before the start date.' }));
+      return;
+    }
+    if (!reason.trim()) {
+      setEditTO(e => ({ ...e, error: 'Please enter a reason.' }));
+      return;
+    }
+    // Only allow editing while still pending (defends against a stale
+    // client whose request was approved/denied in another tab).
+    const current = timeOffRequests.find(r => r.id === id);
+    if (current && current.status !== 'pending') {
+      setEditTO(null);
+      toast.error('This request was already reviewed and can no longer be edited.');
+      return;
+    }
+    setEditTO(e => ({ ...e, saving: true, error: '' }));
+    try {
+      await updateDoc(doc(db, 'timeOffRequests', id), {
+        startDate,
+        endDate,
+        reason: reason.trim(),
+        edited: true,
+        editedAt: serverTimestamp(),
+      });
+      setEditTO(null);
+      toast.success('Time off request updated. The admin team will see your changes.');
+    } catch (err) {
+      setEditTO(e => ({ ...e, saving: false, error: err?.message || 'Failed to update request.' }));
+    }
   };
 
   // ── Cell state logic ──
@@ -1675,6 +1722,48 @@ export default function Schedule() {
                 const endLabel   = req.endDate   ? new Date(req.endDate   + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
                 const sameDay = req.startDate === req.endDate;
 
+                // Inline edit form — pending requests only.
+                if (editTO?.id === req.id) {
+                  return (
+                    <div key={req.id} className="rounded-xl border border-yellow-300 bg-yellow-50/40 p-4 shadow-sm">
+                      <div className="flex items-center gap-2 mb-3">
+                        <CalendarDays size={14} className="text-gray-400 shrink-0" />
+                        <span className="text-sm font-semibold text-gray-800">Editing request</span>
+                        <span className="rounded-full px-2 py-0.5 text-xs font-semibold bg-yellow-100 text-yellow-700">Pending</span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mb-2">
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">Start date</label>
+                          <input type="date" value={editTO.startDate}
+                            onChange={e => setEditTO(v => ({ ...v, startDate: e.target.value, error: '' }))}
+                            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+                        </div>
+                        <div>
+                          <label className="block text-xs text-gray-500 mb-1">End date</label>
+                          <input type="date" value={editTO.endDate}
+                            onChange={e => setEditTO(v => ({ ...v, endDate: e.target.value, error: '' }))}
+                            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+                        </div>
+                      </div>
+                      <label className="block text-xs text-gray-500 mb-1">Reason</label>
+                      <textarea value={editTO.reason} rows={2}
+                        onChange={e => setEditTO(v => ({ ...v, reason: e.target.value, error: '' }))}
+                        className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+                      {editTO.error && <p className="mt-1 text-xs text-red-600">{editTO.error}</p>}
+                      <div className="mt-3 flex gap-2">
+                        <button onClick={handleUpdateTimeOff} disabled={editTO.saving}
+                          className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50 transition-colors">
+                          {editTO.saving ? 'Saving…' : 'Save changes'}
+                        </button>
+                        <button onClick={() => setEditTO(null)} disabled={editTO.saving}
+                          className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors">
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  );
+                }
+
                 return (
                   <div key={req.id} className={`rounded-xl border bg-white p-4 shadow-sm flex items-start justify-between gap-4 ${req.status === 'denied' ? 'opacity-60' : ''}`}>
                     <div className="flex-1 min-w-0">
@@ -1683,6 +1772,9 @@ export default function Schedule() {
                         <span className="text-sm font-semibold text-gray-800">
                           {sameDay ? startLabel : `${startLabel} – ${endLabel}`}
                         </span>
+                        {req.edited && (
+                          <span className="text-[10px] text-gray-400 italic">· edited</span>
+                        )}
                       </div>
                       <p className="text-xs text-gray-500 mb-2 truncate">
                         <span className="font-medium text-gray-600">Reason:</span> {req.reason}
@@ -1691,11 +1783,20 @@ export default function Schedule() {
                         <p className="text-xs text-red-500 font-medium">This request was denied — dates are available again.</p>
                       )}
                     </div>
-                    <div className="shrink-0 flex items-center gap-1.5">
-                      <div className={`w-2 h-2 rounded-full ${s.dot}`} />
-                      <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${s.bg} ${s.text}`}>
-                        {s.label}
-                      </span>
+                    <div className="shrink-0 flex flex-col items-end gap-1.5">
+                      <div className="flex items-center gap-1.5">
+                        <div className={`w-2 h-2 rounded-full ${s.dot}`} />
+                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${s.bg} ${s.text}`}>
+                          {s.label}
+                        </span>
+                      </div>
+                      {req.status === 'pending' && (
+                        <button
+                          onClick={() => setEditTO({ id: req.id, startDate: req.startDate, endDate: req.endDate, reason: req.reason || '', error: '', saving: false })}
+                          className="text-xs font-semibold text-gray-500 hover:text-gray-800 underline underline-offset-2">
+                          Edit
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
