@@ -116,12 +116,12 @@ export const FLEX_ROLE_STYLES = {
     pillBg:       'bg-yellow-100',
     pillText:     'text-yellow-900',
     pillBorder:   'border-yellow-300',
-    dot:          'bg-yellow-600',
-    blockBg:      'bg-yellow-600',
+    dot:          'bg-yellow-700',
+    blockBg:      'bg-yellow-700',
     blockText:    'text-white',
     blockSubText: 'text-yellow-100',
-    stripe:       'bg-yellow-600',
-    hex:          '#ca8a04', // Tailwind yellow-600 — dark yellow / gold
+    stripe:       'bg-yellow-700',
+    hex:          '#a16207', // Tailwind yellow-700 — dark yellow, distinct from Manager gold
   },
   'Summer Camp': {
     label:        'Summer Camp',

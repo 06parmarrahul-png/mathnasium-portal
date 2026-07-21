@@ -8,9 +8,9 @@ import {
 } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
-import { resolveInstructionalHours } from '../lib/centerConfig';
+import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
-import { isFlexRole, FLEX_ROLE_STYLES } from '../lib/subRoles';
+import { isFlexRole } from '../lib/subRoles';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -687,6 +687,7 @@ export default function SupplyDemand() {
           apptData={apptData}
           checkIns={checkIns}
           walkIns={walkIns}
+          centerConfig={centerConfig}
         />
       ))}
     </div>
@@ -1088,7 +1089,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
 
 // ─── Section card ────────────────────────────────────────────────────────
 
-function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand, shifts = [], apptData, checkIns = {}, walkIns = [] }) {
+function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand, shifts = [], apptData, checkIns = {}, walkIns = [], centerConfig }) {
   const startMin = dayWindow?.startMin || 15 * 60;
   const slotLabel = (i) => slotLabelForIndex(startMin, i);
   const slotCount = dayWindow?.slotCount || data?.demand?.length || 10;
@@ -1504,7 +1505,7 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
                     {s.flexRole ? (
                       <span
                         className="ml-1 rounded px-1 text-[10px] font-semibold text-white"
-                        style={{ backgroundColor: FLEX_ROLE_STYLES[s.flexRole]?.hex }}
+                        style={{ backgroundColor: stateColorHex(s.flexRole, centerConfig) }}
                       >
                         {s.flexRole} · not counted
                       </span>

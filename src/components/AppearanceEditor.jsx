@@ -3,6 +3,7 @@ import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import {
   DEFAULT_ASSIGNMENT_COLORS, ASSIGNMENT_COLOR_KEYS,
+  DEFAULT_STATE_COLORS, STATE_COLOR_KEYS, stateColorHex,
   assignmentColorHex, contrastText,
 } from '../lib/centerConfig';
 import { Palette, Save, RotateCcw, AlertTriangle, CheckCircle2 } from 'lucide-react';
@@ -23,32 +24,59 @@ export default function AppearanceEditor({ activeCenterId, centerConfig, activeC
   // Local working copy of the shift-assignment color map. Seeded from the
   // active center's config (merged with the built-in defaults so every
   // assignment has a value to start from).
-  const initial = () => {
+  const seedColors = () => {
     const out = {};
-    for (const role of ASSIGNMENT_COLOR_KEYS) {
-      out[role] = assignmentColorHex(role, centerConfig);
-    }
+    for (const role of ASSIGNMENT_COLOR_KEYS) out[role] = assignmentColorHex(role, centerConfig);
     return out;
   };
-  const [colors, setColors] = useState(initial);
+  const seedStates = () => {
+    const out = {};
+    for (const name of STATE_COLOR_KEYS) out[name] = stateColorHex(name, centerConfig);
+    return out;
+  };
+  const [colors, setColors] = useState(seedColors);
+  const [stateColorsLocal, setStateColorsLocal] = useState(seedStates);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(null);
   const [error, setError] = useState('');
 
   // Re-seed if the active center changes (switchCenter) or config updates.
   useEffect(() => {
-    const out = {};
-    for (const role of ASSIGNMENT_COLOR_KEYS) {
-      out[role] = assignmentColorHex(role, centerConfig);
-    }
-    setColors(out);
+    setColors(seedColors());
+    setStateColorsLocal(seedStates());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [centerConfig, activeCenterId]);
 
-  const dirty = ASSIGNMENT_COLOR_KEYS.some(
-    r => colors[r] !== assignmentColorHex(r, centerConfig)
-  );
+  const dirty =
+    ASSIGNMENT_COLOR_KEYS.some(r => colors[r] !== assignmentColorHex(r, centerConfig)) ||
+    STATE_COLOR_KEYS.some(n => stateColorsLocal[n] !== stateColorHex(n, centerConfig));
 
   const setOne = (role, hex) => setColors(c => ({ ...c, [role]: hex }));
+  const setOneState = (name, hex) => setStateColorsLocal(c => ({ ...c, [name]: hex }));
+
+  // One editable colour row — shared by the assignment and state grids so
+  // both look and behave identically.
+  const swatchRow = (label, value, onChange) => (
+    <div key={label} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
+      <span
+        className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold"
+        style={{ backgroundColor: value, color: contrastText(value) }}
+      >
+        {label.split(' ').map(w => w[0]).join('').slice(0, 2)}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-gray-800 truncate">{label}</p>
+        <p className="text-xs text-gray-400 font-mono">{value}</p>
+      </div>
+      <input
+        type="color"
+        value={value}
+        onChange={e => onChange(label, e.target.value)}
+        className="shrink-0 h-9 w-12 rounded cursor-pointer border border-gray-200 bg-white"
+        title={`Pick color for ${label}`}
+      />
+    </div>
+  );
 
   const handleSave = async () => {
     if (!activeCenterId) return;
@@ -57,7 +85,7 @@ export default function AppearanceEditor({ activeCenterId, centerConfig, activeC
     try {
       await setDoc(
         doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { assignmentColors: colors, updatedAt: serverTimestamp() },
+        { assignmentColors: colors, stateColors: stateColorsLocal, updatedAt: serverTimestamp() },
         { merge: true },
       );
       setSavedAt(Date.now());
@@ -74,6 +102,9 @@ export default function AppearanceEditor({ activeCenterId, centerConfig, activeC
     const out = {};
     for (const role of ASSIGNMENT_COLOR_KEYS) out[role] = DEFAULT_ASSIGNMENT_COLORS[role];
     setColors(out);
+    const st = {};
+    for (const name of STATE_COLOR_KEYS) st[name] = DEFAULT_STATE_COLORS[name];
+    setStateColorsLocal(st);
   };
 
   return (
@@ -88,29 +119,19 @@ export default function AppearanceEditor({ activeCenterId, centerConfig, activeC
         <strong>{activeCenterName || activeCenterId}</strong> only.
       </p>
 
+      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">Roles &amp; Assignments</h4>
       <div className="grid gap-3 sm:grid-cols-2">
-        {ASSIGNMENT_COLOR_KEYS.map(role => (
-          <div key={role} className="flex items-center gap-3 rounded-lg border border-gray-200 px-3 py-2">
-            {/* Live swatch preview */}
-            <span
-              className="shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold"
-              style={{ backgroundColor: colors[role], color: contrastText(colors[role]) }}
-            >
-              {role.split(' ').map(w => w[0]).join('').slice(0, 2)}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-gray-800 truncate">{role}</p>
-              <p className="text-xs text-gray-400 font-mono">{colors[role]}</p>
-            </div>
-            <input
-              type="color"
-              value={colors[role]}
-              onChange={e => setOne(role, e.target.value)}
-              className="shrink-0 h-9 w-12 rounded cursor-pointer border border-gray-200 bg-white"
-              title={`Pick color for ${role}`}
-            />
-          </div>
-        ))}
+        {ASSIGNMENT_COLOR_KEYS.map(role => swatchRow(role, colors[role], setOne))}
+      </div>
+
+      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mt-6 mb-1">States &amp; Flex Roles</h4>
+      <p className="text-xs text-gray-500 mb-2">
+        STEAM and Summer Camp are paid flex work (not counted as instructors); Volunteer, Sick Pay
+        and No-Show are shift states. These fills override the assignment color on the grid, coverage
+        and staffing views.
+      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {STATE_COLOR_KEYS.map(name => swatchRow(name, stateColorsLocal[name], setOneState))}
       </div>
 
       <div className="mt-4 flex items-center gap-2 flex-wrap">

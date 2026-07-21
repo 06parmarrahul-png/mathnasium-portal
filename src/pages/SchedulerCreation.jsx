@@ -67,6 +67,7 @@ const STANDARD_ALIASES = [
 ];
 import { toast } from '../lib/notify';
 import { isFlexRole } from '../lib/subRoles';
+import { stateColorHex } from '../lib/centerConfig';
 
 // ───── Helpers ──────────────────────────────────────────────────────────
 function todayStr() {
@@ -537,7 +538,7 @@ function TodayTab({ centerId }) {
             <span
               key={`${f.name}|${f.flexRole}`}
               className="inline-flex items-center rounded px-1.5 py-0.5 font-semibold text-white"
-              style={{ backgroundColor: f.flexRole === 'STEAM' ? '#ca8a04' : '#f97316' }}
+              style={{ backgroundColor: stateColorHex(f.flexRole, centerConfig) }}
             >
               {f.name} · {f.flexRole}
             </span>

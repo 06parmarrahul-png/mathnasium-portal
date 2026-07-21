@@ -1,6 +1,5 @@
 import { Fragment, useMemo } from 'react';
-import { assignmentFor, assignmentShort, assignmentColorHex, contrastText } from '../lib/centerConfig';
-import { FLEX_ROLE_STYLES } from '../lib/subRoles';
+import { assignmentFor, assignmentShort, assignmentColorHex, contrastText, stateColorHex } from '../lib/centerConfig';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -326,12 +325,12 @@ export default function CoverageGrid({ day, centerConfig }) {
               // Colour precedence: Sick > No-Show > Flex > Volunteer >
               // assignment. Same palette used on the Manage Staff Schedule
               // grid so the two surfaces stay visually consistent.
-              const flexHex = flexRole ? FLEX_ROLE_STYLES[flexRole]?.hex : null;
+              const flexHex = flexRole ? stateColorHex(flexRole, centerConfig) : null;
               const assignment = assignmentFor({ role, subRole });
-              const roleBg = isSick      ? '#7f1d1d'
-                          : isNoShow    ? '#374151'
+              const roleBg = isSick      ? stateColorHex('Sick Pay', centerConfig)
+                          : isNoShow    ? stateColorHex('No-Show', centerConfig)
                           : flexHex     ? flexHex
-                          : isVolunteer ? '#0284c7'
+                          : isVolunteer ? stateColorHex('Volunteer', centerConfig)
                           : assignmentColorHex(assignment, centerConfig);
               const roleText = contrastText(roleBg);
               const badgeLabel = isSick ? 'SICK'

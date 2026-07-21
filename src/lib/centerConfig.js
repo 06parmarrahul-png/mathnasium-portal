@@ -106,6 +106,11 @@ export const DEFAULT_CENTER_CONFIG = {
   // grid. Editable from Super Admin → Appearance. Any assignment not listed
   // falls back to the built-in DEFAULT_ASSIGNMENT_COLORS.
   assignmentColors: {},
+  // Per-center STATE / FLEX colors (hex) — the non-assignment fills used on
+  // the admin grid, coverage grid and staffing views: STEAM, Summer Camp,
+  // Volunteer, Sick Pay, No-Show. Editable from the same Appearance panel.
+  // Anything not listed falls back to DEFAULT_STATE_COLORS.
+  stateColors: {},
 };
 
 // Built-in role colors — used as the fallback when a center hasn't
@@ -166,6 +171,35 @@ export const DEFAULT_ASSIGNMENT_COLORS = {
 
 // Keys shown in the Super Admin color editor (same order as the list).
 export const ASSIGNMENT_COLOR_KEYS = SHIFT_ASSIGNMENTS;
+
+// ─── State / flex colors ─────────────────────────────────────────────────
+// These are NOT assignments — they're the override fills a shift can take:
+// flex roles (STEAM / Summer Camp) and shift states (Volunteer, Sick Pay,
+// No-Show). They win over the assignment color on the admin grid, coverage
+// grid and staffing views, and are edited from the same Appearance panel so
+// an owner can control every colour in one place.
+//
+// STEAM defaults to a darker yellow than Manager (#ca8a04) so the two are
+// distinguishable out of the box; owners can still repaint either.
+export const DEFAULT_STATE_COLORS = {
+  'STEAM':       '#a16207', // yellow-700 — dark yellow, distinct from Manager gold
+  'Summer Camp': '#f97316', // orange-500
+  'Volunteer':   '#0284c7', // sky-600
+  'Sick Pay':    '#7f1d1d', // red-900 — deep burgundy
+  'No-Show':     '#374151', // gray-700 — slate
+};
+
+export const STATE_COLOR_KEYS = Object.keys(DEFAULT_STATE_COLORS);
+
+/**
+ * Resolve a state/flex color: center override first, then the built-in
+ * default, then a neutral slate for anything unrecognized.
+ */
+export function stateColorHex(name, centerConfig) {
+  const custom = centerConfig?.stateColors?.[name];
+  if (custom) return custom;
+  return DEFAULT_STATE_COLORS[name] || '#64748b';
+}
 
 // Compact labels for the admin weekly grid, where column space is tight.
 // The full assignment name still shows on hover.

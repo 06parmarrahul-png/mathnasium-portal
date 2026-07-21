@@ -20,12 +20,13 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, FLEX_ROLES, FLEX_ROLE_STYLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, FLEX_ROLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
+  stateColorHex,
   isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
@@ -4408,13 +4409,14 @@ export default function Admin() {
                                 const isNoShow    = !!s.noShow;
                                 const isVolunteer = s.userName && volunteerNames.has(s.userName);
                                 const isDraft     = s.status === 'draft';
-                                // Flex roles (STEAM / Summer Camp) — loud gold /
-                                // orange so summer flex work is obvious on the grid.
-                                const flexHex     = isFlexRole(s) ? FLEX_ROLE_STYLES[s.flexRole]?.hex : null;
-                                const bg = isSick      ? '#7f1d1d'
-                                        : isNoShow    ? '#374151'
+                                // Flex roles (STEAM / Summer Camp) and shift
+                                // states all read from the centre's editable
+                                // Appearance colours (Super Admin → Appearance).
+                                const flexHex     = isFlexRole(s) ? stateColorHex(s.flexRole, centerConfig) : null;
+                                const bg = isSick      ? stateColorHex('Sick Pay', centerConfig)
+                                        : isNoShow    ? stateColorHex('No-Show', centerConfig)
                                         : flexHex     ? flexHex
-                                        : isVolunteer ? '#0284c7'   // sky-600
+                                        : isVolunteer ? stateColorHex('Volunteer', centerConfig)
                                         : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
