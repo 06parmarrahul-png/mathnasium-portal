@@ -20,7 +20,7 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, FLEX_ROLES, FLEX_ROLE_STYLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
@@ -164,6 +164,46 @@ function defaultShiftTimesFor(date, userLike, centerConfig) {
   return hours && hours.start && hours.end ? hours : FALLBACK;
 }
 
+// Flex-role picker — two mutually-exclusive toggles (STEAM / Summer Camp).
+// A flex shift means the person is present and PAID but is NOT working as
+// a floor instructor that shift, so they're excluded from Supply & Demand
+// and Student Scheduler instructor counts. Passing '' clears the flag.
+function FlexRolePicker({ value, onChange }) {
+  return (
+    <div>
+      <label className="block text-xs text-gray-500 mb-1">
+        Flex role <span className="text-gray-400">· not counted as a floor instructor</span>
+      </label>
+      <div className="flex gap-2">
+        {FLEX_ROLES.map(fr => {
+          const active = value === fr;
+          const activeCls = fr === 'STEAM'
+            ? 'bg-yellow-600 text-white border-yellow-600'
+            : 'bg-orange-500 text-white border-orange-500';
+          return (
+            <button
+              type="button"
+              key={fr}
+              onClick={() => onChange(active ? '' : fr)}
+              aria-pressed={active}
+              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
+                active ? activeCls : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              {fr}
+            </button>
+          );
+        })}
+      </div>
+      {value && (
+        <p className="mt-1 text-xs text-gray-500">
+          Marked <b>{value}</b> — excluded from Supply &amp; Demand and Student Scheduler counts, still paid normally.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ── Add Shift Modal ────────────────────────────────────────────────────────────
 function AddShiftModal({ date, user, users, availability, centerConfig, onClose, onSave }) {
   const [selectedUser, setSelectedUser] = useState(user?.uid || '');
@@ -184,6 +224,9 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
     return 'Elementary';
   };
   const [subRole, setSubRole] = useState(guessSubRole(user));
+  // Flex role (STEAM / Summer Camp) — present + paid, but not counted as
+  // a floor instructor. Empty string = a normal counted shift.
+  const [flexRole, setFlexRole] = useState('');
 
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
@@ -212,6 +255,7 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
       role,
       shiftType,
       subRole,
+      flexRole,
       // New shifts land as drafts. The owner reviews them on the weekly
       // grid (drafts show striped) and clicks Publish when ready.
       // Instructors don't see drafts on their Schedule page.
@@ -331,6 +375,8 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
           </p>
         </div>
 
+        <FlexRolePicker value={flexRole} onChange={setFlexRole} />
+
         <button
           onClick={handleSubmit}
           disabled={!selectedUser}
@@ -359,6 +405,9 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   // that they were originally assigned, but excluded from payroll and
   // from the day's paid-hours total. Mutually exclusive with sickPay.
   const [noShow, setNoShow] = useState(!!shift.noShow);
+  // Flex role (STEAM / Summer Camp) — present + paid, not counted as a
+  // floor instructor. Empty string = a normal counted shift.
+  const [flexRole, setFlexRole] = useState(shift.flexRole || '');
 
   return (
     <Modal
@@ -456,6 +505,8 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
           </div>
         </label>
 
+        <FlexRolePicker value={flexRole} onChange={setFlexRole} />
+
         {/* Draft state banner + Publish button — only shown when this shift
             is still in draft. Publishing flips status to 'live' so the
             instructor sees it on their Schedule. */}
@@ -473,7 +524,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
         )}
 
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay, noShow })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay, noShow, flexRole })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -2181,11 +2232,14 @@ export default function Admin() {
     } catch { /* notify optional */ }
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay, noShow }) => {
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay, noShow, flexRole }) => {
     await updateDoc(doc(db, 'shifts', editShiftModal.id), {
       startTime, endTime, role, shiftType, subRole,
       sickPay: !!sickPay,
       noShow:  !!noShow,
+      // '' when cleared — normalise to null so the field is queryable
+      // and doesn't linger as an empty string on the doc.
+      flexRole: flexRole || null,
     });
     setEditShiftModal(null);
   };
@@ -4354,8 +4408,12 @@ export default function Admin() {
                                 const isNoShow    = !!s.noShow;
                                 const isVolunteer = s.userName && volunteerNames.has(s.userName);
                                 const isDraft     = s.status === 'draft';
+                                // Flex roles (STEAM / Summer Camp) — loud gold /
+                                // orange so summer flex work is obvious on the grid.
+                                const flexHex     = isFlexRole(s) ? FLEX_ROLE_STYLES[s.flexRole]?.hex : null;
                                 const bg = isSick      ? '#7f1d1d'
                                         : isNoShow    ? '#374151'
+                                        : flexHex     ? flexHex
                                         : isVolunteer ? '#0284c7'   // sky-600
                                         : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
@@ -4367,6 +4425,7 @@ export default function Admin() {
                                 const showWhere = where !== 'In-Centre' && assignment !== 'Online Instructor';
                                 const compactLabel = isSick ? 'SICK'
                                   : isNoShow ? 'NO-SHOW'
+                                  : flexHex ? s.flexRole.toUpperCase()
                                   : isVolunteer ? 'VOLUNTEER'
                                   : assignmentShort(assignment);
                                 // Diagonal stripes via repeating-linear-gradient.

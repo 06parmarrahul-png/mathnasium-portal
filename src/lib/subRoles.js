@@ -90,3 +90,60 @@ export const SICK_PAY_STYLE = {
 export function sickStyleFor(shift) {
   return shift?.sickPay ? SICK_PAY_STYLE : null;
 }
+
+/**
+ * Flex roles — a shift where the person is NOT working as a floor
+ * instructor. Over the summer we run STEAM sessions and Summer Camp
+ * alongside regular tutoring; whoever is running those is present and
+ * PAID, but must NOT be counted as teaching supply (Supply & Demand,
+ * Student Scheduler, coverage/instructor tiles). They still appear on
+ * the schedule so everyone can see who's doing what — hence the loud,
+ * distinct colours.
+ *
+ * Stored on the shift as `flexRole: 'STEAM' | 'Summer Camp'` (unset =
+ * a normal counted shift). Mutually exclusive — a shift is one or the
+ * other, never both.
+ *
+ * Colours: STEAM = dark yellow (gold), Summer Camp = orange. Chosen to
+ * be obviously different from each other and from the teaching sub-role
+ * colours (lime / cyan / indigo) and Sick Pay (burgundy).
+ */
+export const FLEX_ROLES = ['STEAM', 'Summer Camp'];
+
+export const FLEX_ROLE_STYLES = {
+  'STEAM': {
+    label:        'STEAM',
+    pillBg:       'bg-yellow-100',
+    pillText:     'text-yellow-900',
+    pillBorder:   'border-yellow-300',
+    dot:          'bg-yellow-600',
+    blockBg:      'bg-yellow-600',
+    blockText:    'text-white',
+    blockSubText: 'text-yellow-100',
+    stripe:       'bg-yellow-600',
+    hex:          '#ca8a04', // Tailwind yellow-600 — dark yellow / gold
+  },
+  'Summer Camp': {
+    label:        'Summer Camp',
+    pillBg:       'bg-orange-100',
+    pillText:     'text-orange-900',
+    pillBorder:   'border-orange-300',
+    dot:          'bg-orange-500',
+    blockBg:      'bg-orange-500',
+    blockText:    'text-white',
+    blockSubText: 'text-orange-100',
+    stripe:       'bg-orange-500',
+    hex:          '#f97316', // Tailwind orange-500
+  },
+};
+
+/** True when the shift is a flex (STEAM / Summer Camp) assignment. */
+export function isFlexRole(shift) {
+  return !!shift && FLEX_ROLES.includes(shift.flexRole);
+}
+
+/** Convenience: returns the flex style for a shift, else null. */
+export function flexStyleFor(shift) {
+  if (!shift?.flexRole) return null;
+  return FLEX_ROLE_STYLES[shift.flexRole] || null;
+}

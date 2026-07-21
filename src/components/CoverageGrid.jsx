@@ -1,5 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { assignmentFor, assignmentShort, assignmentColorHex, contrastText } from '../lib/centerConfig';
+import { FLEX_ROLE_STYLES } from '../lib/subRoles';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -108,7 +109,11 @@ function parseShift(str) {
 //
 // Checks BOTH role and subRole because most centres tag online staff as
 // role:'Instructor' + subRole:'Online' rather than role:'Online Instructor'.
-const rolePriority = (role, subRole, isVolunteer) => {
+const rolePriority = (role, subRole, isVolunteer, flexRole) => {
+  // Flex (STEAM / Summer Camp) sits in its own bottom tier — present and
+  // paid, but not part of the teaching workforce, so it never mixes into
+  // the in-centre instructor block.
+  if (flexRole) return 4;
   if (isVolunteer) return 3;
   if (role === 'Online Instructor' || subRole === 'Online') return 1;
   if (role === 'Instructor' || role === 'Lead')             return 2;
@@ -165,6 +170,7 @@ export default function CoverageGrid({ day, centerConfig }) {
         sickPay:     !!e.sickPay,
         noShow:      !!e.noShow,
         isVolunteer: !!e.isVolunteer,
+        flexRole:    e.flexRole || null,
       }));
     }
     return (day.assignedEmployees || []).map((name, i) => ({
@@ -176,16 +182,17 @@ export default function CoverageGrid({ day, centerConfig }) {
       sickPay:     !!day.sickPay?.[name],
       noShow:      !!day.noShow?.[name],
       isVolunteer: false,
+      flexRole:    day.flexRoles?.[name] || null,
     }));
-  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay, day.noShow]);
+  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay, day.noShow, day.flexRoles]);
 
   // Sort by tier → sub-priority within tier → alphabetical by name.
   // Two entries for the same person stay adjacent when they share tier
   // and sub-priority (each still shows its own role badge + bar).
   const sortedEntries = useMemo(() => {
     return [...entries].sort((a, b) => {
-      const at = rolePriority(a.role, a.subRole, a.isVolunteer);
-      const bt = rolePriority(b.role, b.subRole, b.isVolunteer);
+      const at = rolePriority(a.role, a.subRole, a.isVolunteer, a.flexRole);
+      const bt = rolePriority(b.role, b.subRole, b.isVolunteer, b.flexRole);
       if (at !== bt) return at - bt;
       const asp = subPriorityInTier(at, a.role, a.subRole);
       const bsp = subPriorityInTier(bt, b.role, b.subRole);
@@ -232,7 +239,7 @@ export default function CoverageGrid({ day, centerConfig }) {
         if (!shift) continue;
         if (shift.startMins < sEnd && shift.endMins > sStart) {
           namesPresent.add(e.name);
-          if (TEACHING_ROLES.has(e.role)) teachingCount++;
+          if (!e.flexRole && TEACHING_ROLES.has(e.role)) teachingCount++;
         }
       }
       return { ...slot, teachingCount, totalCount: namesPresent.size };
@@ -299,37 +306,42 @@ export default function CoverageGrid({ day, centerConfig }) {
           </thead>
           <tbody>
             {sortedEntries.map((entry, idx) => {
-              const { name, role, subRole, shiftTime, sickPay: isSick, noShow: isNoShow, isVolunteer } = entry;
+              const { name, role, subRole, shiftTime, sickPay: isSick, noShow: isNoShow, isVolunteer, flexRole } = entry;
               const shift = shiftByKey[entry.key];
               // Bold dividers between the four tiers so the staff list
               // reads "important staff → online → in-centre → volunteers"
               // at a glance. Insert a section header before the FIRST
               // row of each tier whose priority is new.
-              const myPriority = rolePriority(role, subRole, isVolunteer);
+              const myPriority = rolePriority(role, subRole, isVolunteer, flexRole);
               const prevPriority = idx === 0
                 ? -1
-                : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole, sortedEntries[idx - 1].isVolunteer);
+                : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole, sortedEntries[idx - 1].isVolunteer, sortedEntries[idx - 1].flexRole);
               const isFirstOfTier = myPriority !== prevPriority;
               const tierLabel = myPriority === 0 ? 'Hosts & Management'
                               : myPriority === 1 ? 'Online Instructors'
                               : myPriority === 2 ? 'In-Centre Instructors'
-                              : 'Volunteers';
+                              : myPriority === 3 ? 'Volunteers'
+                              : 'STEAM / Summer Camp';
               const colspan = 1 + slots.length;
-              // Colour precedence: Sick > No-Show > Volunteer > assignment.
-              // Same palette used on the Manage Staff Schedule grid so the
-              // two surfaces stay visually consistent.
+              // Colour precedence: Sick > No-Show > Flex > Volunteer >
+              // assignment. Same palette used on the Manage Staff Schedule
+              // grid so the two surfaces stay visually consistent.
+              const flexHex = flexRole ? FLEX_ROLE_STYLES[flexRole]?.hex : null;
               const assignment = assignmentFor({ role, subRole });
               const roleBg = isSick      ? '#7f1d1d'
                           : isNoShow    ? '#374151'
+                          : flexHex     ? flexHex
                           : isVolunteer ? '#0284c7'
                           : assignmentColorHex(assignment, centerConfig);
               const roleText = contrastText(roleBg);
               const badgeLabel = isSick ? 'SICK'
                 : isNoShow ? 'NO-SHOW'
+                : flexRole ? flexRole.toUpperCase()
                 : isVolunteer ? 'VOLUNTEER'
                 : assignmentShort(assignment);
               const badgeTooltip = isSick ? `${assignment} · Sick Pay`
                 : isNoShow ? `${assignment} · No-Show`
+                : flexRole ? flexRole
                 : isVolunteer ? `${assignment} · Volunteer`
                 : assignment;
               // Flag rows where the same person has another entry on the

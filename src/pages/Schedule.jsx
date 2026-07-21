@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor, sickStyleFor } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason, resolveInstructionalHours } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
@@ -1540,7 +1540,10 @@ export default function Schedule() {
               // sub-role colour with deep burgundy so it's instantly
               // distinguishable from a regular working day.
               const sickStyle = sickStyleFor(state.shift);
-              const sStyle = sickStyle || subRoleStyleFor(state.shift.subRole);
+              // Flex roles (STEAM / Summer Camp) get their own loud colour so
+              // the calendar shows who's off the teaching floor. Sick Pay
+              // still wins (attendance state) if somehow both are set.
+              const sStyle = sickStyle || flexStyleFor(state.shift) || subRoleStyleFor(state.shift.subRole);
               const blockBg     = sStyle ? sStyle.blockBg     : 'bg-blue-500';
               const blockText   = sStyle ? sStyle.blockText   : 'text-white';
               const blockSubText= sStyle ? sStyle.blockSubText: 'text-blue-100';

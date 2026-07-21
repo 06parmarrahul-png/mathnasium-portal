@@ -66,6 +66,7 @@ const STANDARD_ALIASES = [
   { parentName: 'Claire and Julia Eddy', replacements: ['Claire Eddy', 'Julia Eddy'] },
 ];
 import { toast } from '../lib/notify';
+import { isFlexRole } from '../lib/subRoles';
 
 // ───── Helpers ──────────────────────────────────────────────────────────
 function todayStr() {
@@ -400,8 +401,10 @@ function TodayTab({ centerId }) {
 
   const scheduledTodayNames = useMemo(() => {
     const set = new Set();
-    // From actual shift docs:
-    for (const s of todayShifts) if (s.userName) set.add(s.userName);
+    // From actual shift docs — but NOT flex (STEAM / Summer Camp) staff.
+    // They're present and paid, but aren't floor supply, so they must not
+    // show up as assignable instructors or be counted in the scheduler.
+    for (const s of todayShifts) if (s.userName && !isFlexRole(s)) set.add(s.userName);
     // From fixed staff schedule for this day of week:
     const fixedMap = (centerConfig?.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
       ? centerConfig.fixedStaff
@@ -419,6 +422,19 @@ function TodayTab({ centerId }) {
     // SLOT_ELIGIBLE_ROLES is a module-level constant — safe to leave out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayShifts, centerConfig, date, settings]);
+
+  // Flex (STEAM / Summer Camp) staff on today — excluded from the scheduler
+  // counts above, but surfaced as a chip so the owner still sees who's on
+  // flex work and doesn't wonder where they went.
+  const flexToday = useMemo(() => {
+    const seen = new Map();
+    for (const s of todayShifts) {
+      if (isFlexRole(s) && s.userName) {
+        seen.set(`${s.userName}|${s.flexRole}`, { name: s.userName, flexRole: s.flexRole });
+      }
+    }
+    return Array.from(seen.values());
+  }, [todayShifts]);
 
   // ── Lazy snapshot capture ────────────────────────────────────────────
   // When the viewed day is COMPLETE (all slots have ended) and no
@@ -509,6 +525,24 @@ function TodayTab({ centerId }) {
           and (when confident enough) a single actionable sentence. */}
       {dayAnalytics?.hasData && data?.totals?.all > 0 && (
         <DaySummary analytics={dayAnalytics} recommendation={recommendation} ratio={ratio} />
+      )}
+
+      {/* Flex chip — STEAM / Summer Camp staff are on today but not counted
+          as floor instructors. Shown so the owner can see who's on flex
+          work; they aren't offered in the slot "+ add" pickers. */}
+      {flexToday.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-xs text-amber-900 print:hidden">
+          <span className="font-semibold">On flex today (not counted):</span>
+          {flexToday.map(f => (
+            <span
+              key={`${f.name}|${f.flexRole}`}
+              className="inline-flex items-center rounded px-1.5 py-0.5 font-semibold text-white"
+              style={{ backgroundColor: f.flexRole === 'STEAM' ? '#ca8a04' : '#f97316' }}
+            >
+              {f.name} · {f.flexRole}
+            </span>
+          ))}
+        </div>
       )}
 
       {/* Floating clipboard chip — appears when something is copied. Lets

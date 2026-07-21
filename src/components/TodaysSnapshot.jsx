@@ -108,6 +108,9 @@ export default function TodaysSnapshot() {
         sickPay:     !!s.sickPay,
         noShow:      !!s.noShow,
         isVolunteer: volunteerNames.has(name),
+        // Flex (STEAM / Summer Camp): present + paid, but not a floor
+        // instructor — kept off every headline instructor count below.
+        flexRole:    s.flexRole || null,
       });
     }
     return {
@@ -131,15 +134,24 @@ export default function TodaysSnapshot() {
   // distinct work. (A teacher pulling both a LEAD and a HOST shift today
   // legitimately fills 1 of each tile's headline number.)
   const teachingCount = useMemo(() => (
-    dayData.shiftEntries.filter(e => ['Instructor', 'Lead'].includes(e.role)).length
+    dayData.shiftEntries.filter(e => !e.flexRole && ['Instructor', 'Lead'].includes(e.role)).length
   ), [dayData]);
 
   const hostCount = useMemo(() => (
-    dayData.shiftEntries.filter(e => e.role === 'Host').length
+    dayData.shiftEntries.filter(e => !e.flexRole && e.role === 'Host').length
   ), [dayData]);
 
   const onlineCount = useMemo(() => (
-    dayData.shiftEntries.filter(e => e.role === 'Online Instructor').length
+    dayData.shiftEntries.filter(e => !e.flexRole && e.role === 'Online Instructor').length
+  ), [dayData]);
+
+  // Flex (STEAM / Summer Camp) people on today — surfaced as a banner so
+  // the owner sees who's doing flex work even though they're not in the
+  // instructor tiles above.
+  const flexToday = useMemo(() => (
+    dayData.shiftEntries
+      .filter(e => e.flexRole)
+      .map(e => ({ name: e.name, flexRole: e.flexRole }))
   ), [dayData]);
 
   const totalHours = useMemo(() => (
@@ -218,6 +230,23 @@ export default function TodaysSnapshot() {
                 </span>
                 <span className="text-sky-700"> — {volunteersToday.join(', ')}. </span>
                 <span className="text-sky-600/80 italic">Not counted in paid coverage.</span>
+              </div>
+            </div>
+          )}
+
+          {/* Flex banner — STEAM / Summer Camp people are present and paid
+              but aren't floor instructors, so they're excluded from the
+              instructor tiles and coverage numbers. Surfaced here so the
+              owner still sees who's on flex work today. */}
+          {flexToday.length > 0 && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
+              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-yellow-600" />
+              <div>
+                <span className="font-semibold text-amber-900">
+                  {flexToday.length} on flex today
+                </span>
+                <span className="text-amber-800"> — {flexToday.map(f => `${f.name} (${f.flexRole})`).join(', ')}. </span>
+                <span className="text-amber-700/80 italic">Not counted as floor instructors.</span>
               </div>
             </div>
           )}

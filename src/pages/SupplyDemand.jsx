@@ -10,6 +10,7 @@ import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
+import { isFlexRole, FLEX_ROLE_STYLES } from '../lib/subRoles';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -159,6 +160,9 @@ function computeSupply(shifts, subRoleMatchers, dayWindow) {
   };
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
+    // STEAM / Summer Camp are present + paid but NOT floor supply — keep
+    // them out of the bars and every headline supply number.
+    if (isFlexRole(s)) continue;
     if (!matchesSide(s)) continue;
     const startMin = timeToMin(s.startTime);
     const endMin   = timeToMin(s.endTime);
@@ -187,6 +191,7 @@ function computeUniqueOnFloor(shifts, dayWindow) {
   const names = new Set();
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
+    if (isFlexRole(s)) continue; // flex staff aren't floor instructors
     const sub = (s.subRole || '').toLowerCase();
     if (sub !== 'elementary' && sub !== 'highschool' && sub !== 'high school') continue;
     if (s.userName || s.userId) names.add(s.userName || s.userId);
@@ -1157,13 +1162,17 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
         if (st == null || en == null) continue;
         const overlap = Math.max(0, Math.min(en, sEnd) - Math.max(st, sStart));
         if (overlap < 15) continue;
-        // Match the headline supply/graph: no Leads/Managers in the
-        // opening slot, no Managers in the closing slot. Keeps this
-        // roster (and its "N instructors" count) in sync with the bars.
-        if (!countsAsFloorSupply(s.role, i, dayWindow?.slotCount ?? 0)) continue;
+        const flex = isFlexRole(s);
+        // Non-flex staff follow the open/close carve-out (no Leads/Managers
+        // in the opening slot, no Managers in the closing slot) so this
+        // roster's counted names stay in sync with the bars. Flex staff
+        // (STEAM / Summer Camp) are ALWAYS listed but tagged and never
+        // counted, so they skip the carve-out entirely.
+        if (!flex && !countsAsFloorSupply(s.role, i, dayWindow?.slotCount ?? 0)) continue;
         (isEm ? supplyEm : supplyHs).push({
           name: s.userName || 'Unknown',
           role: s.role || 'Instructor',
+          flexRole: s.flexRole || null,
         });
       }
       supplyEm.sort((a, b) => a.name.localeCompare(b.name));
@@ -1468,8 +1477,13 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
             const emCount = slot.em.length;
             const hsCount = slot.hs.length;
             const totalDemand = emCount + hsCount;
-            const totalSupply = slot.supplyEm.length + slot.supplyHs.length;
-            if (totalDemand === 0 && totalSupply === 0) return null;
+            // Flex (STEAM / Summer Camp) are listed but NOT counted, so the
+            // headline "N instructors" reflects only real floor supply and
+            // matches the bars above.
+            const countable = (list) => list.filter(x => !x.flexRole).length;
+            const totalSupply = countable(slot.supplyEm) + countable(slot.supplyHs);
+            const totalListed = slot.supplyEm.length + slot.supplyHs.length;
+            if (totalDemand === 0 && totalListed === 0) return null;
             const renderList = (list) => (
               <ul className="space-y-0.5">
                 {list.map((s, idx) => (
@@ -1485,9 +1499,16 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
             const renderStaff = (list) => (
               <ul className="space-y-0.5">
                 {list.map((s, idx) => (
-                  <li key={idx} className="text-xs text-gray-700">
+                  <li key={idx} className={`text-xs ${s.flexRole ? 'text-gray-400' : 'text-gray-700'}`}>
                     {s.name}
-                    {s.role && s.role !== 'Instructor' && (
+                    {s.flexRole ? (
+                      <span
+                        className="ml-1 rounded px-1 text-[10px] font-semibold text-white"
+                        style={{ backgroundColor: FLEX_ROLE_STYLES[s.flexRole]?.hex }}
+                      >
+                        {s.flexRole} · not counted
+                      </span>
+                    ) : s.role && s.role !== 'Instructor' && (
                       <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
                     )}
                   </li>
@@ -1526,19 +1547,19 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
                   </div>
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wide text-purple-700 mb-1">Supply ({totalSupply})</p>
-                    {totalSupply === 0 ? (
+                    {totalListed === 0 ? (
                       <p className="text-xs text-gray-400 italic">No instructors on floor.</p>
                     ) : (
                       <>
                         {slot.supplyEm.length > 0 && (
                           <div className="mb-2">
-                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {slot.supplyEm.length}</p>
+                            <p className="text-[10px] font-semibold uppercase text-emerald-600 mb-0.5">Elementary · {countable(slot.supplyEm)}</p>
                             {renderStaff(slot.supplyEm)}
                           </div>
                         )}
                         {slot.supplyHs.length > 0 && (
                           <div>
-                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {slot.supplyHs.length}</p>
+                            <p className="text-[10px] font-semibold uppercase text-blue-600 mb-0.5">High School · {countable(slot.supplyHs)}</p>
                             {renderStaff(slot.supplyHs)}
                           </div>
                         )}
