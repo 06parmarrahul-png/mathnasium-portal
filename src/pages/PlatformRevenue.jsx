@@ -38,7 +38,7 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 // at the Stripe Price level (20% off) so we don't need a separate row here.
 //
 // `setupFee` is a one-time charge added as an invoice item on the first
-// Stripe Checkout invoice (handled in api/stripe/create-checkout-session.js).
+// Stripe Checkout invoice (handled in api/stripe/billing.js, action:'checkout').
 // Founder tier is the "Founding 10" launch program — locked-in $79/mo for
 // life with no setup fee. Cap it at 10 active founders (we surface a counter
 // in the summary cards below).
@@ -105,7 +105,7 @@ export default function PlatformRevenue() {
   const [portalError, setPortalError] = useState('');
 
   // Open the Stripe Customer Portal for a centre that already has a
-  // stripeCustomerId on file. Hits our /api/stripe/create-portal-session
+  // stripeCustomerId on file. Hits our /api/stripe/billing (action:'portal')
   // route, then redirects to the hosted portal in a new tab.
   const openCustomerPortal = async (center) => {
     setPortalError('');
@@ -113,13 +113,13 @@ export default function PlatformRevenue() {
     try {
       const idToken = user ? await user.getIdToken() : null;
       if (!idToken) throw new Error('Not signed in.');
-      const r = await fetch('/api/stripe/create-portal-session', {
+      const r = await fetch('/api/stripe/billing', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
           'Content-Type':  'application/json',
         },
-        body: JSON.stringify({ centerId: center.id }),
+        body: JSON.stringify({ action: 'portal', centerId: center.id }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || `Portal request failed (${r.status}).`);
@@ -300,7 +300,7 @@ export default function PlatformRevenue() {
 }
 
 // Modal for generating a Stripe Checkout URL. Super-admin picks the tier and
-// billing interval, this hits our /api/stripe/create-checkout-session route,
+// billing interval, this hits our /api/stripe/billing route (action:'checkout'),
 // and the resulting hosted Checkout URL is displayed with a one-click Copy
 // button. The super-admin then emails that URL to the centre's owner; once
 // the owner pays, the webhook flips the centre's status to 'active'.
@@ -320,13 +320,13 @@ function StripeCheckoutModal({ center, user, onClose }) {
     try {
       const idToken = user ? await user.getIdToken() : null;
       if (!idToken) throw new Error('Not signed in.');
-      const r = await fetch('/api/stripe/create-checkout-session', {
+      const r = await fetch('/api/stripe/billing', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${idToken}`,
           'Content-Type':  'application/json',
         },
-        body: JSON.stringify({ centerId: center.id, tier, billing }),
+        body: JSON.stringify({ action: 'checkout', centerId: center.id, tier, billing }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data?.error || `Request failed (${r.status}).`);

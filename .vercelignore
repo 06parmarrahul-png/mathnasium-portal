@@ -1,0 +1,7 @@
+# The Stripe checkout + portal routes were merged into api/stripe/billing.js
+# to stay under the Hobby-plan limit of 12 Serverless Functions per deploy.
+# These two originals are excluded from deployment so they no longer count
+# as functions. They can be safely `git rm`-ed later, after which these two
+# lines can be removed.
+api/stripe/create-checkout-session.js
+api/stripe/create-portal-session.js
