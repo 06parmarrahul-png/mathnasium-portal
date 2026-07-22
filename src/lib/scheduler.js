@@ -430,6 +430,13 @@ export function effectiveTrack(instructor, preferredAssignment) {
  *                                                Shifts inside the current window (being regenerated)
  *                                                and shifts from earlier months are ignored.
  */
+// Staff the auto-scheduler is allowed to place into HOST shifts on its own.
+// Everyone else who can host is handled MANUALLY — they can still take host
+// swaps (that's gated by the Host capability), but the generator won't
+// auto-assign them as Host, so the centre's designated host is the only one
+// who shows up automatically. Override per-centre via centerConfig.autoHostNames.
+export const DEFAULT_AUTO_HOST_NAMES = ['Rahul Parmar'];
+
 export function generateSchedule({
   instructors,
   availability,
@@ -458,6 +465,14 @@ export function generateSchedule({
 
   // Center-specific tunables (with defaults that match legacy Langley behavior)
   const instructionalHours = centerConfig.instructionalHours || DEFAULT_INSTRUCTIONAL_HOURS;
+
+  // Who may be AUTO-scheduled as Host. Defaults to the designated host
+  // (DEFAULT_AUTO_HOST_NAMES); a centre can override with centerConfig.autoHostNames.
+  const autoHostNames = (Array.isArray(centerConfig.autoHostNames) && centerConfig.autoHostNames.length > 0)
+    ? centerConfig.autoHostNames
+    : DEFAULT_AUTO_HOST_NAMES;
+  const autoHostSet = new Set(autoHostNames.map(n => String(n).trim().toLowerCase()));
+  const isAutoHost = (inst) => autoHostSet.has(String(inst?.displayName || '').trim().toLowerCase());
   const fixedStaffMap      = (centerConfig.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
                                 ? centerConfig.fixedStaff
                                 : FIXED_SCHEDULES;
@@ -652,8 +667,18 @@ export function generateSchedule({
     // opt into the online pass for one specific day (and vice versa).
     // When the preference is 'either' or unset, the profile default wins.
     const onlineOnly = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'online');
-    const hosts      = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && isHostRole(a.inst));
-    const inCentre   = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre' && !isHostRole(a.inst));
+    // Only the designated auto-host(s) get auto-placed into Host shifts. Other
+    // host-typed staff who are available are surfaced as a warning so the owner
+    // can enter them manually if there's a discrepancy that day.
+    const centreAvail = availableInstructors.filter(a => effectiveTrack(a.inst, a.preferredAssignment) === 'centre');
+    const hosts      = centreAvail.filter(a => isHostRole(a.inst) && isAutoHost(a.inst));
+    const skippedHosts = centreAvail.filter(a => isHostRole(a.inst) && !isAutoHost(a.inst));
+    const inCentre   = centreAvail.filter(a => !isHostRole(a.inst));
+    for (const s of skippedHosts) {
+      warnings.push(
+        `ℹ ${dayName} ${dayMonth} ${dayNumber}: ${s.inst.displayName} (Host) is available but was not auto-scheduled — only the designated host is placed automatically. Add them manually if needed.`
+      );
+    }
 
     // ── 4. Sort in-centre instructors by blended priority + fairness ─────────
     // Blended score (priority + shifts-so-far) is the primary key, so a
