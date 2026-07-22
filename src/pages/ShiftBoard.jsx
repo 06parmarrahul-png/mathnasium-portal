@@ -6,7 +6,7 @@ import {
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, requiredCapabilityForShift } from '../lib/subRoles';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
@@ -83,7 +83,7 @@ function CardShell({ children, eligible, isMine }) {
 
 function OpenShiftCard({ shift, profile, onClaim, canAdmin, onEdit, onDelete }) {
   const [busy, setBusy] = useState(false);
-  const eligible = canTake(shift.subRole, profile?.subRoles);
+  const eligible = canTake(requiredCapabilityForShift(shift), profile?.subRoles);
   const handleClick = async () => {
     setBusy(true);
     try { await onClaim(shift); }
@@ -97,7 +97,7 @@ function OpenShiftCard({ shift, profile, onClaim, canAdmin, onEdit, onDelete }) 
           <p className="text-base font-bold text-gray-900 mt-0.5">{fmtDate(shift.date)}</p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
-          <SubRolePill subRole={shift.subRole} />
+          <SubRolePill subRole={requiredCapabilityForShift(shift)} />
           {canAdmin && (
             <>
               <button
@@ -336,7 +336,7 @@ export default function ShiftBoard() {
   // Apply "hide ineligible" toggle
   const filteredOpen = useMemo(() => (
     hideIneligible
-      ? visibleOpen.filter(s => canTake(s.subRole, profile?.subRoles))
+      ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), profile?.subRoles))
       : visibleOpen
   ), [visibleOpen, hideIneligible, profile]);
 
@@ -432,7 +432,9 @@ export default function ShiftBoard() {
   const handleTakeSwap = async (swap) => {
     if (swap.userId === profile?.uid) return;
     if (!canTake(swap.shiftSubRole, profile?.subRoles)) {
-      toast.error('You don\'t have the right teaching sub-role to take this shift.');
+      toast.error(swap.shiftSubRole === 'Host'
+        ? 'Only staff who can host can take this shift.'
+        : 'You don\'t have the required sub-role to take this shift.');
       return;
     }
     // 15-minute grace period so the poster has time to retract without
@@ -464,7 +466,9 @@ export default function ShiftBoard() {
         const data = chatSnap.data();
         if (data.swapStatus !== 'open') throw new Error('This shift has already been taken.');
         if (!canTake(data.shiftSubRole, profile?.subRoles)) {
-          throw new Error('You don\'t have the right sub-role for this shift.');
+          throw new Error(data.shiftSubRole === 'Host'
+            ? 'Only staff who can host can take this shift.'
+            : 'You don\'t have the required sub-role for this shift.');
         }
 
         tx.update(chatRef, {

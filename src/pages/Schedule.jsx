@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor, requiredCapabilityForShift } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason, resolveInstructionalHours } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
@@ -134,7 +134,7 @@ function buildFullDayByDow(centerConfig) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [] }) {
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -338,22 +338,35 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
               {openShifts.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Open Shifts</p>
-                  {openShifts.map(s => (
+                  {openShifts.map(s => {
+                    const required = requiredCapabilityForShift(s);
+                    const canClaim = !required || mySubRoles.includes(required);
+                    return (
                     <div key={s.id} className="rounded-xl bg-orange-50 border border-orange-200 p-3">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-bold text-orange-900">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</p>
                           {s.role && <p className="text-xs text-orange-600 font-medium">{s.role}</p>}
                         </div>
-                        <button
-                          onClick={() => onClaimOpenShift(s)}
-                          className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
-                        >
-                          Claim
-                        </button>
+                        {canClaim ? (
+                          <button
+                            onClick={() => onClaimOpenShift(s)}
+                            className="rounded-lg bg-orange-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
+                          >
+                            Claim
+                          </button>
+                        ) : (
+                          <span
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-400"
+                            title={required === 'Host' ? 'Only staff who can host can take this' : `Requires the ${required} sub-role`}
+                          >
+                            {required === 'Host' ? 'Host only' : `Requires ${required}`}
+                          </span>
+                        )}
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -1419,18 +1432,33 @@ export default function Schedule() {
       shiftStartTime: shift.startTime,
       shiftEndTime: shift.endTime,
       shiftRole: shift.role || '',
-      shiftSubRole: shift.subRole || null, // gates who is allowed to take it
+      // Capability required to take this shift. Host shifts require the Host
+      // capability (not the teaching level), so only staff tagged Host can
+      // take them; teaching shifts still require the matching sub-role.
+      shiftSubRole: requiredCapabilityForShift(shift),
       swapStatus: 'open',
       acceptedBy: null,
       acceptedByName: null,
     });
     setSelectedDate(null);
-    toast.success('Posted to the Shift Board! Other instructors with the same teaching level can take it.');
+    const cap = requiredCapabilityForShift(shift);
+    const who = cap === 'Host' ? 'staff who can host' : cap ? `staff tagged ${cap}` : 'other staff';
+    toast.success(`Posted to the Shift Board! Only ${who} can take it.`);
   };
 
   const handleClaimOpenShift = async (openShift) => {
     if (openShift.status !== 'open') {
       toast.error('This shift has already been claimed.');
+      return;
+    }
+    // Capability gate — a Host shift can only be claimed by staff tagged
+    // Host; teaching shifts require the matching sub-role. Guards every
+    // claim path (Shift Board + this Day modal).
+    const required = requiredCapabilityForShift(openShift);
+    if (required && !(profile?.subRoles || []).includes(required)) {
+      toast.error(required === 'Host'
+        ? 'Only staff who can host can claim this shift.'
+        : `This shift requires the ${required} sub-role — you don't have it.`);
       return;
     }
     try {
@@ -1976,6 +2004,7 @@ export default function Schedule() {
           onPostSwap={handlePostSwap}
           onClaimOpenShift={handleClaimOpenShift}
           onRequestTimeOff={handleRequestTimeOff}
+          mySubRoles={profile?.subRoles || []}
         />
       )}
     </div>

@@ -20,7 +20,7 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, FLEX_ROLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
@@ -732,9 +732,9 @@ function AddStaffModal({ onClose, onSubmit }) {
           </div>
         </div>
         <div>
-          <label className="block text-xs font-semibold text-gray-600 mb-1">Teaching Sub-Roles</label>
+          <label className="block text-xs font-semibold text-gray-600 mb-1">Sub-Roles &amp; Capabilities</label>
           <div className="flex flex-wrap gap-2">
-            {SUB_ROLES.map(sr => {
+            {STAFF_CAPABILITIES.map(sr => {
               const active = subRoles.includes(sr);
               const style = SUB_ROLE_STYLES[sr];
               return (
@@ -847,9 +847,9 @@ function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset })
         </div>
 
         <div>
-          <label className="mb-1.5 block text-xs text-gray-500 font-medium">Teaching Sub-Roles</label>
+          <label className="mb-1.5 block text-xs text-gray-500 font-medium">Sub-Roles &amp; Capabilities</label>
           <div className="flex flex-wrap gap-2">
-            {SUB_ROLES.map(sr => {
+            {STAFF_CAPABILITIES.map(sr => {
               const active = subRoles.includes(sr);
               const style = SUB_ROLE_STYLES[sr];
               return (

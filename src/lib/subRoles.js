@@ -56,7 +56,40 @@ export const SUB_ROLE_STYLES = {
     stripe:       'bg-indigo-700',
     hex:          '#4338ca',
   },
+  // Host is a CAPABILITY (front-of-house), not a teaching level — but it
+  // gets a style here so capability pills and swap-eligibility tags render.
+  // Blue, matching the Host assignment colour used on the grid.
+  Host: {
+    label:        'Host',
+    pillBg:       'bg-blue-100',
+    pillText:     'text-blue-800',
+    pillBorder:   'border-blue-200',
+    dot:          'bg-blue-500',
+    blockBg:      'bg-blue-600',
+    blockText:    'text-white',
+    blockSubText: 'text-blue-100',
+    stripe:       'bg-blue-600',
+    hex:          '#2563eb',
+  },
 };
+
+// What a STAFF MEMBER can be assigned for swap / open-shift eligibility:
+// the three teaching sub-roles PLUS Host. Kept separate from SUB_ROLES
+// (which is only the teaching LEVEL a shift can carry — Host is a role, not
+// a level, so it must never appear in a shift's "Teaching Level" dropdown).
+export const STAFF_CAPABILITIES = [...SUB_ROLES, 'Host'];
+
+/**
+ * The capability someone must have to work a given shift — used to gate
+ * shift swaps and open-shift claims. A Host shift requires the 'Host'
+ * capability; every other shift requires its teaching sub-role. Returns
+ * null when the shift has neither (legacy → no restriction).
+ */
+export function requiredCapabilityForShift(shift) {
+  if (!shift) return null;
+  if (shift.role === 'Host') return 'Host';
+  return shift.subRole || null;
+}
 
 /**
  * Look up a sub-role style by name. Returns null for unknown values
