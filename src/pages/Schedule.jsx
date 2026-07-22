@@ -13,6 +13,7 @@ import {
   CalendarDays, ChevronLeft, ChevronRight,
   ArrowRightLeft, Plus, X, Check, AlertTriangle, Briefcase,
   Clock, Loader2, Repeat, Trash2, Building2, Laptop, Wifi,
+  CalendarPlus, Copy, RotateCcw, Smartphone,
 } from 'lucide-react';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
@@ -1111,12 +1112,137 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+// ─── Calendar Sync Modal ─────────────────────────────────────────────────
+// Gives each user a private iCal subscription link (served by
+// /api/calendar/<token>.ics) that Apple / Google Calendar can subscribe to.
+// The token lives on their own user doc; resetting it rotates the token and
+// invalidates old subscriptions. See api/calendar/[token].js.
+function CalendarSyncModal({ profile, onClose }) {
+  const [token, setToken] = useState(profile?.calendarToken || '');
+  const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const httpsUrl = token ? `${origin}/api/calendar/${token}.ics` : '';
+  const webcalUrl = httpsUrl.replace(/^https?:\/\//i, 'webcal://');
+
+  const genToken = () => (
+    (typeof crypto !== 'undefined' && crypto.randomUUID)
+      ? crypto.randomUUID().replace(/-/g, '')
+      : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)
+  );
+
+  const saveToken = async (newToken) => {
+    if (!profile?.uid) return;
+    setBusy(true);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), { calendarToken: newToken });
+      setToken(newToken);
+    } catch (err) {
+      toast.error(err?.message || 'Could not update your calendar link.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleReset = async () => {
+    const ok = window.confirm('Reset your calendar link? Any device already subscribed with the old link will stop updating and will need the new one.');
+    if (ok) await saveToken(genToken());
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(httpsUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* clipboard blocked — the field is selectable to copy manually */ }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="w-full max-w-lg rounded-2xl bg-white shadow-xl" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 bg-gradient-to-r from-blue-50 to-white">
+          <div className="flex items-center gap-2">
+            <CalendarPlus size={18} className="text-blue-600" />
+            <h3 className="text-base font-bold text-gray-900">Sync to your calendar</h3>
+          </div>
+          <button onClick={onClose} className="rounded-full w-8 h-8 flex items-center justify-center hover:bg-gray-100 text-gray-400">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <p className="text-sm text-gray-600">
+            Add your Ratio shifts and approved time off to Apple or Google Calendar. It keeps itself
+            up to date — your calendar app re-checks the link every few hours.
+          </p>
+
+          {!token ? (
+            <button
+              onClick={() => saveToken(genToken())}
+              disabled={busy}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-50"
+            >
+              {busy ? <Loader2 size={15} className="animate-spin" /> : <CalendarPlus size={15} />}
+              Generate my calendar link
+            </button>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 mb-1">Your private calendar link</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={httpsUrl}
+                    onFocus={e => e.target.select()}
+                    className="flex-1 rounded-lg border px-3 py-2 text-xs font-mono text-gray-700 bg-gray-50"
+                  />
+                  <button
+                    onClick={handleCopy}
+                    className="shrink-0 flex items-center gap-1 rounded-lg border border-gray-200 px-3 py-2 text-xs font-semibold text-gray-700 hover:bg-gray-50"
+                  >
+                    {copied ? <><Check size={13} /> Copied</> : <><Copy size={13} /> Copy</>}
+                  </button>
+                </div>
+                <p className="mt-1 text-xs text-amber-600">Keep this private — anyone with the link can see your schedule.</p>
+              </div>
+
+              <a
+                href={webcalUrl}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-gray-900 px-4 py-3 text-sm font-bold text-white hover:bg-gray-800"
+              >
+                <Smartphone size={15} /> Add to Apple Calendar
+              </a>
+
+              <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-3 text-xs text-gray-600 space-y-1">
+                <p className="font-semibold text-gray-700">Google Calendar (on a computer)</p>
+                <p>Next to <b>Other calendars</b> click <b>+</b> → <b>From URL</b> → paste the link → <b>Add calendar</b>.</p>
+                <p className="font-semibold text-gray-700 mt-2">iPhone / Apple Calendar</p>
+                <p>Tap <b>Add to Apple Calendar</b> above, or Settings → Calendar → Accounts → Add Account → Other → <b>Add Subscribed Calendar</b>, then paste the link.</p>
+              </div>
+
+              <button
+                onClick={handleReset}
+                disabled={busy}
+                className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 hover:text-red-600 disabled:opacity-50"
+              >
+                <RotateCcw size={13} /> Reset link (breaks old subscriptions)
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Schedule() {
   const { profile, activeCenterId, centerConfig } = useAuth();
   const fullDayByDow = useMemo(() => buildFullDayByDow(centerConfig), [centerConfig]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
+  const [showSyncModal, setShowSyncModal] = useState(false);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [openShifts, setOpenShifts] = useState([]);
@@ -1481,12 +1607,21 @@ export default function Schedule() {
             <p className="text-sm text-gray-500">View shifts, set availability, and manage time off</p>
           </div>
         </div>
-        <button
-          onClick={() => setShowWeeklyModal(true)}
-          className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
-        >
-          <Repeat size={15} /> Set Weekly
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowSyncModal(true)}
+            className="flex items-center gap-2 rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm font-bold text-gray-700 shadow-sm hover:bg-gray-50 active:scale-95 transition-all"
+            title="Sync your shifts to Apple or Google Calendar"
+          >
+            <CalendarPlus size={15} /> Sync Calendar
+          </button>
+          <button
+            onClick={() => setShowWeeklyModal(true)}
+            className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700 active:scale-95 transition-all"
+          >
+            <Repeat size={15} /> Set Weekly
+          </button>
+        </div>
       </div>
 
       {/* Stats row */}
@@ -1817,6 +1952,11 @@ export default function Schedule() {
           onClose={() => setShowWeeklyModal(false)}
           onSaveBulk={handleSaveBulk}
         />
+      )}
+
+      {/* Calendar Sync Modal */}
+      {showSyncModal && (
+        <CalendarSyncModal profile={profile} onClose={() => setShowSyncModal(false)} />
       )}
 
       {/* Day Modal */}
