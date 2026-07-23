@@ -389,8 +389,8 @@ function TodayTab({ centerId }) {
     return () => clearInterval(id);
   }, []);
   const liveCount = useMemo(
-    () => liveInCentreCount({ data, checkIns, dateStr: date, timezone: data?.timezone, now }),
-    [data, checkIns, date, now],
+    () => liveInCentreCount({ data, checkIns, walkIns, dateStr: date, timezone: data?.timezone, now }),
+    [data, checkIns, walkIns, date, now],
   );
   const isToday = data?.timezone
     ? date === new Intl.DateTimeFormat('en-CA', { timeZone: data.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)

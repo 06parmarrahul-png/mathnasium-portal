@@ -297,14 +297,22 @@ export function isDayComplete(data, dateStr, timezone, now = new Date()) {
  * ticking `now` from the page so the number updates minute to minute with no
  * user interaction.
  *
+ * Counts BOTH booked (iCal) students who are checked in AND walk-ins:
+ *   - Booked students count only once they're checked in ('in' / 'late') —
+ *     a booking isn't a body in the room until someone marks them present.
+ *   - Walk-ins count by default (they physically walked in), unless they've
+ *     been explicitly marked 'noshow' / 'cancel'.
+ * Either way, a student drops off once their session end passes.
+ *
  * @param {Object}  data      server response (data.slots[] + data.timezone)
  * @param {Object}  checkIns  { studentId: { status } }
+ * @param {Object}  walkIns   scheduleAddOns doc: { "SIDE|HH:MM": [entry,…], slotOverrides }
  * @param {string}  dateStr   the viewed day, 'YYYY-MM-DD'
  * @param {string}  timezone  IANA tz (falls back to data.timezone)
  * @param {Date}    now
  * @returns {number}
  */
-export function liveInCentreCount({ data, checkIns = {}, dateStr, timezone, now = new Date() }) {
+export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, timezone, now = new Date() }) {
   if (!data || !Array.isArray(data.slots)) return 0;
   const tz = timezone || data.timezone || 'America/Vancouver';
   // Live count only makes sense for the current day.
@@ -312,6 +320,8 @@ export function liveInCentreCount({ data, checkIns = {}, dateStr, timezone, now 
   const nowMin = minutesInTZ(now, tz);
   const seen = new Set();
   let count = 0;
+
+  // Booked (iCal) students — must be checked in to count.
   for (const row of data.slots) {
     const [h, m] = String(row.slot || '0:0').split(':').map(Number);
     const startMin = (h || 0) * 60 + (m || 0);
@@ -325,11 +335,32 @@ export function liveInCentreCount({ data, checkIns = {}, dateStr, timezone, now 
         const status = checkIns[id]?.status;
         if (status !== 'in' && status !== 'late') continue; // must be checked in
         const dur = Number(s.duration) > 0 ? Number(s.duration) : 30;
-        // Still in the room until their session end passes.
+        if (nowMin < startMin + dur) count++; // still in the room until session end
+      }
+    }
+  }
+
+  // Walk-ins — present by default (they're physically here), keyed by
+  // "SIDE|HH:MM" on the scheduleAddOns doc. Skip non-list keys (slotOverrides).
+  if (walkIns && typeof walkIns === 'object') {
+    for (const [key, list] of Object.entries(walkIns)) {
+      if (!Array.isArray(list)) continue;
+      const [side, slot] = String(key).split('|');
+      if (side !== 'EM' && side !== 'HS') continue;
+      const [h, m] = String(slot || '0:0').split(':').map(Number);
+      const startMin = (h || 0) * 60 + (m || 0);
+      for (const w of list) {
+        const id = w?.id;
+        if (!id || seen.has(id)) continue;
+        seen.add(id);
+        const status = checkIns[id]?.status;
+        if (status === 'noshow' || status === 'cancel') continue; // explicitly left/absent
+        const dur = Number(w.duration) > 0 ? Number(w.duration) : 60;
         if (nowMin < startMin + dur) count++;
       }
     }
   }
+
   return count;
 }
 
