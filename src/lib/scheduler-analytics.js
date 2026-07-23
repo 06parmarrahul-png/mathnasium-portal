@@ -284,6 +284,55 @@ export function isDayComplete(data, dateStr, timezone, now = new Date()) {
   return true;
 }
 
+// ─── Live in-centre headcount ──────────────────────────────────────────
+
+/**
+ * How many students are physically IN THE CENTRE right now — the ones who
+ * are checked in ('in' or 'late') AND whose session window hasn't ended yet.
+ * A student drops off automatically the moment their session end (their slot
+ * start + booked duration) passes in the centre's local time.
+ *
+ * Only meaningful for TODAY, so it returns 0 for any other date (a past day's
+ * sessions have all ended; a future day has no real check-ins). PURE — pass a
+ * ticking `now` from the page so the number updates minute to minute with no
+ * user interaction.
+ *
+ * @param {Object}  data      server response (data.slots[] + data.timezone)
+ * @param {Object}  checkIns  { studentId: { status } }
+ * @param {string}  dateStr   the viewed day, 'YYYY-MM-DD'
+ * @param {string}  timezone  IANA tz (falls back to data.timezone)
+ * @param {Date}    now
+ * @returns {number}
+ */
+export function liveInCentreCount({ data, checkIns = {}, dateStr, timezone, now = new Date() }) {
+  if (!data || !Array.isArray(data.slots)) return 0;
+  const tz = timezone || data.timezone || 'America/Vancouver';
+  // Live count only makes sense for the current day.
+  if (dateStr !== ymdInTZ(now, tz)) return 0;
+  const nowMin = minutesInTZ(now, tz);
+  const seen = new Set();
+  let count = 0;
+  for (const row of data.slots) {
+    const [h, m] = String(row.slot || '0:0').split(':').map(Number);
+    const startMin = (h || 0) * 60 + (m || 0);
+    for (const side of ['EM', 'HS']) {
+      const bucket = row.students?.[side];
+      if (!bucket) continue;
+      for (const s of [...(bucket.onHour || []), ...(bucket.halfHour || [])]) {
+        const id = s.id || s.uniqueId;
+        if (!id || seen.has(id)) continue; // one row per student (their start slot)
+        seen.add(id);
+        const status = checkIns[id]?.status;
+        if (status !== 'in' && status !== 'late') continue; // must be checked in
+        const dur = Number(s.duration) > 0 ? Number(s.duration) : 30;
+        // Still in the room until their session end passes.
+        if (nowMin < startMin + dur) count++;
+      }
+    }
+  }
+  return count;
+}
+
 /**
  * Produce ONE actionable sentence — the entire point of the day-summary
  * tile. We rank candidate insights by severity and return the strongest.

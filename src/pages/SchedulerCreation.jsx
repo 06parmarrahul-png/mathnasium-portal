@@ -39,7 +39,7 @@ import { FIXED_SCHEDULES } from '../lib/scheduler';
 import {
   hasSlotEnded, classifyStudent,
   computeDayAnalytics, recommendationFor, isDayComplete,
-  fmtRatio, fmtPct,
+  fmtRatio, fmtPct, liveInCentreCount,
 } from '../lib/scheduler-analytics';
 import {
   saveSnapshot, getSnapshot, getSnapshotsInRange,
@@ -380,6 +380,22 @@ function TodayTab({ centerId }) {
   }, [data, assignments, checkIns, ratio, date]);
   const recommendation = useMemo(() => recommendationFor(dayAnalytics), [dayAnalytics]);
 
+  // Ticking clock (minute resolution) so the live in-centre headcount drops
+  // students automatically the moment their session window ends — no click
+  // or refresh needed.
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
+  const liveCount = useMemo(
+    () => liveInCentreCount({ data, checkIns, dateStr: date, timezone: data?.timezone, now }),
+    [data, checkIns, date, now],
+  );
+  const isToday = data?.timezone
+    ? date === new Intl.DateTimeFormat('en-CA', { timeZone: data.timezone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
+    : false;
+
   // ── Today's scheduled staff (from the shifts collection) ────────────
   // Drives the "On shift today" pre-filter on the +add dropdown so
   // staff doesn't scroll through every approved instructor when picking
@@ -475,6 +491,18 @@ function TodayTab({ centerId }) {
           className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
           <RefreshCw size={14} /> Refresh
         </button>
+        {isToday && data && (
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-800"
+            title="Students checked in whose session is still running — auto-updates as sessions end."
+          >
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+            </span>
+            {liveCount} in centre now
+          </span>
+        )}
         {/* Two print buttons — one per side. Each conditionally renders only
             its own section, so the resulting print output is single-side
             and the page break is implicit. */}
