@@ -3,6 +3,8 @@ import { collection, onSnapshot, query, where, doc, setDoc, serverTimestamp } fr
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
+import { resolveInstructionalHours } from '../lib/centerConfig';
+import { BUDGET_BUCKETS, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
   Wallet, ChevronLeft, ChevronRight, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays,
@@ -18,21 +20,6 @@ import {
  * Manage Payroll. Targets live on centerConfig.staffingBudget.
  */
 
-// ── Role → budget bucket (one row per role, like the spreadsheet) ───────────
-function shiftCategory(s) {
-  if (s.flexRole) return 'flex';
-  const role = s.role || 'Instructor';
-  const sub = (s.subRole || '').toLowerCase();
-  if (role === 'Online Instructor' || sub === 'online' || s.shiftType === 'Online') return 'online';
-  if (role === 'Admin') return 'admin';
-  if (role === 'Host') return 'host';
-  if (role === 'Manager') return 'manager';
-  if (role === 'Lead') return 'lead';
-  if (role === 'Center Director' || role === 'Centre Director'
-      || role === 'Dir. of Education' || role === 'Director of Education') return 'admin';
-  return 'instructional';
-}
-
 // Paid hours — matches Manage Payroll (no-show = 0, payHoursOverride wins).
 function paidHours(s) {
   if (s.noShow) return 0;
@@ -44,24 +31,21 @@ function paidHours(s) {
   return isNaN(h) || h < 0 ? 0 : h;
 }
 
-const CATEGORIES = [
-  { key: 'instructional', label: 'Instructional',       color: '#059669' },
-  { key: 'lead',          label: 'Lead',                color: '#7c3aed' },
-  { key: 'manager',       label: 'Manager',             color: '#ca8a04' },
-  { key: 'host',          label: 'Host',                color: '#2563eb' },
-  { key: 'admin',         label: 'Admin',               color: '#dc2626' },
-  { key: 'online',        label: 'Online',              color: '#4338ca' },
-  { key: 'flex',          label: 'STEAM / Summer Camp', color: '#f97316' },
-];
+// Category rows = the shared work-type buckets.
+const CATEGORIES = BUDGET_BUCKETS;
 
 // Per-period default targets, seeded from the July 2026 model.
 const DEFAULT_TARGETS = {
-  instructional: 396, lead: 68, manager: 0, host: 46, admin: 40, online: 54, flex: 70,
+  instructional: 396, online: 54, steam: 46, summerCamp: 70,
+  adminHours: 68, adminAssistant: 40, host: 46,
   kpi: 1.8, // instructional hours per student
 };
 
-function aggregate(shifts, loStr, hiStr, excluded) {
-  const byCat = { instructional: 0, lead: 0, manager: 0, host: 0, admin: 0, online: 0, flex: 0 };
+// `windowFor(dateStr)` → { start, end } instructional window for that day (or null),
+// used to split floor shifts into Instructional (in-window) vs Admin Hours (out).
+function aggregate(shifts, loStr, hiStr, excluded, windowFor) {
+  const byCat = {};
+  for (const b of BUDGET_BUCKETS) byCat[b.key] = 0;
   const staff = new Set();
   let total = 0;
   for (const s of shifts) {
@@ -70,14 +54,15 @@ function aggregate(shifts, loStr, hiStr, excluded) {
     if (excluded && excluded.has(s.userName)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
-    byCat[shiftCategory(s)] += hrs;
+    const alloc = bucketHoursForShift(s, hrs, windowFor(s.date));
+    for (const k in alloc) byCat[k] = (byCat[k] || 0) + alloc[k];
     total += hrs;
     if (s.userName) staff.add(s.userName);
   }
   return { byCat, total, staffCount: staff.size };
 }
 
-function perDayHours(shifts, loStr, hiStr, excluded) {
+function perDayHours(shifts, loStr, hiStr, excluded, windowFor) {
   const byDate = new Map();
   for (const s of shifts) {
     if (!s.date || s.date < loStr || s.date > hiStr) continue;
@@ -87,7 +72,8 @@ function perDayHours(shifts, loStr, hiStr, excluded) {
     if (hrs <= 0) continue;
     const rec = byDate.get(s.date) || { total: 0, instructional: 0 };
     rec.total += hrs;
-    if (shiftCategory(s) === 'instructional') rec.instructional += hrs;
+    const alloc = bucketHoursForShift(s, hrs, windowFor(s.date));
+    rec.instructional += (alloc.instructional || 0);
     byDate.set(s.date, rec);
   }
   return byDate;
@@ -144,6 +130,18 @@ export default function StaffingBudget() {
     return set;
   }, [centerConfig, users, activeCenterId]);
 
+  // Instructional window for a given date — used to split floor shifts into
+  // Instructional (inside the window) vs Admin Hours (outside). Honours summer
+  // overrides via resolveInstructionalHours.
+  const windowFor = useMemo(() => {
+    const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    return (dateStr) => {
+      const d = new Date(dateStr + 'T12:00:00');
+      const map = resolveInstructionalHours(centerConfig, d) || {};
+      return map[DOW[d.getDay()]] || null;
+    };
+  }, [centerConfig]);
+
   // Payroll period. Default: the one containing today.
   const [periodStart, setPeriodStart] = useState(() => payrollStartFor(new Date()));
   const periodEnd = periodEndFor(periodStart);
@@ -184,7 +182,7 @@ export default function StaffingBudget() {
     );
   }, [activeCenterId]);
 
-  const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames), [shifts, loStr, hiStr, excludedNames]);
+  const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames, windowFor), [shifts, loStr, hiStr, excludedNames, windowFor]);
   const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
   const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (Number(targets[c.key]) || 0), 0), [targets]);
   const catScale = useMemo(
@@ -193,7 +191,7 @@ export default function StaffingBudget() {
   );
 
   const perDay = useMemo(() => {
-    const byDate = perDayHours(shifts, loStr, hiStr, excludedNames);
+    const byDate = perDayHours(shifts, loStr, hiStr, excludedNames, windowFor);
     const opDays = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
       ? centerConfig.operatingDays
       : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -209,7 +207,7 @@ export default function StaffingBudget() {
       d = addDays(d, 1);
     }
     return { rows, dailyBudget: opCount > 0 ? totalTarget / opCount : 0 };
-  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget]);
+  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget, windowFor]);
   const dayScale = useMemo(
     () => Math.max(1, perDay.dailyBudget, ...perDay.rows.map(r => r.total)) * 1.05,
     [perDay],
@@ -221,10 +219,10 @@ export default function StaffingBudget() {
     for (let i = 0; i < 6; i++) { starts.unshift(s); s = prevPeriodStart(s); }
     return starts.map(st => {
       const en = periodEndFor(st);
-      const a = aggregate(shifts, format(st, 'yyyy-MM-dd'), format(en, 'yyyy-MM-dd'), excludedNames);
-      return { label: format(st, 'MMM d'), total: a.total, instructional: a.instructional };
+      const a = aggregate(shifts, format(st, 'yyyy-MM-dd'), format(en, 'yyyy-MM-dd'), excludedNames, windowFor);
+      return { label: format(st, 'MMM d'), total: a.total, instructional: a.byCat.instructional };
     });
-  }, [shifts, periodStart, excludedNames]);
+  }, [shifts, periodStart, excludedNames, windowFor]);
   const trendMax = useMemo(() => Math.max(1, totalTarget, ...trend.map(t => t.total)) * 1.05, [trend, totalTarget]);
 
   const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]));
@@ -317,7 +315,7 @@ export default function StaffingBudget() {
 
       {/* Budget by role — bars */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <h3 className="mb-4 text-sm font-bold text-gray-900">Hours by role vs budget</h3>
+        <h3 className="mb-4 text-sm font-bold text-gray-900">Hours by category vs budget</h3>
         <div className="space-y-3.5">
           {CATEGORIES.map(c => {
             const actual = period.byCat[c.key];
@@ -338,7 +336,7 @@ export default function StaffingBudget() {
           })}
         </div>
         <p className="mt-4 border-t pt-2 text-xs text-gray-400">
-          Bar = actual hours, tick = budget target. Red = over, green = under. Salaried staff + volunteers excluded (same as Manage Payroll).
+          Bar = actual hours, tick = budget target. Red = over, green = under. Floor shifts split by the clock — time <b>inside</b> instructional hours counts as Instructional, time <b>outside</b> (setup / prep / office) as Admin Hours — so someone who teaches and does admin lands in both. Salaried staff + volunteers excluded (same as Manage Payroll).
         </p>
       </div>
 
@@ -412,8 +410,8 @@ export default function StaffingBudget() {
             <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per pay period)</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
-                ['instructional', 'Instructional'], ['lead', 'Lead'], ['manager', 'Manager'], ['host', 'Host'],
-                ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'],
+                ['instructional', 'Instructional'], ['online', 'Online'], ['steam', 'STEAM'], ['summerCamp', 'Summer Camp'],
+                ['adminHours', 'Admin Hours'], ['adminAssistant', 'Admin Assistant'], ['host', 'Host'],
               ].map(([k, label]) => (
                 <label key={k} className="block">
                   <span className="mb-1 block text-xs text-gray-500">{label}</span>
