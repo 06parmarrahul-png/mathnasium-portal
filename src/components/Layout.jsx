@@ -200,6 +200,7 @@ export default function Layout({ children }) {
   if (useOwnerLayout) {
     intelligence.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
     intelligence.push({ to: '/supply-demand',    label: 'Supply & Demand',  icon: Activity });
+    intelligence.push({ to: '/staffing-budget',  label: 'Staffing Budget',  icon: Wallet });
     intelligence.push({ to: '/case-study',       label: 'Case Study',       icon: FileBarChart });
   }
 
