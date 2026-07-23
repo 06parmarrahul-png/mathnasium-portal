@@ -5,25 +5,20 @@ import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { format, addDays, subDays } from 'date-fns';
 import {
-  Wallet, ChevronLeft, ChevronRight, Save, Check, AlertTriangle, TrendingUp, Users, GraduationCap,
+  Wallet, ChevronLeft, ChevronRight, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays,
 } from 'lucide-react';
 
 /**
- * Staffing Budget — Budget vs Actual, per 2-week period.
+ * Staffing Budget — Budget vs Actual, aligned to the centre's PAYROLL PERIODS
+ * (the 11th–25th and the 26th–10th), straight off Ratio's shift data.
  *
- * Ports the "SUMMARY" tab of the Staffing & Scheduling Budget workbook into
- * Ratio, straight off the centre's own shift data — no more exporting a
- * timeclock and reconciling by hand. For a chosen 14-day period it rolls up
- * paid hours by category, staff + student counts, and the North-Star metric
- * (Instructional Hours ÷ Students), each against an editable target.
- *
- * Targets live on centerConfig.staffingBudget (per 2-week) so they're set
- * once and shared. Defaults seed from the July 2026 model.
+ * Hours split by role, each vs an editable target (per-role, seeded from the
+ * July 2026 model). Visual bars + numbers, plus a per-day over/under view and
+ * a multi-period trend. Salaried staff + volunteers are excluded to match
+ * Manage Payroll. Targets live on centerConfig.staffingBudget.
  */
 
-// ── Category + hours helpers ───────────────────────────────────────────────
-// Which budget bucket a shift falls into — one row PER ROLE so the split
-// matches the spreadsheet (admin vs host vs instructor separately).
+// ── Role → budget bucket (one row per role, like the spreadsheet) ───────────
 function shiftCategory(s) {
   if (s.flexRole) return 'flex';
   const role = s.role || 'Instructor';
@@ -33,20 +28,15 @@ function shiftCategory(s) {
   if (role === 'Host') return 'host';
   if (role === 'Manager') return 'manager';
   if (role === 'Lead') return 'lead';
-  // Directors are salaried (excluded upstream); if ever logged hourly they
-  // fall in with Admin rather than inflating Instructional.
   if (role === 'Center Director' || role === 'Centre Director'
       || role === 'Dir. of Education' || role === 'Director of Education') return 'admin';
   return 'instructional';
 }
 
-// Paid hours for a shift — matches Manage Payroll: no-show pays 0, a
-// per-shift payHoursOverride wins, otherwise scheduled length.
+// Paid hours — matches Manage Payroll (no-show = 0, payHoursOverride wins).
 function paidHours(s) {
   if (s.noShow) return 0;
-  if (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride)) {
-    return Math.max(0, s.payHoursOverride);
-  }
+  if (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride)) return Math.max(0, s.payHoursOverride);
   if (!s.startTime || !s.endTime) return 0;
   const [sh, sm] = s.startTime.split(':').map(Number);
   const [eh, em] = s.endTime.split(':').map(Number);
@@ -55,26 +45,18 @@ function paidHours(s) {
 }
 
 const CATEGORIES = [
-  { key: 'instructional', label: 'Instructional',       tint: 'text-emerald-700' },
-  { key: 'lead',          label: 'Lead',                tint: 'text-purple-700' },
-  { key: 'manager',       label: 'Manager',             tint: 'text-yellow-700' },
-  { key: 'host',          label: 'Host',                tint: 'text-blue-700' },
-  { key: 'admin',         label: 'Admin',               tint: 'text-red-700' },
-  { key: 'online',        label: 'Online',              tint: 'text-indigo-700' },
-  { key: 'flex',          label: 'STEAM / Summer Camp', tint: 'text-orange-700' },
+  { key: 'instructional', label: 'Instructional',       color: '#059669' },
+  { key: 'lead',          label: 'Lead',                color: '#7c3aed' },
+  { key: 'manager',       label: 'Manager',             color: '#ca8a04' },
+  { key: 'host',          label: 'Host',                color: '#2563eb' },
+  { key: 'admin',         label: 'Admin',               color: '#dc2626' },
+  { key: 'online',        label: 'Online',              color: '#4338ca' },
+  { key: 'flex',          label: 'STEAM / Summer Camp', color: '#f97316' },
 ];
 
-// Per-2-week default targets, seeded from the July 2026 model (Admin=Rachel 40,
-// Host=Rahul 46, Online 54, Lead 68, Instructional 396). Total is computed as
-// the sum of these, so it stays consistent with whatever you set per role.
+// Per-period default targets, seeded from the July 2026 model.
 const DEFAULT_TARGETS = {
-  instructional: 396,
-  lead: 68,
-  manager: 0,
-  host: 46,
-  admin: 40,
-  online: 54,
-  flex: 70,
+  instructional: 396, lead: 68, manager: 0, host: 46, admin: 40, online: 54, flex: 70,
   kpi: 1.8, // instructional hours per student
 };
 
@@ -85,8 +67,6 @@ function aggregate(shifts, loStr, hiStr, excluded) {
   for (const s of shifts) {
     if (!s.date || s.date < loStr || s.date > hiStr) continue;
     if (s.status === 'draft') continue;
-    // Salaried staff (Vin, Neeru, …) and volunteers aren't on the hourly
-    // budget — same exclusion Manage Payroll uses.
     if (excluded && excluded.has(s.userName)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
@@ -97,9 +77,6 @@ function aggregate(shifts, loStr, hiStr, excluded) {
   return { byCat, total, staffCount: staff.size };
 }
 
-// Paid hours per calendar date over the period (same exclusions as aggregate).
-// Returns date -> { total, instructional } so the day view can show both the
-// total and the main budget line (instructors) and flag which days ran over.
 function perDayHours(shifts, loStr, hiStr, excluded) {
   const byDate = new Map();
   for (const s of shifts) {
@@ -116,13 +93,39 @@ function perDayHours(shifts, loStr, hiStr, excluded) {
   return byDate;
 }
 
-function round1(n) { return Math.round(n * 10) / 10; }
+const round1 = (n) => Math.round(n * 10) / 10;
 
-// Monday on/before the given date — periods align to Mondays like the model.
-function mondayOnOrBefore(d) {
-  const day = d.getDay(); // 0 Sun … 6 Sat
-  const back = day === 0 ? 6 : day - 1;
-  return subDays(d, back);
+// ── Payroll periods: 11th–25th, and 26th–10th (crosses month end) ───────────
+function payrollStartFor(d) {
+  const y = d.getFullYear(), m = d.getMonth(), day = d.getDate();
+  if (day >= 11 && day <= 25) return new Date(y, m, 11);
+  if (day >= 26) return new Date(y, m, 26);
+  return new Date(y, m - 1, 26); // 1st–10th belongs to the prior 26th
+}
+function periodEndFor(start) {
+  return start.getDate() === 11
+    ? new Date(start.getFullYear(), start.getMonth(), 25)
+    : new Date(start.getFullYear(), start.getMonth() + 1, 10);
+}
+function nextPeriodStart(s) {
+  return s.getDate() === 11 ? new Date(s.getFullYear(), s.getMonth(), 26) : new Date(s.getFullYear(), s.getMonth() + 1, 11);
+}
+function prevPeriodStart(s) {
+  return s.getDate() === 11 ? new Date(s.getFullYear(), s.getMonth() - 1, 26) : new Date(s.getFullYear(), s.getMonth(), 11);
+}
+
+// ── Small presentational bar (actual fill + target tick) ────────────────────
+function HBar({ value, target, scale, over }) {
+  const w = scale > 0 ? Math.min(100, (value / scale) * 100) : 0;
+  const tick = scale > 0 ? Math.min(100, (target / scale) * 100) : 0;
+  return (
+    <div className="relative h-2.5 w-full rounded-full bg-gray-100">
+      <div className="h-2.5 rounded-full transition-all" style={{ width: `${w}%`, backgroundColor: over ? '#ef4444' : '#10b981' }} />
+      {target > 0 && (
+        <div className="absolute -top-1 h-[18px] w-0.5 rounded bg-gray-700" style={{ left: `calc(${tick}% - 1px)` }} title={`Target ${round1(target)}`} />
+      )}
+    </div>
+  );
 }
 
 export default function StaffingBudget() {
@@ -130,10 +133,8 @@ export default function StaffingBudget() {
   const [shifts, setShifts] = useState([]);
   const [studentCount, setStudentCount] = useState(0);
   const [users, setUsers] = useState([]);
+  const [showTargets, setShowTargets] = useState(false);
 
-  // People who are NOT on the hourly budget: salaried staff (Center Director,
-  // Dir. of Education, etc.) and volunteers. Matches Manage Payroll's filter
-  // so the totals line up.
   const excludedNames = useMemo(() => {
     const set = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
     for (const u of users) {
@@ -143,34 +144,28 @@ export default function StaffingBudget() {
     return set;
   }, [centerConfig, users, activeCenterId]);
 
-  // Period = 14 days starting on a Monday. Default: the completed 2-week
-  // block ending around today (two Mondays back).
-  const [periodStart, setPeriodStart] = useState(() => mondayOnOrBefore(subDays(new Date(), 13)));
-  const periodEnd = addDays(periodStart, 13);
+  // Payroll period. Default: the one containing today.
+  const [periodStart, setPeriodStart] = useState(() => payrollStartFor(new Date()));
+  const periodEnd = periodEndFor(periodStart);
   const loStr = format(periodStart, 'yyyy-MM-dd');
   const hiStr = format(periodEnd, 'yyyy-MM-dd');
 
-  // Editable targets (seeded from config → defaults).
   const savedTargets = useMemo(() => ({ ...DEFAULT_TARGETS, ...(centerConfig?.staffingBudget || {}) }), [centerConfig]);
   const [targets, setTargets] = useState(savedTargets);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
   useEffect(() => { setTargets(savedTargets); }, [savedTargets]);
 
-  // Shifts for this centre (bounded client-side to the recent window).
   useEffect(() => {
     if (!activeCenterId) return;
-    const windowStart = format(subDays(new Date(), 140), 'yyyy-MM-dd');
+    const windowStart = format(subDays(new Date(), 220), 'yyyy-MM-dd');
     return onSnapshot(
       query(collection(db, 'shifts'), where('centerId', '==', activeCenterId)),
-      snap => setShifts(
-        snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.date && s.date >= windowStart),
-      ),
+      snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.date && s.date >= windowStart)),
       () => setShifts([]),
     );
   }, [activeCenterId]);
 
-  // Active student roster count (the denominator of the KPI).
   useEffect(() => {
     if (!activeCenterId) return;
     return onSnapshot(
@@ -180,7 +175,6 @@ export default function StaffingBudget() {
     );
   }, [activeCenterId]);
 
-  // Users — needed only to resolve who's flagged volunteer for this centre.
   useEffect(() => {
     if (!activeCenterId) return;
     return onSnapshot(
@@ -192,13 +186,12 @@ export default function StaffingBudget() {
 
   const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames), [shifts, loStr, hiStr, excludedNames]);
   const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
-
-  // Total target = sum of the per-role targets, so it stays consistent.
   const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (Number(targets[c.key]) || 0), 0), [targets]);
+  const catScale = useMemo(
+    () => Math.max(1, ...CATEGORIES.map(c => Math.max(period.byCat[c.key], Number(targets[c.key]) || 0))) * 1.1,
+    [period, targets],
+  );
 
-  // Per-day view — which days ran over/under. Daily budget is the period
-  // total spread evenly across operating days (an even split until per-weekday
-  // targets land in Phase 1).
   const perDay = useMemo(() => {
     const byDate = perDayHours(shifts, loStr, hiStr, excludedNames);
     const opDays = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
@@ -207,33 +200,32 @@ export default function StaffingBudget() {
     const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const rows = [];
     let opCount = 0;
-    for (let i = 0; i < 14; i++) {
-      const d = addDays(periodStart, i);
+    let d = periodStart;
+    while (format(d, 'yyyy-MM-dd') <= hiStr) {
       const isOp = opDays.includes(DOW[d.getDay()]);
       if (isOp) opCount++;
       const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, instructional: 0 };
-      rows.push({ label: format(d, 'EEE, MMM d'), isOp, total: rec.total, instructional: rec.instructional });
+      rows.push({ label: format(d, 'EEE MMM d'), isOp, total: rec.total, instructional: rec.instructional });
+      d = addDays(d, 1);
     }
     return { rows, dailyBudget: opCount > 0 ? totalTarget / opCount : 0 };
   }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget]);
+  const dayScale = useMemo(
+    () => Math.max(1, perDay.dailyBudget, ...perDay.rows.map(r => r.total)) * 1.05,
+    [perDay],
+  );
 
-  // Trend: the previous 6 periods (total + instructional + KPI).
   const trend = useMemo(() => {
-    const rows = [];
-    for (let i = 5; i >= 0; i--) {
-      const start = subDays(periodStart, i * 14);
-      const end = addDays(start, 13);
-      const agg = aggregate(shifts, format(start, 'yyyy-MM-dd'), format(end, 'yyyy-MM-dd'), excludedNames);
-      rows.push({
-        label: `${format(start, 'MMM d')}–${format(end, 'MMM d')}`,
-        total: agg.total,
-        instructional: agg.byCat.instructional,
-        staff: agg.staffCount,
-        kpi: studentCount > 0 ? agg.byCat.instructional / studentCount : null,
-      });
-    }
-    return rows;
-  }, [shifts, periodStart, studentCount, excludedNames]);
+    const starts = [];
+    let s = periodStart;
+    for (let i = 0; i < 6; i++) { starts.unshift(s); s = prevPeriodStart(s); }
+    return starts.map(st => {
+      const en = periodEndFor(st);
+      const a = aggregate(shifts, format(st, 'yyyy-MM-dd'), format(en, 'yyyy-MM-dd'), excludedNames);
+      return { label: format(st, 'MMM d'), total: a.total, instructional: a.instructional };
+    });
+  }, [shifts, periodStart, excludedNames]);
+  const trendMax = useMemo(() => Math.max(1, totalTarget, ...trend.map(t => t.total)) * 1.05, [trend, totalTarget]);
 
   const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]));
 
@@ -243,30 +235,21 @@ export default function StaffingBudget() {
     try {
       const clean = {};
       for (const k of Object.keys(DEFAULT_TARGETS)) clean[k] = Number(targets[k]) || 0;
-      await setDoc(
-        doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { staffingBudget: clean, updatedAt: serverTimestamp() },
-        { merge: true },
-      );
+      await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { staffingBudget: clean, updatedAt: serverTimestamp() }, { merge: true });
       setSavedAt(true); setTimeout(() => setSavedAt(false), 2500);
     } finally { setSaving(false); }
   };
 
   if (!canSeeAdminPanel) {
-    return (
-      <div className="p-6">
-        <h1 className="text-xl font-bold text-gray-900">Staffing Budget</h1>
-        <p className="text-sm text-gray-500">Owner / admin only.</p>
-      </div>
-    );
+    return <div className="p-6"><h1 className="text-xl font-bold text-gray-900">Staffing Budget</h1><p className="text-sm text-gray-500">Owner / admin only.</p></div>;
   }
 
-  const varianceCell = (actual, target) => {
-    const diff = actual - target;
-    const over = diff > 0.5;
-    const under = diff < -0.5;
+  const VarPill = ({ diff }) => {
+    const over = diff > 0.5, under = diff < -0.5;
     return (
-      <span className={`font-semibold ${over ? 'text-red-600' : under ? 'text-emerald-600' : 'text-gray-500'}`}>
+      <span className={`inline-block min-w-[52px] rounded-full px-2 py-0.5 text-center text-xs font-bold ${
+        over ? 'bg-red-100 text-red-700' : under ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
         {diff >= 0 ? '+' : ''}{round1(diff)}
       </span>
     );
@@ -274,199 +257,185 @@ export default function StaffingBudget() {
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
+      {/* Header */}
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <div className="rounded-xl bg-amber-100 p-2.5 text-amber-600"><Wallet size={22} /></div>
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Staffing Budget</h1>
-            <p className="text-sm text-gray-500">Budget vs actual, per 2-week period · {activeCenterName || activeCenterId}</p>
+            <p className="text-sm text-gray-500">Budget vs actual · payroll periods · {activeCenterName || activeCenterId}</p>
           </div>
         </div>
-        {/* Period navigator */}
         <div className="flex items-center gap-2 rounded-xl border bg-white px-2 py-1.5 shadow-sm">
-          <button onClick={() => setPeriodStart(subDays(periodStart, 14))} className="rounded-lg p-1.5 hover:bg-gray-100" title="Previous period">
-            <ChevronLeft size={16} />
-          </button>
-          <span className="min-w-[150px] text-center text-sm font-semibold text-gray-800">
-            {format(periodStart, 'MMM d')} – {format(periodEnd, 'MMM d, yyyy')}
-          </span>
-          <button onClick={() => setPeriodStart(addDays(periodStart, 14))} className="rounded-lg p-1.5 hover:bg-gray-100" title="Next period">
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      </div>
-
-      {/* KPI + counts */}
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-            <TrendingUp size={13} /> Instr. hrs ÷ student
+          <button onClick={() => setPeriodStart(prevPeriodStart(periodStart))} className="rounded-lg p-1.5 hover:bg-gray-100"><ChevronLeft size={16} /></button>
+          <div className="min-w-[168px] text-center">
+            <div className="text-sm font-bold text-gray-800">{format(periodStart, 'MMM d')} – {format(periodEnd, 'MMM d')}</div>
+            <div className="text-[10px] uppercase tracking-wide text-gray-400">Pay period {periodStart.getDate() === 11 ? '11–25' : '26–10'}</div>
           </div>
-          <div className="mt-1 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-gray-900">{kpi == null ? '—' : round1(kpi)}</span>
-            <span className="text-xs text-gray-400">target {round1(targets.kpi)}</span>
+          <button onClick={() => setPeriodStart(nextPeriodStart(periodStart))} className="rounded-lg p-1.5 hover:bg-gray-100"><ChevronRight size={16} /></button>
+        </div>
+      </div>
+
+      {/* Headline cards */}
+      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total hours</div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-3xl font-bold text-gray-900">{round1(period.total)}</span>
+            <span className="text-xs text-gray-400">/ {round1(totalTarget)}</span>
           </div>
-          {kpi != null && (
-            <p className={`mt-0.5 text-xs font-medium ${kpi > targets.kpi + 0.05 ? 'text-red-600' : 'text-emerald-600'}`}>
-              {kpi > targets.kpi + 0.05 ? 'Above target (more hours per student)' : 'At / under target'}
-            </p>
-          )}
+          <div className="mt-2"><HBar value={period.total} target={totalTarget} scale={Math.max(period.total, totalTarget) * 1.1} over={period.total > totalTarget} /></div>
+          <div className="mt-1.5"><VarPill diff={period.total - totalTarget} /></div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"><Users size={13} /> Staff worked</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{period.staffCount}</div>
-          <p className="mt-0.5 text-xs text-gray-400">distinct people this period</p>
+          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Instructional</div>
+          <div className="mt-1 flex items-baseline gap-1.5">
+            <span className="text-3xl font-bold text-emerald-700">{round1(period.byCat.instructional)}</span>
+            <span className="text-xs text-gray-400">/ {round1(targets.instructional)}</span>
+          </div>
+          <div className="mt-2"><HBar value={period.byCat.instructional} target={Number(targets.instructional)} scale={Math.max(period.byCat.instructional, Number(targets.instructional)) * 1.1} over={period.byCat.instructional > targets.instructional} /></div>
+          <div className="mt-1.5"><VarPill diff={period.byCat.instructional - targets.instructional} /></div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"><GraduationCap size={13} /> Active students</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{studentCount}</div>
-          <p className="mt-0.5 text-xs text-gray-400">current roster</p>
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"><TrendingUp size={13} /> Instr ÷ student</div>
+          <div className="mt-1 text-3xl font-bold text-gray-900">{kpi == null ? '—' : round1(kpi)}</div>
+          <p className="mt-1 text-xs text-gray-400">target {round1(targets.kpi)}</p>
+        </div>
+        <div className="rounded-2xl border bg-white p-4 shadow-sm">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"><Users size={12} /> Staff</div>
+              <div className="text-2xl font-bold text-gray-900">{period.staffCount}</div>
+            </div>
+            <div>
+              <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"><GraduationCap size={12} /> Students</div>
+              <div className="text-2xl font-bold text-gray-900">{studentCount}</div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Category breakdown: Actual vs Target vs Variance */}
-      <div className="overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b bg-gray-50 text-xs uppercase tracking-wide text-gray-500">
-              <th className="px-4 py-2.5 text-left font-semibold">Category</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Actual (hrs)</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Target</th>
-              <th className="px-4 py-2.5 text-right font-semibold">Variance</th>
-            </tr>
-          </thead>
-          <tbody>
-            {CATEGORIES.map(c => (
-              <tr key={c.key} className="border-b border-gray-100">
-                <td className={`px-4 py-2.5 font-semibold ${c.tint}`}>{c.label}</td>
-                <td className="px-4 py-2.5 text-right font-mono">{round1(period.byCat[c.key])}</td>
-                <td className="px-4 py-2.5 text-right text-gray-500">{round1(targets[c.key])}</td>
-                <td className="px-4 py-2.5 text-right">{varianceCell(period.byCat[c.key], targets[c.key])}</td>
-              </tr>
-            ))}
-            <tr className="bg-gray-50 font-bold">
-              <td className="px-4 py-2.5 text-gray-900">Total</td>
-              <td className="px-4 py-2.5 text-right font-mono">{round1(period.total)}</td>
-              <td className="px-4 py-2.5 text-right text-gray-500">{round1(totalTarget)}</td>
-              <td className="px-4 py-2.5 text-right">{varianceCell(period.total, totalTarget)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <p className="mt-1.5 text-xs text-gray-400">
-        Green variance = under budget, red = over. Hours are paid hours (no-shows count 0, per-shift pay overrides honoured), and salaried staff + volunteers are excluded — same as Manage Payroll.
-      </p>
-
-      {/* Per-day — which days ran over / under */}
-      <div className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-gray-50 px-4 py-2.5">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">By day — which days ran over / under</span>
-          <span className="text-xs text-gray-400">daily budget ≈ {round1(perDay.dailyBudget)}h (period total ÷ operating days)</span>
+      {/* Budget by role — bars */}
+      <div className="rounded-2xl border bg-white p-5 shadow-sm">
+        <h3 className="mb-4 text-sm font-bold text-gray-900">Hours by role vs budget</h3>
+        <div className="space-y-3.5">
+          {CATEGORIES.map(c => {
+            const actual = period.byCat[c.key];
+            const target = Number(targets[c.key]) || 0;
+            const over = actual > target;
+            return (
+              <div key={c.key} className="grid grid-cols-[110px_1fr_120px] items-center gap-3">
+                <div className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: c.color }}>
+                  <span className="h-2 w-2 rounded-full" style={{ backgroundColor: c.color }} /> {c.label}
+                </div>
+                <HBar value={actual} target={target} scale={catScale} over={over} />
+                <div className="flex items-center justify-end gap-2">
+                  <span className="font-mono text-sm text-gray-700">{round1(actual)}<span className="text-gray-300"> / {round1(target)}</span></span>
+                  <VarPill diff={actual - target} />
+                </div>
+              </div>
+            );
+          })}
         </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-xs uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 text-left font-semibold">Day</th>
-              <th className="px-4 py-2 text-right font-semibold">Total hrs</th>
-              <th className="px-4 py-2 text-right font-semibold">Instructional</th>
-              <th className="px-4 py-2 text-right font-semibold">vs daily budget</th>
-            </tr>
-          </thead>
-          <tbody>
-            {perDay.rows.map((r, i) => {
-              if (!r.isOp && r.total === 0) {
-                return (
-                  <tr key={i} className="border-b border-gray-100 text-gray-300">
-                    <td className="px-4 py-1.5">{r.label}</td>
-                    <td className="px-4 py-1.5 text-right">—</td>
-                    <td className="px-4 py-1.5 text-right">—</td>
-                    <td className="px-4 py-1.5 text-right text-[11px]">closed</td>
-                  </tr>
-                );
-              }
-              const diff = r.total - perDay.dailyBudget;
-              const over = diff > 2;
-              const under = diff < -2;
-              return (
-                <tr key={i} className="border-b border-gray-100">
-                  <td className="px-4 py-1.5 font-medium text-gray-700">{r.label}</td>
-                  <td className="px-4 py-1.5 text-right font-mono">{round1(r.total)}</td>
-                  <td className="px-4 py-1.5 text-right font-mono text-emerald-700">{round1(r.instructional)}</td>
-                  <td className={`px-4 py-1.5 text-right font-semibold ${over ? 'text-red-600' : under ? 'text-emerald-600' : 'text-gray-400'}`}>
-                    {diff >= 0 ? '+' : ''}{round1(diff)}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <p className="mt-4 border-t pt-2 text-xs text-gray-400">
+          Bar = actual hours, tick = budget target. Red = over, green = under. Salaried staff + volunteers excluded (same as Manage Payroll).
+        </p>
       </div>
 
-      {/* Editable targets */}
+      {/* By day — bars */}
+      <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <h3 className="flex items-center gap-1.5 text-sm font-bold text-gray-900"><CalendarDays size={15} /> By day — which days ran over / under</h3>
+          <span className="text-xs text-gray-400">daily budget ≈ {round1(perDay.dailyBudget)}h (even split)</span>
+        </div>
+        <div className="space-y-1.5">
+          {perDay.rows.map((r, i) => {
+            const diff = r.total - perDay.dailyBudget;
+            const over = r.isOp && diff > 2;
+            return (
+              <div key={i} className={`grid grid-cols-[96px_1fr_128px] items-center gap-3 ${!r.isOp && r.total === 0 ? 'opacity-40' : ''}`}>
+                <div className="text-xs font-medium text-gray-600">{r.label}</div>
+                {(!r.isOp && r.total === 0)
+                  ? <div className="text-[11px] text-gray-300">closed</div>
+                  : <HBar value={r.total} target={perDay.dailyBudget} scale={dayScale} over={over} />}
+                <div className="flex items-center justify-end gap-2">
+                  <span className="font-mono text-xs text-gray-600">{round1(r.total)}h</span>
+                  {r.isOp || r.total > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Trend — 6 periods */}
+      <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
+        <h3 className="mb-3 text-sm font-bold text-gray-900">Trend — last 6 pay periods</h3>
+        <div className="relative flex items-end justify-between gap-2" style={{ height: 140 }}>
+          {/* Target reference line */}
+          <div className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-amber-400"
+            style={{ bottom: `${Math.min(100, (totalTarget / trendMax) * 100)}%` }}>
+            <span className="absolute -top-4 right-0 text-[10px] font-semibold text-amber-600">budget {round1(totalTarget)}</span>
+          </div>
+          {trend.map((t, i) => {
+            const totalH = (t.total / trendMax) * 100;
+            const instrH = (t.instructional / trendMax) * 100;
+            const over = t.total > totalTarget;
+            return (
+              <div key={i} className="flex flex-1 flex-col items-center justify-end gap-1" style={{ height: '100%' }}>
+                <span className="text-[10px] font-mono text-gray-500">{round1(t.total)}</span>
+                <div className="relative w-full max-w-[46px] rounded-t bg-gray-100" style={{ height: `${totalH}%` }} title={`Total ${round1(t.total)}h · Instr ${round1(t.instructional)}h`}>
+                  <div className="absolute bottom-0 w-full rounded-t bg-emerald-400" style={{ height: `${(instrH / Math.max(totalH, 0.001)) * 100}%` }} />
+                  <div className={`absolute inset-x-0 top-0 h-1 rounded-t ${over ? 'bg-red-500' : 'bg-gray-300'}`} />
+                </div>
+                <span className="text-[10px] text-gray-400">{t.label}</span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex items-center gap-4 text-[11px] text-gray-500">
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-emerald-400" /> Instructional</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-gray-200" /> Other</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-3 border-t border-dashed border-amber-400" /> Total budget</span>
+        </div>
+      </div>
+
+      {/* Targets — collapsible */}
       <div className="mt-5 rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-gray-900">Targets (per 2-week period)</h3>
-          <div className="flex items-center gap-2">
-            {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
-            <button onClick={saveTargets} disabled={!dirty || saving}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-              <Save size={13} /> {saving ? 'Saving…' : 'Save targets'}
-            </button>
-          </div>
-        </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {[
-            ['instructional', 'Instructional'], ['lead', 'Lead'], ['manager', 'Manager'],
-            ['host', 'Host'], ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'], ['kpi', 'Instr÷student'],
-          ].map(([k, label]) => (
-            <label key={k} className="block">
-              <span className="mb-1 block text-xs text-gray-500">{label}</span>
-              <input
-                type="number" step={k === 'kpi' ? '0.1' : '1'} min="0"
-                value={targets[k]}
-                onChange={e => setTargets(t => ({ ...t, [k]: e.target.value }))}
-                className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none"
-              />
-            </label>
-          ))}
-        </div>
+        <button onClick={() => setShowTargets(v => !v)} className="flex w-full items-center justify-between text-sm font-bold text-gray-900">
+          <span>Targets (per pay period)</span>
+          <span className="text-xs font-normal text-gray-400">{showTargets ? 'Hide' : 'Edit'}</span>
+        </button>
+        {showTargets && (
+          <>
+            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {[
+                ['instructional', 'Instructional'], ['lead', 'Lead'], ['manager', 'Manager'], ['host', 'Host'],
+                ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'], ['kpi', 'Instr÷student'],
+              ].map(([k, label]) => (
+                <label key={k} className="block">
+                  <span className="mb-1 block text-xs text-gray-500">{label}</span>
+                  <input type="number" step={k === 'kpi' ? '0.1' : '1'} min="0" value={targets[k]}
+                    onChange={e => setTargets(t => ({ ...t, [k]: e.target.value }))}
+                    className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 flex items-center gap-2">
+              <button onClick={saveTargets} disabled={!dirty || saving}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+                <Save size={13} /> {saving ? 'Saving…' : 'Save targets'}
+              </button>
+              {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
+              <span className="text-xs text-gray-400">Total budget = {round1(totalTarget)}h (sum of roles)</span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* Trend — last 6 periods */}
-      <div className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm">
-        <div className="border-b bg-gray-50 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide text-gray-500">
-          Last 6 periods
-        </div>
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-xs uppercase tracking-wide text-gray-400">
-              <th className="px-4 py-2 text-left font-semibold">Period</th>
-              <th className="px-4 py-2 text-right font-semibold">Total hrs</th>
-              <th className="px-4 py-2 text-right font-semibold">Instr. hrs</th>
-              <th className="px-4 py-2 text-right font-semibold">Staff</th>
-              <th className="px-4 py-2 text-right font-semibold">Instr÷student</th>
-            </tr>
-          </thead>
-          <tbody>
-            {trend.map((r, i) => (
-              <tr key={i} className="border-b border-gray-100">
-                <td className="px-4 py-2 text-gray-700">{r.label}</td>
-                <td className="px-4 py-2 text-right font-mono">{round1(r.total)}</td>
-                <td className="px-4 py-2 text-right font-mono">{round1(r.instructional)}</td>
-                <td className="px-4 py-2 text-right">{r.staff}</td>
-                <td className="px-4 py-2 text-right font-mono">{r.kpi == null ? '—' : round1(r.kpi)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="mt-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/50 px-3 py-2 text-xs text-amber-800">
-        <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-        <span>
-          The Instr÷student ratio uses your <b>current</b> active roster ({studentCount}) for every period, so historical periods are approximate until we snapshot roster size per period. Everything else is exact from your shift data.
-        </span>
-      </div>
+      <p className="mt-4 text-xs text-gray-400">
+        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. The per-day budget is an even split of the period total; encoding per-weekday targets makes it exact.
+      </p>
     </div>
   );
 }
