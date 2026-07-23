@@ -56,6 +56,17 @@ const ROLE_OPTIONS = [
   'Volunteer',
 ];
 
+// Roles that don't teach a specific level — the "Teaching Level" field is
+// hidden for them when scheduling (Host, Admin, Directors, Volunteer). Flex
+// shifts (STEAM / Summer Camp) also skip it. Instructor / Lead / Manager DO
+// teach or float the floor, so they keep the teaching level.
+const NON_TEACHING_ROLES = new Set(['Host', 'Admin', 'Center Director', 'Dir. of Education', 'Volunteer']);
+// A shift needs a teaching level unless it's a flex shift or a non-teaching role.
+function shiftNeedsTeachingLevel(role, flexRole) {
+  if (flexRole) return false;
+  return !NON_TEACHING_ROLES.has(role);
+}
+
 // Sub-roles (teaching specializations) live in src/lib/subRoles.js.
 // Each shift is shown on the admin grid with a single "assignment" color
 // (Elementary Instructor, Highschool Instructor, …) — see assignmentFor()
@@ -255,7 +266,7 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
       endTime,
       role,
       shiftType,
-      subRole,
+      subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '',
       flexRole,
       // New shifts land as drafts. The owner reviews them on the weekly
       // grid (drafts show striped) and clicks Publish when ready.
@@ -360,21 +371,23 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
           </div>
         </div>
 
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Teaching Level <span className="text-red-500">*</span>
-          </label>
-          <select
-            value={subRole}
-            onChange={e => setSubRole(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
-          >
-            {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
-          </select>
-          <p className="mt-1 text-xs text-gray-400">
-            Required for shift swaps — only instructors with this sub-role can take it.
-          </p>
-        </div>
+        {shiftNeedsTeachingLevel(role, flexRole) && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Teaching Level <span className="text-red-500">*</span>
+            </label>
+            <select
+              value={subRole}
+              onChange={e => setSubRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
+            >
+              {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-gray-400">
+              Required for shift swaps — only instructors with this sub-role can take it.
+            </p>
+          </div>
+        )}
 
         <FlexRolePicker value={flexRole} onChange={setFlexRole} />
 
@@ -450,18 +463,20 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
             </select>
           </div>
         </div>
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">
-            Teaching Level <span className="text-red-500">*</span>
-          </label>
-          <select value={subRole} onChange={e => setSubRole(e.target.value)}
-            className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
-            {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
-          </select>
-          <p className="mt-1 text-xs text-gray-400">
-            Required for shift swaps — only instructors with this sub-role can take it.
-          </p>
-        </div>
+        {shiftNeedsTeachingLevel(role, flexRole) && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">
+              Teaching Level <span className="text-red-500">*</span>
+            </label>
+            <select value={subRole} onChange={e => setSubRole(e.target.value)}
+              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+              {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+            </select>
+            <p className="mt-1 text-xs text-gray-400">
+              Required for shift swaps — only instructors with this sub-role can take it.
+            </p>
+          </div>
+        )}
 
         {/* Sick Pay toggle — flips this shift into the "Sick" payroll bucket
             without removing it from the schedule. Useful when an instructor
@@ -525,7 +540,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
         )}
 
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole, sickPay, noShow, flexRole })}
+          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole })}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
             Save Changes
           </button>
@@ -946,7 +961,7 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   const [subRole, setSubRole] = useState('Elementary');
 
   const handleSubmit = async () => {
-    await onSave({ date, startTime, endTime, role, subRole });
+    await onSave({ date, startTime, endTime, role, subRole: shiftNeedsTeachingLevel(role) ? subRole : '' });
     onClose();
   };
 
@@ -978,15 +993,17 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
               {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
-          <div>
-            <label className="block text-xs text-gray-500 mb-1">
-              Teaching Level <span className="text-red-500">*</span>
-            </label>
-            <select value={subRole} onChange={e => setSubRole(e.target.value)}
-              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
-              {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
-            </select>
-          </div>
+          {shiftNeedsTeachingLevel(role) && (
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">
+                Teaching Level <span className="text-red-500">*</span>
+              </label>
+              <select value={subRole} onChange={e => setSubRole(e.target.value)}
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
+                {SUB_ROLES.map(sr => <option key={sr} value={sr}>{sr}</option>)}
+              </select>
+            </div>
+          )}
         </div>
         <button onClick={handleSubmit}
           className="w-full rounded-lg bg-orange-500 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 transition-colors mt-1">
