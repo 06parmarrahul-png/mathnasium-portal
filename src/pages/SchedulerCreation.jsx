@@ -546,7 +546,7 @@ function TodayTab({ centerId }) {
       )}
 
       {data && data.totals.Unknown > 0 && (
-        <UnknownBanner data={data} centerId={centerId} onFix={loadSchedule} />
+        <UnknownBanner data={data} centerId={centerId} date={date} timezone={data?.timezone} walkIns={walkIns} onFix={loadSchedule} />
       )}
 
       {/* Day-level supply / demand summary — visible whenever the day
@@ -1005,6 +1005,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
             id: w.id,
             name: w.name,
             isAssessment: !!w.isAssessment,
+            tag: w.tag || null, // 'FS' (first session) / 'NEW' (free trial)
             duration: dur,
             isWalkIn: true,
             _wStart: wStart,
@@ -1472,6 +1473,16 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
           (A)
         </span>
       )}
+      {s.tag === 'FS' && (
+        <span className="rounded bg-purple-100 px-1 text-[10px] font-bold text-purple-700 shrink-0" title="First session">
+          FS
+        </span>
+      )}
+      {s.tag === 'NEW' && (
+        <span className="rounded bg-pink-100 px-1 text-[10px] font-bold text-pink-700 shrink-0" title="Free trial">
+          NEW
+        </span>
+      )}
       {s.uncertainAlias && (
         <span className="text-xs font-bold text-amber-600 shrink-0"
           title={`Couldn't confidently pick a student for parent "${s.aliasedFrom}". Verify.`}>
@@ -1668,7 +1679,18 @@ function SummaryTile({ label, value, sub, tone = 'neutral' }) {
   );
 }
 
-function UnknownBanner({ data, centerId, onFix }) {
+function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
+  // Names already placed as tagged walk-ins today (First Session / Free
+  // Trial). Once placed, a student drops out of the Uncategorized list so
+  // it doesn't nag about someone who's already on the board.
+  const placedNames = new Set();
+  if (walkIns && typeof walkIns === 'object') {
+    for (const [, list] of Object.entries(walkIns)) {
+      if (!Array.isArray(list)) continue;
+      for (const w of list) if (w?.name) placedNames.add(w.name.trim().toLowerCase());
+    }
+  }
+
   // Group the unknown list by parent name so siblings booked under the
   // same Acuity account get treated as one alias problem. For each group
   // we show every booking time in order, then a single "Map siblings"
@@ -1677,15 +1699,52 @@ function UnknownBanner({ data, centerId, onFix }) {
   const groups = new Map();
   for (const s of data.unknownList) {
     const key = (s.name || '').toLowerCase();
+    if (placedNames.has(key)) continue; // already placed as FS / Free Trial
     if (!groups.has(key)) groups.set(key, { name: s.name, bookings: [] });
     groups.get(key).bookings.push(s);
   }
+  const visibleGroups = [...groups.values()];
+  if (visibleGroups.length === 0) return null;
 
   function fmtTime(iso) {
     try {
       return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
     } catch { return ''; }
   }
+
+  // Snap a booking's start instant to the half-hour slot grid in centre time.
+  const slotFromStart = (iso) => {
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone || 'America/Vancouver', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(new Date(iso));
+      const h = parseInt(parts.find(p => p.type === 'hour').value, 10) % 24;
+      const m = parseInt(parts.find(p => p.type === 'minute').value, 10) < 30 ? 0 : 30;
+      return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+    } catch { return null; }
+  };
+
+  // Place an un-enrolled drop-in into their scheduled slot as a tagged
+  // walk-in. value is "FS|EM" | "FS|HS" | "NEW|EM" | "NEW|HS".
+  const tagAs = async (group, value) => {
+    const [tag, side] = String(value).split('|');
+    if ((tag !== 'FS' && tag !== 'NEW') || (side !== 'EM' && side !== 'HS')) return;
+    try {
+      let placed = 0;
+      for (const b of group.bookings) {
+        const slot = slotFromStart(b.start);
+        if (!slot) continue;
+        const dur = Number(b.duration) === 90 ? 90 : 60;
+        await addWalkIn(centerId, date, side, slot, { name: group.name, duration: dur, tag });
+        placed++;
+      }
+      if (placed > 0) {
+        toast.success(`${group.name} added as ${tag === 'FS' ? 'First Session (FS)' : 'Free Trial (NEW)'} · ${side}`);
+      } else {
+        toast.error('Could not read the booking time for this student.');
+      }
+    } catch (e) { toast.error(e.message); }
+  };
 
   const fix = async (group) => {
     const n = group.bookings.length;
@@ -1708,10 +1767,10 @@ function UnknownBanner({ data, centerId, onFix }) {
   return (
     <div className="mb-3 rounded-lg border border-amber-300 bg-amber-50 p-3 print:hidden">
       <div className="mb-1 flex items-center gap-1 text-sm font-semibold text-amber-800">
-        <AlertTriangle size={14} /> Uncategorized: {data.unknownList.length}
+        <AlertTriangle size={14} /> Uncategorized: {visibleGroups.reduce((n, g) => n + g.bookings.length, 0)}
       </div>
       <ul className="space-y-2 text-sm">
-        {[...groups.values()].map(g => (
+        {visibleGroups.map(g => (
           <li key={g.name} className="flex flex-wrap items-start gap-2">
             <div className="flex-1 min-w-0">
               <span className="font-medium">{g.name}</span>
@@ -1726,10 +1785,30 @@ function UnknownBanner({ data, centerId, onFix }) {
                 ))}
               </ul>
             </div>
-            <button onClick={() => fix(g)}
-              className="rounded bg-white border border-amber-300 px-2 py-0.5 text-xs hover:bg-amber-100 whitespace-nowrap">
-              {g.bookings.length > 1 ? `→ Map ${g.bookings.length} siblings…` : '→ Map to student…'}
-            </button>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button onClick={() => fix(g)}
+                className="rounded bg-white border border-amber-300 px-2 py-0.5 text-xs hover:bg-amber-100 whitespace-nowrap">
+                {g.bookings.length > 1 ? `→ Map ${g.bookings.length} siblings…` : '→ Map to student…'}
+              </button>
+              {/* Un-enrolled drop-ins: tag as First Session / Free Trial and
+                  drop them straight into their booked slot (no account). */}
+              <select
+                defaultValue=""
+                onChange={(e) => { const v = e.target.value; e.target.value = ''; if (v) tagAs(g, v); }}
+                title="Place as a First Session or Free Trial without creating an account"
+                className="rounded border border-amber-300 bg-white px-1.5 py-0.5 text-xs hover:bg-amber-100"
+              >
+                <option value="">First Session / Free Trial…</option>
+                <optgroup label="First Session (FS)">
+                  <option value="FS|EM">First Session · Elementary</option>
+                  <option value="FS|HS">First Session · High School</option>
+                </optgroup>
+                <optgroup label="Free Trial (NEW)">
+                  <option value="NEW|EM">Free Trial · Elementary</option>
+                  <option value="NEW|HS">Free Trial · High School</option>
+                </optgroup>
+              </select>
+            </div>
           </li>
         ))}
       </ul>

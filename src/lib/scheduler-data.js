@@ -222,7 +222,7 @@ export function watchWalkIns(centerId, dateStr, cb) {
   return onSnapshot(ref, snap => cb(snap.exists() ? snap.data() : {}));
 }
 
-export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessment, duration, addedByName }) {
+export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessment, duration, addedByName, tag }) {
   if (!name?.trim()) throw new Error('Walk-in needs a name.');
   const ref = doc(db, 'centers', centerId, 'scheduleAddOns', dateStr);
   const snap = await getDoc(ref);
@@ -239,6 +239,9 @@ export async function addWalkIn(centerId, dateStr, side, slot, { name, isAssessm
     id,
     name: name.trim(),
     isAssessment: !!isAssessment,
+    // Optional label for un-enrolled drop-ins placed from the Uncategorized
+    // banner: 'FS' (first session) or 'NEW' (free trial).
+    tag: tag === 'FS' || tag === 'NEW' ? tag : null,
     duration: dur,
     addedAt: new Date().toISOString(),
     addedBy: addedByName || '',
