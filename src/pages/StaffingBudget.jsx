@@ -41,6 +41,9 @@ const DEFAULT_TARGETS = {
   kpi: 1.8, // instructional hours per student
 };
 
+// Weekday order for the per-day budget editor.
+const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
 // `windowFor(dateStr)` → { start, end } instructional window for that day (or null),
 // used to split floor shifts into Instructional (in-window) vs Admin Hours (out).
 function aggregate(shifts, loStr, hiStr, excluded, windowFor) {
@@ -154,6 +157,13 @@ export default function StaffingBudget() {
   const [savedAt, setSavedAt] = useState(false);
   useEffect(() => { setTargets(savedTargets); }, [savedTargets]);
 
+  // Optional per-weekday budgets. When any are set, the By-day view compares
+  // each day to its own weekday budget instead of the even split.
+  const savedDaily = useMemo(() => (centerConfig?.staffingBudget?.dailyBudgets || null), [centerConfig]);
+  const [dailyBudgets, setDailyBudgets] = useState(() => savedDaily || {});
+  const [showDaily, setShowDaily] = useState(false);
+  useEffect(() => { setDailyBudgets(savedDaily || {}); }, [savedDaily]);
+
   useEffect(() => {
     if (!activeCenterId) return;
     const windowStart = format(subDays(new Date(), 220), 'yyyy-MM-dd');
@@ -196,20 +206,26 @@ export default function StaffingBudget() {
       ? centerConfig.operatingDays
       : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const useDaily = dailyBudgets && Object.values(dailyBudgets).some(v => Number(v) > 0);
     const rows = [];
     let opCount = 0;
     let d = periodStart;
     while (format(d, 'yyyy-MM-dd') <= hiStr) {
-      const isOp = opDays.includes(DOW[d.getDay()]);
+      const weekday = DOW[d.getDay()];
+      const isOp = opDays.includes(weekday);
       if (isOp) opCount++;
       const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, instructional: 0 };
-      rows.push({ label: format(d, 'EEE MMM d'), isOp, total: rec.total, instructional: rec.instructional });
+      rows.push({ label: format(d, 'EEE MMM d'), weekday, isOp, total: rec.total, instructional: rec.instructional });
       d = addDays(d, 1);
     }
-    return { rows, dailyBudget: opCount > 0 ? totalTarget / opCount : 0 };
-  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget, windowFor]);
+    const evenBudget = opCount > 0 ? totalTarget / opCount : 0;
+    for (const r of rows) {
+      r.budget = useDaily ? (Number(dailyBudgets[r.weekday]) || 0) : (r.isOp ? evenBudget : 0);
+    }
+    return { rows, evenBudget, useDaily };
+  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget, windowFor, dailyBudgets]);
   const dayScale = useMemo(
-    () => Math.max(1, perDay.dailyBudget, ...perDay.rows.map(r => r.total)) * 1.05,
+    () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
     [perDay],
   );
 
@@ -225,7 +241,8 @@ export default function StaffingBudget() {
   }, [shifts, periodStart, excludedNames, windowFor]);
   const trendMax = useMemo(() => Math.max(1, totalTarget, ...trend.map(t => t.total)) * 1.05, [trend, totalTarget]);
 
-  const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]));
+  const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]))
+    || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0));
 
   const saveTargets = async () => {
     if (!activeCenterId) return;
@@ -233,6 +250,9 @@ export default function StaffingBudget() {
     try {
       const clean = {};
       for (const k of Object.keys(DEFAULT_TARGETS)) clean[k] = Number(targets[k]) || 0;
+      const cleanDaily = {};
+      for (const wd of WEEKDAY_ORDER) cleanDaily[wd] = Number(dailyBudgets[wd]) || 0;
+      clean.dailyBudgets = cleanDaily;
       await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
         { staffingBudget: clean, updatedAt: serverTimestamp() }, { merge: true });
       setSavedAt(true); setTimeout(() => setSavedAt(false), 2500);
@@ -344,21 +364,54 @@ export default function StaffingBudget() {
       <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-1.5 text-sm font-bold text-gray-900"><CalendarDays size={15} /> By day — which days ran over / under</h3>
-          <span className="text-xs text-gray-400">daily budget ≈ {round1(perDay.dailyBudget)}h (even split)</span>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-400">{perDay.useDaily ? 'per-weekday budgets' : `even split ≈ ${round1(perDay.evenBudget)}h/day`}</span>
+            <button onClick={() => setShowDaily(v => !v)} className="rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+              {showDaily ? 'Close' : 'Set daily budgets'}
+            </button>
+          </div>
         </div>
+
+        {/* Per-weekday budget editor */}
+        {showDaily && (
+          <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
+            <p className="mb-2 text-xs text-gray-500">Set an hours budget for each weekday. Leave all at 0 to fall back to an even split of the period total.</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+              {WEEKDAY_ORDER.map(wd => (
+                <label key={wd} className="block">
+                  <span className="mb-1 block text-[11px] font-medium text-gray-500">{wd.slice(0, 3)}</span>
+                  <input type="number" step="0.5" min="0" value={dailyBudgets[wd] ?? ''}
+                    placeholder="0"
+                    onChange={e => setDailyBudgets(b => ({ ...b, [wd]: e.target.value }))}
+                    className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
+                </label>
+              ))}
+            </div>
+            <div className="mt-2.5 flex items-center gap-2">
+              <button onClick={saveTargets} disabled={!dirty || saving}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
+                <Save size={13} /> {saving ? 'Saving…' : 'Save daily budgets'}
+              </button>
+              {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
+              <span className="text-xs text-gray-400">Weekday total = {round1(WEEKDAY_ORDER.reduce((n, wd) => n + (Number(dailyBudgets[wd]) || 0), 0))}h/wk</span>
+            </div>
+          </div>
+        )}
+
         <div className="space-y-1.5">
           {perDay.rows.map((r, i) => {
-            const diff = r.total - perDay.dailyBudget;
-            const over = r.isOp && diff > 2;
+            const diff = r.total - (r.budget || 0);
+            const over = (r.budget || 0) > 0 && diff > 2;
+            const showBar = r.isOp || r.total > 0 || (r.budget || 0) > 0;
             return (
-              <div key={i} className={`grid grid-cols-[96px_1fr_128px] items-center gap-3 ${!r.isOp && r.total === 0 ? 'opacity-40' : ''}`}>
+              <div key={i} className={`grid grid-cols-[96px_1fr_128px] items-center gap-3 ${!showBar ? 'opacity-40' : ''}`}>
                 <div className="text-xs font-medium text-gray-600">{r.label}</div>
-                {(!r.isOp && r.total === 0)
-                  ? <div className="text-[11px] text-gray-300">closed</div>
-                  : <HBar value={r.total} target={perDay.dailyBudget} scale={dayScale} over={over} />}
+                {showBar
+                  ? <HBar value={r.total} target={r.budget || 0} scale={dayScale} over={over} />
+                  : <div className="text-[11px] text-gray-300">closed</div>}
                 <div className="flex items-center justify-end gap-2">
                   <span className="font-mono text-xs text-gray-600">{round1(r.total)}h</span>
-                  {r.isOp || r.total > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
+                  {showBar && (r.budget || 0) > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
                 </div>
               </div>
             );
@@ -455,7 +508,7 @@ export default function StaffingBudget() {
       </div>
 
       <p className="mt-4 text-xs text-gray-400">
-        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. The per-day budget is an even split of the period total; encoding per-weekday targets makes it exact.
+        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. Set a budget per weekday under "By day → Set daily budgets" for exact per-day over/under; otherwise it falls back to an even split of the period total.
       </p>
     </div>
   );
