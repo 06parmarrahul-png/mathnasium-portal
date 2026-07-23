@@ -408,26 +408,49 @@ export default function StaffingBudget() {
         </button>
         {showTargets && (
           <>
-            <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {/* Hour targets, per role */}
+            <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per pay period)</p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 ['instructional', 'Instructional'], ['lead', 'Lead'], ['manager', 'Manager'], ['host', 'Host'],
-                ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'], ['kpi', 'Instr÷student'],
+                ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'],
               ].map(([k, label]) => (
                 <label key={k} className="block">
                   <span className="mb-1 block text-xs text-gray-500">{label}</span>
-                  <input type="number" step={k === 'kpi' ? '0.1' : '1'} min="0" value={targets[k]}
+                  <input type="number" step="1" min="0" value={targets[k]}
                     onChange={e => setTargets(t => ({ ...t, [k]: e.target.value }))}
                     className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
                 </label>
               ))}
             </div>
+
+            {/* Prominent total of all the hour targets */}
+            <div className="mt-3 flex items-center justify-between rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+              <span className="text-sm font-bold text-amber-900">Total hours budget</span>
+              <span className="text-2xl font-bold text-amber-900">{round1(totalTarget)}<span className="ml-1 text-sm font-semibold">h</span></span>
+            </div>
+
+            {/* Efficiency target — a ratio, not hours (kept separate to avoid confusion) */}
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div>
+                  <span className="block text-xs font-semibold text-gray-700">Instr ÷ student target</span>
+                  <input type="number" step="0.1" min="0" value={targets.kpi}
+                    onChange={e => setTargets(t => ({ ...t, kpi: e.target.value }))}
+                    className="mt-1 w-24 rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
+                </div>
+                <p className="flex-1 text-xs text-gray-500">
+                  <b>Instructional hours ÷ number of students</b> — how many instructor-hours you spend per enrolled student each pay period. It's an efficiency ratio, <i>not</i> an hours figure, so it isn't part of the total above. Lower = leaner.
+                </p>
+              </div>
+            </div>
+
             <div className="mt-3 flex items-center gap-2">
               <button onClick={saveTargets} disabled={!dirty || saving}
                 className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
                 <Save size={13} /> {saving ? 'Saving…' : 'Save targets'}
               </button>
               {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
-              <span className="text-xs text-gray-400">Total budget = {round1(totalTarget)}h (sum of roles)</span>
             </div>
           </>
         )}
