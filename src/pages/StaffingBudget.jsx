@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { resolveUserForCenter } from '../lib/centerMembership';
 import { format, addDays, subDays } from 'date-fns';
 import {
   Wallet, ChevronLeft, ChevronRight, Save, Check, AlertTriangle, TrendingUp, Users, GraduationCap,
@@ -71,13 +72,16 @@ const DEFAULT_TARGETS = {
   kpi: 1.8, // instructional hours per student
 };
 
-function aggregate(shifts, loStr, hiStr) {
+function aggregate(shifts, loStr, hiStr, excluded) {
   const byCat = { adminHosting: 0, lead: 0, instructional: 0, online: 0, flex: 0 };
   const staff = new Set();
   let total = 0;
   for (const s of shifts) {
     if (!s.date || s.date < loStr || s.date > hiStr) continue;
     if (s.status === 'draft') continue;
+    // Salaried staff (Vin, Neeru, …) and volunteers aren't on the hourly
+    // budget — same exclusion Manage Payroll uses.
+    if (excluded && excluded.has(s.userName)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
     byCat[shiftCategory(s)] += hrs;
@@ -100,6 +104,19 @@ export default function StaffingBudget() {
   const { activeCenterId, centerConfig, canSeeAdminPanel, activeCenterName } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [studentCount, setStudentCount] = useState(0);
+  const [users, setUsers] = useState([]);
+
+  // People who are NOT on the hourly budget: salaried staff (Center Director,
+  // Dir. of Education, etc.) and volunteers. Matches Manage Payroll's filter
+  // so the totals line up.
+  const excludedNames = useMemo(() => {
+    const set = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
+    for (const u of users) {
+      const resolved = resolveUserForCenter(u, activeCenterId);
+      if (resolved?.isVolunteer === true && resolved.displayName) set.add(resolved.displayName);
+    }
+    return set;
+  }, [centerConfig, users, activeCenterId]);
 
   // Period = 14 days starting on a Monday. Default: the completed 2-week
   // block ending around today (two Mondays back).
@@ -138,7 +155,17 @@ export default function StaffingBudget() {
     );
   }, [activeCenterId]);
 
-  const period = useMemo(() => aggregate(shifts, loStr, hiStr), [shifts, loStr, hiStr]);
+  // Users — needed only to resolve who's flagged volunteer for this centre.
+  useEffect(() => {
+    if (!activeCenterId) return;
+    return onSnapshot(
+      query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
+      snap => setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
+      () => setUsers([]),
+    );
+  }, [activeCenterId]);
+
+  const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames), [shifts, loStr, hiStr, excludedNames]);
   const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
 
   // Trend: the previous 6 periods (total + instructional + KPI).
@@ -147,7 +174,7 @@ export default function StaffingBudget() {
     for (let i = 5; i >= 0; i--) {
       const start = subDays(periodStart, i * 14);
       const end = addDays(start, 13);
-      const agg = aggregate(shifts, format(start, 'yyyy-MM-dd'), format(end, 'yyyy-MM-dd'));
+      const agg = aggregate(shifts, format(start, 'yyyy-MM-dd'), format(end, 'yyyy-MM-dd'), excludedNames);
       rows.push({
         label: `${format(start, 'MMM d')}–${format(end, 'MMM d')}`,
         total: agg.total,
@@ -157,7 +184,7 @@ export default function StaffingBudget() {
       });
     }
     return rows;
-  }, [shifts, periodStart, studentCount]);
+  }, [shifts, periodStart, studentCount, excludedNames]);
 
   const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]));
 
@@ -278,7 +305,7 @@ export default function StaffingBudget() {
         </table>
       </div>
       <p className="mt-1.5 text-xs text-gray-400">
-        Green variance = under budget, red = over. Hours are paid hours (no-shows count 0, per-shift pay overrides honoured), same as Manage Payroll.
+        Green variance = under budget, red = over. Hours are paid hours (no-shows count 0, per-shift pay overrides honoured), and salaried staff + volunteers are excluded — same as Manage Payroll.
       </p>
 
       {/* Editable targets */}
