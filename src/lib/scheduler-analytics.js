@@ -318,13 +318,18 @@ export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, 
   // Live count only makes sense for the current day.
   if (dateStr !== ymdInTZ(now, tz)) return 0;
   const nowMin = minutesInTZ(now, tz);
+  const slotToMin = (slot) => {
+    const [h, m] = String(slot || '0:0').split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+  };
+  // Same-day slot moves ("drag a student into a later block") are stored here.
+  const overrides = (walkIns && walkIns.slotOverrides) || {};
   const seen = new Set();
   let count = 0;
 
   // Booked (iCal) students — must be checked in to count.
   for (const row of data.slots) {
-    const [h, m] = String(row.slot || '0:0').split(':').map(Number);
-    const startMin = (h || 0) * 60 + (m || 0);
+    const rowStartMin = slotToMin(row.slot);
     for (const side of ['EM', 'HS']) {
       const bucket = row.students?.[side];
       if (!bucket) continue;
@@ -334,6 +339,10 @@ export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, 
         seen.add(id);
         const status = checkIns[id]?.status;
         if (status !== 'in' && status !== 'late') continue; // must be checked in
+        // If this student was moved into a different block, time them by the
+        // MOVED slot, not their original booking — otherwise a student dragged
+        // into a later block gets dropped as soon as their old slot ends.
+        const startMin = overrides[id] != null ? slotToMin(overrides[id]) : rowStartMin;
         const dur = Number(s.duration) > 0 ? Number(s.duration) : 30;
         if (nowMin < startMin + dur) count++; // still in the room until session end
       }
