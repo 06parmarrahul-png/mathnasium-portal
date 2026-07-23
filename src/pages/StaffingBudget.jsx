@@ -22,20 +22,21 @@ import {
  */
 
 // ── Category + hours helpers ───────────────────────────────────────────────
-const ADMIN_HOST_ROLES = new Set([
-  'Admin', 'Host', 'Manager', 'Center Director', 'Centre Director',
-  'Dir. of Education', 'Director of Education',
-]);
-
-// Which budget bucket a shift falls into. Mirrors the workbook's split:
-// Admin/Hosting, Lead, Instructional, Online, plus Flex (STEAM / Summer Camp).
+// Which budget bucket a shift falls into — one row PER ROLE so the split
+// matches the spreadsheet (admin vs host vs instructor separately).
 function shiftCategory(s) {
   if (s.flexRole) return 'flex';
   const role = s.role || 'Instructor';
   const sub = (s.subRole || '').toLowerCase();
   if (role === 'Online Instructor' || sub === 'online' || s.shiftType === 'Online') return 'online';
-  if (ADMIN_HOST_ROLES.has(role)) return 'adminHosting';
+  if (role === 'Admin') return 'admin';
+  if (role === 'Host') return 'host';
+  if (role === 'Manager') return 'manager';
   if (role === 'Lead') return 'lead';
+  // Directors are salaried (excluded upstream); if ever logged hourly they
+  // fall in with Admin rather than inflating Instructional.
+  if (role === 'Center Director' || role === 'Centre Director'
+      || role === 'Dir. of Education' || role === 'Director of Education') return 'admin';
   return 'instructional';
 }
 
@@ -54,26 +55,31 @@ function paidHours(s) {
 }
 
 const CATEGORIES = [
-  { key: 'instructional', label: 'Instructional', tint: 'text-emerald-700' },
-  { key: 'adminHosting',  label: 'Admin & Hosting', tint: 'text-blue-700' },
-  { key: 'lead',          label: 'Lead',           tint: 'text-purple-700' },
-  { key: 'online',        label: 'Online',         tint: 'text-indigo-700' },
+  { key: 'instructional', label: 'Instructional',       tint: 'text-emerald-700' },
+  { key: 'lead',          label: 'Lead',                tint: 'text-purple-700' },
+  { key: 'manager',       label: 'Manager',             tint: 'text-yellow-700' },
+  { key: 'host',          label: 'Host',                tint: 'text-blue-700' },
+  { key: 'admin',         label: 'Admin',               tint: 'text-red-700' },
+  { key: 'online',        label: 'Online',              tint: 'text-indigo-700' },
   { key: 'flex',          label: 'STEAM / Summer Camp', tint: 'text-orange-700' },
 ];
 
-// Per-2-week default targets, seeded from the July 2026 model.
+// Per-2-week default targets, seeded from the July 2026 model (Admin=Rachel 40,
+// Host=Rahul 46, Online 54, Lead 68, Instructional 396). Total is computed as
+// the sum of these, so it stays consistent with whatever you set per role.
 const DEFAULT_TARGETS = {
-  total: 604,
   instructional: 396,
-  adminHosting: 86,
   lead: 68,
+  manager: 0,
+  host: 46,
+  admin: 40,
   online: 54,
   flex: 70,
   kpi: 1.8, // instructional hours per student
 };
 
 function aggregate(shifts, loStr, hiStr, excluded) {
-  const byCat = { adminHosting: 0, lead: 0, instructional: 0, online: 0, flex: 0 };
+  const byCat = { instructional: 0, lead: 0, manager: 0, host: 0, admin: 0, online: 0, flex: 0 };
   const staff = new Set();
   let total = 0;
   for (const s of shifts) {
@@ -89,6 +95,25 @@ function aggregate(shifts, loStr, hiStr, excluded) {
     if (s.userName) staff.add(s.userName);
   }
   return { byCat, total, staffCount: staff.size };
+}
+
+// Paid hours per calendar date over the period (same exclusions as aggregate).
+// Returns date -> { total, instructional } so the day view can show both the
+// total and the main budget line (instructors) and flag which days ran over.
+function perDayHours(shifts, loStr, hiStr, excluded) {
+  const byDate = new Map();
+  for (const s of shifts) {
+    if (!s.date || s.date < loStr || s.date > hiStr) continue;
+    if (s.status === 'draft') continue;
+    if (excluded && excluded.has(s.userName)) continue;
+    const hrs = paidHours(s);
+    if (hrs <= 0) continue;
+    const rec = byDate.get(s.date) || { total: 0, instructional: 0 };
+    rec.total += hrs;
+    if (shiftCategory(s) === 'instructional') rec.instructional += hrs;
+    byDate.set(s.date, rec);
+  }
+  return byDate;
 }
 
 function round1(n) { return Math.round(n * 10) / 10; }
@@ -167,6 +192,30 @@ export default function StaffingBudget() {
 
   const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames), [shifts, loStr, hiStr, excludedNames]);
   const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
+
+  // Total target = sum of the per-role targets, so it stays consistent.
+  const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (Number(targets[c.key]) || 0), 0), [targets]);
+
+  // Per-day view — which days ran over/under. Daily budget is the period
+  // total spread evenly across operating days (an even split until per-weekday
+  // targets land in Phase 1).
+  const perDay = useMemo(() => {
+    const byDate = perDayHours(shifts, loStr, hiStr, excludedNames);
+    const opDays = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
+      ? centerConfig.operatingDays
+      : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const rows = [];
+    let opCount = 0;
+    for (let i = 0; i < 14; i++) {
+      const d = addDays(periodStart, i);
+      const isOp = opDays.includes(DOW[d.getDay()]);
+      if (isOp) opCount++;
+      const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, instructional: 0 };
+      rows.push({ label: format(d, 'EEE, MMM d'), isOp, total: rec.total, instructional: rec.instructional });
+    }
+    return { rows, dailyBudget: opCount > 0 ? totalTarget / opCount : 0 };
+  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget]);
 
   // Trend: the previous 6 periods (total + instructional + KPI).
   const trend = useMemo(() => {
@@ -298,8 +347,8 @@ export default function StaffingBudget() {
             <tr className="bg-gray-50 font-bold">
               <td className="px-4 py-2.5 text-gray-900">Total</td>
               <td className="px-4 py-2.5 text-right font-mono">{round1(period.total)}</td>
-              <td className="px-4 py-2.5 text-right text-gray-500">{round1(targets.total)}</td>
-              <td className="px-4 py-2.5 text-right">{varianceCell(period.total, targets.total)}</td>
+              <td className="px-4 py-2.5 text-right text-gray-500">{round1(totalTarget)}</td>
+              <td className="px-4 py-2.5 text-right">{varianceCell(period.total, totalTarget)}</td>
             </tr>
           </tbody>
         </table>
@@ -307,6 +356,51 @@ export default function StaffingBudget() {
       <p className="mt-1.5 text-xs text-gray-400">
         Green variance = under budget, red = over. Hours are paid hours (no-shows count 0, per-shift pay overrides honoured), and salaried staff + volunteers are excluded — same as Manage Payroll.
       </p>
+
+      {/* Per-day — which days ran over / under */}
+      <div className="mt-5 overflow-hidden rounded-2xl border bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b bg-gray-50 px-4 py-2.5">
+          <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">By day — which days ran over / under</span>
+          <span className="text-xs text-gray-400">daily budget ≈ {round1(perDay.dailyBudget)}h (period total ÷ operating days)</span>
+        </div>
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b text-xs uppercase tracking-wide text-gray-400">
+              <th className="px-4 py-2 text-left font-semibold">Day</th>
+              <th className="px-4 py-2 text-right font-semibold">Total hrs</th>
+              <th className="px-4 py-2 text-right font-semibold">Instructional</th>
+              <th className="px-4 py-2 text-right font-semibold">vs daily budget</th>
+            </tr>
+          </thead>
+          <tbody>
+            {perDay.rows.map((r, i) => {
+              if (!r.isOp && r.total === 0) {
+                return (
+                  <tr key={i} className="border-b border-gray-100 text-gray-300">
+                    <td className="px-4 py-1.5">{r.label}</td>
+                    <td className="px-4 py-1.5 text-right">—</td>
+                    <td className="px-4 py-1.5 text-right">—</td>
+                    <td className="px-4 py-1.5 text-right text-[11px]">closed</td>
+                  </tr>
+                );
+              }
+              const diff = r.total - perDay.dailyBudget;
+              const over = diff > 2;
+              const under = diff < -2;
+              return (
+                <tr key={i} className="border-b border-gray-100">
+                  <td className="px-4 py-1.5 font-medium text-gray-700">{r.label}</td>
+                  <td className="px-4 py-1.5 text-right font-mono">{round1(r.total)}</td>
+                  <td className="px-4 py-1.5 text-right font-mono text-emerald-700">{round1(r.instructional)}</td>
+                  <td className={`px-4 py-1.5 text-right font-semibold ${over ? 'text-red-600' : under ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    {diff >= 0 ? '+' : ''}{round1(diff)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {/* Editable targets */}
       <div className="mt-5 rounded-2xl border bg-white p-4 shadow-sm">
@@ -322,8 +416,8 @@ export default function StaffingBudget() {
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {[
-            ['instructional', 'Instructional'], ['adminHosting', 'Admin & Hosting'], ['lead', 'Lead'],
-            ['online', 'Online'], ['flex', 'STEAM / Camp'], ['total', 'Total hours'], ['kpi', 'Instr÷student'],
+            ['instructional', 'Instructional'], ['lead', 'Lead'], ['manager', 'Manager'],
+            ['host', 'Host'], ['admin', 'Admin'], ['online', 'Online'], ['flex', 'STEAM / Camp'], ['kpi', 'Instr÷student'],
           ].map(([k, label]) => (
             <label key={k} className="block">
               <span className="mb-1 block text-xs text-gray-500">{label}</span>
