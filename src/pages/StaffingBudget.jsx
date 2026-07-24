@@ -3,7 +3,7 @@ import { collection, onSnapshot, query, where, doc, setDoc, deleteField, serverT
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
-import { resolveInstructionalHours } from '../lib/centerConfig';
+import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
 import { BUDGET_BUCKETS, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
@@ -56,10 +56,24 @@ function countsAsWork(s, excluded) {
 const DEFAULT_TARGETS = {
   instructional: 315, online: 54, steam: 46, summerCamp: 54,
   adminHours: 68, adminAssistant: 40, host: 46,
-  kpi: 1.8,            // instructional hours per student
-  extraDayHours: null, // null = price the 15th day automatically
+  kpi: 1.8, // instructional hours per student
 };
 const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
+
+// ── What one operating day is worth, by category ────────────────────────
+// The centre's day model. Used to price the 15th (and 16th) day of a pay
+// period — the days the 14-day cycle above doesn't pay for. Each extra day
+// is seeded from its weekday here and stays editable per period.
+//   Mon/Wed 83h · Tue/Thu 61h · Fri 39.5h · Sat 42.5h
+const WEEKDAY_DEFAULTS = {
+  Monday:    { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Tuesday:   { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Wednesday: { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Thursday:  { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Friday:    { instructional: 21.5, online: 3, steam: 3, host: 3, adminAssistant: 4, adminHours: 5 },
+  Saturday:  { instructional: 30,              steam: 4, host: 4,                    adminHours: 4.5 },
+  Sunday:    {}, // closed — a 3rd Sunday costs nothing
+};
 
 // ── Per-period targets ──────────────────────────────────────────────────
 // Targets are saved AGAINST A PAY PERIOD, keyed by that period's start date
@@ -231,6 +245,12 @@ export default function StaffingBudget() {
       return {};
     };
   }, [budgetCfg]);
+  // Per-period overrides for the extra day's category budget, keyed by
+  // weekday. Absent → fall back to WEEKDAY_DEFAULTS.
+  const extraDaysFor = useMemo(() => {
+    const byPeriod = budgetCfg.byPeriod || {};
+    return (key) => byPeriod[key]?.extraDays || {};
+  }, [budgetCfg]);
 
   // Where this period's numbers came from — drives the badge in the Targets
   // panel so it's never ambiguous whether you're looking at saved figures.
@@ -254,6 +274,19 @@ export default function StaffingBudget() {
   const [showDaily, setShowDaily] = useState(false);
   const [expandedDay, setExpandedDay] = useState(null); // day row index whose category breakdown is open
   useEffect(() => { setDailyBudgets(savedDaily || {}); }, [savedDaily]);
+
+  const savedExtraDays = useMemo(() => extraDaysFor(loStr), [extraDaysFor, loStr]);
+  const [extraDays, setExtraDays] = useState(() => savedExtraDays || {});
+  useEffect(() => { setExtraDays(savedExtraDays || {}); }, [savedExtraDays]);
+  const setExtraCat = (weekday, key, value) => setExtraDays(prev => ({
+    ...prev,
+    [weekday]: { ...(WEEKDAY_DEFAULTS[weekday] || {}), ...(prev[weekday] || {}), [key]: value },
+  }));
+  const resetExtraDay = (weekday) => setExtraDays(prev => {
+    const next = { ...prev };
+    delete next[weekday];
+    return next;
+  });
 
   useEffect(() => {
     if (!activeCenterId) return;
@@ -310,74 +343,43 @@ export default function StaffingBudget() {
   // the schedule.
   //
   // The extra days are simply the first (length − 14) days of the period.
-  // Each is priced at that weekday's daily budget, falling back to an even
-  // split of the base across a 14-day cycle's operating days when daily
-  // budgets aren't set. Closed weekdays cost nothing, which is why the
-  // 16-day 26th–10th periods that pick up a 3rd Sunday only really pay for
-  // the Monday.
-  //
-  // The top-up is then split across categories using that weekday's OWN
-  // observed mix this period — a 3rd Wednesday buys Wednesday-shaped hours
-  // (Instructional + Online + STEAM), a 3rd Saturday buys Saturday-shaped
-  // ones — so there are no per-weekday percentages to keep up to date.
+  // Each carries its OWN category budget, seeded from WEEKDAY_DEFAULTS and
+  // editable per period — same seven boxes as the cycle above, so a 3rd
+  // Wednesday buys Wednesday-shaped hours and a 3rd Saturday buys
+  // Saturday-shaped ones. A 3rd Sunday costs nothing (closed), which is why
+  // the 16-day 26th–10th periods that pick up Sunday + Monday only really
+  // pay for the Monday.
   const extra = useMemo(() => {
     const periodDays = Math.round((periodEnd - periodStart) / 86400000) + 1;
     const days = [];
     for (let i = 0; i < Math.max(0, periodDays - 14); i++) {
       const d = addDays(periodStart, i);
-      days.push({ weekday: DOW_NAMES[d.getDay()], label: format(d, 'EEE MMM d') });
+      const weekday = DOW_NAMES[d.getDay()];
+      const saved = extraDays[weekday];
+      const seed = WEEKDAY_DEFAULTS[weekday] || {};
+      const cats = {};
+      for (const c of CATEGORIES) {
+        const raw = saved && saved[c.key] != null && saved[c.key] !== ''
+          ? saved[c.key]
+          : (seed[c.key] || 0);
+        cats[c.key] = Number(raw) || 0;
+      }
+      days.push({
+        weekday,
+        label: format(d, 'EEE MMM d'),
+        dayNo: 15 + i,
+        cats,
+        total: CATEGORIES.reduce((n, c) => n + cats[c.key], 0),
+        isCustom: !!saved,
+        isOpen: opDays.includes(weekday),
+      });
     }
-
-    const cycleOpDays = opDays.length * 2;           // operating days in 14 days
-    const evenRate = cycleOpDays > 0 ? baseTarget / cycleOpDays : 0;
-    const rateFor = (wd) => {
-      if (!opDays.includes(wd)) return 0;            // closed that day → free
-      const set = Number(dailyBudgets[wd]) || 0;
-      return set > 0 ? set : evenRate;
-    };
-
-    const autoHours = days.reduce((n, d) => n + rateFor(d.weekday), 0);
-    const ov = targets.extraDayHours;
-    const isOverride = ov != null && ov !== '';
-    const hours = isOverride ? (Number(ov) || 0) : autoHours;
-
-    // Category weights — each extra day contributes its own rate, shaped by
-    // how that weekday actually ran this period.
-    const weights = {};
-    let weightTotal = 0;
-    for (const d of days) {
-      const rate = rateFor(d.weekday);
-      if (rate <= 0) continue;
-      const shape = {};
-      let shapeTotal = 0;
-      for (const [ds, rec] of byDateHours) {
-        if (DOW_NAMES[new Date(ds + 'T12:00:00').getDay()] !== d.weekday) continue;
-        for (const k in rec.byCat) { shape[k] = (shape[k] || 0) + rec.byCat[k]; shapeTotal += rec.byCat[k]; }
-      }
-      let src = shape, srcTotal = shapeTotal;
-      if (!(srcTotal > 0)) {
-        // Never worked that weekday this period — fall back to the shape of
-        // the base targets so the top-up still lands somewhere sensible.
-        src = {}; srcTotal = 0;
-        for (const c of CATEGORIES) {
-          const v = Number(targets[c.key]) || 0;
-          if (v > 0) { src[c.key] = v; srcTotal += v; }
-        }
-      }
-      if (!(srcTotal > 0)) continue;
-      for (const k in src) {
-        const w = rate * (src[k] / srcTotal);
-        weights[k] = (weights[k] || 0) + w;
-        weightTotal += w;
-      }
-    }
-
     const alloc = {};
-    if (hours > 0 && weightTotal > 0) {
-      for (const k in weights) alloc[k] = hours * (weights[k] / weightTotal);
+    for (const d of days) {
+      for (const c of CATEGORIES) if (d.cats[c.key] > 0) alloc[c.key] = (alloc[c.key] || 0) + d.cats[c.key];
     }
-    return { days, autoHours, hours, alloc, isOverride, periodDays };
-  }, [periodStart, periodEnd, opDays, dailyBudgets, targets, baseTarget, byDateHours]);
+    return { days, alloc, hours: days.reduce((n, d) => n + d.total, 0), periodDays };
+  }, [periodStart, periodEnd, opDays, extraDays]);
 
   // What every bar on this page actually measures against: base + top-up.
   const effTargets = useMemo(() => {
@@ -398,11 +400,19 @@ export default function StaffingBudget() {
     let opCount = 0;
     let d = periodStart;
     while (format(d, 'yyyy-MM-dd') <= hiStr) {
+      const ds = format(d, 'yyyy-MM-dd');
       const weekday = DOW_NAMES[d.getDay()];
-      const isOp = opDays.includes(weekday);
+      // A configured holiday closes the centre just like a non-operating
+      // weekday, so it greys out and carries no budget.
+      const holiday = holidayFor(ds, centerConfig);
+      const isOp = opDays.includes(weekday) && !holiday;
       if (isOp) opCount++;
-      const rec = byDateHours.get(format(d, 'yyyy-MM-dd')) || { total: 0, byCat: {} };
-      rows.push({ label: format(d, 'EEE MMM d'), weekday, isOp, total: rec.total, byCat: rec.byCat });
+      const rec = byDateHours.get(ds) || { total: 0, byCat: {} };
+      rows.push({
+        label: format(d, 'EEE MMM d'), weekday, isOp,
+        holiday: holiday?.name || null,
+        total: rec.total, byCat: rec.byCat,
+      });
       d = addDays(d, 1);
     }
     // opCount is this period's real operating-day count (13 or 14, not 12),
@@ -413,7 +423,7 @@ export default function StaffingBudget() {
       r.budget = useDaily ? (Number(dailyBudgets[r.weekday]) || 0) : (r.isOp ? evenBudget : 0);
     }
     return { rows, evenBudget, useDaily, opCount };
-  }, [byDateHours, hiStr, periodStart, opDays, totalTarget, dailyBudgets]);
+  }, [byDateHours, hiStr, periodStart, opDays, totalTarget, dailyBudgets, centerConfig]);
   const dayScale = useMemo(
     () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
     [perDay],
@@ -426,22 +436,17 @@ export default function StaffingBudget() {
     const key = format(st, 'yyyy-MM-dd');
     const t = targetsFor(key);
     const base = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
-    const ov = t.extraDayHours;
-    if (ov != null && ov !== '') return base + (Number(ov) || 0);
     const en = periodEndFor(st);
     const len = Math.round((en - st) / 86400000) + 1;
-    const daily = dailyFor(key);
-    const cycleOpDays = opDays.length * 2;
-    const evenRate = cycleOpDays > 0 ? base / cycleOpDays : 0;
+    const saved = extraDaysFor(key);
     let topUp = 0;
     for (let i = 0; i < Math.max(0, len - 14); i++) {
       const wd = DOW_NAMES[addDays(st, i).getDay()];
-      if (!opDays.includes(wd)) continue;
-      const set = Number(daily[wd]) || 0;
-      topUp += set > 0 ? set : evenRate;
+      const src = saved[wd] || WEEKDAY_DEFAULTS[wd] || {};
+      for (const c of CATEGORIES) topUp += Number(src[c.key]) || 0;
     }
     return base + topUp;
-  }, [targetsFor, dailyFor, opDays]);
+  }, [targetsFor, extraDaysFor]);
 
   const trend = useMemo(() => {
     const starts = [];
@@ -463,14 +468,15 @@ export default function StaffingBudget() {
     [trend],
   );
 
-  // extraDayHours is compared separately: null ("auto") and 0 ("override to
-  // zero") are different states that Number() would flatten to the same 0.
-  const blankExtra = (v) => v == null || v === '';
-  const dirty = TARGET_KEYS.filter(k => k !== 'extraDayHours')
-      .some(k => Number(targets[k]) !== Number(savedTargets[k]))
-    || blankExtra(targets.extraDayHours) !== blankExtra(savedTargets.extraDayHours)
-    || (!blankExtra(targets.extraDayHours) && Number(targets.extraDayHours) !== Number(savedTargets.extraDayHours))
-    || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0));
+  // Normalised so '30' (freshly typed) and 30 (loaded from Firestore) don't
+  // read as a change.
+  const normExtra = (o) => JSON.stringify(WEEKDAY_ORDER.reduce((acc, wd) => {
+    if (o?.[wd]) acc[wd] = CATEGORIES.reduce((m, c) => ({ ...m, [c.key]: Number(o[wd][c.key]) || 0 }), {});
+    return acc;
+  }, {}));
+  const dirty = TARGET_KEYS.some(k => Number(targets[k]) !== Number(savedTargets[k]))
+    || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0))
+    || normExtra(extraDays) !== normExtra(savedExtraDays);
 
   // Writes ONLY the period currently on screen, under
   // staffingBudget.byPeriod['<period start>']. setDoc + merge deep-merges
@@ -481,13 +487,17 @@ export default function StaffingBudget() {
     try {
       const clean = {};
       for (const k of TARGET_KEYS) clean[k] = Number(targets[k]) || 0;
-      // Blank means "price the extra day automatically" — store null, not 0,
-      // so pickTargets falls through to the default rather than reading it
-      // as a deliberate zero-hour override.
-      clean.extraDayHours = blankExtra(targets.extraDayHours) ? null : (Number(targets.extraDayHours) || 0);
       const cleanDaily = {};
       for (const wd of WEEKDAY_ORDER) cleanDaily[wd] = Number(dailyBudgets[wd]) || 0;
       clean.dailyBudgets = cleanDaily;
+      // Only weekdays actually edited are stored; the rest keep falling back
+      // to WEEKDAY_DEFAULTS, so changing the model updates untouched periods.
+      const cleanExtra = {};
+      for (const wd of WEEKDAY_ORDER) {
+        if (!extraDays[wd]) continue;
+        cleanExtra[wd] = CATEGORIES.reduce((m, c) => ({ ...m, [c.key]: Number(extraDays[wd][c.key]) || 0 }), {});
+      }
+      clean.extraDays = cleanExtra;
       await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
         { staffingBudget: { byPeriod: { [loStr]: clean } }, updatedAt: serverTimestamp() },
         { merge: true });
@@ -662,7 +672,9 @@ export default function StaffingBudget() {
                   <div className="text-xs font-medium text-gray-600">{r.label}</div>
                   {showBar
                     ? <HBar value={r.total} target={r.budget || 0} scale={dayScale} over={over} />
-                    : <div className="text-[11px] text-gray-300">closed</div>}
+                    : <div className="text-[11px] text-gray-300">
+                        {r.holiday ? <>closed — <span className="font-medium text-gray-400">{r.holiday}</span></> : 'closed'}
+                      </div>}
                   <div className="flex items-center justify-end gap-1.5">
                     <span className="font-mono text-xs text-gray-600">{round1(r.total)}h</span>
                     {showBar && (r.budget || 0) > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
@@ -788,54 +800,40 @@ export default function StaffingBudget() {
                 8th box. Pay periods are 15–16 days but the targets above
                 are a 14-day cycle, so one or two weekdays run a 3rd time
                 and need paying for. */}
-            <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="min-w-[200px] flex-1">
-                  <span className="block text-xs font-bold text-indigo-900">
-                    {extra.days.length > 1 ? `Days 15–${extra.periodDays} — extra days` : 'Day 15 — the extra day'}
+            {extra.days.length === 0 ? (
+              <p className="mt-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500">
+                This period is exactly 14 days — no extra day to budget for.
+              </p>
+            ) : extra.days.map(d => (
+              <div key={d.weekday} className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3">
+                <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+                  <span className="text-xs font-bold text-indigo-900">
+                    Day {d.dayNo} — <b>{d.weekday}</b> runs 3× this period
+                    {!d.isOpen && <span className="ml-1 font-normal text-indigo-400">(closed — costs nothing)</span>}
                   </span>
-                  <span className="mt-0.5 block text-[11px] text-indigo-700">
-                    {extra.days.length === 0
-                      ? 'This period is exactly 14 days — nothing to top up.'
-                      : <>This period is {extra.periodDays} days, so{' '}
-                          {extra.days.map((d, i) => (
-                            <span key={d.weekday}>
-                              {i > 0 && ' and '}
-                              <b>{d.weekday}</b> runs 3×
-                              {!opDays.includes(d.weekday) && <span className="text-indigo-400"> (closed — costs nothing)</span>}
-                            </span>
-                          ))}.
-                        </>}
+                  <span className="flex items-center gap-2">
+                    {d.isCustom && (
+                      <button onClick={() => resetExtraDay(d.weekday)}
+                        className="rounded-lg border border-indigo-200 px-2 py-0.5 text-[10px] font-semibold text-indigo-600 hover:bg-indigo-100">
+                        Reset to {d.weekday} default
+                      </button>
+                    )}
+                    <span className="text-sm font-bold text-indigo-900">{round1(d.total)}h</span>
                   </span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <input type="number" step="0.5" min="0"
-                    value={targets.extraDayHours ?? ''}
-                    placeholder={round1(extra.autoHours)}
-                    onChange={e => setTargets(t => ({ ...t, extraDayHours: e.target.value === '' ? null : e.target.value }))}
-                    title="Leave blank to price the extra day automatically from its weekday budget."
-                    className="w-24 rounded-lg border px-2 py-1.5 text-right text-sm focus:border-indigo-500 focus:outline-none" />
-                  <span className="text-xs font-semibold text-indigo-700">h</span>
-                  {extra.isOverride && (
-                    <button onClick={() => setTargets(t => ({ ...t, extraDayHours: null }))}
-                      className="rounded-lg border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-100">
-                      Auto
-                    </button>
-                  )}
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {CATEGORIES.map(c => (
+                    <label key={c.key} className="block">
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: c.color }}>{c.label}</span>
+                      <input type="number" step="0.5" min="0"
+                        value={extraDays[d.weekday]?.[c.key] ?? (WEEKDAY_DEFAULTS[d.weekday]?.[c.key] ?? 0)}
+                        onChange={e => setExtraCat(d.weekday, c.key, e.target.value)}
+                        className="w-full rounded-lg border bg-white px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
+                    </label>
+                  ))}
                 </div>
               </div>
-              {extra.days.length > 0 && (
-                <p className="mt-2 border-t border-indigo-200/70 pt-2 text-[11px] text-indigo-700">
-                  {extra.isOverride
-                    ? <>Manual override. Auto would be <b>{round1(extra.autoHours)}h</b>.</>
-                    : <>Priced from your {extra.days.filter(d => opDays.includes(d.weekday)).map(d => d.weekday).join(' + ') || 'weekday'} budget under “Set daily budgets”, falling back to an even split of the base when that's blank.</>}
-                  {Object.keys(extra.alloc).length > 0 && (
-                    <> Split by how that weekday actually ran: {CATEGORIES.filter(c => (extra.alloc[c.key] || 0) > 0.05)
-                      .map(c => `${c.label} +${round1(extra.alloc[c.key])}h`).join(', ')}.</>
-                  )}
-                </p>
-              )}
-            </div>
+            ))}
 
             {/* Prominent total of all the hour targets */}
             <div className="mt-3 rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
@@ -845,7 +843,7 @@ export default function StaffingBudget() {
               </div>
               <div className="mt-1 text-right text-[11px] font-medium text-amber-700">
                 {round1(baseTarget)}h base (14-day cycle)
-                {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => opDays.includes(d.weekday)).map(d => d.weekday).join(' + ')}</>}
+                {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => d.total > 0).map(d => d.weekday).join(' + ')}</>}
               </div>
             </div>
 
