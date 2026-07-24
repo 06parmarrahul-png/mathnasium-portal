@@ -7052,11 +7052,16 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   //     (owner / super-admin / Admin Team / internal) excluded
   //   – sick shifts NOT added to the headline (they live in a separate
   //     Sick Pay column in the export)
+  //   – no-shows count 0 (they didn't come in, they don't get paid) —
+  //     this matches Staffing Budget's paidHours(); without it Analytics
+  //     over-reported the period by the no-show hours.
   //   – Payroll Hours = payHoursOverride if set, else scheduled.
-  const payHrsOf = (s) =>
-    (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
+  const payHrsOf = (s) => {
+    if (s.noShow) return 0;
+    return (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
       ? s.payHoursOverride
       : shiftHours(s);
+  };
 
   // Rebuild the same exclusion sets the payroll tab uses. AnalyticsTab
   // only receives `users` + `activeCenterId`, so we resolve per-centre
