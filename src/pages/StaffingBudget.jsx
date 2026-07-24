@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
-import { BUDGET_BUCKETS, bucketHoursForShift } from '../lib/budgetBuckets';
+import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
   Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays, RotateCcw,
@@ -60,20 +60,10 @@ const DEFAULT_TARGETS = {
 };
 const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
 
-// ── What one operating day is worth, by category ────────────────────────
-// The centre's day model. Used to price the 15th (and 16th) day of a pay
-// period — the days the 14-day cycle above doesn't pay for. Each extra day
-// is seeded from its weekday here and stays editable per period.
-//   Mon/Wed 83h · Tue/Thu 61h · Fri 39.5h · Sat 42.5h
-const WEEKDAY_DEFAULTS = {
-  Monday:    { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
-  Tuesday:   { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
-  Wednesday: { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
-  Thursday:  { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
-  Friday:    { instructional: 21.5, online: 3, steam: 3, host: 3, adminAssistant: 4, adminHours: 5 },
-  Saturday:  { instructional: 30,              steam: 4, host: 4,                    adminHours: 4.5 },
-  Sunday:    {}, // closed — a 3rd Sunday costs nothing
-};
+// WEEKDAY_DEFAULTS (the centre's day model) is imported from budgetBuckets
+// so Manage Schedule's header ratio and this page's extra-day pricing can't
+// drift apart. Each extra day is seeded from its weekday there and stays
+// editable per period.
 
 // ── Per-period targets ──────────────────────────────────────────────────
 // Targets are saved AGAINST A PAY PERIOD, keyed by that period's start date

@@ -38,6 +38,7 @@ import {
   notifyOpenShift, notifySchedulePosted, notifyTimeOffDecision,
 } from '../lib/emailService';
 import { attachEmails } from '../lib/userContact';
+import { weekdayBudgetTotal } from '../lib/budgetBuckets';
 import {
   resolveUserForCenter,
   membershipFieldPath,
@@ -2296,7 +2297,7 @@ export default function Admin() {
       .filter(d => isOperatingDay(d, centerConfig)),
   [weekStart, centerConfig]);
 
-  const { totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek } = useMemo(() => {
+  const { totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek, sickHoursThisWeek, sickByDate } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
     // "Total assigned" is an HOURLY figure — it's the number the staffing
@@ -2333,21 +2334,39 @@ export default function Admin() {
     let paid = 0;
     let volunteer = 0;
     let salary = 0;
+    let sick = 0;
+    const sickDates = new Map(); // date → sick hours that day
     for (const s of shifts) {
       if (s.date < ws || s.date > we) continue;
       // No-show shifts are unpaid — subtract from the day's hours by
-      // simply not counting them. Sick still counts toward the planning
-      // total (they were scheduled and paid), it's just tracked
-      // separately downstream in Payroll.
+      // simply not counting them.
       if (s.noShow === true) continue;
       const hrs = shiftHours(s);
       const isVolunteer = (s.userId && volunteerIds.has(s.userId))
         || (s.userName && volunteerNames.has(s.userName));
-      if (isVolunteer)                          volunteer += hrs;
-      else if (s.userName && salaryNames.has(s.userName)) salary += hrs;
-      else                                      paid      += hrs;
+      // Sick shifts come OUT of the assigned total. Nobody worked those
+      // hours, so counting them made this page disagree with payroll, the
+      // analytics projection and the staffing budget — all three of which
+      // hold sick in its own bucket. They're surfaced per-day on the grid
+      // instead, so the cover gap is still obvious.
+      if (s.sickPay === true) {
+        if (!isVolunteer) {
+          sick += hrs;
+          sickDates.set(s.date, (sickDates.get(s.date) || 0) + hrs);
+        }
+        continue;
+      }
+      if (isVolunteer)                                    volunteer += hrs;
+      else if (s.userName && salaryNames.has(s.userName)) salary    += hrs;
+      else                                                paid      += hrs;
     }
-    return { totalAssignedHours: paid, volunteerHoursThisWeek: volunteer, salaryHoursThisWeek: salary };
+    return {
+      totalAssignedHours: paid,
+      volunteerHoursThisWeek: volunteer,
+      salaryHoursThisWeek: salary,
+      sickHoursThisWeek: sick,
+      sickByDate: sickDates,
+    };
   }, [shifts, weekStart, usersForCentre, centerConfig]);
 
   // Auto-scheduler
@@ -4197,6 +4216,14 @@ export default function Admin() {
                     {Math.round(salaryHoursThisWeek * 10) / 10} salary hrs
                   </span>
                 )}
+                {sickHoursThisWeek > 0 && (
+                  <span
+                    title="Sick hours are paid under the sick budget, not as assigned coverage — so they sit outside this total, same as payroll and the staffing budget."
+                    className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                  >
+                    +{Math.round(sickHoursThisWeek * 10) / 10} sick hrs
+                  </span>
+                )}
                 {volunteerHoursThisWeek > 0 && (
                   <span
                     title="Volunteer hours are tracked but excluded from the paid total and from payroll."
@@ -4279,21 +4306,28 @@ export default function Admin() {
                       // the full scheduled picture; visual stripes on the cells
                       // already mark which ones are draft vs published.
                       // No-show shifts are excluded (they didn't happen).
-                      // Volunteer AND salary shifts are excluded too — neither
-                      // costs hourly wages, and both are tracked in their own
-                      // chips in the header. Keeps this figure reconcilable
-                      // with payroll and the staffing budget.
+                      // Volunteer, salary AND sick shifts are excluded too —
+                      // none of them cost hourly wages, and each is tracked in
+                      // its own chip. Keeps this figure reconcilable with
+                      // payroll and the staffing budget.
                       const dayTotalHrs = shifts
                         .filter(s =>
                           s.date === ds
                           && portalNames.has(s.userName)
                           && s.noShow !== true
+                          && s.sickPay !== true
                           && !volunteerNames.has(s.userName)
                           && !salaryStaff.has(s.userName)
                           && !hiddenFromOps.has(s.userName)
                         )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
+                      // Denominator = what this weekday is budgeted for, so
+                      // the header reads as a fraction of plan rather than a
+                      // bare number with no reference point.
+                      const dayBudget = weekdayBudgetTotal(format(d, 'EEEE'));
+                      const overBudget = dayBudget > 0 && dayTotalHrs > dayBudget;
+                      const daySick = Math.round((sickByDate.get(ds) || 0) * 10) / 10;
                       const headerBg = holiday
                         ? 'bg-amber-50 text-amber-700'
                         : isToday
@@ -4307,11 +4341,27 @@ export default function Admin() {
                             <div className="mx-auto mt-0.5 max-w-full truncate text-[10px] font-semibold uppercase tracking-wide text-amber-700" title={`Closed — ${holiday.name}`}>
                               {holiday.name || 'Closed'}
                             </div>
-                          ) : dayHrsDisplay > 0 ? (
-                            <div className={`text-xs font-semibold mt-0.5 ${isToday ? 'text-red-500' : 'text-purple-600'}`}>
-                              {dayHrsDisplay}h
+                          ) : (dayHrsDisplay > 0 || dayBudget > 0) ? (
+                            <div
+                              className={`text-xs font-semibold mt-0.5 ${
+                                overBudget ? 'text-red-600' : isToday ? 'text-red-500' : 'text-purple-600'
+                              }`}
+                              title={dayBudget > 0
+                                ? `${dayHrsDisplay}h scheduled of ${dayBudget}h budgeted for a ${format(d, 'EEEE')} — ${
+                                    overBudget ? `${Math.round((dayTotalHrs - dayBudget) * 10) / 10}h over` : `${Math.round((dayBudget - dayTotalHrs) * 10) / 10}h under`}`
+                                : `${dayHrsDisplay}h scheduled`}
+                            >
+                              {dayBudget > 0 ? <>{dayHrsDisplay}<span className="font-normal text-gray-400"> / {dayBudget}h</span></> : `${dayHrsDisplay}h`}
                             </div>
                           ) : null}
+                          {/* Sick hours sit outside the total above, but the
+                              cover gap still needs to be visible on the day. */}
+                          {!holiday && daySick > 0 && (
+                            <div className="mx-auto mt-0.5 inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
+                              title="Sick hours — paid under the sick budget, not counted in the day's assigned hours.">
+                              +{daySick}h sick
+                            </div>
+                          )}
                         </th>
                       );
                     })}
@@ -4596,25 +4646,38 @@ export default function Admin() {
                       const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
                       const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
-                      // Exclude no-show, volunteer and salary shifts from the
-                      // day's total hours so this footer matches the header +
-                      // the weekly Total assigned. Volunteer and salary hours
-                      // are tracked separately in the header chips.
+                      // Exclude no-show, sick, volunteer and salary shifts from
+                      // the day's total hours so this footer matches the header
+                      // + the weekly Total assigned. Each is tracked separately
+                      // in its own chip.
                       const hrs = dayShiftsPortal
                         .filter(s =>
                           s.noShow !== true
+                          && s.sickPay !== true
                           && !volunteerNames.has(s.userName)
                           && !salaryStaff.has(s.userName)
                           && !hiddenFromOps.has(s.userName)
                         )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
+                      const footSick = Math.round((sickByDate.get(ds) || 0) * 10) / 10;
+                      const footBudget = weekdayBudgetTotal(format(d, 'EEEE'));
                       return (
                         <td key={ds} className="text-center py-2 text-xs text-gray-500">
                           {count > 0 ? (
                             <div className="space-y-0.5">
                               <span className="font-semibold text-gray-700">{count} staff</span>
-                              <div className="text-purple-600 font-semibold">{hrsDisplay}h total</div>
+                              <div className={`font-semibold ${footBudget > 0 && hrs > footBudget ? 'text-red-600' : 'text-purple-600'}`}>
+                                {footBudget > 0
+                                  ? <>{hrsDisplay}<span className="font-normal text-gray-400"> / {footBudget}h</span></>
+                                  : <>{hrsDisplay}h total</>}
+                              </div>
+                              {footSick > 0 && (
+                                <div className="inline-block rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
+                                  title="Sick hours — paid under the sick budget, not counted in the day's assigned hours.">
+                                  +{footSick}h sick
+                                </div>
+                              )}
                               {draftCount > 0 && (
                                 <>
                                   <div className="text-amber-600 text-[10px] font-semibold uppercase tracking-wide">

@@ -28,6 +28,30 @@ export const BUDGET_BUCKETS = [
 
 export const BUCKET_KEYS = BUDGET_BUCKETS.map(b => b.key);
 
+// ── What one operating day is worth, by category ────────────────────────
+// The centre's day model. Two consumers:
+//   • Staffing Budget — prices the 15th/16th day of a pay period, the days
+//     the 14-day cycle of targets doesn't pay for.
+//   • Manage Schedule — the denominator of each day header's hours ratio.
+// Keep them reading this one object so the two pages can't drift apart.
+//   Mon/Wed 83h · Tue/Thu 61h · Fri 39.5h · Sat 39.5h
+export const WEEKDAY_DEFAULTS = {
+  Monday:    { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Tuesday:   { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Wednesday: { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Thursday:  { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Friday:    { instructional: 21.5, online: 3, steam: 3, host: 3, adminAssistant: 4, adminHours: 5 },
+  Saturday:  { instructional: 30,              steam: 4, host: 4,                    adminHours: 1.5 },
+  Sunday:    {}, // closed
+};
+
+// Total budgeted hours for a weekday name ('Monday'). 0 for closed days.
+export function weekdayBudgetTotal(weekday) {
+  const day = WEEKDAY_DEFAULTS[weekday];
+  if (!day) return 0;
+  return BUCKET_KEYS.reduce((n, k) => n + (Number(day[k]) || 0), 0);
+}
+
 function toMin(t) {
   if (!t || typeof t !== 'string') return null;
   const [h, m] = t.split(':').map(Number);
