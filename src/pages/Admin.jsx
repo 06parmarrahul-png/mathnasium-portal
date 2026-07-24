@@ -2296,23 +2296,43 @@ export default function Admin() {
       .filter(d => isOperatingDay(d, centerConfig)),
   [weekStart, centerConfig]);
 
-  const { totalAssignedHours, volunteerHoursThisWeek } = useMemo(() => {
+  const { totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
-    // Only volunteers are pulled out of the schedule total — everyone
-    // else (paid hourly instructors, salary staff like Vinod/Neeru,
-    // owners) counts toward "planned hours this week" so the owner
-    // can see the full picture of who's on the floor. Payroll is a
-    // separate concern handled by the Payroll tab, which excludes
-    // owners + salary staff independently.
+    // "Total assigned" is an HOURLY figure — it's the number the staffing
+    // budget and payroll are read against, so anyone who isn't paid by the
+    // hour has to stay out of it. Two groups get pulled out and tracked in
+    // their own chips instead:
+    //   • Volunteers — unpaid.
+    //   • Salary staff (Vinod / Neeru) — they do get scheduled shifts for
+    //     coverage, but their hours don't cost hourly wages, so counting
+    //     them inflated every weekly and per-day total on this page.
+    // Both still appear on the grid; they're just not in the hourly total.
+    //
+    // Note this rebuilds the salary/volunteer sets locally rather than
+    // reusing the ones defined further down — those are declared after this
+    // hook runs, so referencing them here would hit the temporal dead zone.
     const volunteerIds = new Set(
       usersForCentre.filter(u => u.isVolunteer === true).map(u => u.uid),
     );
     const volunteerNames = new Set(
       usersForCentre.filter(u => u.isVolunteer === true).map(u => u.displayName).filter(Boolean),
     );
+    // Mirrors payroll's exclusion set exactly: the salaryStaff config PLUS
+    // hidden-from-ops accounts (owner / super-admin / director / internal /
+    // "Admin Team"). Vin sits in the second group, Neeru in the first, so
+    // checking only salaryStaff would have left one of them in the total.
+    const salaryNames = new Set(
+      Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [],
+    );
+    for (const u of usersForCentre) {
+      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
+        || u.internal === true || u.displayName === 'Admin Team';
+      if (hidden && u.displayName) salaryNames.add(u.displayName);
+    }
     let paid = 0;
     let volunteer = 0;
+    let salary = 0;
     for (const s of shifts) {
       if (s.date < ws || s.date > we) continue;
       // No-show shifts are unpaid — subtract from the day's hours by
@@ -2323,11 +2343,12 @@ export default function Admin() {
       const hrs = shiftHours(s);
       const isVolunteer = (s.userId && volunteerIds.has(s.userId))
         || (s.userName && volunteerNames.has(s.userName));
-      if (isVolunteer) volunteer += hrs;
-      else             paid      += hrs;
+      if (isVolunteer)                          volunteer += hrs;
+      else if (s.userName && salaryNames.has(s.userName)) salary += hrs;
+      else                                      paid      += hrs;
     }
-    return { totalAssignedHours: paid, volunteerHoursThisWeek: volunteer };
-  }, [shifts, weekStart, usersForCentre]);
+    return { totalAssignedHours: paid, volunteerHoursThisWeek: volunteer, salaryHoursThisWeek: salary };
+  }, [shifts, weekStart, usersForCentre, centerConfig]);
 
   // Auto-scheduler
   const handleGenerate = async () => {
@@ -4163,13 +4184,19 @@ export default function Admin() {
                 <span className="text-xs text-gray-500">
                   Total assigned: <strong>{Math.round(totalAssignedHours * 10) / 10} hrs</strong>
                 </span>
-                {/* Volunteer hours tracked separately — see them for
-                    records, but excluded from the total since they
-                    don't cost anything. Salary staff (Vinod / Neeru)
-                    are NOT split out — their hours land in the total
-                    like everyone else because they're still coverage
-                    that matters for planning. Payroll excludes them
-                    independently via the salaryStaff config. */}
+                {/* Volunteer and salary hours are tracked separately — still
+                    visible for coverage planning, but out of the hourly
+                    total so it reconciles with payroll and the staffing
+                    budget, both of which exclude them too. */}
+                {salaryHoursThisWeek > 0 && (
+                  <span
+                    title="Salary staff are scheduled for coverage but aren't paid hourly, so their hours sit outside the assigned total — same as payroll and the staffing budget."
+                    className="inline-flex items-center gap-1 rounded-full bg-violet-100 px-2 py-0.5 text-[11px] font-semibold text-violet-800"
+                  >
+                    <UserX size={11} />
+                    {Math.round(salaryHoursThisWeek * 10) / 10} salary hrs
+                  </span>
+                )}
                 {volunteerHoursThisWeek > 0 && (
                   <span
                     title="Volunteer hours are tracked but excluded from the paid total and from payroll."
@@ -4252,15 +4279,18 @@ export default function Admin() {
                       // the full scheduled picture; visual stripes on the cells
                       // already mark which ones are draft vs published.
                       // No-show shifts are excluded (they didn't happen).
-                      // Volunteer shifts are excluded too — they're tracked
-                      // in the header's separate volunteer-hours chip and
-                      // don't count toward paid planning coverage.
+                      // Volunteer AND salary shifts are excluded too — neither
+                      // costs hourly wages, and both are tracked in their own
+                      // chips in the header. Keeps this figure reconcilable
+                      // with payroll and the staffing budget.
                       const dayTotalHrs = shifts
                         .filter(s =>
                           s.date === ds
                           && portalNames.has(s.userName)
                           && s.noShow !== true
                           && !volunteerNames.has(s.userName)
+                          && !salaryStaff.has(s.userName)
+                          && !hiddenFromOps.has(s.userName)
                         )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
@@ -4566,12 +4596,17 @@ export default function Admin() {
                       const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
                       const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
-                      // Exclude no-show + volunteer shifts from the day's
-                      // total hours so this footer matches the header +
-                      // the weekly Total assigned. Volunteer hours are
-                      // tracked separately in the header chip.
+                      // Exclude no-show, volunteer and salary shifts from the
+                      // day's total hours so this footer matches the header +
+                      // the weekly Total assigned. Volunteer and salary hours
+                      // are tracked separately in the header chips.
                       const hrs = dayShiftsPortal
-                        .filter(s => s.noShow !== true && !volunteerNames.has(s.userName))
+                        .filter(s =>
+                          s.noShow !== true
+                          && !volunteerNames.has(s.userName)
+                          && !salaryStaff.has(s.userName)
+                          && !hiddenFromOps.has(s.userName)
+                        )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
                       return (
