@@ -34,6 +34,21 @@ function paidHours(s) {
 // Category rows = the shared work-type buckets.
 const CATEGORIES = BUDGET_BUCKETS;
 
+// Normalise a display name so the staff count de-dupes name variants
+// ("Benjamin Gong" vs "benjamin gong ") — same as Manage Payroll.
+const normName = (n) => (n || '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+// Does this shift count toward WORKED budget hours? Mirrors Manage Payroll's
+// filter: skip drafts, role=Volunteer shifts, and the excluded people
+// (salaried / volunteer-flagged / hidden-from-ops). Sick + no-show handled
+// separately by the caller.
+function countsAsWork(s, excluded) {
+  if (s.status === 'draft') return false;
+  if (s.role === 'Volunteer') return false;
+  if (excluded && excluded.has(s.userName)) return false;
+  return true;
+}
+
 // Per-period default targets, seeded from the July 2026 model.
 const DEFAULT_TARGETS = {
   instructional: 396, online: 54, steam: 46, summerCamp: 70,
@@ -51,28 +66,29 @@ function aggregate(shifts, loStr, hiStr, excluded, windowFor) {
   for (const b of BUDGET_BUCKETS) byCat[b.key] = 0;
   const staff = new Set();
   let total = 0;
+  let sick = 0; // paid, but kept OUT of worked buckets (like Manage Payroll)
   for (const s of shifts) {
     if (!s.date || s.date < loStr || s.date > hiStr) continue;
-    if (s.status === 'draft') continue;
-    if (excluded && excluded.has(s.userName)) continue;
+    if (!countsAsWork(s, excluded)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
+    if (s.sickPay) { sick += hrs; continue; } // sick tracked separately
     const alloc = bucketHoursForShift(s, hrs, windowFor(s.date));
     for (const k in alloc) byCat[k] = (byCat[k] || 0) + alloc[k];
     total += hrs;
-    if (s.userName) staff.add(s.userName);
+    if (s.userName) staff.add(normName(s.userName));
   }
-  return { byCat, total, staffCount: staff.size };
+  return { byCat, total, staffCount: staff.size, sick };
 }
 
 function perDayHours(shifts, loStr, hiStr, excluded, windowFor) {
   const byDate = new Map();
   for (const s of shifts) {
     if (!s.date || s.date < loStr || s.date > hiStr) continue;
-    if (s.status === 'draft') continue;
-    if (excluded && excluded.has(s.userName)) continue;
+    if (!countsAsWork(s, excluded)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
+    if (s.sickPay) continue; // sick not in worked day totals
     let rec = byDate.get(s.date);
     if (!rec) { rec = { total: 0, byCat: {} }; byDate.set(s.date, rec); }
     rec.total += hrs;
@@ -128,7 +144,12 @@ export default function StaffingBudget() {
     const set = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
     for (const u of users) {
       const resolved = resolveUserForCenter(u, activeCenterId);
+      // Volunteers (per-centre flag) — unpaid, off the hourly budget.
       if (resolved?.isVolunteer === true && resolved.displayName) set.add(resolved.displayName);
+      // Hidden-from-ops accounts — same set Manage Payroll drops.
+      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
+        || u.internal === true || u.displayName === 'Admin Team';
+      if (hidden && u.displayName) set.add(u.displayName);
     }
     return set;
   }, [centerConfig, users, activeCenterId]);
@@ -304,7 +325,10 @@ export default function StaffingBudget() {
             <span className="text-xs text-gray-400">/ {round1(totalTarget)}</span>
           </div>
           <div className="mt-2"><HBar value={period.total} target={totalTarget} scale={Math.max(period.total, totalTarget) * 1.1} over={period.total > totalTarget} /></div>
-          <div className="mt-1.5"><VarPill diff={period.total - totalTarget} /></div>
+          <div className="mt-1.5 flex items-center gap-2">
+            <VarPill diff={period.total - totalTarget} />
+            {period.sick > 0 && <span className="text-[10px] text-gray-400">+{round1(period.sick)}h sick (separate)</span>}
+          </div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Instructional</div>
@@ -357,7 +381,7 @@ export default function StaffingBudget() {
           })}
         </div>
         <p className="mt-4 border-t pt-2 text-xs text-gray-400">
-          Bar = actual hours, tick = budget target. Red = over, green = under. Floor shifts split by the clock — time <b>inside</b> instructional hours counts as Instructional, time <b>outside</b> (setup / prep / office) as Admin Hours — so someone who teaches and does admin lands in both. Salaried staff + volunteers excluded (same as Manage Payroll).
+          Bar = actual hours, tick = budget target. Red = over, green = under. Floor shifts split by the clock — time <b>inside</b> instructional hours counts as Instructional, time <b>outside</b> (setup / prep / office) as Admin Hours — so someone who teaches and does admin lands in both. Matches Manage Payroll: no-shows count 0, pay overrides honoured, and salaried staff, volunteers, hidden-from-ops accounts, and <b>sick pay</b> are all kept out of these worked hours (sick shown separately on the Total card).
         </p>
       </div>
 
