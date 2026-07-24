@@ -2936,6 +2936,10 @@ export default function Admin() {
           payHours: 0,
           sickHours: 0,
           sickCount: 0,
+          // No-shows — scheduled but not worked. Tracked separately so the
+          // headline/scheduled figures can exclude them (they're not owed).
+          noShowHours: 0,
+          noShowCount: 0,
         };
       }
       const hrs = shiftHours(s);
@@ -2977,6 +2981,10 @@ export default function Admin() {
       } else {
         byPerson[key].totalHours += hrs;
         byPerson[key].payHours   += payHrs;
+        if (isNoShow) {
+          byPerson[key].noShowHours += hrs;
+          byPerson[key].noShowCount += 1;
+        }
       }
     }
 
@@ -2987,6 +2995,7 @@ export default function Admin() {
       byPerson[key].totalHours = Math.round(byPerson[key].totalHours * 100) / 100;
       byPerson[key].payHours   = Math.round(byPerson[key].payHours   * 100) / 100;
       byPerson[key].sickHours  = Math.round(byPerson[key].sickHours  * 100) / 100;
+      byPerson[key].noShowHours = Math.round(byPerson[key].noShowHours * 100) / 100;
     }
 
     // ─── Stat (statutory holiday) pay ───────────────────────────────────
@@ -3273,7 +3282,13 @@ export default function Admin() {
     return end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
   })() : '';
 
-  const totalPayrollHours = payrollSummary.reduce((s, p) => s + p.totalHours, 0);
+  // Headline "Total hours" = what we actually PAY, i.e. the sum of Pay h.
+  // That means no-shows count 0 and per-shift overrides are honoured — the
+  // same number Export Final Payroll ships to QuickBooks. (It used to sum
+  // scheduled hours, so a no-show still inflated the period total.)
+  const totalPayrollHours = payrollSummary.reduce((s, p) => s + (p.payHours ?? p.totalHours), 0);
+  const totalNoShowHours  = payrollSummary.reduce((s, p) => s + (p.noShowHours || 0), 0);
+  const totalNoShowCount  = payrollSummary.reduce((s, p) => s + (p.noShowCount || 0), 0);
 
   // Add / remove a staff member from the salaryStaff list (which the payroll
   // filter uses to keep salaried people off the hourly sheet). Writes are
@@ -3723,6 +3738,24 @@ export default function Admin() {
     } catch (e) { toast.error(e?.message || 'Failed to update.'); }
   };
 
+  // ── Mark a payroll row as a No Show ─────────────────────────────────
+  // The instructor was scheduled but didn't come in. The shift stays on
+  // the sheet (greyed) so it's visible that they WERE assigned, but it
+  // pays 0 and drops out of the period's Total hours + the export.
+  //
+  // Marking also clears any manual Pay h override (it's moot at 0) and
+  // auto-resolves the row — "not in Radius because they didn't show" is
+  // an explanation, not an outstanding discrepancy. Un-marking restores
+  // scheduled pay and re-flags the row for review.
+  const handleToggleNoShow = async (shiftId, next = true) => {
+    if (!shiftId) return;
+    try {
+      await updateDoc(doc(db, 'shifts', shiftId), next
+        ? { noShow: true,  payHoursOverride: null, payrollResolved: true }
+        : { noShow: false, payrollResolved: false });
+    } catch (e) { toast.error(e?.message || 'Failed to update.'); }
+  };
+
   // Export gated by unresolved count. When everything's resolved, just
   // export. When some are still flagged, confirm before letting them
   // proceed — admin should know what they're shipping.
@@ -3792,7 +3825,11 @@ export default function Admin() {
         .filter(r => personMatchesRadius(person.name, r.name));
       for (const r of radiusRows) attributedIdxs.add(r._idx);
       const actualHours = radiusRows.reduce((s, r) => s + r.actualHours, 0);
-      const scheduledHours = person.totalHours;
+      // Scheduled baseline for the Sched-vs-Actual comparison EXCLUDES
+      // no-shows. They were assigned but didn't work, so Radius will never
+      // have a clock-in for them — leaving them in made every no-show look
+      // like an unexplained shortfall on the person's header.
+      const scheduledHours = Math.round((person.totalHours - (person.noShowHours || 0)) * 100) / 100;
       const diff = Math.round((actualHours - scheduledHours) * 100) / 100;
       const hasDiscrepancy = Math.abs(diff) > 0.25; // >15 min difference flags it
 
@@ -3941,8 +3978,11 @@ export default function Admin() {
           role: user.instructorType || 'Instructor',
           shifts: [],
           totalHours: 0,
+          payHours: 0,
           sickHours: 0,
           sickCount: 0,
+          noShowHours: 0,
+          noShowCount: 0,
           actualHours: 0,
           scheduledHours: 0,
           diff: 0,
@@ -5491,7 +5531,16 @@ export default function Admin() {
                   </div>
                   <div>
                     <span className="text-gray-500">Total hours: </span>
-                    <span className="font-bold text-green-700">{Math.round(totalPayrollHours * 100) / 100}h</span>
+                    <span className="font-bold text-green-700"
+                      title="Sum of Pay h — no-shows count 0 and per-shift overrides are honoured. This is what Export Final Payroll ships.">
+                      {Math.round(totalPayrollHours * 100) / 100}h
+                    </span>
+                    {totalNoShowHours > 0 && (
+                      <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-[11px] font-semibold text-gray-500"
+                        title="No-show hours excluded from the total above.">
+                        −{Math.round(totalNoShowHours * 100) / 100}h no show · {totalNoShowCount} shift{totalNoShowCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
                   </div>
                 </div>
                 {/* Unresolved counter — aggregates red rows across all
@@ -5505,7 +5554,8 @@ export default function Admin() {
                   let unresolved = 0;
                   for (const p of rows) {
                     for (const s of (p.shiftComparisons || [])) {
-                      if ((s.shiftDiscrepancy || s.missingFromRadius) && !s.payrollResolved) {
+                      // No-shows are explained, not outstanding — never count them.
+                      if (!s.noShow && (s.shiftDiscrepancy || s.missingFromRadius) && !s.payrollResolved) {
                         unresolved++;
                       }
                     }
@@ -5679,9 +5729,9 @@ export default function Admin() {
                           </>
                         ) : (
                           <>
-                            <div className="text-sm font-bold text-green-700">{person.totalHours.toFixed(2)}h worked</div>
+                            <div className="text-sm font-bold text-green-700">{(person.payHours ?? person.totalHours).toFixed(2)}h worked</div>
                             <div className="text-xs text-gray-400">
-                              {person.shifts.length - (person.sickCount || 0)} worked shift{person.shifts.length - (person.sickCount || 0) !== 1 ? 's' : ''}
+                              {person.shifts.length - (person.sickCount || 0) - (person.noShowCount || 0)} worked shift{person.shifts.length - (person.sickCount || 0) - (person.noShowCount || 0) !== 1 ? 's' : ''}
                             </div>
                           </>
                         )}
@@ -5694,6 +5744,14 @@ export default function Admin() {
                           <div className="mt-1 text-xs font-semibold text-amber-700">
                             <span className="rounded bg-amber-100 px-1.5 py-0.5">
                               Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
+                            </span>
+                          </div>
+                        )}
+                        {(person.noShowCount || 0) > 0 && (
+                          <div className="mt-1 text-xs font-semibold text-gray-500">
+                            <span className="rounded bg-gray-200 px-1.5 py-0.5"
+                              title="Scheduled but didn't come in — unpaid and excluded from the period total.">
+                              No show: {person.noShowHours.toFixed(2)}h · {person.noShowCount} shift{person.noShowCount !== 1 ? 's' : ''} · unpaid
                             </span>
                           </div>
                         )}
@@ -5728,7 +5786,12 @@ export default function Admin() {
                             </th>
                           )}
                           {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Diff</th>}
-                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-16">Resolved</th>}
+                          {hasRadius && (
+                            <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-44"
+                              title="Resolve = I've reviewed this. No show = they didn't come in, so it pays 0 and leaves the period total.">
+                              Actions
+                            </th>
+                          )}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-50">
@@ -5746,7 +5809,11 @@ export default function Admin() {
                           const dateLabel = new Date(s.date + 'T00:00:00').toLocaleDateString('en-US', {
                             weekday: 'short', month: 'short', day: 'numeric',
                           });
-                          const rowFlag = hasRadius && (s.shiftDiscrepancy || s.missingFromRadius);
+                          // No-show — scheduled, didn't come in. Renders grey
+                          // and pays 0. It never counts as a red discrepancy:
+                          // "not in Radius" is expected when nobody showed up.
+                          const isNoShow = !!s.noShow;
+                          const rowFlag = hasRadius && !isNoShow && (s.shiftDiscrepancy || s.missingFromRadius);
                           // Resolved overrides the red flag — once admin
                           // ✓'s a row, it goes green even if the underlying
                           // Sched/Actual diff is still mathematically wide.
@@ -5757,22 +5824,28 @@ export default function Admin() {
                           const showRedFlag = rowFlag && !rowResolved;
                           return (
                             <tr key={i} className={`transition-colors ${
-                              showRedFlag ? 'bg-red-50 hover:bg-red-100'
+                              isNoShow ? 'bg-gray-100 text-gray-400 hover:bg-gray-200/70'
+                              : showRedFlag ? 'bg-red-50 hover:bg-red-100'
                               : rowResolved ? 'bg-emerald-50/70 hover:bg-emerald-100/70'
                               : s.sick ? 'bg-amber-50/60 hover:bg-amber-100/60'
                               : 'hover:bg-gray-50'
                             }`}>
-                              <td className="px-5 py-2.5 text-gray-800 font-medium">
+                              <td className={`px-5 py-2.5 font-medium ${isNoShow ? 'text-gray-400' : 'text-gray-800'}`}>
                                 {dateLabel}
                                 {s.sick && (
                                   <span className="ml-2 rounded bg-amber-200 text-amber-900 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">Sick</span>
                                 )}
+                                {isNoShow && (
+                                  <span className="ml-2 rounded bg-gray-300 text-gray-700 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide">No Show</span>
+                                )}
                               </td>
-                              <td className="px-4 py-2.5 text-gray-600 text-xs">{fmtT(s.startTime)} – {fmtT(s.endTime)}</td>
+                              <td className={`px-4 py-2.5 text-xs ${isNoShow ? 'text-gray-400 line-through' : 'text-gray-600'}`}>{fmtT(s.startTime)} – {fmtT(s.endTime)}</td>
                               {hasRadius && (
                                 <td className="px-4 py-2.5 text-xs">
                                   {s.missingFromRadius
-                                    ? <span className="text-red-500 font-medium">Not in Radius</span>
+                                    ? <span className={`font-medium ${isNoShow ? 'text-gray-400' : 'text-red-500'}`}>
+                                        {isNoShow ? 'No clock-in — no show' : 'Not in Radius'}
+                                      </span>
                                     : <div className="flex items-center gap-1">
                                         <input type="time" value={normalizeTimeToHHMM(s.actual.timeIn)}
                                           onChange={e => updateRadiusEntry(s.actual._idx, 'timeIn', e.target.value)}
@@ -5788,7 +5861,7 @@ export default function Admin() {
                                       </div>}
                                 </td>
                               )}
-                              <td className="px-5 py-2.5 text-right font-semibold text-gray-800">{s.hours.toFixed(2)}h</td>
+                              <td className={`px-5 py-2.5 text-right font-semibold ${isNoShow ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{s.hours.toFixed(2)}h</td>
                               {hasRadius && (
                                 <td className="px-5 py-2.5 text-right font-semibold text-blue-700">
                                   {s.missingFromRadius
@@ -5810,7 +5883,15 @@ export default function Admin() {
                                   active so manual edits stand out. */}
                               {hasRadius && (
                                 <td className="px-5 py-2.5 text-right font-semibold">
-                                  {payEditing.shiftId === s.shiftId ? (
+                                  {isNoShow ? (
+                                    // No-show pays 0 and isn't editable — undo
+                                    // the No Show tag first if that's wrong.
+                                    <span
+                                      title="No show — not paid. Click the No Show button to undo."
+                                      className="inline-flex items-center justify-end w-20 rounded-md border border-dashed border-gray-300 bg-gray-50 px-2 py-1 text-right text-gray-400">
+                                      0.00h
+                                    </span>
+                                  ) : payEditing.shiftId === s.shiftId ? (
                                     <input
                                       autoFocus
                                       type="number" step="0.25" min="0"
@@ -5850,31 +5931,61 @@ export default function Admin() {
                                 </td>
                               )}
                               {hasRadius && (
-                                <td className={`px-5 py-2.5 text-right font-bold text-xs ${s.missingFromRadius ? 'text-red-500' : s.shiftDiscrepancy ? 'text-red-600' : 'text-green-600'}`}>
-                                  {s.missingFromRadius ? '⚠ missing' : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
+                                <td className={`px-5 py-2.5 text-right font-bold text-xs ${
+                                  isNoShow ? 'text-gray-400'
+                                  : s.missingFromRadius ? 'text-red-500'
+                                  : s.shiftDiscrepancy ? 'text-red-600' : 'text-green-600'
+                                }`}>
+                                  {isNoShow ? 'not paid' : s.missingFromRadius ? '⚠ missing' : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
                                 </td>
                               )}
                               {/* Resolve column — only meaningful on red
                                   rows. Unflagged rows render an empty cell
                                   so the table grid stays aligned. */}
                               {hasRadius && (
-                                <td className="px-5 py-2.5 text-right">
-                                  {rowFlag && !rowResolved && (
-                                    <button
-                                      onClick={() => handleResolveShift(s.shiftId, true)}
-                                      title="Mark this discrepancy as reviewed. Pay h stays editable."
-                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
-                                      ✓ Resolve
-                                    </button>
-                                  )}
-                                  {rowResolved && (
-                                    <button
-                                      onClick={() => handleResolveShift(s.shiftId, false)}
-                                      title="Un-resolve — re-flags this row as needing review."
-                                      className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
-                                      ✓ Resolved
-                                    </button>
-                                  )}
+                                <td className="px-5 py-2.5">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    {isNoShow ? (
+                                      <button
+                                        onClick={() => handleToggleNoShow(s.shiftId, false)}
+                                        title="Undo — restores scheduled pay for this shift and re-flags it for review."
+                                        className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-gray-200 px-2 py-0.5 text-xs font-semibold text-gray-600 hover:bg-gray-300">
+                                        <UserX size={11} /> No Show
+                                      </button>
+                                    ) : (
+                                      <>
+                                        {/* Mark no-show — offered on any unpaid-looking
+                                            row (nothing in Radius) and, more quietly, on
+                                            every other row via hover. */}
+                                        <button
+                                          onClick={() => handleToggleNoShow(s.shiftId, true)}
+                                          title="They were scheduled but didn't come in. Pays 0 and drops out of the period total."
+                                          className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-semibold transition-colors ${
+                                            s.missingFromRadius
+                                              ? 'border-gray-300 bg-white text-gray-600 hover:bg-gray-100'
+                                              : 'border-transparent text-transparent hover:border-gray-300 hover:bg-gray-100 hover:text-gray-600'
+                                          }`}>
+                                          <UserX size={11} /> No show
+                                        </button>
+                                        {rowFlag && !rowResolved && (
+                                          <button
+                                            onClick={() => handleResolveShift(s.shiftId, true)}
+                                            title="Mark this discrepancy as reviewed. Pay h stays editable."
+                                            className="inline-flex items-center gap-1 rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
+                                            ✓ Resolve
+                                          </button>
+                                        )}
+                                        {rowResolved && (
+                                          <button
+                                            onClick={() => handleResolveShift(s.shiftId, false)}
+                                            title="Un-resolve — re-flags this row as needing review."
+                                            className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
+                                            ✓ Resolved
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
                                 </td>
                               )}
                             </tr>
@@ -5925,7 +6036,15 @@ export default function Admin() {
                       <tfoot>
                         <tr className={`border-t ${isDiscrepant ? 'bg-red-50' : 'bg-green-50'}`}>
                           <td colSpan={3} className={`px-5 py-2 text-sm font-semibold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}>Total</td>
-                          <td className={`px-5 py-2 text-right text-sm font-bold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}>{person.totalHours.toFixed(2)}h</td>
+                          {/* Sched total nets off no-show hours in the Radius
+                              view so Diff (= Actual − Sched) reconciles against
+                              the struck-through rows above. */}
+                          <td className={`px-5 py-2 text-right text-sm font-bold ${isDiscrepant ? 'text-red-800' : 'text-green-800'}`}
+                            title={hasRadius && (person.noShowHours || 0) > 0
+                              ? `Scheduled ${person.totalHours.toFixed(2)}h less ${person.noShowHours.toFixed(2)}h no-show`
+                              : undefined}>
+                            {(hasRadius ? person.scheduledHours : person.totalHours).toFixed(2)}h
+                          </td>
                           {hasRadius && <td className="px-5 py-2 text-right text-sm font-bold text-blue-700">{person.actualHours.toFixed(2)}h</td>}
                           {hasRadius && (
                             <td className="px-5 py-2 text-right text-sm font-bold text-purple-700"
