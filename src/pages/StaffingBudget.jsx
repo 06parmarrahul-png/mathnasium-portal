@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { collection, onSnapshot, query, where, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, query, where, doc, setDoc, deleteField, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
@@ -7,7 +7,7 @@ import { resolveInstructionalHours } from '../lib/centerConfig';
 import { BUDGET_BUCKETS, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
-  Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays,
+  Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays, RotateCcw,
 } from 'lucide-react';
 
 /**
@@ -49,12 +49,46 @@ function countsAsWork(s, excluded) {
   return true;
 }
 
-// Per-period default targets, seeded from the July 2026 model.
+// Per-period default targets — the centre's current model, 623h total.
+// Used for any pay period that hasn't had its own targets saved (see the
+// resolution chain below). Update these when the underlying model changes;
+// periods already saved under byPeriod are unaffected.
 const DEFAULT_TARGETS = {
-  instructional: 396, online: 54, steam: 46, summerCamp: 70,
+  instructional: 315, online: 54, steam: 46, summerCamp: 54,
   adminHours: 68, adminAssistant: 40, host: 46,
   kpi: 1.8, // instructional hours per student
 };
+const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
+
+// ── Per-period targets ──────────────────────────────────────────────────
+// Targets are saved AGAINST A PAY PERIOD, keyed by that period's start date
+// ('2026-07-11'). Editing next period's budget therefore leaves this
+// period's alone — before this, every period shared one global set, so
+// changing one changed them all.
+//
+// Resolution order for whichever period you're viewing:
+//   1. targets saved for that exact period → use them
+//   2. periods on/before LEGACY_TARGETS_THROUGH → the centre's old single
+//      global set, so already-reviewed history keeps the budget line it
+//      was measured against
+//   3. anything later → DEFAULT_TARGETS, the July 2026 model. A brand-new
+//      period starts from the model rather than silently inheriting
+//      whatever happened to be set months ago.
+//
+// The constant is the start date of the pay period during which per-period
+// targets shipped. It's deliberately frozen rather than derived from
+// "today" — otherwise periods would silently change which budget they were
+// compared against as time passed.
+const LEGACY_TARGETS_THROUGH = '2026-07-11';
+
+// Keep only real target keys — the stored staffingBudget object also holds
+// dailyBudgets and byPeriod, which must never leak into a targets object.
+function pickTargets(src) {
+  const out = {};
+  if (!src) return out;
+  for (const k of TARGET_KEYS) if (src[k] != null && src[k] !== '') out[k] = src[k];
+  return out;
+}
 
 // Weekday order for the per-day budget editor.
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
@@ -172,15 +206,47 @@ export default function StaffingBudget() {
   const loStr = format(periodStart, 'yyyy-MM-dd');
   const hiStr = format(periodEnd, 'yyyy-MM-dd');
 
-  const savedTargets = useMemo(() => ({ ...DEFAULT_TARGETS, ...(centerConfig?.staffingBudget || {}) }), [centerConfig]);
+  const budgetCfg = useMemo(() => centerConfig?.staffingBudget || {}, [centerConfig]);
+
+  // `targetsFor(periodKey)` / `dailyFor(periodKey)` — resolve a period's
+  // budget through the saved → legacy → default chain described up top.
+  // Exposed as functions (not just this period's value) so the trend chart
+  // can compare each of its 6 bars to that bar's own budget.
+  const targetsFor = useMemo(() => {
+    const byPeriod = budgetCfg.byPeriod || {};
+    return (key) => {
+      if (byPeriod[key]) return { ...DEFAULT_TARGETS, ...pickTargets(byPeriod[key]) };
+      if (key <= LEGACY_TARGETS_THROUGH) return { ...DEFAULT_TARGETS, ...pickTargets(budgetCfg) };
+      return { ...DEFAULT_TARGETS };
+    };
+  }, [budgetCfg]);
+  const dailyFor = useMemo(() => {
+    const byPeriod = budgetCfg.byPeriod || {};
+    return (key) => {
+      if (byPeriod[key]) return byPeriod[key].dailyBudgets || {};
+      if (key <= LEGACY_TARGETS_THROUGH) return budgetCfg.dailyBudgets || {};
+      return {};
+    };
+  }, [budgetCfg]);
+
+  // Where this period's numbers came from — drives the badge in the Targets
+  // panel so it's never ambiguous whether you're looking at saved figures.
+  const targetSource = (budgetCfg.byPeriod || {})[loStr]
+    ? 'saved'
+    : (loStr <= LEGACY_TARGETS_THROUGH ? 'legacy' : 'default');
+
+  const savedTargets = useMemo(() => targetsFor(loStr), [targetsFor, loStr]);
   const [targets, setTargets] = useState(savedTargets);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
+  // Re-seeds whenever you page to another period, so the boxes always show
+  // THAT period's budget rather than carrying your unsaved edits across.
   useEffect(() => { setTargets(savedTargets); }, [savedTargets]);
 
   // Optional per-weekday budgets. When any are set, the By-day view compares
-  // each day to its own weekday budget instead of the even split.
-  const savedDaily = useMemo(() => (centerConfig?.staffingBudget?.dailyBudgets || null), [centerConfig]);
+  // each day to its own weekday budget instead of the even split. Saved
+  // per-period alongside the hour targets.
+  const savedDaily = useMemo(() => dailyFor(loStr), [dailyFor, loStr]);
   const [dailyBudgets, setDailyBudgets] = useState(() => savedDaily || {});
   const [showDaily, setShowDaily] = useState(false);
   const [expandedDay, setExpandedDay] = useState(null); // day row index whose category breakdown is open
@@ -256,28 +322,52 @@ export default function StaffingBudget() {
     let s = periodStart;
     for (let i = 0; i < 6; i++) { starts.unshift(s); s = prevPeriodStart(s); }
     return starts.map(st => {
+      const key = format(st, 'yyyy-MM-dd');
       const en = periodEndFor(st);
-      const a = aggregate(shifts, format(st, 'yyyy-MM-dd'), format(en, 'yyyy-MM-dd'), excludedNames, windowFor);
-      return { label: format(st, 'MMM d'), total: a.total, instructional: a.byCat.instructional };
+      const a = aggregate(shifts, key, format(en, 'yyyy-MM-dd'), excludedNames, windowFor);
+      // Each bar is measured against ITS OWN period's budget — a single
+      // shared line would be wrong now that targets vary period to period.
+      const t = targetsFor(key);
+      const budget = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
+      return { label: format(st, 'MMM d'), total: a.total, instructional: a.byCat.instructional, budget };
     });
-  }, [shifts, periodStart, excludedNames, windowFor]);
-  const trendMax = useMemo(() => Math.max(1, totalTarget, ...trend.map(t => t.total)) * 1.05, [trend, totalTarget]);
+  }, [shifts, periodStart, excludedNames, windowFor, targetsFor]);
+  const trendMax = useMemo(
+    () => Math.max(1, ...trend.map(t => Math.max(t.total, t.budget || 0))) * 1.08,
+    [trend],
+  );
 
-  const dirty = Object.keys(DEFAULT_TARGETS).some(k => Number(targets[k]) !== Number(savedTargets[k]))
+  const dirty = TARGET_KEYS.some(k => Number(targets[k]) !== Number(savedTargets[k]))
     || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0));
 
+  // Writes ONLY the period currently on screen, under
+  // staffingBudget.byPeriod['<period start>']. setDoc + merge deep-merges
+  // map fields, so every other period's saved budget is untouched.
   const saveTargets = async () => {
     if (!activeCenterId) return;
     setSaving(true);
     try {
       const clean = {};
-      for (const k of Object.keys(DEFAULT_TARGETS)) clean[k] = Number(targets[k]) || 0;
+      for (const k of TARGET_KEYS) clean[k] = Number(targets[k]) || 0;
       const cleanDaily = {};
       for (const wd of WEEKDAY_ORDER) cleanDaily[wd] = Number(dailyBudgets[wd]) || 0;
       clean.dailyBudgets = cleanDaily;
       await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { staffingBudget: clean, updatedAt: serverTimestamp() }, { merge: true });
+        { staffingBudget: { byPeriod: { [loStr]: clean } }, updatedAt: serverTimestamp() },
+        { merge: true });
       setSavedAt(true); setTimeout(() => setSavedAt(false), 2500);
+    } finally { setSaving(false); }
+  };
+
+  // Drop this period's saved budget so it falls back down the chain again
+  // (legacy set for old periods, DEFAULT_TARGETS for new ones).
+  const clearPeriodTargets = async () => {
+    if (!activeCenterId) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { staffingBudget: { byPeriod: { [loStr]: deleteField() } }, updatedAt: serverTimestamp() },
+        { merge: true });
     } finally { setSaving(false); }
   };
 
@@ -400,7 +490,7 @@ export default function StaffingBudget() {
         {/* Per-weekday budget editor */}
         {showDaily && (
           <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
-            <p className="mb-2 text-xs text-gray-500">Set an hours budget for each weekday. Leave all at 0 to fall back to an even split of the period total.</p>
+            <p className="mb-2 text-xs text-gray-500">Set an hours budget for each weekday <b>for this pay period</b>. Leave all at 0 to fall back to an even split of the period total.</p>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
               {WEEKDAY_ORDER.map(wd => (
                 <label key={wd} className="block">
@@ -414,8 +504,8 @@ export default function StaffingBudget() {
             </div>
             <div className="mt-2.5 flex items-center gap-2">
               <button onClick={saveTargets} disabled={!dirty || saving}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-                <Save size={13} /> {saving ? 'Saving…' : 'Save daily budgets'}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
+                <Save size={13} /> {saving ? 'Saving…' : 'Save hours for this period'}
               </button>
               {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
               <span className="text-xs text-gray-400">Weekday total = {round1(WEEKDAY_ORDER.reduce((n, wd) => n + (Number(dailyBudgets[wd]) || 0), 0))}h/wk</span>
@@ -484,43 +574,64 @@ export default function StaffingBudget() {
       {/* Trend — 6 periods */}
       <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
         <h3 className="mb-3 text-sm font-bold text-gray-900">Trend — last 6 pay periods</h3>
-        <div className="relative flex items-end justify-between gap-2" style={{ height: 140 }}>
-          {/* Target reference line */}
-          <div className="pointer-events-none absolute left-0 right-0 border-t border-dashed border-amber-400"
-            style={{ bottom: `${Math.min(100, (totalTarget / trendMax) * 100)}%` }}>
-            <span className="absolute -top-4 right-0 text-[10px] font-semibold text-amber-600">budget {round1(totalTarget)}</span>
-          </div>
+        <div className="flex items-end justify-between gap-2" style={{ height: 140 }}>
           {trend.map((t, i) => {
             const totalH = (t.total / trendMax) * 100;
             const instrH = (t.instructional / trendMax) * 100;
-            const over = t.total > totalTarget;
+            const budgetH = ((t.budget || 0) / trendMax) * 100;
+            const over = (t.budget || 0) > 0 && t.total > t.budget;
             return (
               <div key={i} className="flex flex-1 flex-col items-center justify-end gap-1" style={{ height: '100%' }}>
-                <span className="text-[10px] font-mono text-gray-500">{round1(t.total)}</span>
-                <div className="relative w-full max-w-[46px] rounded-t bg-gray-100" style={{ height: `${totalH}%` }} title={`Total ${round1(t.total)}h · Instr ${round1(t.instructional)}h`}>
-                  <div className="absolute bottom-0 w-full rounded-t bg-emerald-400" style={{ height: `${(instrH / Math.max(totalH, 0.001)) * 100}%` }} />
-                  <div className={`absolute inset-x-0 top-0 h-1 rounded-t ${over ? 'bg-red-500' : 'bg-gray-300'}`} />
+                <span className={`text-[10px] font-mono ${over ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{round1(t.total)}</span>
+                {/* Column is full-height so the budget tick can sit at its own
+                    level independent of how tall the bar is. */}
+                <div className="relative w-full max-w-[46px] flex-1">
+                  <div className="absolute bottom-0 w-full rounded-t bg-gray-100" style={{ height: `${totalH}%` }}
+                    title={`Total ${round1(t.total)}h · Instr ${round1(t.instructional)}h · Budget ${round1(t.budget || 0)}h`}>
+                    <div className="absolute bottom-0 w-full rounded-t bg-emerald-400" style={{ height: `${(instrH / Math.max(totalH, 0.001)) * 100}%` }} />
+                    <div className={`absolute inset-x-0 top-0 h-1 rounded-t ${over ? 'bg-red-500' : 'bg-gray-300'}`} />
+                  </div>
+                  {/* Per-period budget tick — this period's own target. */}
+                  {(t.budget || 0) > 0 && (
+                    <div className="pointer-events-none absolute -inset-x-1 border-t border-dashed border-amber-400"
+                      style={{ bottom: `${Math.min(100, budgetH)}%` }} title={`Budget ${round1(t.budget)}h`} />
+                  )}
                 </div>
                 <span className="text-[10px] text-gray-400">{t.label}</span>
               </div>
             );
           })}
         </div>
-        <div className="mt-3 flex items-center gap-4 text-[11px] text-gray-500">
+        <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-gray-500">
           <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-emerald-400" /> Instructional</span>
           <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-gray-200" /> Other</span>
-          <span className="flex items-center gap-1"><span className="h-2 w-3 border-t border-dashed border-amber-400" /> Total budget</span>
+          <span className="flex items-center gap-1"><span className="h-2 w-3 border-t border-dashed border-amber-400" /> That period's own budget</span>
         </div>
       </div>
 
       {/* Targets — collapsible */}
       <div className="mt-5 rounded-2xl border bg-white p-4 shadow-sm">
         <button onClick={() => setShowTargets(v => !v)} className="flex w-full items-center justify-between text-sm font-bold text-gray-900">
-          <span>Targets (per pay period)</span>
+          <span className="flex flex-wrap items-center gap-2">
+            <span>Targets for {format(periodStart, 'MMM d')} – {format(periodEnd, 'MMM d')}</span>
+            {targetSource === 'saved' && (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Saved for this period</span>
+            )}
+            {targetSource === 'legacy' && (
+              <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-gray-500">Centre baseline</span>
+            )}
+            {targetSource === 'default' && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Model default — not saved yet</span>
+            )}
+          </span>
           <span className="text-xs font-normal text-gray-400">{showTargets ? 'Hide' : 'Edit'}</span>
         </button>
         {showTargets && (
           <>
+            <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+              These targets belong to <b>this pay period only</b>. Page to another period with the arrows up top and you'll see (and can save) a different set — editing one no longer rewrites the rest.
+            </p>
+
             {/* Hour targets, per role */}
             <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per pay period)</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -558,12 +669,21 @@ export default function StaffingBudget() {
               </div>
             </div>
 
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <button onClick={saveTargets} disabled={!dirty || saving}
-                className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50">
-                <Save size={13} /> {saving ? 'Saving…' : 'Save targets'}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
+                <Save size={14} /> {saving ? 'Saving…' : `Save hours for ${format(periodStart, 'MMM d')} – ${format(periodEnd, 'MMM d')}`}
               </button>
-              {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
+              {savedAt && <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700"><Check size={13} /> Saved</span>}
+              {dirty && !savedAt && (
+                <span className="text-xs font-medium text-amber-600">Unsaved changes — they only apply to this period.</span>
+              )}
+              {targetSource === 'saved' && !dirty && (
+                <button onClick={clearPeriodTargets} disabled={saving}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                  <RotateCcw size={12} /> Reset this period
+                </button>
+              )}
             </div>
           </>
         )}
