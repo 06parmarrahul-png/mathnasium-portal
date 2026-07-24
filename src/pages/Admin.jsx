@@ -3287,6 +3287,10 @@ export default function Admin() {
   // same number Export Final Payroll ships to QuickBooks. (It used to sum
   // scheduled hours, so a no-show still inflated the period total.)
   const totalPayrollHours = payrollSummary.reduce((s, p) => s + (p.payHours ?? p.totalHours), 0);
+  // Scheduled total kept separate — the export's Detail sheet needs a real
+  // "Scheduled h" grand total, which is NOT the same number now that the
+  // headline nets off no-shows and honours Pay h overrides.
+  const totalScheduledHours = payrollSummary.reduce((s, p) => s + (p.totalHours || 0), 0);
   const totalNoShowHours  = payrollSummary.reduce((s, p) => s + (p.noShowHours || 0), 0);
   const totalNoShowCount  = payrollSummary.reduce((s, p) => s + (p.noShowCount || 0), 0);
 
@@ -3391,7 +3395,7 @@ export default function Admin() {
     );
     detailRows.push([
       '', '', 'GRAND TOTAL', '', '',
-      Math.round(totalPayrollHours * 100) / 100,
+      Math.round(totalScheduledHours * 100) / 100,
       Math.round(grandPay * 100) / 100,
       '',
     ]);
@@ -3797,12 +3801,27 @@ export default function Admin() {
       .replace(/[.'`]/g, '')      // drop punctuation that doesn't affect identity
       .split(/[\s-]+/)            // split on whitespace + hyphens
       .filter(Boolean);
+    // Radius holds the LEGAL first name; Ratio holds the name people go by
+    // ("Devanshi Mistry" vs "Dev Mistry", "Benjamin Gong" vs "Ben Gong").
+    // Treat one first name as matching the other when it's a prefix of it,
+    // 3+ chars so "Jo" doesn't sweep up Joanne AND Jonathan. Only used when
+    // BOTH names carry a surname, and the surname must still match exactly —
+    // that anchors it, so the only false-positive left is two staff who share
+    // a surname AND whose first names prefix one another. If that ever
+    // happens, the radiusName alias on the user doc still wins.
+    const firstNamesMatch = (a, b) => {
+      if (a === b) return true;
+      const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+      return short.length >= 3 && long.startsWith(short);
+    };
     const namesMatch = (a, b) => {
       const ta = nameTokens(a);
       const tb = nameTokens(b);
       if (ta.length === 0 || tb.length === 0) return false;
+      // Single-token name on either side — no surname to anchor a nickname
+      // guess, so require an exact hit.
       if (ta.length === 1 || tb.length === 1) return ta[0] === tb[0];
-      return ta[0] === tb[0] && ta[ta.length - 1] === tb[tb.length - 1];
+      return firstNamesMatch(ta[0], tb[0]) && ta[ta.length - 1] === tb[tb.length - 1];
     };
     // Pull the user's radiusName from the canonical user list so the
     // matcher can recognise both "Joanne Lee" and "Jieun Lee".
