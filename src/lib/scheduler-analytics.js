@@ -318,6 +318,12 @@ export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, 
   // Live count only makes sense for the current day.
   if (dateStr !== ymdInTZ(now, tz)) return 0;
   const nowMin = minutesInTZ(now, tz);
+  // A session counts as "here now" only while it's actually in progress:
+  // from a short early-arrival grace before its start, until its end. Without
+  // the start check, someone checked in / a walk-in slotted for LATER today
+  // would wrongly show as in-centre hours early.
+  const EARLY_GRACE_MIN = 20;
+  const inProgress = (startMin, dur) => nowMin >= startMin - EARLY_GRACE_MIN && nowMin < startMin + dur;
   const slotToMin = (slot) => {
     const [h, m] = String(slot || '0:0').split(':').map(Number);
     return (h || 0) * 60 + (m || 0);
@@ -344,7 +350,7 @@ export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, 
         // into a later block gets dropped as soon as their old slot ends.
         const startMin = overrides[id] != null ? slotToMin(overrides[id]) : rowStartMin;
         const dur = Number(s.duration) > 0 ? Number(s.duration) : 30;
-        if (nowMin < startMin + dur) count++; // still in the room until session end
+        if (inProgress(startMin, dur)) count++; // in the room while their session is running
       }
     }
   }
@@ -365,7 +371,7 @@ export function liveInCentreCount({ data, checkIns = {}, walkIns = {}, dateStr, 
         const status = checkIns[id]?.status;
         if (status === 'noshow' || status === 'cancel') continue; // explicitly left/absent
         const dur = Number(w.duration) > 0 ? Number(w.duration) : 60;
-        if (nowMin < startMin + dur) count++;
+        if (inProgress(startMin, dur)) count++;
       }
     }
   }
