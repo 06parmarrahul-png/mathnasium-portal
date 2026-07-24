@@ -7,7 +7,7 @@ import { resolveInstructionalHours } from '../lib/centerConfig';
 import { BUDGET_BUCKETS, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
-  Wallet, ChevronLeft, ChevronRight, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays,
+  Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays,
 } from 'lucide-react';
 
 /**
@@ -73,11 +73,11 @@ function perDayHours(shifts, loStr, hiStr, excluded, windowFor) {
     if (excluded && excluded.has(s.userName)) continue;
     const hrs = paidHours(s);
     if (hrs <= 0) continue;
-    const rec = byDate.get(s.date) || { total: 0, instructional: 0 };
+    let rec = byDate.get(s.date);
+    if (!rec) { rec = { total: 0, byCat: {} }; byDate.set(s.date, rec); }
     rec.total += hrs;
     const alloc = bucketHoursForShift(s, hrs, windowFor(s.date));
-    rec.instructional += (alloc.instructional || 0);
-    byDate.set(s.date, rec);
+    for (const k in alloc) rec.byCat[k] = (rec.byCat[k] || 0) + alloc[k];
   }
   return byDate;
 }
@@ -162,6 +162,7 @@ export default function StaffingBudget() {
   const savedDaily = useMemo(() => (centerConfig?.staffingBudget?.dailyBudgets || null), [centerConfig]);
   const [dailyBudgets, setDailyBudgets] = useState(() => savedDaily || {});
   const [showDaily, setShowDaily] = useState(false);
+  const [expandedDay, setExpandedDay] = useState(null); // day row index whose category breakdown is open
   useEffect(() => { setDailyBudgets(savedDaily || {}); }, [savedDaily]);
 
   useEffect(() => {
@@ -214,15 +215,15 @@ export default function StaffingBudget() {
       const weekday = DOW[d.getDay()];
       const isOp = opDays.includes(weekday);
       if (isOp) opCount++;
-      const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, instructional: 0 };
-      rows.push({ label: format(d, 'EEE MMM d'), weekday, isOp, total: rec.total, instructional: rec.instructional });
+      const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, byCat: {} };
+      rows.push({ label: format(d, 'EEE MMM d'), weekday, isOp, total: rec.total, byCat: rec.byCat });
       d = addDays(d, 1);
     }
     const evenBudget = opCount > 0 ? totalTarget / opCount : 0;
     for (const r of rows) {
       r.budget = useDaily ? (Number(dailyBudgets[r.weekday]) || 0) : (r.isOp ? evenBudget : 0);
     }
-    return { rows, evenBudget, useDaily };
+    return { rows, evenBudget, useDaily, opCount };
   }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget, windowFor, dailyBudgets]);
   const dayScale = useMemo(
     () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
@@ -403,16 +404,53 @@ export default function StaffingBudget() {
             const diff = r.total - (r.budget || 0);
             const over = (r.budget || 0) > 0 && diff > 2;
             const showBar = r.isOp || r.total > 0 || (r.budget || 0) > 0;
+            const canExpand = r.total > 0;
+            const isExpanded = expandedDay === i;
             return (
-              <div key={i} className={`grid grid-cols-[96px_1fr_128px] items-center gap-3 ${!showBar ? 'opacity-40' : ''}`}>
-                <div className="text-xs font-medium text-gray-600">{r.label}</div>
-                {showBar
-                  ? <HBar value={r.total} target={r.budget || 0} scale={dayScale} over={over} />
-                  : <div className="text-[11px] text-gray-300">closed</div>}
-                <div className="flex items-center justify-end gap-2">
-                  <span className="font-mono text-xs text-gray-600">{round1(r.total)}h</span>
-                  {showBar && (r.budget || 0) > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
+              <div key={i}>
+                <div className={`grid grid-cols-[96px_1fr_150px] items-center gap-3 ${!showBar ? 'opacity-40' : ''}`}>
+                  <div className="text-xs font-medium text-gray-600">{r.label}</div>
+                  {showBar
+                    ? <HBar value={r.total} target={r.budget || 0} scale={dayScale} over={over} />
+                    : <div className="text-[11px] text-gray-300">closed</div>}
+                  <div className="flex items-center justify-end gap-1.5">
+                    <span className="font-mono text-xs text-gray-600">{round1(r.total)}h</span>
+                    {showBar && (r.budget || 0) > 0 ? <VarPill diff={diff} /> : <span className="min-w-[52px]" />}
+                    {canExpand
+                      ? <button onClick={() => setExpandedDay(isExpanded ? null : i)} title="Category breakdown"
+                          className="rounded p-0.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700">
+                          <ChevronDown size={14} className={`transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                        </button>
+                      : <span className="w-[18px]" />}
+                  </div>
                 </div>
+                {isExpanded && (
+                  <div className="mb-1 ml-[108px] mr-1 rounded-lg border border-gray-100 bg-gray-50/70 px-3 py-2">
+                    {CATEGORIES.filter(c => (r.byCat?.[c.key] || 0) > 0.05)
+                      .map(c => {
+                        const a = r.byCat[c.key];
+                        // Compare to this category's own typical operating day this
+                        // period — surfaces the category that ran hotter than usual.
+                        const avg = perDay.opCount > 0 ? (period.byCat[c.key] || 0) / perDay.opCount : 0;
+                        return { c, a, cv: a - avg };
+                      })
+                      .sort((x, y) => y.cv - x.cv)
+                      .map(({ c, a, cv }) => (
+                        <div key={c.key} className="flex items-center justify-between py-0.5 text-xs">
+                          <span className="flex items-center gap-1.5 font-medium" style={{ color: c.color }}>
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: c.color }} />{c.label}
+                          </span>
+                          <span className="flex items-center gap-3">
+                            <span className="font-mono text-gray-600">{round1(a)}h</span>
+                            <span className={`min-w-[42px] text-right font-bold ${cv > 0.5 ? 'text-red-600' : cv < -0.5 ? 'text-emerald-600' : 'text-gray-400'}`}>
+                              {cv >= 0 ? '+' : ''}{round1(cv)}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    <p className="mt-1 border-t border-gray-200 pt-1 text-[10px] text-gray-400">Hours by category · +/- vs this category's typical day this period (red = ran hotter than usual — the likely driver).</p>
+                  </div>
+                )}
               </div>
             );
           })}
