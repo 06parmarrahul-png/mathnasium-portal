@@ -56,7 +56,8 @@ function countsAsWork(s, excluded) {
 const DEFAULT_TARGETS = {
   instructional: 315, online: 54, steam: 46, summerCamp: 54,
   adminHours: 68, adminAssistant: 40, host: 46,
-  kpi: 1.8, // instructional hours per student
+  kpi: 1.8,            // instructional hours per student
+  extraDayHours: null, // null = price the 15th day automatically
 };
 const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
 
@@ -92,6 +93,8 @@ function pickTargets(src) {
 
 // Weekday order for the per-day budget editor.
 const WEEKDAY_ORDER = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+// Indexed by Date#getDay().
+const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // `windowFor(dateStr)` → { start, end } instructional window for that day (or null),
 // used to split floor shifts into Instructional (in-window) vs Admin Hours (out).
@@ -282,40 +285,163 @@ export default function StaffingBudget() {
 
   const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames, windowFor), [shifts, loStr, hiStr, excludedNames, windowFor]);
   const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
-  const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (Number(targets[c.key]) || 0), 0), [targets]);
+
+  const opDays = useMemo(() => (
+    (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
+      ? centerConfig.operatingDays
+      : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  ), [centerConfig]);
+
+  // Hoisted so both the by-day view and the extra-day mix read the same
+  // per-date buckets instead of recomputing them.
+  const byDateHours = useMemo(
+    () => perDayHours(shifts, loStr, hiStr, excludedNames, windowFor),
+    [shifts, loStr, hiStr, excludedNames, windowFor],
+  );
+
+  // Base budget = the 14-day cycle the targets are written against.
+  const baseTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (Number(targets[c.key]) || 0), 0), [targets]);
+
+  // ── The 15th (and sometimes 16th) day ──────────────────────────────────
+  // Pay periods run 15 days (11th–25th) or 15–16 days (26th–10th), but the
+  // staffing budget is built on a 14-day cycle. That leaves one or two
+  // weekdays running a THIRD time in the period which the base targets
+  // don't pay for — so a 15-day period read over budget through no fault of
+  // the schedule.
+  //
+  // The extra days are simply the first (length − 14) days of the period.
+  // Each is priced at that weekday's daily budget, falling back to an even
+  // split of the base across a 14-day cycle's operating days when daily
+  // budgets aren't set. Closed weekdays cost nothing, which is why the
+  // 16-day 26th–10th periods that pick up a 3rd Sunday only really pay for
+  // the Monday.
+  //
+  // The top-up is then split across categories using that weekday's OWN
+  // observed mix this period — a 3rd Wednesday buys Wednesday-shaped hours
+  // (Instructional + Online + STEAM), a 3rd Saturday buys Saturday-shaped
+  // ones — so there are no per-weekday percentages to keep up to date.
+  const extra = useMemo(() => {
+    const periodDays = Math.round((periodEnd - periodStart) / 86400000) + 1;
+    const days = [];
+    for (let i = 0; i < Math.max(0, periodDays - 14); i++) {
+      const d = addDays(periodStart, i);
+      days.push({ weekday: DOW_NAMES[d.getDay()], label: format(d, 'EEE MMM d') });
+    }
+
+    const cycleOpDays = opDays.length * 2;           // operating days in 14 days
+    const evenRate = cycleOpDays > 0 ? baseTarget / cycleOpDays : 0;
+    const rateFor = (wd) => {
+      if (!opDays.includes(wd)) return 0;            // closed that day → free
+      const set = Number(dailyBudgets[wd]) || 0;
+      return set > 0 ? set : evenRate;
+    };
+
+    const autoHours = days.reduce((n, d) => n + rateFor(d.weekday), 0);
+    const ov = targets.extraDayHours;
+    const isOverride = ov != null && ov !== '';
+    const hours = isOverride ? (Number(ov) || 0) : autoHours;
+
+    // Category weights — each extra day contributes its own rate, shaped by
+    // how that weekday actually ran this period.
+    const weights = {};
+    let weightTotal = 0;
+    for (const d of days) {
+      const rate = rateFor(d.weekday);
+      if (rate <= 0) continue;
+      const shape = {};
+      let shapeTotal = 0;
+      for (const [ds, rec] of byDateHours) {
+        if (DOW_NAMES[new Date(ds + 'T12:00:00').getDay()] !== d.weekday) continue;
+        for (const k in rec.byCat) { shape[k] = (shape[k] || 0) + rec.byCat[k]; shapeTotal += rec.byCat[k]; }
+      }
+      let src = shape, srcTotal = shapeTotal;
+      if (!(srcTotal > 0)) {
+        // Never worked that weekday this period — fall back to the shape of
+        // the base targets so the top-up still lands somewhere sensible.
+        src = {}; srcTotal = 0;
+        for (const c of CATEGORIES) {
+          const v = Number(targets[c.key]) || 0;
+          if (v > 0) { src[c.key] = v; srcTotal += v; }
+        }
+      }
+      if (!(srcTotal > 0)) continue;
+      for (const k in src) {
+        const w = rate * (src[k] / srcTotal);
+        weights[k] = (weights[k] || 0) + w;
+        weightTotal += w;
+      }
+    }
+
+    const alloc = {};
+    if (hours > 0 && weightTotal > 0) {
+      for (const k in weights) alloc[k] = hours * (weights[k] / weightTotal);
+    }
+    return { days, autoHours, hours, alloc, isOverride, periodDays };
+  }, [periodStart, periodEnd, opDays, dailyBudgets, targets, baseTarget, byDateHours]);
+
+  // What every bar on this page actually measures against: base + top-up.
+  const effTargets = useMemo(() => {
+    const out = {};
+    for (const c of CATEGORIES) out[c.key] = (Number(targets[c.key]) || 0) + (extra.alloc[c.key] || 0);
+    return out;
+  }, [targets, extra]);
+  const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (effTargets[c.key] || 0), 0), [effTargets]);
+
   const catScale = useMemo(
-    () => Math.max(1, ...CATEGORIES.map(c => Math.max(period.byCat[c.key], Number(targets[c.key]) || 0))) * 1.1,
-    [period, targets],
+    () => Math.max(1, ...CATEGORIES.map(c => Math.max(period.byCat[c.key], effTargets[c.key] || 0))) * 1.1,
+    [period, effTargets],
   );
 
   const perDay = useMemo(() => {
-    const byDate = perDayHours(shifts, loStr, hiStr, excludedNames, windowFor);
-    const opDays = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
-      ? centerConfig.operatingDays
-      : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const useDaily = dailyBudgets && Object.values(dailyBudgets).some(v => Number(v) > 0);
     const rows = [];
     let opCount = 0;
     let d = periodStart;
     while (format(d, 'yyyy-MM-dd') <= hiStr) {
-      const weekday = DOW[d.getDay()];
+      const weekday = DOW_NAMES[d.getDay()];
       const isOp = opDays.includes(weekday);
       if (isOp) opCount++;
-      const rec = byDate.get(format(d, 'yyyy-MM-dd')) || { total: 0, byCat: {} };
+      const rec = byDateHours.get(format(d, 'yyyy-MM-dd')) || { total: 0, byCat: {} };
       rows.push({ label: format(d, 'EEE MMM d'), weekday, isOp, total: rec.total, byCat: rec.byCat });
       d = addDays(d, 1);
     }
+    // opCount is this period's real operating-day count (13 or 14, not 12),
+    // and totalTarget now includes the extra-day top-up — so the even split
+    // divides the right budget by the right number of days.
     const evenBudget = opCount > 0 ? totalTarget / opCount : 0;
     for (const r of rows) {
       r.budget = useDaily ? (Number(dailyBudgets[r.weekday]) || 0) : (r.isOp ? evenBudget : 0);
     }
     return { rows, evenBudget, useDaily, opCount };
-  }, [shifts, loStr, hiStr, excludedNames, periodStart, centerConfig, totalTarget, windowFor, dailyBudgets]);
+  }, [byDateHours, hiStr, periodStart, opDays, totalTarget, dailyBudgets]);
   const dayScale = useMemo(
     () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
     [perDay],
   );
+
+  // Total budget for ANY period — that period's saved targets plus its own
+  // extra-day top-up. Used by the trend so each bar compares to a budget
+  // built for its own length, not this period's.
+  const periodBudgetTotal = useMemo(() => (st) => {
+    const key = format(st, 'yyyy-MM-dd');
+    const t = targetsFor(key);
+    const base = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
+    const ov = t.extraDayHours;
+    if (ov != null && ov !== '') return base + (Number(ov) || 0);
+    const en = periodEndFor(st);
+    const len = Math.round((en - st) / 86400000) + 1;
+    const daily = dailyFor(key);
+    const cycleOpDays = opDays.length * 2;
+    const evenRate = cycleOpDays > 0 ? base / cycleOpDays : 0;
+    let topUp = 0;
+    for (let i = 0; i < Math.max(0, len - 14); i++) {
+      const wd = DOW_NAMES[addDays(st, i).getDay()];
+      if (!opDays.includes(wd)) continue;
+      const set = Number(daily[wd]) || 0;
+      topUp += set > 0 ? set : evenRate;
+    }
+    return base + topUp;
+  }, [targetsFor, dailyFor, opDays]);
 
   const trend = useMemo(() => {
     const starts = [];
@@ -326,18 +452,24 @@ export default function StaffingBudget() {
       const en = periodEndFor(st);
       const a = aggregate(shifts, key, format(en, 'yyyy-MM-dd'), excludedNames, windowFor);
       // Each bar is measured against ITS OWN period's budget — a single
-      // shared line would be wrong now that targets vary period to period.
-      const t = targetsFor(key);
-      const budget = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
+      // shared line would be wrong now that targets vary period to period,
+      // and each period tops up for its own extra day(s).
+      const budget = periodBudgetTotal(st);
       return { label: format(st, 'MMM d'), total: a.total, instructional: a.byCat.instructional, budget };
     });
-  }, [shifts, periodStart, excludedNames, windowFor, targetsFor]);
+  }, [shifts, periodStart, excludedNames, windowFor, periodBudgetTotal]);
   const trendMax = useMemo(
     () => Math.max(1, ...trend.map(t => Math.max(t.total, t.budget || 0))) * 1.08,
     [trend],
   );
 
-  const dirty = TARGET_KEYS.some(k => Number(targets[k]) !== Number(savedTargets[k]))
+  // extraDayHours is compared separately: null ("auto") and 0 ("override to
+  // zero") are different states that Number() would flatten to the same 0.
+  const blankExtra = (v) => v == null || v === '';
+  const dirty = TARGET_KEYS.filter(k => k !== 'extraDayHours')
+      .some(k => Number(targets[k]) !== Number(savedTargets[k]))
+    || blankExtra(targets.extraDayHours) !== blankExtra(savedTargets.extraDayHours)
+    || (!blankExtra(targets.extraDayHours) && Number(targets.extraDayHours) !== Number(savedTargets.extraDayHours))
     || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0));
 
   // Writes ONLY the period currently on screen, under
@@ -349,6 +481,10 @@ export default function StaffingBudget() {
     try {
       const clean = {};
       for (const k of TARGET_KEYS) clean[k] = Number(targets[k]) || 0;
+      // Blank means "price the extra day automatically" — store null, not 0,
+      // so pickTargets falls through to the default rather than reading it
+      // as a deliberate zero-hour override.
+      clean.extraDayHours = blankExtra(targets.extraDayHours) ? null : (Number(targets.extraDayHours) || 0);
       const cleanDaily = {};
       for (const wd of WEEKDAY_ORDER) cleanDaily[wd] = Number(dailyBudgets[wd]) || 0;
       clean.dailyBudgets = cleanDaily;
@@ -424,10 +560,10 @@ export default function StaffingBudget() {
           <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Instructional</div>
           <div className="mt-1 flex items-baseline gap-1.5">
             <span className="text-3xl font-bold text-emerald-700">{round1(period.byCat.instructional)}</span>
-            <span className="text-xs text-gray-400">/ {round1(targets.instructional)}</span>
+            <span className="text-xs text-gray-400">/ {round1(effTargets.instructional)}</span>
           </div>
-          <div className="mt-2"><HBar value={period.byCat.instructional} target={Number(targets.instructional)} scale={Math.max(period.byCat.instructional, Number(targets.instructional)) * 1.1} over={period.byCat.instructional > targets.instructional} /></div>
-          <div className="mt-1.5"><VarPill diff={period.byCat.instructional - targets.instructional} /></div>
+          <div className="mt-2"><HBar value={period.byCat.instructional} target={effTargets.instructional} scale={Math.max(period.byCat.instructional, effTargets.instructional) * 1.1} over={period.byCat.instructional > effTargets.instructional} /></div>
+          <div className="mt-1.5"><VarPill diff={period.byCat.instructional - effTargets.instructional} /></div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"><TrendingUp size={13} /> Instr ÷ student</div>
@@ -454,7 +590,7 @@ export default function StaffingBudget() {
         <div className="space-y-3.5">
           {CATEGORIES.map(c => {
             const actual = period.byCat[c.key];
-            const target = Number(targets[c.key]) || 0;
+            const target = effTargets[c.key] || 0;   // base + extra-day top-up
             const over = actual > target;
             return (
               <div key={c.key} className="grid grid-cols-[110px_1fr_120px] items-center gap-3">
@@ -633,7 +769,7 @@ export default function StaffingBudget() {
             </p>
 
             {/* Hour targets, per role */}
-            <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per pay period)</p>
+            <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per 14-day cycle)</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {[
                 ['instructional', 'Instructional'], ['online', 'Online'], ['steam', 'STEAM'], ['summerCamp', 'Summer Camp'],
@@ -648,10 +784,69 @@ export default function StaffingBudget() {
               ))}
             </div>
 
+            {/* ── The 15th day ───────────────────────────────────────────
+                8th box. Pay periods are 15–16 days but the targets above
+                are a 14-day cycle, so one or two weekdays run a 3rd time
+                and need paying for. */}
+            <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/60 px-4 py-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="min-w-[200px] flex-1">
+                  <span className="block text-xs font-bold text-indigo-900">
+                    {extra.days.length > 1 ? `Days 15–${extra.periodDays} — extra days` : 'Day 15 — the extra day'}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-indigo-700">
+                    {extra.days.length === 0
+                      ? 'This period is exactly 14 days — nothing to top up.'
+                      : <>This period is {extra.periodDays} days, so{' '}
+                          {extra.days.map((d, i) => (
+                            <span key={d.weekday}>
+                              {i > 0 && ' and '}
+                              <b>{d.weekday}</b> runs 3×
+                              {!opDays.includes(d.weekday) && <span className="text-indigo-400"> (closed — costs nothing)</span>}
+                            </span>
+                          ))}.
+                        </>}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input type="number" step="0.5" min="0"
+                    value={targets.extraDayHours ?? ''}
+                    placeholder={round1(extra.autoHours)}
+                    onChange={e => setTargets(t => ({ ...t, extraDayHours: e.target.value === '' ? null : e.target.value }))}
+                    title="Leave blank to price the extra day automatically from its weekday budget."
+                    className="w-24 rounded-lg border px-2 py-1.5 text-right text-sm focus:border-indigo-500 focus:outline-none" />
+                  <span className="text-xs font-semibold text-indigo-700">h</span>
+                  {extra.isOverride && (
+                    <button onClick={() => setTargets(t => ({ ...t, extraDayHours: null }))}
+                      className="rounded-lg border border-indigo-200 px-2 py-1 text-[11px] font-semibold text-indigo-600 hover:bg-indigo-100">
+                      Auto
+                    </button>
+                  )}
+                </div>
+              </div>
+              {extra.days.length > 0 && (
+                <p className="mt-2 border-t border-indigo-200/70 pt-2 text-[11px] text-indigo-700">
+                  {extra.isOverride
+                    ? <>Manual override. Auto would be <b>{round1(extra.autoHours)}h</b>.</>
+                    : <>Priced from your {extra.days.filter(d => opDays.includes(d.weekday)).map(d => d.weekday).join(' + ') || 'weekday'} budget under “Set daily budgets”, falling back to an even split of the base when that's blank.</>}
+                  {Object.keys(extra.alloc).length > 0 && (
+                    <> Split by how that weekday actually ran: {CATEGORIES.filter(c => (extra.alloc[c.key] || 0) > 0.05)
+                      .map(c => `${c.label} +${round1(extra.alloc[c.key])}h`).join(', ')}.</>
+                  )}
+                </p>
+              )}
+            </div>
+
             {/* Prominent total of all the hour targets */}
-            <div className="mt-3 flex items-center justify-between rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
-              <span className="text-sm font-bold text-amber-900">Total hours budget</span>
-              <span className="text-2xl font-bold text-amber-900">{round1(totalTarget)}<span className="ml-1 text-sm font-semibold">h</span></span>
+            <div className="mt-3 rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-bold text-amber-900">Total hours budget</span>
+                <span className="text-2xl font-bold text-amber-900">{round1(totalTarget)}<span className="ml-1 text-sm font-semibold">h</span></span>
+              </div>
+              <div className="mt-1 text-right text-[11px] font-medium text-amber-700">
+                {round1(baseTarget)}h base (14-day cycle)
+                {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => opDays.includes(d.weekday)).map(d => d.weekday).join(' + ')}</>}
+              </div>
             </div>
 
             {/* Efficiency target — a ratio, not hours (kept separate to avoid confusion) */}
