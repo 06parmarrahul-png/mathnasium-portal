@@ -34,14 +34,19 @@ export const BUCKET_KEYS = BUDGET_BUCKETS.map(b => b.key);
 //     the 14-day cycle of targets doesn't pay for.
 //   • Manage Schedule — the denominator of each day header's hours ratio.
 // Keep them reading this one object so the two pages can't drift apart.
-//   Mon/Wed 83h · Tue/Thu 61h · Fri 39.5h · Sat 39.5h
+//
+// EVERY figure here is ONE DAY, not a fortnight. Worth stating plainly
+// because the Instructional column was originally supplied as a two-week
+// budget (Mon 62) and had to be halved to 31 — if these ever need
+// re-tuning, check which basis the new numbers are on first.
+//   Mon/Wed 52h · Tue/Thu 39h · Fri 28.75h · Sat 24.5h
 export const WEEKDAY_DEFAULTS = {
-  Monday:    { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
-  Tuesday:   { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
-  Wednesday: { instructional: 62,   online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
-  Thursday:  { instructional: 44,   online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
-  Friday:    { instructional: 21.5, online: 3, steam: 3, host: 3, adminAssistant: 4, adminHours: 5 },
-  Saturday:  { instructional: 30,              steam: 4, host: 4,                    adminHours: 1.5 },
+  Monday:    { instructional: 31,    online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Tuesday:   { instructional: 22,    online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Wednesday: { instructional: 31,    online: 4, steam: 4, host: 4, adminAssistant: 4, adminHours: 5 },
+  Thursday:  { instructional: 22,    online: 4, steam: 4,          adminAssistant: 4, adminHours: 5 },
+  Friday:    { instructional: 10.75, online: 3, steam: 3, host: 3, adminAssistant: 4, adminHours: 5 },
+  Saturday:  { instructional: 15,               steam: 4, host: 4,                    adminHours: 1.5 },
   Sunday:    {}, // closed
 };
 
