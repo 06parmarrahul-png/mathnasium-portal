@@ -4,7 +4,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
-import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, bucketHoursForShift } from '../lib/budgetBuckets';
+import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, weekdayBudgetTotal, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
   Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays, RotateCcw,
@@ -87,7 +87,7 @@ const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
 const LEGACY_TARGETS_THROUGH = '2026-07-11';
 
 // Keep only real target keys — the stored staffingBudget object also holds
-// dailyBudgets and byPeriod, which must never leak into a targets object.
+// extraDays and byPeriod, which must never leak into a targets object.
 function pickTargets(src) {
   const out = {};
   if (!src) return out;
@@ -215,7 +215,7 @@ export default function StaffingBudget() {
 
   const budgetCfg = useMemo(() => centerConfig?.staffingBudget || {}, [centerConfig]);
 
-  // `targetsFor(periodKey)` / `dailyFor(periodKey)` — resolve a period's
+  // `targetsFor(periodKey)` — resolve a period's
   // budget through the saved → legacy → default chain described up top.
   // Exposed as functions (not just this period's value) so the trend chart
   // can compare each of its 6 bars to that bar's own budget.
@@ -225,14 +225,6 @@ export default function StaffingBudget() {
       if (byPeriod[key]) return { ...DEFAULT_TARGETS, ...pickTargets(byPeriod[key]) };
       if (key <= LEGACY_TARGETS_THROUGH) return { ...DEFAULT_TARGETS, ...pickTargets(budgetCfg) };
       return { ...DEFAULT_TARGETS };
-    };
-  }, [budgetCfg]);
-  const dailyFor = useMemo(() => {
-    const byPeriod = budgetCfg.byPeriod || {};
-    return (key) => {
-      if (byPeriod[key]) return byPeriod[key].dailyBudgets || {};
-      if (key <= LEGACY_TARGETS_THROUGH) return budgetCfg.dailyBudgets || {};
-      return {};
     };
   }, [budgetCfg]);
   // Per-period overrides for the extra day's category budget, keyed by
@@ -256,14 +248,7 @@ export default function StaffingBudget() {
   // THAT period's budget rather than carrying your unsaved edits across.
   useEffect(() => { setTargets(savedTargets); }, [savedTargets]);
 
-  // Optional per-weekday budgets. When any are set, the By-day view compares
-  // each day to its own weekday budget instead of the even split. Saved
-  // per-period alongside the hour targets.
-  const savedDaily = useMemo(() => dailyFor(loStr), [dailyFor, loStr]);
-  const [dailyBudgets, setDailyBudgets] = useState(() => savedDaily || {});
-  const [showDaily, setShowDaily] = useState(false);
   const [expandedDay, setExpandedDay] = useState(null); // day row index whose category breakdown is open
-  useEffect(() => { setDailyBudgets(savedDaily || {}); }, [savedDaily]);
 
   const savedExtraDays = useMemo(() => extraDaysFor(loStr), [extraDaysFor, loStr]);
   const [extraDays, setExtraDays] = useState(() => savedExtraDays || {});
@@ -384,8 +369,11 @@ export default function StaffingBudget() {
     [period, effTargets],
   );
 
+  // Each day is measured against its weekday's budget from the centre's day
+  // model — the same numbers Manage Schedule puts in its column headers, so
+  // a Monday reads the same on both pages. No per-period daily editor: the
+  // model is the single source, edited in lib/budgetBuckets.
   const perDay = useMemo(() => {
-    const useDaily = dailyBudgets && Object.values(dailyBudgets).some(v => Number(v) > 0);
     const rows = [];
     let opCount = 0;
     let d = periodStart;
@@ -405,15 +393,17 @@ export default function StaffingBudget() {
       });
       d = addDays(d, 1);
     }
-    // opCount is this period's real operating-day count (13 or 14, not 12),
-    // and totalTarget now includes the extra-day top-up — so the even split
-    // divides the right budget by the right number of days.
-    const evenBudget = opCount > 0 ? totalTarget / opCount : 0;
+    // Closed days and holidays carry no budget; everything else takes its
+    // weekday's figure. modelTotal is what the model says this whole period
+    // should cost, surfaced in the header so it can be compared against the
+    // period target rather than quietly disagreeing with it.
+    let modelTotal = 0;
     for (const r of rows) {
-      r.budget = useDaily ? (Number(dailyBudgets[r.weekday]) || 0) : (r.isOp ? evenBudget : 0);
+      r.budget = r.isOp ? weekdayBudgetTotal(r.weekday) : 0;
+      modelTotal += r.budget;
     }
-    return { rows, evenBudget, useDaily, opCount };
-  }, [byDateHours, hiStr, periodStart, opDays, totalTarget, dailyBudgets, centerConfig]);
+    return { rows, opCount, modelTotal };
+  }, [byDateHours, hiStr, periodStart, opDays, centerConfig]);
   const dayScale = useMemo(
     () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
     [perDay],
@@ -465,7 +455,6 @@ export default function StaffingBudget() {
     return acc;
   }, {}));
   const dirty = TARGET_KEYS.some(k => Number(targets[k]) !== Number(savedTargets[k]))
-    || WEEKDAY_ORDER.some(wd => Number(dailyBudgets[wd] || 0) !== Number((savedDaily || {})[wd] || 0))
     || normExtra(extraDays) !== normExtra(savedExtraDays);
 
   // Writes ONLY the period currently on screen, under
@@ -477,9 +466,6 @@ export default function StaffingBudget() {
     try {
       const clean = {};
       for (const k of TARGET_KEYS) clean[k] = Number(targets[k]) || 0;
-      const cleanDaily = {};
-      for (const wd of WEEKDAY_ORDER) cleanDaily[wd] = Number(dailyBudgets[wd]) || 0;
-      clean.dailyBudgets = cleanDaily;
       // Only weekdays actually edited are stored; the rest keep falling back
       // to WEEKDAY_DEFAULTS, so changing the model updates untouched periods.
       const cleanExtra = {};
@@ -615,39 +601,19 @@ export default function StaffingBudget() {
       <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="flex items-center gap-1.5 text-sm font-bold text-gray-900"><CalendarDays size={15} /> By day — which days ran over / under</h3>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-gray-400">{perDay.useDaily ? 'per-weekday budgets' : `even split ≈ ${round1(perDay.evenBudget)}h/day`}</span>
-            <button onClick={() => setShowDaily(v => !v)} className="rounded-lg border border-gray-200 px-2 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50">
-              {showDaily ? 'Close' : 'Set daily budgets'}
-            </button>
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-gray-400">
+              Mon/Wed {weekdayBudgetTotal('Monday')}h · Tue/Thu {weekdayBudgetTotal('Tuesday')}h ·
+              Fri {weekdayBudgetTotal('Friday')}h · Sat {weekdayBudgetTotal('Saturday')}h
+            </span>
+            {Math.abs(perDay.modelTotal - totalTarget) > 1 && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800"
+                title="The weekday model and the period targets are two different numbers for the same period. Reconcile them or the day bars and the headline will keep disagreeing.">
+                weekday model = {round1(perDay.modelTotal)}h vs period target {round1(totalTarget)}h
+              </span>
+            )}
           </div>
         </div>
-
-        {/* Per-weekday budget editor */}
-        {showDaily && (
-          <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50/60 p-3">
-            <p className="mb-2 text-xs text-gray-500">Set an hours budget for each weekday <b>for this pay period</b>. Leave all at 0 to fall back to an even split of the period total.</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-              {WEEKDAY_ORDER.map(wd => (
-                <label key={wd} className="block">
-                  <span className="mb-1 block text-[11px] font-medium text-gray-500">{wd.slice(0, 3)}</span>
-                  <input type="number" step="0.5" min="0" value={dailyBudgets[wd] ?? ''}
-                    placeholder="0"
-                    onChange={e => setDailyBudgets(b => ({ ...b, [wd]: e.target.value }))}
-                    className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
-                </label>
-              ))}
-            </div>
-            <div className="mt-2.5 flex items-center gap-2">
-              <button onClick={saveTargets} disabled={!dirty || saving}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
-                <Save size={13} /> {saving ? 'Saving…' : 'Save hours for this period'}
-              </button>
-              {savedAt && <span className="flex items-center gap-1 text-xs text-emerald-700"><Check size={13} /> Saved</span>}
-              <span className="text-xs text-gray-400">Weekday total = {round1(WEEKDAY_ORDER.reduce((n, wd) => n + (Number(dailyBudgets[wd]) || 0), 0))}h/wk</span>
-            </div>
-          </div>
-        )}
 
         <div className="space-y-1.5">
           {perDay.rows.map((r, i) => {
@@ -873,7 +839,7 @@ export default function StaffingBudget() {
       </div>
 
       <p className="mt-4 text-xs text-gray-400">
-        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. Set a budget per weekday under "By day → Set daily budgets" for exact per-day over/under; otherwise it falls back to an even split of the period total.
+        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. Per-day budgets come from the centre's weekday model — the same figures Manage Schedule shows in its day headers.
       </p>
     </div>
   );
