@@ -2297,7 +2297,10 @@ export default function Admin() {
       .filter(d => isOperatingDay(d, centerConfig)),
   [weekStart, centerConfig]);
 
-  const { totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek, sickHoursThisWeek, sickByDate } = useMemo(() => {
+  const {
+    totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek,
+    sickHoursThisWeek, sickByDate, noAccountHoursThisWeek,
+  } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
     const we = format(addDays(weekStart, 6), 'yyyy-MM-dd');
     // "Total assigned" is an HOURLY figure — it's the number the staffing
@@ -2331,10 +2334,18 @@ export default function Admin() {
         || u.internal === true || u.displayName === 'Admin Team';
       if (hidden && u.displayName) salaryNames.add(u.displayName);
     }
+    // The grid only has rows for people with a portal account; shifts for
+    // anyone else surface as the footer's "+N no account" note. This total
+    // has to use the same rule or "Total assigned" wouldn't equal the sum of
+    // the day headers sitting right below it — those hours get their own
+    // chip instead so nothing is silently dropped.
+    const portalNames = new Set(users.map(u => u.displayName));
+
     let paid = 0;
     let volunteer = 0;
     let salary = 0;
     let sick = 0;
+    let noAccount = 0;
     const sickDates = new Map(); // date → sick hours that day
     for (const s of shifts) {
       if (s.date < ws || s.date > we) continue;
@@ -2358,6 +2369,7 @@ export default function Admin() {
       }
       if (isVolunteer)                                    volunteer += hrs;
       else if (s.userName && salaryNames.has(s.userName)) salary    += hrs;
+      else if (!portalNames.has(s.userName))              noAccount += hrs;
       else                                                paid      += hrs;
     }
     return {
@@ -2366,8 +2378,9 @@ export default function Admin() {
       salaryHoursThisWeek: salary,
       sickHoursThisWeek: sick,
       sickByDate: sickDates,
+      noAccountHoursThisWeek: noAccount,
     };
-  }, [shifts, weekStart, usersForCentre, centerConfig]);
+  }, [shifts, weekStart, users, usersForCentre, centerConfig]);
 
   // Auto-scheduler
   const handleGenerate = async () => {
@@ -4214,6 +4227,14 @@ export default function Admin() {
                   >
                     <UserX size={11} />
                     {Math.round(salaryHoursThisWeek * 10) / 10} salary hrs
+                  </span>
+                )}
+                {noAccountHoursThisWeek > 0 && (
+                  <span
+                    title="Shifts whose staff member has no portal account. They have no row on the grid, so their hours sit outside the total — same rule the day columns use."
+                    className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-semibold text-gray-600"
+                  >
+                    +{Math.round(noAccountHoursThisWeek * 10) / 10} no-account hrs
                   </span>
                 )}
                 {sickHoursThisWeek > 0 && (
