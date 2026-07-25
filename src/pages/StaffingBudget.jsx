@@ -7,7 +7,7 @@ import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
 import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, weekdayBudgetTotal, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
-  Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, GraduationCap, TrendingUp, CalendarDays, RotateCcw,
+  Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, CalendarDays, RotateCcw,
 } from 'lucide-react';
 
 /**
@@ -56,7 +56,6 @@ function countsAsWork(s, excluded) {
 const DEFAULT_TARGETS = {
   instructional: 315, online: 54, steam: 46, summerCamp: 54,
   adminHours: 68, adminAssistant: 40, host: 46,
-  kpi: 1.8, // instructional hours per student
 };
 const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
 
@@ -177,7 +176,6 @@ function HBar({ value, target, scale, over }) {
 export default function StaffingBudget() {
   const { activeCenterId, centerConfig, canSeeAdminPanel, activeCenterName } = useAuth();
   const [shifts, setShifts] = useState([]);
-  const [studentCount, setStudentCount] = useState(0);
   const [users, setUsers] = useState([]);
   const [showTargets, setShowTargets] = useState(false);
 
@@ -273,14 +271,6 @@ export default function StaffingBudget() {
     );
   }, [activeCenterId]);
 
-  useEffect(() => {
-    if (!activeCenterId) return;
-    return onSnapshot(
-      query(collection(db, 'students'), where('centerId', '==', activeCenterId)),
-      snap => setStudentCount(snap.docs.filter(d => (d.data()?.status || 'active') !== 'inactive').length),
-      () => setStudentCount(0),
-    );
-  }, [activeCenterId]);
 
   useEffect(() => {
     if (!activeCenterId) return;
@@ -292,7 +282,6 @@ export default function StaffingBudget() {
   }, [activeCenterId]);
 
   const period = useMemo(() => aggregate(shifts, loStr, hiStr, excludedNames, windowFor), [shifts, loStr, hiStr, excludedNames, windowFor]);
-  const kpi = studentCount > 0 ? period.byCat.instructional / studentCount : null;
 
   const opDays = useMemo(() => (
     (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
@@ -529,7 +518,7 @@ export default function StaffingBudget() {
       </div>
 
       {/* Headline cards */}
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
           <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Total hours</div>
           <div className="mt-1 flex items-baseline gap-1.5">
@@ -552,21 +541,9 @@ export default function StaffingBudget() {
           <div className="mt-1.5"><VarPill diff={period.byCat.instructional - effTargets.instructional} /></div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500"><TrendingUp size={13} /> Instr ÷ student</div>
-          <div className="mt-1 text-3xl font-bold text-gray-900">{kpi == null ? '—' : round1(kpi)}</div>
-          <p className="mt-1 text-xs text-gray-400">target {round1(targets.kpi)}</p>
-        </div>
-        <div className="rounded-2xl border bg-white p-4 shadow-sm">
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"><Users size={12} /> Staff</div>
-              <div className="text-2xl font-bold text-gray-900">{period.staffCount}</div>
-            </div>
-            <div>
-              <div className="flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wide text-gray-500"><GraduationCap size={12} /> Students</div>
-              <div className="text-2xl font-bold text-gray-900">{studentCount}</div>
-            </div>
-          </div>
+          <div className="flex items-center gap-1 text-xs font-semibold uppercase tracking-wide text-gray-500"><Users size={13} /> Staff</div>
+          <div className="mt-1 text-3xl font-bold text-gray-900">{period.staffCount}</div>
+          <p className="mt-1 text-xs text-gray-400">worked this period</p>
         </div>
       </div>
 
@@ -803,21 +780,6 @@ export default function StaffingBudget() {
               </div>
             </div>
 
-            {/* Efficiency target — a ratio, not hours (kept separate to avoid confusion) */}
-            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60 px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div>
-                  <span className="block text-xs font-semibold text-gray-700">Instr ÷ student target</span>
-                  <input type="number" step="0.1" min="0" value={targets.kpi}
-                    onChange={e => setTargets(t => ({ ...t, kpi: e.target.value }))}
-                    className="mt-1 w-24 rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
-                </div>
-                <p className="flex-1 text-xs text-gray-500">
-                  <b>Instructional hours ÷ number of students</b> — how many instructor-hours you spend per enrolled student each pay period. It's an efficiency ratio, <i>not</i> an hours figure, so it isn't part of the total above. Lower = leaner.
-                </p>
-              </div>
-            </div>
-
             <div className="mt-3 flex flex-wrap items-center gap-2">
               <button onClick={saveTargets} disabled={!dirty || saving}
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
@@ -839,7 +801,7 @@ export default function StaffingBudget() {
       </div>
 
       <p className="mt-4 text-xs text-gray-400">
-        Instr ÷ student uses your current roster ({studentCount}) for every period, so historical periods are approximate until roster size is snapshotted. Per-day budgets come from the centre's weekday model — the same figures Manage Schedule shows in its day headers.
+        Per-day budgets come from the centre's weekday model — the same figures Manage Schedule shows in its day headers.
       </p>
     </div>
   );
