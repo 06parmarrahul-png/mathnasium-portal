@@ -199,21 +199,32 @@ function computeUniqueOnFloor(shifts, dayWindow) {
   return names;
 }
 
-// Per-slot classification. Mirrors Andy's logic:
-//   over/under ratio = (supply − demand) / forecastRatio
-//   |ratio| < 0.5  → matched
-//   ratio  <  0    → understaffed
-//   ratio  >  0    → overstaffed
+// Per-slot classification, counted in WHOLE INSTRUCTORS.
+//
+// You cannot roster 0.7 of a person, so the requirement is rounded UP:
+// 7 students at 1:3 needs 3 instructors, not 2.33. The surplus is then
+// supply − required, always a whole number, and always something you could
+// actually act on (send someone home / call someone in).
+//
+//   required = ceil(demand ÷ target ratio)
+//   diff     = supply − required
+//   diff = 0 → matched · diff < 0 → understaffed · diff > 0 → overstaffed
+//
+// The old version compared supply against the UNROUNDED demand ÷ ratio and
+// flagged anything ≥ 0.5 away as off-target. That reported "0.7 Over" for a
+// slot that was exactly right — worse, it contradicted the "match demand"
+// button below, which has always used ceil(). Pressing that button left
+// slots glowing red because it staffed 3 and the status wanted 2.33.
 function classifySlots(demand, supply, forecastRatio) {
   const fr = Number(forecastRatio) || 1;
   return demand.map((d, i) => {
     const s = supply[i] ?? 0;
-    const diff = s - d / fr;
-    const overUnderRatio = fr > 0 ? diff / (1) : 0;
-    const abs = Math.abs(overUnderRatio);
+    const required = fr > 0 ? Math.ceil(d / fr) : 0;
+    const diff = s - required;
     let status = 'matched';
-    if (abs >= 0.5) status = overUnderRatio > 0 ? 'overstaffed' : 'understaffed';
-    return { i, demand: d, supply: s, capacity: s * fr, overUnderRatio, status };
+    if (diff > 0) status = 'overstaffed';
+    else if (diff < 0) status = 'understaffed';
+    return { i, demand: d, supply: s, required, capacity: s * fr, overUnderRatio: diff, status };
   });
 }
 
@@ -1262,18 +1273,18 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
           </thead>
           <tbody>
             {/* RATIO STATUS row — one full-width coloured pill per slot.
-                Values format: "Matched" or "0.5 Over" / "0.5 Under" —
-                the signed decimal is (capacity − demand) ÷ target ratio,
-                capped to one decimal place. */}
+                Values format: "Matched" or "2 Over" / "1 Under", counted in
+                whole instructors (supply − ceil(demand ÷ ratio)). Never a
+                fraction: half a person isn't an action anyone can take. */}
             <tr>
               <td className="pr-2 py-2 text-left align-top">
                 <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Ratio Status</div>
               </td>
               {rows.map(r => {
-                const val = forecastRatio > 0 ? (r.capacity - r.demand) / forecastRatio : 0;
-                const abs = Math.abs(val).toFixed(1);
+                // r.overUnderRatio is already a whole number of instructors.
+                const abs = Math.abs(r.overUnderRatio);
                 let label = 'Matched';
-                if (r.status === 'overstaffed')      label = `${abs} Over`;
+                if (r.status === 'overstaffed')       label = `${abs} Over`;
                 else if (r.status === 'understaffed') label = `${abs} Under`;
                 const cls = r.status === 'matched'
                   ? 'bg-emerald-200/70 text-emerald-900'
