@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { format } from 'date-fns';
-import { Calendar, HandHeart } from 'lucide-react';
+import { format, addDays } from 'date-fns';
+import { Calendar, HandHeart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
@@ -27,8 +27,10 @@ const DAY_NAMES = [
 
 export default function TodaysSnapshot() {
   const { activeCenterId, centerConfig } = useAuth();
-  const [shifts, setShifts] = useState([]);
-  const [loading, setLoading] = useState(true);
+  // Rows are stamped with the date they belong to, so "still loading" can be
+  // derived rather than tracked as a second piece of state that has to be
+  // flipped back on every time the day changes.
+  const [shiftData, setShiftData] = useState({ date: null, rows: [] });
 
   // Capture today once on mount; re-tick the component if the date rolls over.
   // This way leaving the tab open across midnight doesn't show stale data.
@@ -43,9 +45,23 @@ export default function TodaysSnapshot() {
     return () => clearInterval(id);
   }, []);
 
-  const todayStr   = format(now, 'yyyy-MM-dd');
-  const todayLabel = format(now, 'EEEE, MMMM d, yyyy');
-  const dayOfWeek  = DAY_NAMES[now.getDay()];
+  // Day being viewed, held as an OFFSET from today rather than an absolute
+  // date. That way the midnight re-tick above still lands you on the right
+  // day: "today" stays today, and if you're parked two days back you stay
+  // two days back rather than silently drifting a day forward.
+  const [dayOffset, setDayOffset] = useState(0);
+  const viewDate   = useMemo(() => addDays(now, dayOffset), [now, dayOffset]);
+
+  const todayStr   = format(viewDate, 'yyyy-MM-dd');
+  const todayLabel = format(viewDate, 'EEEE, MMMM d, yyyy');
+  const dayOfWeek  = DAY_NAMES[viewDate.getDay()];
+  const isToday    = dayOffset === 0;
+  // Used wherever copy read "today" — reads wrong once you're browsing.
+  const dayWord    = isToday ? 'today' : 'this day';
+  const relLabel   = dayOffset === 0 ? 'Today'
+    : dayOffset === -1 ? 'Yesterday'
+    : dayOffset === 1 ? 'Tomorrow'
+    : null;
 
   useEffect(() => (
     onSnapshot(
@@ -55,17 +71,22 @@ export default function TodaysSnapshot() {
         where('date', '==', todayStr),
       ),
       snap => {
-        // Drafts are excluded — Today's Snapshot reflects what's actually
+        // Drafts are excluded — the snapshot reflects what's actually
         // happening, not what's been planned but not yet published.
         const rows = snap.docs
           .map(d => ({ id: d.id, ...d.data() }))
           .filter(s => s.status !== 'draft');
-        setShifts(rows);
-        setLoading(false);
+        setShiftData({ date: todayStr, rows });
       },
-      () => setLoading(false),
+      () => setShiftData({ date: todayStr, rows: [] }),
     )
   ), [todayStr, activeCenterId]);
+
+  // While a newly selected day's subscription is in flight, shiftData still
+  // holds the PREVIOUS day's rows — show the spinner rather than yesterday's
+  // staff sitting under today's date.
+  const loading = shiftData.date !== todayStr;
+  const shifts = shiftData.rows;
 
   // Users subscription — needed to know which shifts belong to a
   // volunteer. Volunteer flag is per-centre so we resolve against the
@@ -116,10 +137,10 @@ export default function TodaysSnapshot() {
     return {
       date: todayStr,
       dayOfWeek,
-      dayNumber: now.getDate(),
+      dayNumber: viewDate.getDate(),
       shiftEntries,
     };
-  }, [shifts, todayStr, dayOfWeek, now, volunteerNames]);
+  }, [shifts, todayStr, dayOfWeek, viewDate, volunteerNames]);
 
   // Volunteers on the day → banner + count for the header.
   const volunteersToday = useMemo(() => {
@@ -170,13 +191,50 @@ export default function TodaysSnapshot() {
 
   return (
     <div className="rounded-2xl border bg-white p-5 sm:p-6 shadow-sm">
-      <div className="mb-5 flex items-center gap-3">
-        <div className="rounded-xl bg-blue-100 p-2 text-blue-600 shrink-0">
-          <Calendar size={22} />
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="rounded-xl bg-blue-100 p-2 text-blue-600 shrink-0">
+            <Calendar size={22} />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-lg font-bold text-gray-900">
+              {isToday ? "Today's Snapshot" : 'Daily Snapshot'}
+            </h2>
+            <p className="flex items-center gap-1.5 text-xs text-gray-500">
+              <span className="truncate">{todayLabel}</span>
+              {relLabel && !isToday && (
+                <span className="shrink-0 rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-blue-700">
+                  {relLabel}
+                </span>
+              )}
+            </p>
+          </div>
         </div>
-        <div className="min-w-0">
-          <h2 className="text-lg font-bold text-gray-900">Today's Snapshot</h2>
-          <p className="text-xs text-gray-500 truncate">{todayLabel}</p>
+
+        {/* Day nav */}
+        <div className="flex items-center gap-1 rounded-xl border bg-white px-1.5 py-1 shadow-sm">
+          <button
+            onClick={() => setDayOffset(d => d - 1)}
+            title="Previous day"
+            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            onClick={() => setDayOffset(0)}
+            disabled={isToday}
+            title="Jump back to today"
+            className="rounded-lg px-2.5 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-100 disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            Today
+          </button>
+          <button
+            onClick={() => setDayOffset(d => d + 1)}
+            title="Next day"
+            className="rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+          >
+            <ChevronRight size={16} />
+          </button>
         </div>
       </div>
 
@@ -186,7 +244,9 @@ export default function TodaysSnapshot() {
         </div>
       ) : totalStaff === 0 ? (
         <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 px-4 py-10 text-center">
-          <p className="text-sm font-medium text-gray-500">No staff scheduled today.</p>
+          <p className="text-sm font-medium text-gray-500">
+            No staff scheduled {isToday ? 'today' : `for ${format(viewDate, 'EEE MMM d')}`}.
+          </p>
           <p className="mt-1 text-xs text-gray-400">
             Run the auto-scheduler or add shifts manually from the Admin Panel.
           </p>
@@ -226,7 +286,7 @@ export default function TodaysSnapshot() {
               <HandHeart size={14} className="text-sky-600 mt-0.5 shrink-0" />
               <div>
                 <span className="font-semibold text-sky-900">
-                  {volunteersToday.length} volunteer{volunteersToday.length === 1 ? '' : 's'} today
+                  {volunteersToday.length} volunteer{volunteersToday.length === 1 ? '' : 's'} {dayWord}
                 </span>
                 <span className="text-sky-700"> — {volunteersToday.join(', ')}. </span>
                 <span className="text-sky-600/80 italic">Not counted in paid coverage.</span>
@@ -243,7 +303,7 @@ export default function TodaysSnapshot() {
               <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-yellow-600" />
               <div>
                 <span className="font-semibold text-amber-900">
-                  {flexToday.length} on flex today
+                  {flexToday.length} on flex {dayWord}
                 </span>
                 <span className="text-amber-800"> — {flexToday.map(f => `${f.name} (${f.flexRole})`).join(', ')}. </span>
                 <span className="text-amber-700/80 italic">Not counted as floor instructors.</span>
