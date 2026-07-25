@@ -16,7 +16,7 @@ import {
   ArrowLeft, LayoutGrid, Calendar, HelpCircle, TrendingUp, HandHeart, Megaphone,
 } from 'lucide-react';
 import {
-  format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay,
+  format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay, isSameWeek,
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
@@ -7364,6 +7364,58 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const period1Names  = new Set(period1Shifts.map(s => s.userName).filter(Boolean));
   const period2Names  = new Set(period2Shifts.map(s => s.userName).filter(Boolean));
 
+  // ─── Weekly scheduled hours (Mon–Sat) ─────────────────────────────────
+  // Deliberately mirrors Manage Schedule's "Total assigned" rather than the
+  // payroll rule above, so a given week reads identically on both pages:
+  //   • drafts DO count (planned coverage is still coverage)
+  //   • no-shows, sick, volunteers, salaried and hidden-from-ops do NOT
+  //   • neither does anyone without a portal account — they have no row on
+  //     the grid, so Manage Schedule leaves them out too
+  // Week boundaries use the same Sunday-anchored startOfWeek() the schedule
+  // grid uses; the centre is closed Sundays so the span reads as Mon–Sat.
+  const _schedPortalNames = new Set(users.map(u => u.displayName).filter(Boolean));
+  const _schedExcluded = new Set([
+    ..._paySalaryStaff, ..._payVolunteerNames, ..._payHiddenFromOps,
+  ]);
+  const _schedEligible = (s) =>
+    s.noShow !== true
+    && s.sickPay !== true
+    && s.role !== 'Volunteer'
+    && _schedPortalNames.has(s.userName)
+    && !_schedExcluded.has(s.userName);
+
+  const weekRows = [];
+  {
+    const monthEndStr = format(endOfMonth(viewMonth), 'yyyy-MM-dd');
+    let w = startOfWeek(startOfMonth(viewMonth));
+    while (format(w, 'yyyy-MM-dd') <= monthEndStr) {
+      const wStart = format(w, 'yyyy-MM-dd');
+      const wEnd   = format(addDays(w, 6), 'yyyy-MM-dd');
+      let hrs = 0;
+      let sick = 0;
+      for (const s of shifts) {
+        if (!s.date || s.date < wStart || s.date > wEnd) continue;
+        if (s.sickPay === true && s.noShow !== true && _schedPortalNames.has(s.userName)
+            && !_schedExcluded.has(s.userName) && s.role !== 'Volunteer') {
+          sick += shiftHours(s);
+          continue;
+        }
+        if (!_schedEligible(s)) continue;
+        hrs += shiftHours(s);
+      }
+      weekRows.push({
+        key: wStart,
+        // Mon–Sat span, since Sunday is a closure.
+        label: `${format(addDays(w, 1), 'MMM d')} – ${format(addDays(w, 6), 'MMM d')}`,
+        hours: hrs,
+        sick,
+        isCurrent: isSameWeek(new Date(), w),
+      });
+      w = addDays(w, 7);
+    }
+  }
+  const weeklyTotal = weekRows.reduce((n, r) => n + r.hours, 0);
+
   // Which pay run is "upcoming" given today's date:
   //   day 1–10  → 15th of this month is next up (period 1)
   //   day 11–25 → 30th of this month is next up (period 2)
@@ -7775,66 +7827,13 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       </div>
       )}
 
-      {/* ── Snapshot module: Operations Snapshot + Payroll Projection ──
-          Operations Snapshot — dense, decision-useful numbers replacing
-          the old 30-day bar chart. Each row is a single KPI that maps to
-          a real operating question (Are shifts getting filled? Are we
-          short-staffed? Which day is our peak?). Month nav arrows let
-          the owner page through prior months for comparison without
-          losing the live deltas. */}
-      {view === 'snapshot' && (
-        <div className="rounded-2xl border bg-white p-5 shadow-sm">
-          <div className="flex items-center justify-between mb-1">
-            <h3 className="text-sm font-semibold text-gray-900">Operations Snapshot</h3>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setViewMonth(m => subMonths(m, 1))}
-                title="Previous month"
-                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-              >
-                <ChevronLeft size={14} />
-              </button>
-              {!isViewingCurrentMonth && (
-                <button
-                  onClick={() => setViewMonth(startOfMonth(new Date()))}
-                  title="Jump to current month"
-                  className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-50"
-                >
-                  Today
-                </button>
-              )}
-              <button
-                onClick={() => setViewMonth(m => addMonths(m, 1))}
-                title="Next month"
-                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-          </div>
-          <p className="text-xs text-gray-500 mb-4">
-            {format(viewMonth, 'MMMM yyyy')}{isViewingCurrentMonth ? ' · live numbers' : ''}
-          </p>
-          <div className="divide-y divide-gray-100">
-            <SnapshotRow label="Avg hours / day"        value={`${round1(avgHoursPerDay)}h`}  hint={`${monthDatesWithShifts.size} day${monthDatesWithShifts.size === 1 ? '' : 's'} scheduled`} />
-            <SnapshotRow label="Avg hours / instructor" value={`${round1(avgPerInstructor)}h`} hint={`${monthInstructors.size} working this month`} />
-            <SnapshotRow label="Avg hours / shift"      value={`${round1(avgHoursPerShift)}h`} hint={`${monthShiftCount} shift${monthShiftCount === 1 ? '' : 's'} posted`} />
-            <SnapshotRow label="Open-shift fill rate"   value={`${Math.round(fillRate)}%`}     hint={`${openShiftsMonth} still open`} tone={fillRate >= 90 ? 'good' : fillRate >= 75 ? 'warn' : 'bad'} />
-            <SnapshotRow label="Students per employee"  value={studentsPerEmployee || '—'}     hint="workload ratio" />
-            <SnapshotRow label="Busiest day"  value={busiestDay ? busiestDay.day : '—'}  hint={busiestDay ? `${round1(busiestDay.avg)}h avg` : ''} />
-            <SnapshotRow label="Quietest day" value={quietestDay ? quietestDay.day : '—'} hint={quietestDay ? `${round1(quietestDay.avg)}h avg` : ''} />
-            <SnapshotRow label="Sick day rate"         value={`${Math.round(sickRate * 10) / 10}%`} hint={`${sickDaysThisMonth} of ${personDaysThisMonth} scheduled days`} tone={sickRate >= 8 ? 'bad' : sickRate >= 4 ? 'warn' : 'good'} />
-            <SnapshotRow label="Coverage vs target"    value={`${Math.round(coverageVsTarget)}%`}   hint={`${round1(coverageAvg)} of ${coverageTarget} target instructors / day`} tone={coverageVsTarget >= 95 ? 'good' : coverageVsTarget >= 80 ? 'warn' : 'bad'} />
-          </div>
-        </div>
-      )}
-
-      {/* Payroll Projection — semi-monthly view. 15th pay run covers
-          prior-month 26th → this-month 10th; 30th pay run covers
-          this-month 11th → 25th. Uses the same Payroll Hours value as
-          Manage Payroll — Override wins, scheduled falls back. Owners
-          can spot a bloated upcoming run before payroll day instead
-          of after. */}
+      {/* ── Snapshot module: Payroll Projection + Operations Snapshot ──
+          Payroll Projection leads — it's the number owners open this page
+          for. Semi-monthly view: the 15th pay run covers prior-month 26th →
+          this-month 10th; the 30th covers this-month 11th → 25th. Uses the
+          same Payroll Hours value as Manage Payroll — override wins,
+          scheduled falls back, no-shows count 0 — so a bloated upcoming run
+          is visible before payroll day instead of after. */}
       {view === 'snapshot' && (
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <div className="flex items-center justify-between mb-1">
@@ -7902,6 +7901,101 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
           </p>
         )}
       </div>
+      )}
+
+      {/* Operations Snapshot — dense, decision-useful numbers replacing
+          the old 30-day bar chart. Each row is a single KPI that maps to
+          a real operating question (Are shifts getting filled? Are we
+          short-staffed? Which day is our peak?). Month nav arrows let
+          the owner page through prior months for comparison without
+          losing the live deltas. */}
+      {view === 'snapshot' && (
+        <div className="rounded-2xl border bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-1">
+            <h3 className="text-sm font-semibold text-gray-900">Operations Snapshot</h3>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setViewMonth(m => subMonths(m, 1))}
+                title="Previous month"
+                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              {!isViewingCurrentMonth && (
+                <button
+                  onClick={() => setViewMonth(startOfMonth(new Date()))}
+                  title="Jump to current month"
+                  className="rounded border border-gray-200 bg-white px-2 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-50"
+                >
+                  Today
+                </button>
+              )}
+              <button
+                onClick={() => setViewMonth(m => addMonths(m, 1))}
+                title="Next month"
+                className="rounded-md p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-900 transition-colors"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500 mb-4">
+            {format(viewMonth, 'MMMM yyyy')}{isViewingCurrentMonth ? ' · live numbers' : ''}
+          </p>
+          <div className="divide-y divide-gray-100">
+            <SnapshotRow label="Avg hours / day"        value={`${round1(avgHoursPerDay)}h`}  hint={`${monthDatesWithShifts.size} day${monthDatesWithShifts.size === 1 ? '' : 's'} scheduled`} />
+            <SnapshotRow label="Avg hours / instructor" value={`${round1(avgPerInstructor)}h`} hint={`${monthInstructors.size} working this month`} />
+            <SnapshotRow label="Avg hours / shift"      value={`${round1(avgHoursPerShift)}h`} hint={`${monthShiftCount} shift${monthShiftCount === 1 ? '' : 's'} posted`} />
+            <SnapshotRow label="Open-shift fill rate"   value={`${Math.round(fillRate)}%`}     hint={`${openShiftsMonth} still open`} tone={fillRate >= 90 ? 'good' : fillRate >= 75 ? 'warn' : 'bad'} />
+            <SnapshotRow label="Students per employee"  value={studentsPerEmployee || '—'}     hint="workload ratio" />
+            <SnapshotRow label="Busiest day"  value={busiestDay ? busiestDay.day : '—'}  hint={busiestDay ? `${round1(busiestDay.avg)}h avg` : ''} />
+            <SnapshotRow label="Quietest day" value={quietestDay ? quietestDay.day : '—'} hint={quietestDay ? `${round1(quietestDay.avg)}h avg` : ''} />
+            <SnapshotRow label="Sick day rate"         value={`${Math.round(sickRate * 10) / 10}%`} hint={`${sickDaysThisMonth} of ${personDaysThisMonth} scheduled days`} tone={sickRate >= 8 ? 'bad' : sickRate >= 4 ? 'warn' : 'good'} />
+            <SnapshotRow label="Coverage vs target"    value={`${Math.round(coverageVsTarget)}%`}   hint={`${round1(coverageAvg)} of ${coverageTarget} target instructors / day`} tone={coverageVsTarget >= 95 ? 'good' : coverageVsTarget >= 80 ? 'warn' : 'bad'} />
+          </div>
+
+          {/* Weekly scheduled hours — same rule and same week boundaries as
+              Manage Schedule's "Total assigned", so the two agree week for
+              week. Sick sits outside the figure and shows beside it. */}
+          <div className="mt-5 border-t border-gray-100 pt-4">
+            <div className="mb-2 flex items-baseline justify-between">
+              <h4 className="text-xs font-bold uppercase tracking-wide text-gray-700">Hours scheduled by week</h4>
+              <span className="text-[10px] text-gray-400">Mon – Sat · matches Manage Schedule</span>
+            </div>
+            <div className="divide-y divide-gray-100">
+              {weekRows.map(w => (
+                <div key={w.key} className={`flex items-center justify-between py-1.5 ${w.isCurrent ? 'font-semibold' : ''}`}>
+                  <span className={`text-xs ${w.isCurrent ? 'text-gray-900' : 'text-gray-600'}`}>
+                    {w.label}
+                    {w.isCurrent && (
+                      <span className="ml-1.5 rounded-full bg-purple-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-purple-700">
+                        This week
+                      </span>
+                    )}
+                  </span>
+                  <span className="flex items-center gap-2">
+                    {w.sick > 0 && (
+                      <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800"
+                        title="Sick hours — paid under the sick budget, not counted in the scheduled total.">
+                        +{round1(w.sick)}h sick
+                      </span>
+                    )}
+                    <span className="text-sm font-semibold text-gray-900 tabular-nums">{round1(w.hours)}h</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
+              <span className="text-xs font-medium text-gray-600">
+                Total across {weekRows.length} week{weekRows.length === 1 ? '' : 's'}
+              </span>
+              <span className="text-sm font-bold text-gray-900">{round1(weeklyTotal)} hrs</span>
+            </div>
+            <p className="mt-2 text-[10px] text-gray-400 italic">
+              Drafts count; no-shows, sick, volunteers, salaried and hidden accounts don't. Weeks can spill past the month edge, so this total won't equal the month projection above.
+            </p>
+          </div>
+        </div>
       )}
 
       {/* ── Intakes module: Public Intake form + Apptoto appointments ── */}
