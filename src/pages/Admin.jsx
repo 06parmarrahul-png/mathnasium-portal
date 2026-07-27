@@ -2969,6 +2969,46 @@ export default function Admin() {
     return set;
   }, [users]);
 
+  // ─── Earlier-in-the-year sick shifts ──────────────────────────────────
+  // Sick entitlement is annual, but the live `shifts` listener only covers a
+  // 180-day sliding window. By December that window starts in June, so sick
+  // days taken earlier in the year are simply absent from `shifts` — and
+  // everyone silently looks like they still have allowance left, which would
+  // quietly pay sick days that aren't owed. Backfill just the missing slice
+  // (Jan 1 → window start) with a ONE-OFF read; it fetches nothing for the
+  // first half of the year, and it's the same query shape as the live
+  // listener so it needs no extra Firestore index.
+  const [priorYearSickShifts, setPriorYearSickShifts] = useState([]);
+  useEffect(() => {
+    if (!activeCenterId) return;
+    const yearStart = `${new Date().getFullYear()}-01-01`;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - 180);
+    const windowStart = format(cutoff, 'yyyy-MM-dd');
+    if (windowStart <= yearStart) { setPriorYearSickShifts([]); return; }
+    let cancelled = false;
+    getDocs(query(
+      collection(db, 'shifts'),
+      where('centerId', '==', activeCenterId),
+      where('date', '>=', yearStart),
+      where('date', '<', windowStart),
+    ))
+      .then(snap => {
+        if (cancelled) return;
+        setPriorYearSickShifts(
+          snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.sickPay === true),
+        );
+      })
+      .catch(() => { if (!cancelled) setPriorYearSickShifts([]); });
+    return () => { cancelled = true; };
+  }, [activeCenterId]);
+
+  // Everything needed to count a full calendar year of sick days.
+  const shiftsForSickYear = useMemo(
+    () => [...shifts, ...priorYearSickShifts],
+    [shifts, priorYearSickShifts],
+  );
+
   // Payroll summary — all shifts in the selected pay period grouped by person
   const payrollSummary = useMemo(() => {
     if (!payStart || !payEnd) return [];
@@ -3104,7 +3144,7 @@ export default function Admin() {
     {
       const year = (payStart || '').slice(0, 4);
       const yearSickByName = new Map();
-      for (const s of shifts) {
+      for (const s of shiftsForSickYear) {
         if (!s.sickPay || !s.userName || !s.date) continue;
         if (!s.date.startsWith(year)) continue;
         const k = normName(s.userName);
@@ -3211,7 +3251,7 @@ export default function Admin() {
       const lastB = b.name.split(' ').pop() || b.name;
       return lastA.localeCompare(lastB);
     });
-  }, [shifts, usersForCentre, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, centerConfig]);
+  }, [shifts, shiftsForSickYear, usersForCentre, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, centerConfig]);
 
   // Sick days tracker — per-user counts for the current calendar year.
   //
@@ -3230,7 +3270,7 @@ export default function Admin() {
     // (If they took half a day sick, we count it as 1 — same as employers
     // typically do.)
     const sickDatesByName = new Map();
-    for (const s of shifts) {
+    for (const s of shiftsForSickYear) {
       if (!s.sickPay || !s.userName || !s.date) continue;
       if (s.date < yearStart || s.date > yearEnd) continue;
       if (!sickDatesByName.has(s.userName)) sickDatesByName.set(s.userName, new Set());
@@ -3273,7 +3313,7 @@ export default function Admin() {
       });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
-  }, [shifts, approvedUsers, volunteerNames, hiddenFromOps]);
+  }, [shiftsForSickYear, approvedUsers, volunteerNames, hiddenFromOps]);
 
   // Sub-tab inside Manage Payroll: "This period" or "Sick days".
   const [payrollSubtab, setPayrollSubtab] = useState('period');
