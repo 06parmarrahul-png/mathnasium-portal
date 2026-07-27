@@ -95,6 +95,35 @@ function fmtHHMM(t) {
   return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2,'0')}${ampm}`;
 }
 
+// Inline "this shift should have paid N hours" input, used by the payroll
+// gap panel. Local state so typing doesn't re-render the whole payroll tab.
+function GapHoursInput({ onSave }) {
+  const [val, setVal] = useState('');
+  const commit = () => {
+    const n = Number(val);
+    if (!isFinite(n) || n <= 0) return;
+    onSave(n);
+    setVal('');
+  };
+  return (
+    <span className="flex items-center gap-1">
+      <input
+        type="number" step="0.25" min="0" value={val} placeholder="hrs"
+        onChange={e => setVal(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') commit(); }}
+        className="w-16 rounded-md border border-amber-300 px-1.5 py-0.5 text-right text-[11px] focus:border-amber-500 focus:outline-none"
+      />
+      <button
+        onClick={commit}
+        disabled={!(Number(val) > 0)}
+        className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-40"
+      >
+        Pay this
+      </button>
+    </span>
+  );
+}
+
 // ─── Sick-pay policy (BC ESA minimum) ──────────────────────────────────
 // 5 paid sick days per calendar year, available once the 90-day probation
 // is served. Module-scope because BOTH the payroll summary and the Sick
@@ -576,9 +605,19 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
           </div>
         )}
 
+        {/* A shift whose times produce 0 hours is invisible to payroll — it
+            shows on the grid with no hours label and pays nothing. Block it
+            at the source rather than discovering it on payroll day. */}
+        {!(shiftHours({ startTime, endTime }) > 0) && (
+          <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+            ⚠ These times work out to 0 hours, so this shift would pay nothing. Check the start and end times.
+          </p>
+        )}
         <div className="flex gap-2 pt-1">
-          <button onClick={() => onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole })}
-            className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700">
+          <button
+            onClick={() => onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole })}
+            disabled={!(shiftHours({ startTime, endTime }) > 0)}
+            className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40">
             Save Changes
           </button>
           <button onClick={onDelete}
@@ -3253,6 +3292,61 @@ export default function Admin() {
     });
   }, [shifts, shiftsForSickYear, usersForCentre, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, centerConfig]);
 
+  // Force a shift's payroll hours without touching its (broken) times.
+  // Unblocks a payroll run today; the times still want fixing on the
+  // schedule so the shift stops reading as 0h everywhere else.
+  const setGapPayHours = async (shiftId, hours) => {
+    if (!shiftId || !(hours > 0)) return;
+    try {
+      await updateDoc(doc(db, 'shifts', shiftId), {
+        payHoursOverride: hours,
+        payrollResolved: true,
+      });
+      toast.success(`Set to ${hours}h — fix the shift times on the schedule too.`);
+    } catch (e) { toast.error(e?.message || 'Failed to update.'); }
+  };
+
+  // ─── Shifts in this period that pay nothing ───────────────────────────
+  // Payroll silently drops anything still in DRAFT — new shifts land as
+  // drafts and only enter payroll once published. So a shift that someone
+  // genuinely worked can be missing from payroll entirely, with no warning
+  // anywhere: they just get paid nothing for it. (Summer Camp / STEAM flex
+  // shifts are NOT excluded by role — that part works fine; it's the draft
+  // status that hides them.)
+  //
+  // This surfaces every shift in the period contributing zero hours, with
+  // the reason, so it's caught before the export instead of after payday.
+  // Deliberate exclusions — volunteers, salaried, hidden accounts, no-shows
+  // — are left out; they're intentional and already visible elsewhere.
+  const payrollGaps = useMemo(() => {
+    if (!payStart || !payEnd) return [];
+    const out = [];
+    for (const s of shifts) {
+      if (!s.date || s.date < payStart || s.date > payEnd) continue;
+      const name = s.userName || '(unnamed)';
+      if (s.role === 'Volunteer' || volunteerNames.has(name)) continue;
+      if (salaryStaff.has(name) || hiddenFromOps.has(name)) continue;
+      if (s.noShow === true) continue;
+      let reason = null;
+      if (s.status === 'draft') reason = 'Still a draft — publish it to pay it';
+      else if (!s.startTime || !s.endTime) reason = 'No start/end time — counts as 0 hours';
+      else if (shiftHours(s) <= 0) reason = 'Start and end are the same — 0 hours';
+      else if (s.payHoursOverride === 0) reason = 'Payroll hours manually set to 0';
+      if (!reason) continue;
+      out.push({
+        shift: s,
+        id: s.id,
+        date: s.date,
+        name,
+        reason,
+        isDraft: s.status === 'draft',
+        label: `${s.flexRole || s.role || 'Instructor'} · ${fmtHHMM(s.startTime) || '?'}–${fmtHHMM(s.endTime) || '?'}`,
+        hours: shiftHours(s),
+      });
+    }
+    return out.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
+  }, [shifts, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps]);
+
   // Sick days tracker — per-user counts for the current calendar year.
   //
   // Policy: every employee who has completed 3-month probation is eligible
@@ -5851,6 +5945,63 @@ export default function Admin() {
               </div>
             )}
           </div>
+
+          {/* Shifts in this period that pay nothing — the silent-failure
+              catcher. A worked-but-unpublished shift used to vanish from
+              payroll with no warning at all. */}
+          {payrollGaps.length > 0 && (
+            <div className="mt-4 rounded-xl border-2 border-amber-300 bg-amber-50 p-4">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h4 className="text-sm font-bold text-amber-900">
+                    ⚠ {payrollGaps.length} shift{payrollGaps.length === 1 ? '' : 's'} in this period will pay 0 hours
+                  </h4>
+                  <p className="text-xs text-amber-800">
+                    These are in the pay period but contribute nothing to payroll. Check each one before exporting.
+                  </p>
+                </div>
+                {payrollGaps.some(g => g.isDraft) && (
+                  <button
+                    onClick={() => handlePublishShifts(payrollGaps.filter(g => g.isDraft).map(g => g.shift))}
+                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-emerald-700"
+                  >
+                    Publish {payrollGaps.filter(g => g.isDraft).length} draft{payrollGaps.filter(g => g.isDraft).length === 1 ? '' : 's'}
+                  </button>
+                )}
+              </div>
+              <div className="divide-y divide-amber-200 rounded-lg border border-amber-200 bg-white">
+                {payrollGaps.map(g => (
+                  <div key={g.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                    <div className="min-w-0">
+                      <span className="text-xs font-semibold text-gray-900">{g.name}</span>
+                      <span className="ml-2 text-[11px] text-gray-500">
+                        {new Date(g.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+                        {' · '}{g.label}
+                        {g.hours > 0 && <> · <b>{g.hours.toFixed(2)}h</b> scheduled</>}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                        {g.reason}
+                      </span>
+                      {g.isDraft ? (
+                        <button
+                          onClick={() => handlePublishSingleShift(g.shift)}
+                          className="rounded-md border border-emerald-300 bg-white px-2 py-0.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50"
+                        >
+                          Publish
+                        </button>
+                      ) : (
+                        // Broken times — let payroll be corrected now, rather
+                        // than blocking the run on a schedule edit.
+                        <GapHoursInput onSave={(n) => setGapPayHours(g.id, n)} />
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Radius Import — auto-collapses to a one-line chip once
               entries are loaded, so it doesn't waste vertical space on
