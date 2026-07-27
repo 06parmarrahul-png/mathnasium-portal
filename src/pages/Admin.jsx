@@ -95,6 +95,42 @@ function fmtHHMM(t) {
   return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2,'0')}${ampm}`;
 }
 
+// ─── Sick-pay policy (BC ESA minimum) ──────────────────────────────────
+// 5 paid sick days per calendar year, available once the 90-day probation
+// is served. Module-scope because BOTH the payroll summary and the Sick
+// Days tab need them, and the payroll summary runs first — declaring them
+// inside the component below the summary would put them in the temporal
+// dead zone.
+const SICK_DAYS_PER_YEAR = 5;
+const PROBATION_DAYS = 90;
+
+// Which of a person's sick DATES are actually payable.
+//
+// Entitlement is consumed chronologically across the WHOLE calendar year,
+// not per pay period — whether today's sick day is paid depends on how many
+// were taken before it. A date is unpaid when the person was still on
+// probation that day, or when the 5-day allowance is already spent.
+//
+// A missing hire date counts as ELIGIBLE: withholding pay because nobody
+// filled in a form is the worse failure mode. Those rows are flagged in the
+// export so the gap gets fixed.
+function paidSickDates(sickDates, hireDate) {
+  const paid = new Set();
+  let used = 0;
+  for (const ds of [...sickDates].sort()) {
+    if (used >= SICK_DAYS_PER_YEAR) break;
+    if (hireDate) {
+      const daysIn = Math.floor(
+        (new Date(ds + 'T00:00:00') - new Date(hireDate + 'T00:00:00')) / 86400000,
+      );
+      if (daysIn < PROBATION_DAYS) continue; // on probation that day → unpaid
+    }
+    paid.add(ds);
+    used += 1;
+  }
+  return paid;
+}
+
 function shiftHours(s) {
   if (!s.startTime || !s.endTime) return 0;
   const [sh, sm] = s.startTime.split(':').map(Number);
@@ -2989,6 +3025,12 @@ export default function Admin() {
           payHours: 0,
           sickHours: 0,
           sickCount: 0,
+          // Sick split by entitlement — filled in after the loop, once the
+          // whole year's sick dates are known.
+          sickPaidHours: 0,
+          sickUnpaidHours: 0,
+          sickDatesInPeriod: new Map(), // date → hours, for the split below
+          noHireDate: false,
           // No-shows — scheduled but not worked. Tracked separately so the
           // headline/scheduled figures can exclude them (they're not owed).
           noShowHours: 0,
@@ -3031,6 +3073,9 @@ export default function Admin() {
       if (isSick) {
         byPerson[key].sickHours += hrs;
         byPerson[key].sickCount += 1;
+        byPerson[key].sickDatesInPeriod.set(
+          s.date, (byPerson[key].sickDatesInPeriod.get(s.date) || 0) + hrs,
+        );
       } else {
         byPerson[key].totalHours += hrs;
         byPerson[key].payHours   += payHrs;
@@ -3049,6 +3094,40 @@ export default function Admin() {
       byPerson[key].payHours   = Math.round(byPerson[key].payHours   * 100) / 100;
       byPerson[key].sickHours  = Math.round(byPerson[key].sickHours  * 100) / 100;
       byPerson[key].noShowHours = Math.round(byPerson[key].noShowHours * 100) / 100;
+    }
+
+    // ─── Split this period's sick hours into payable vs not ─────────────
+    // Needs the person's sick dates for the WHOLE year, because the 5-day
+    // allowance is spent chronologically — a sick day in this period is only
+    // paid if fewer than 5 were taken before it. Payroll used to add none of
+    // it to Total Payable, so every sick hour went unpaid regardless.
+    {
+      const year = (payStart || '').slice(0, 4);
+      const yearSickByName = new Map();
+      for (const s of shifts) {
+        if (!s.sickPay || !s.userName || !s.date) continue;
+        if (!s.date.startsWith(year)) continue;
+        const k = normName(s.userName);
+        if (!yearSickByName.has(k)) yearSickByName.set(k, new Set());
+        yearSickByName.get(k).add(s.date);
+      }
+      for (const p of Object.values(byPerson)) {
+        if (p.sickHours <= 0) continue;
+        const user = usersForCentre.find(u =>
+          (p.userId && u.uid === p.userId) || normName(u.displayName) === normName(p.name),
+        );
+        const hire = user?.hireDate
+          || (user?.approvedAt?.toDate ? user.approvedAt.toDate().toISOString().slice(0, 10) : null)
+          || (user?.createdAt?.toDate  ? user.createdAt.toDate().toISOString().slice(0, 10)  : null);
+        p.noHireDate = !hire;
+        const paid = paidSickDates(yearSickByName.get(normName(p.name)) || new Set(), hire);
+        let paidH = 0, unpaidH = 0;
+        for (const [ds, hrs] of p.sickDatesInPeriod) {
+          if (paid.has(ds)) paidH += hrs; else unpaidH += hrs;
+        }
+        p.sickPaidHours   = Math.round(paidH * 100) / 100;
+        p.sickUnpaidHours = Math.round(unpaidH * 100) / 100;
+      }
     }
 
     // ─── Stat (statutory holiday) pay ───────────────────────────────────
@@ -3141,8 +3220,6 @@ export default function Admin() {
   // shifts with sickPay === true in the current year, regardless of pay
   // period. Probation start date is taken from the user's hireDate field
   // if set; otherwise falls back to the Firestore createdAt timestamp.
-  const SICK_DAYS_PER_YEAR = 5;
-  const PROBATION_DAYS = 90;
   const sickDaysSummary = useMemo(() => {
     const now = new Date();
     const yearStart = `${now.getFullYear()}-01-01`;
@@ -3455,11 +3532,12 @@ export default function Admin() {
 
     // ── Sheet 2: Attendance (QuickBooks-shaped) ──
     const attendanceRows = [
-      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Stat Pay Hrs', 'Total Payable Hrs', 'Special Cases'],
+      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Sick (unpaid)', 'Stat Pay Hrs', 'Total Payable Hrs', 'Special Cases'],
     ];
     let totalHoursSum = 0;
     let employeesCount = 0;
     let sickSum = 0;
+    let sickUnpaidSum = 0;
     let statSum = 0;
     // Sort alphabetically by last name where possible — matches the
     // owner's existing template format.
@@ -3474,23 +3552,33 @@ export default function Admin() {
       const abbrev = roleAbbrev(person.role);
       const isVolunteer = abbrev === 'V';
       const totalH = Math.round((person.payHours ?? person.totalHours ?? 0) * 100) / 100;
-      const sickH = Math.round((person.sickHours || 0) * 100) / 100;
+      // Sick splits by entitlement: the first 5 days of the calendar year
+      // (after probation) are payable, the rest are recorded but unpaid.
+      const sickH       = Math.round((person.sickPaidHours   || 0) * 100) / 100;
+      const sickUnpaidH = Math.round((person.sickUnpaidHours || 0) * 100) / 100;
       const statH = Math.round((person.statHours || 0) * 100) / 100;
-      // Total payable = worked + stat (both paid at regular rate). Sick stays
-      // in its own column since it's filed under the separate sick budget.
-      const payableH = Math.round((totalH + statH) * 100) / 100;
+      // Total payable = worked + PAYABLE sick + stat. Sick used to be left
+      // out entirely, so with no stat pay this column just mirrored Total
+      // Hours and every sick hour in the sheet was paid to nobody.
+      const payableH = Math.round((totalH + sickH + statH) * 100) / 100;
+      // Flag the data gap rather than silently guessing at eligibility.
+      const notes = person.noHireDate && (sickH > 0 || sickUnpaidH > 0)
+        ? 'No hire date on file — sick paid by default; confirm probation'
+        : '';
       attendanceRows.push([
         `${person.name} (${abbrev})`,
         totalH || '',
         isVolunteer ? '' : 1,
         sickH || '',
+        sickUnpaidH || '',
         statH || '',
         payableH || '',
-        '', // Special Cases — left blank for manual fill
+        notes,
       ]);
       totalHoursSum += totalH;
       if (!isVolunteer) employeesCount += 1;
       sickSum += sickH;
+      sickUnpaidSum += sickUnpaidH;
       statSum += statH;
     }
     attendanceRows.push([]);
@@ -3499,8 +3587,9 @@ export default function Admin() {
       Math.round(totalHoursSum * 100) / 100,
       employeesCount,
       Math.round(sickSum * 100) / 100 || '',
+      Math.round(sickUnpaidSum * 100) / 100 || '',
       Math.round(statSum * 100) / 100 || '',
-      Math.round((totalHoursSum + statSum) * 100) / 100 || '',
+      Math.round((totalHoursSum + sickSum + statSum) * 100) / 100 || '',
       '',
     ]);
 
@@ -5879,10 +5968,24 @@ export default function Admin() {
                             purple Stat badge vanish even though the pay was still
                             owed. */}
                         {(person.sickCount || 0) > 0 && (
-                          <div className="mt-1 text-xs font-semibold text-amber-700">
-                            <span className="rounded bg-amber-100 px-1.5 py-0.5">
+                          <div className="mt-1 flex flex-wrap items-center gap-1 text-xs font-semibold">
+                            <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-700">
                               Sick: {person.sickHours.toFixed(2)}h · {person.sickCount} shift{person.sickCount !== 1 ? 's' : ''}
                             </span>
+                            {/* Beyond the 5-day annual entitlement (or taken on
+                                probation) — recorded, but not payable. */}
+                            {(person.sickUnpaidHours || 0) > 0 && (
+                              <span className="rounded bg-gray-200 px-1.5 py-0.5 text-gray-600"
+                                title="Past the 5-day annual sick entitlement, or taken during probation — recorded but not paid.">
+                                {person.sickUnpaidHours.toFixed(2)}h unpaid
+                              </span>
+                            )}
+                            {person.noHireDate && (
+                              <span className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
+                                title="No hire date on file, so probation can't be checked. Sick is paid by default — set a hire date under Sick Days to be sure.">
+                                no hire date
+                              </span>
+                            )}
                           </div>
                         )}
                         {(person.noShowCount || 0) > 0 && (
