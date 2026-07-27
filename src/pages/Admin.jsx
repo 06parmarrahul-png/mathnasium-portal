@@ -1525,7 +1525,7 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
 // calendar year, with probation status. Policy: 5 sick days per year,
 // available once the 3-month probation is over. "Used" counts distinct
 // calendar dates where a sickPay-tagged shift exists for that person.
-function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate }) {
+function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate, onAddExternalSickDate, onRemoveExternalSickDate }) {
   const [query, setQuery] = useState('');
   const filtered = query
     ? rows.filter(r => r.name.toLowerCase().includes(query.toLowerCase()))
@@ -1603,11 +1603,39 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate }) {
                   {r.eligible ? r.remaining : '—'}
                 </td>
                 <td className="px-4 py-2 text-xs text-gray-600">
-                  {r.sickDates.length === 0
+                  {r.sickDates.length === 0 && r.externalSickDates.length === 0
                     ? <span className="text-gray-300">— none —</span>
-                    : r.sickDates.map(d => (
-                        <span key={d} className="inline-block rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 mr-1 mb-1">{d}</span>
-                      ))}
+                    : (
+                      <>
+                        {r.sickDates.map(d => (
+                          <span key={d} className="inline-block rounded bg-amber-50 border border-amber-200 px-1.5 py-0.5 mr-1 mb-1">{d}</span>
+                        ))}
+                        {/* Days taken outside Ratio — no shift exists for them,
+                            so nothing else can know they happened. They still
+                            consume the annual entitlement. */}
+                        {r.externalSickDates.map(d => (
+                          <span key={d} className="inline-flex items-center gap-1 rounded border border-gray-300 bg-gray-100 px-1.5 py-0.5 mr-1 mb-1">
+                            {d}
+                            <span className="text-[9px] uppercase tracking-wide text-gray-500">off-system</span>
+                            <button
+                              onClick={() => onRemoveExternalSickDate(r.uid, d)}
+                              title="Remove this day"
+                              className="text-gray-400 hover:text-red-600"
+                            >×</button>
+                          </span>
+                        ))}
+                      </>
+                    )}
+                  <div className="mt-1">
+                    <input
+                      type="date"
+                      value=""
+                      onChange={e => e.target.value && onAddExternalSickDate(r.uid, e.target.value)}
+                      title="Record a sick day taken outside Ratio — it still uses up their entitlement."
+                      className="rounded border border-dashed border-gray-300 px-1.5 py-0.5 text-[11px] text-gray-500"
+                    />
+                    <span className="ml-1 text-[10px] text-gray-400">+ day taken outside Ratio</span>
+                  </div>
                 </td>
               </tr>
             ))}
@@ -3199,7 +3227,16 @@ export default function Admin() {
           || (user?.approvedAt?.toDate ? user.approvedAt.toDate().toISOString().slice(0, 10) : null)
           || (user?.createdAt?.toDate  ? user.createdAt.toDate().toISOString().slice(0, 10)  : null);
         p.noHireDate = !hire;
-        const paid = paidSickDates(yearSickByName.get(normName(p.name)) || new Set(), hire);
+        // Sick days taken outside Ratio spend entitlement too — without them
+        // someone who's actually used all 5 still looks like they have one
+        // left, and the day gets paid when it shouldn't be.
+        const external = (Array.isArray(user?.externalSickDates) ? user.externalSickDates : [])
+          .filter(d => typeof d === 'string' && d.startsWith(year));
+        const allDates = new Set([
+          ...(yearSickByName.get(normName(p.name)) || new Set()),
+          ...external,
+        ]);
+        const paid = paidSickDates(allDates, hire);
         let paidH = 0, unpaidH = 0;
         for (const [ds, hrs] of p.sickDatesInPeriod) {
           if (paid.has(ds)) paidH += hrs; else unpaidH += hrs;
@@ -3389,7 +3426,17 @@ export default function Admin() {
         onProbation = daysIn < PROBATION_DAYS;
       }
 
-      const used = (sickDatesByName.get(u.displayName) || new Set()).size;
+      // Days taken outside Ratio (previous employer's records, a day nobody
+      // logged, a centre transfer) have no shift to count, but they still
+      // spend the annual entitlement. Recorded by hand on this tab.
+      const externalSickDates = (Array.isArray(u.externalSickDates) ? u.externalSickDates : [])
+        .filter(d => typeof d === 'string' && d >= yearStart && d <= yearEnd)
+        .sort();
+      const allSickDates = new Set([
+        ...(sickDatesByName.get(u.displayName) || new Set()),
+        ...externalSickDates,
+      ]);
+      const used = allSickDates.size;
       const remaining = onProbation ? 0 : Math.max(0, SICK_DAYS_PER_YEAR - used);
 
       out.push({
@@ -3404,6 +3451,7 @@ export default function Admin() {
         eligible: !onProbation,
         // Per-date list for the expandable tooltip
         sickDates: [...(sickDatesByName.get(u.displayName) || new Set())].sort(),
+        externalSickDates,
       });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
@@ -3526,6 +3574,31 @@ export default function Admin() {
   const handleSetHireDate = async (userId, dateStr) => {
     if (!userId) return;
     await updateDoc(doc(db, 'users', userId), { hireDate: dateStr || null });
+  };
+
+  // Sick days taken outside Ratio. Stored on the user because they're a
+  // property of the person's year, not of any shift — there is no shift.
+  const handleAddExternalSickDate = async (userId, dateStr) => {
+    if (!userId || !dateStr) return;
+    const u = users.find(x => (x.uid || x.id) === userId);
+    const cur = Array.isArray(u?.externalSickDates) ? u.externalSickDates : [];
+    if (cur.includes(dateStr)) return;
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        externalSickDates: [...cur, dateStr].sort(),
+      });
+      toast.success('Recorded — it now counts against their 5 days.');
+    } catch (e) { toast.error(e?.message || 'Failed to update.'); }
+  };
+  const handleRemoveExternalSickDate = async (userId, dateStr) => {
+    if (!userId || !dateStr) return;
+    const u = users.find(x => (x.uid || x.id) === userId);
+    const cur = Array.isArray(u?.externalSickDates) ? u.externalSickDates : [];
+    try {
+      await updateDoc(doc(db, 'users', userId), {
+        externalSickDates: cur.filter(d => d !== dateStr),
+      });
+    } catch (e) { toast.error(e?.message || 'Failed to update.'); }
     try { toast.success('Hire date saved'); } catch { /* ignore */ }
   };
 
@@ -3557,6 +3630,16 @@ export default function Admin() {
   const totalScheduledHours = payrollSummary.reduce((s, p) => s + (p.totalHours || 0), 0);
   const totalNoShowHours  = payrollSummary.reduce((s, p) => s + (p.noShowHours || 0), 0);
   const totalNoShowCount  = payrollSummary.reduce((s, p) => s + (p.noShowCount || 0), 0);
+
+  // What actually gets paid: worked + payable sick + stat. Worked hours
+  // alone were the only figure on screen, so a sick day looked like it had
+  // simply gone missing — the money was never added up anywhere you could
+  // see it before the export.
+  const payableFor = (p) =>
+    (p.payHours ?? p.totalHours ?? 0) + (p.sickPaidHours || 0) + (p.statHours || 0);
+  const totalPayableHours = payrollSummary.reduce((s, p) => s + payableFor(p), 0);
+  const totalSickPaidHours = payrollSummary.reduce((s, p) => s + (p.sickPaidHours || 0), 0);
+  const totalStatHours = payrollSummary.reduce((s, p) => s + (p.statHours || 0), 0);
 
   // Add / remove a staff member from the salaryStaff list (which the payroll
   // filter uses to keep salaried people off the hourly sheet). Writes are
@@ -5800,6 +5883,8 @@ export default function Admin() {
               year={new Date().getFullYear()}
               maxPerYear={SICK_DAYS_PER_YEAR}
               probationDays={PROBATION_DAYS}
+              onAddExternalSickDate={handleAddExternalSickDate}
+              onRemoveExternalSickDate={handleRemoveExternalSickDate}
               onSetHireDate={handleSetHireDate}
             />
           )}
@@ -5891,15 +5976,30 @@ export default function Admin() {
                     <span className="font-semibold text-gray-800">{payrollSummary.reduce((s,p) => s + p.shifts.length, 0)}</span>
                   </div>
                   <div>
-                    <span className="text-gray-500">Total hours: </span>
-                    <span className="font-bold text-green-700"
-                      title="Sum of Pay h — no-shows count 0 and per-shift overrides are honoured. This is what Export Final Payroll ships.">
+                    <span className="text-gray-500">Hours worked: </span>
+                    <span className="font-bold text-gray-800"
+                      title="Sum of Pay h — no-shows count 0 and per-shift overrides are honoured. Sick and stat are paid on top; see Total payable.">
                       {Math.round(totalPayrollHours * 100) / 100}h
                     </span>
                     {totalNoShowHours > 0 && (
                       <span className="ml-2 rounded bg-gray-200 px-1.5 py-0.5 text-[11px] font-semibold text-gray-500"
                         title="No-show hours excluded from the total above.">
                         −{Math.round(totalNoShowHours * 100) / 100}h no show · {totalNoShowCount} shift{totalNoShowCount !== 1 ? 's' : ''}
+                      </span>
+                    )}
+                  </div>
+                  {/* The number that actually leaves the building. */}
+                  <div>
+                    <span className="text-gray-500">Total payable: </span>
+                    <span className="font-bold text-green-700"
+                      title="Worked + payable sick + stat. This is the Total Payable Hrs column in the export.">
+                      {Math.round(totalPayableHours * 100) / 100}h
+                    </span>
+                    {(totalSickPaidHours > 0 || totalStatHours > 0) && (
+                      <span className="ml-1.5 text-[11px] text-gray-500">
+                        ({Math.round(totalPayrollHours * 100) / 100} worked
+                        {totalSickPaidHours > 0 && <> + {Math.round(totalSickPaidHours * 100) / 100} sick</>}
+                        {totalStatHours > 0 && <> + {Math.round(totalStatHours * 100) / 100} stat</>})
                       </span>
                     )}
                   </div>
@@ -6175,6 +6275,21 @@ export default function Admin() {
                               <span className="rounded bg-orange-100 px-1.5 py-0.5 text-orange-700"
                                 title="No hire date on file, so probation can't be checked. Sick is paid by default — set a hire date under Sick Days to be sure.">
                                 no hire date
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {/* Payable — worked + payable sick + stat. Without
+                            this the card showed 75h worked next to a 5h sick
+                            badge and never stated the 80h actually owed. */}
+                        {(payableFor(person) > 0) && (
+                          <div className="mt-1.5 rounded-lg bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-800">
+                            Payable: {payableFor(person).toFixed(2)}h
+                            {((person.sickPaidHours || 0) > 0 || (person.statHours || 0) > 0) && (
+                              <span className="ml-1 font-medium text-emerald-700">
+                                ({(person.payHours ?? person.totalHours ?? 0).toFixed(2)} worked
+                                {(person.sickPaidHours || 0) > 0 && <> + {person.sickPaidHours.toFixed(2)} sick</>}
+                                {(person.statHours || 0) > 0 && <> + {person.statHours.toFixed(2)} stat</>})
                               </span>
                             )}
                           </div>
