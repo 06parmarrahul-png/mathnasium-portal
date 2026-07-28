@@ -4,10 +4,11 @@ import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 import { toast } from '../lib/notify';
+import { hasCapability } from '../lib/subRoles';
 import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, mySubRoles, activeCenterId } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -40,7 +41,7 @@ export default function Chat() {
   const [channel, setChannel] = useState('all');
   // Who can see the Online side channel: Online sub-role staff, plus admins,
   // owners, and super-admins so leadership can oversee / chime in.
-  const isOnlineMember = (profile?.subRoles || []).includes('Online')
+  const isOnlineMember = hasCapability(mySubRoles, 'Online')
     || profile?.role === 'super_admin'
     || profile?.role === 'owner'
     || profile?.role === 'admin_assistant'

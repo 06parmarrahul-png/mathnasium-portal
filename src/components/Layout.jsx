@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -75,7 +75,7 @@ export default function Layout({ children }) {
   // Eligible-for-this-user count for the sidebar badge.
   const boardCount = useMemo(() => {
     const today = todayStr();
-    const subs = profile?.subRoles || [];
+    const subs = mySubRoles || [];
 
     const openCount = openShifts.filter(s =>
       s.status === 'open' &&

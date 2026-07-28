@@ -11,7 +11,7 @@ import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
-import { buildInitialMembership } from '../lib/centerMembership';
+import { buildInitialMembership, resolveUserForCenter } from '../lib/centerMembership';
 
 const AuthContext = createContext(null);
 
@@ -339,10 +339,25 @@ export function AuthProvider({ children }) {
    */
   const refreshProfile = async () => {};
 
+  // ─── The signed-in user's capabilities AT THE ACTIVE CENTRE ───────────
+  // `subRoles` is a per-centre field: Manage Staff writes it to
+  // centerMemberships[centreId].subRoles. Reading profile.subRoles directly
+  // gets the stale TOP-LEVEL copy, so ticking "Highschool" for someone had
+  // no effect on what they were allowed to claim — the UI showed the new
+  // sub-role while every capability check still saw the old list.
+  //
+  // resolveUserForCenter layers the membership over the top-level values,
+  // so this falls back correctly for anyone with no membership row yet.
+  const mySubRoles = useMemo(() => {
+    const resolved = resolveUserForCenter(profile, activeCenterId);
+    return Array.isArray(resolved?.subRoles) ? resolved.subRoles : [];
+  }, [profile, activeCenterId]);
+
   return (
     <AuthContext.Provider value={{
       user,
       profile,
+      mySubRoles,
       loading,
       login,
       signup,

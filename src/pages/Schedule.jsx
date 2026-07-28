@@ -6,7 +6,7 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor, requiredCapabilityForShift } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason, resolveInstructionalHours } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
@@ -1250,7 +1250,7 @@ function CalendarSyncModal({ profile, onClose }) {
 }
 
 export default function Schedule() {
-  const { profile, activeCenterId, centerConfig } = useAuth();
+  const { profile, mySubRoles, activeCenterId, centerConfig } = useAuth();
   const fullDayByDow = useMemo(() => buildFullDayByDow(centerConfig), [centerConfig]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -1455,7 +1455,7 @@ export default function Schedule() {
     // Host; teaching shifts require the matching sub-role. Guards every
     // claim path (Shift Board + this Day modal).
     const required = requiredCapabilityForShift(openShift);
-    if (required && !(profile?.subRoles || []).includes(required)) {
+    if (required && !hasCapability(mySubRoles, required)) {
       toast.error(required === 'Host'
         ? 'Only staff who can host can claim this shift.'
         : `This shift requires the ${required} sub-role — you don't have it.`);
@@ -2004,7 +2004,7 @@ export default function Schedule() {
           onPostSwap={handlePostSwap}
           onClaimOpenShift={handleClaimOpenShift}
           onRequestTimeOff={handleRequestTimeOff}
-          mySubRoles={profile?.subRoles || []}
+          mySubRoles={mySubRoles}
         />
       )}
     </div>

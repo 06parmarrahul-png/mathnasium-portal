@@ -16,6 +16,47 @@
 
 export const SUB_ROLES = ['Elementary', 'Highschool', 'Online'];
 
+// ─── Capability matching ────────────────────────────────────────────────
+// Sub-role strings are not consistent in stored data: 'Highschool' is the
+// canonical form, but 'High School' (with a space) exists on older shifts
+// and imports, and 'HS' / 'Elem' turn up as shorthand. Comparing them with
+// a plain === meant a genuinely qualified instructor could be told they
+// lacked a sub-role they visibly had.
+//
+// Everything that gates on capability should go through hasCapability()
+// rather than Array.includes(), so a stray space can't lock someone out.
+const CAPABILITY_ALIASES = {
+  highschool: 'highschool',
+  hs: 'highschool',
+  high: 'highschool',
+  elementary: 'elementary',
+  elem: 'elementary',
+  em: 'elementary',
+  online: 'online',
+  host: 'host',
+};
+
+/** Fold any spelling of a capability down to a single comparable token. */
+export function normalizeCapability(value) {
+  if (!value || typeof value !== 'string') return '';
+  const key = value.toLowerCase().replace(/[^a-z]/g, '');
+  return CAPABILITY_ALIASES[key] || key;
+}
+
+/**
+ * Can someone holding `userSubRoles` work a shift requiring `required`?
+ *
+ * - no requirement (legacy shift with no subRole) → anyone can take it
+ * - no sub-roles recorded at all → locked out, as before
+ */
+export function hasCapability(userSubRoles, required) {
+  const subs = Array.isArray(userSubRoles) ? userSubRoles : [];
+  if (subs.length === 0) return false;
+  const want = normalizeCapability(required);
+  if (!want) return true;
+  return subs.some(s => normalizeCapability(s) === want);
+}
+
 export const SUB_ROLE_STYLES = {
   Elementary: {
     label:        'Elementary',

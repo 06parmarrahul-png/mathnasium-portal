@@ -6,7 +6,7 @@ import {
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { styleFor as subRoleStyleFor, requiredCapabilityForShift } from '../lib/subRoles';
+import { styleFor as subRoleStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
@@ -43,15 +43,13 @@ function fmtDate(dateStr) {
  * Eligibility rule:
  *  - If the shift has no `subRole` (legacy data), anyone with at least one
  *    sub-role can take it. Users with zero sub-roles are still locked out.
- *  - If the shift has a `subRole`, the user must have that exact sub-role
- *    in their profile.subRoles array.
+ *  - If the shift has a `subRole`, the user must hold that capability.
+ *
+ * Matching is delegated to hasCapability() so 'Highschool' and
+ * 'High School' are treated as the same thing — an exact === here used to
+ * lock qualified people out of shifts they could clearly work.
  */
-function canTake(shiftSubRole, userSubRoles) {
-  const subs = userSubRoles || [];
-  if (subs.length === 0) return false; // user has no sub-roles → locked out
-  if (!shiftSubRole) return true;       // legacy shift, no restriction
-  return subs.includes(shiftSubRole);
-}
+const canTake = (shiftSubRole, userSubRoles) => hasCapability(userSubRoles, shiftSubRole);
 
 // ─── Card components ──────────────────────────────────────────────────────────
 
@@ -81,9 +79,9 @@ function CardShell({ children, eligible, isMine }) {
   );
 }
 
-function OpenShiftCard({ shift, profile, onClaim, canAdmin, onEdit, onDelete }) {
+function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete }) {
   const [busy, setBusy] = useState(false);
-  const eligible = canTake(requiredCapabilityForShift(shift), profile?.subRoles);
+  const eligible = canTake(requiredCapabilityForShift(shift), mySubRoles);
   const handleClick = async () => {
     setBusy(true);
     try { await onClaim(shift); }
@@ -150,10 +148,10 @@ function OpenShiftCard({ shift, profile, onClaim, canAdmin, onEdit, onDelete }) 
   );
 }
 
-function SwapCard({ swap, profile, onTake, canAdmin, onDelete }) {
+function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete }) {
   const [busy, setBusy] = useState(false);
   const isMine = swap.userId === profile?.uid;
-  const eligible = !isMine && canTake(swap.shiftSubRole, profile?.subRoles);
+  const eligible = !isMine && canTake(swap.shiftSubRole, mySubRoles);
   const handleClick = async () => {
     setBusy(true);
     try { await onTake(swap); }
@@ -278,7 +276,7 @@ function EditOpenShiftModal({ shift, onClose, onSave }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile, activeCenterId, canSeeAdminPanel, centerConfig } = useAuth();
+  const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, centerConfig } = useAuth();
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
@@ -336,13 +334,13 @@ export default function ShiftBoard() {
   // Apply "hide ineligible" toggle
   const filteredOpen = useMemo(() => (
     hideIneligible
-      ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), profile?.subRoles))
+      ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), mySubRoles))
       : visibleOpen
   ), [visibleOpen, hideIneligible, profile]);
 
   const filteredSwaps = useMemo(() => (
     hideIneligible
-      ? visibleSwaps.filter(s => s.userId === profile?.uid || canTake(s.shiftSubRole, profile?.subRoles))
+      ? visibleSwaps.filter(s => s.userId === profile?.uid || canTake(s.shiftSubRole, mySubRoles))
       : visibleSwaps
   ), [visibleSwaps, hideIneligible, profile]);
 
@@ -353,7 +351,7 @@ export default function ShiftBoard() {
   // ─── Actions ──────────────────────────────────────────────────────────────
 
   const handleClaim = async (openShift) => {
-    if (!canTake(openShift.subRole, profile?.subRoles)) {
+    if (!canTake(openShift.subRole, mySubRoles)) {
       toast.error('You don\'t have the right teaching sub-role to claim this shift.');
       return;
     }
@@ -366,7 +364,7 @@ export default function ShiftBoard() {
         const data = openSnap.data();
         if (data.status !== 'open') throw new Error('This shift has already been claimed.');
         // Re-check sub-role inside the transaction too, defense-in-depth
-        if (!canTake(data.subRole, profile?.subRoles)) {
+        if (!canTake(data.subRole, mySubRoles)) {
           throw new Error('You don\'t have the right sub-role for this shift.');
         }
 
@@ -431,7 +429,7 @@ export default function ShiftBoard() {
 
   const handleTakeSwap = async (swap) => {
     if (swap.userId === profile?.uid) return;
-    if (!canTake(swap.shiftSubRole, profile?.subRoles)) {
+    if (!canTake(swap.shiftSubRole, mySubRoles)) {
       toast.error(swap.shiftSubRole === 'Host'
         ? 'Only staff who can host can take this shift.'
         : 'You don\'t have the required sub-role to take this shift.');
@@ -465,7 +463,7 @@ export default function ShiftBoard() {
         if (!chatSnap.exists()) throw new Error('Swap request no longer exists.');
         const data = chatSnap.data();
         if (data.swapStatus !== 'open') throw new Error('This shift has already been taken.');
-        if (!canTake(data.shiftSubRole, profile?.subRoles)) {
+        if (!canTake(data.shiftSubRole, mySubRoles)) {
           throw new Error(data.shiftSubRole === 'Host'
             ? 'Only staff who can host can take this shift.'
             : 'You don\'t have the required sub-role for this shift.');
@@ -549,7 +547,7 @@ export default function ShiftBoard() {
 
   // ─── No-sub-roles warning banner ──────────────────────────────────────────
 
-  const userHasNoSubRoles = (profile?.subRoles || []).length === 0;
+  const userHasNoSubRoles = (mySubRoles || []).length === 0;
 
   return (
     <div className="mx-auto max-w-4xl">
@@ -615,7 +613,7 @@ export default function ShiftBoard() {
               <OpenShiftCard
                 key={s.id}
                 shift={s}
-                profile={profile}
+                mySubRoles={mySubRoles}
                 onClaim={handleClaim}
                 canAdmin={canSeeAdminPanel}
                 onEdit={setEditingOpenShift}
@@ -655,6 +653,7 @@ export default function ShiftBoard() {
                 key={s.id}
                 swap={s}
                 profile={profile}
+                mySubRoles={mySubRoles}
                 onTake={handleTakeSwap}
                 canAdmin={canSeeAdminPanel}
                 onDelete={handleAdminDeleteSwap}
