@@ -39,6 +39,7 @@ import {
 } from '../lib/emailService';
 import { attachEmails } from '../lib/userContact';
 import { weekdayBudgetTotal } from '../lib/budgetBuckets';
+import { isPaidStatHoliday, statPayForHoliday } from '../lib/statPay';
 import {
   resolveUserForCenter,
   membershipFieldPath,
@@ -1687,7 +1688,7 @@ function StatPayTab({ holidays, rows }) {
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900">Stat Pay</h3>
             <p className="text-xs text-gray-600">
-              {subtitle} — qualify at 15+ shifts in the 30 days before the holiday. Stat hours = average hours per qualifying shift (BC ESA).
+              {subtitle} — qualify at 15+ <b>days worked</b> in the 30 days before the holiday. Stat hours = an average day's pay: total hours ÷ days worked (BC ESA). Two shifts in one day count as one day.
             </p>
           </div>
         </div>
@@ -1738,7 +1739,7 @@ function StatPayTab({ holidays, rows }) {
             <tr>
               <th className="px-4 py-2 text-left">Staff</th>
               <th className="px-4 py-2 text-left">Role</th>
-              <th className="px-4 py-2 text-center">Shifts in window</th>
+              <th className="px-4 py-2 text-center">Days worked in window</th>
               <th className="px-4 py-2 text-center">Stat hrs eligible</th>
               <th className="px-4 py-2 text-left">Status</th>
               {multi && <th className="px-4 py-2 text-left">Holidays</th>}
@@ -3247,11 +3248,11 @@ export default function Admin() {
     }
 
     // ─── Stat (statutory holiday) pay ───────────────────────────────────
-    // For each stat holiday in the pay period, anyone with 15+ shifts in
-    // the 30 calendar days BEFORE that holiday qualifies. Their stat-pay
-    // hours for that day = avg hours per qualifying shift (BC ESA's
-    // "average day"), rounded to the nearest 0.01h. Multiple stat days
-    // in the same pay period add up.
+    // For each PAID statutory holiday in the pay period, anyone with 15+
+    // DAYS worked in the 30 calendar days before it qualifies, and is paid
+    // an average day (total hours ÷ days worked). Rules and the reasoning
+    // behind them live in lib/statPay.js, which is unit tested. Multiple
+    // stat days in the same pay period add up.
     //
     // Note: people who qualify (15+ prior-30-day shifts) but have NO
     // shifts in the pay period itself won't appear here, since this loop
@@ -3276,46 +3277,35 @@ export default function Admin() {
       if (!shiftsByPerson[id]) shiftsByPerson[id] = [];
       shiftsByPerson[id].push(s);
     }
+    // Only genuinely statutory holidays pay. The holidays list also holds
+    // ordinary closures — being shut on Sat Aug 1 as well as BC Day on Mon
+    // Aug 3 used to pay stat TWICE. See isPaidStatHoliday.
     const statHolidays = (Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [])
-      .filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
-    const minusDays = (dateStr, n) => {
-      const d = new Date(dateStr + 'T00:00:00');
-      d.setDate(d.getDate() - n);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    };
+      .filter(h => h?.date && h.date >= payStart && h.date <= payEnd && isPaidStatHoliday(h));
     for (const key of Object.keys(byPerson)) {
       const person = byPerson[key];
       const pid = person.userId || nameToUid[person.name] || person.name;
       const personShifts = shiftsByPerson[pid] || [];
       person.statHours = 0;
       person.statDays = 0;
-      person.statEntries = []; // [{ date, name, hours, basisShifts, windowStart, totalHrs, shifts:[...] }]
+      person.statEntries = []; // [{ date, name, hours, basisDays, windowStart, totalHrs, days:[...] }]
       for (const h of statHolidays) {
-        const windowStart = minusDays(h.date, 30);
-        const relevant = personShifts.filter(s => s.date >= windowStart && s.date < h.date);
-        if (relevant.length < 15) continue;
-        const totalHrs = relevant.reduce((sum, s) => sum + shiftHours(s), 0);
-        const avg = Math.round((totalHrs / relevant.length) * 100) / 100;
-        person.statHours += avg;
+        // Qualification is by DAY worked, not by shift record, and skips
+        // drafts / no-shows / volunteer shifts. See lib/statPay.js.
+        const r = statPayForHoliday(personShifts, h.date, shiftHours);
+        if (!r.qualifies) continue;
+        person.statHours += r.hours;
         person.statDays  += 1;
         person.statEntries.push({
           date: h.date,
           name: h.name || 'Statutory Holiday',
-          hours: avg,
-          basisShifts: relevant.length,
-          windowStart,
-          totalHrs: Math.round(totalHrs * 100) / 100,
-          // The exact shifts that qualified this person — the audit trail the
-          // Stat Pay export sheet lists so staff can sanity-check the math.
-          shifts: relevant
-            .slice()
-            .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
-            .map(s => ({
-              date: s.date,
-              startTime: s.startTime || '',
-              endTime: s.endTime || '',
-              hours: Math.round(shiftHours(s) * 100) / 100,
-            })),
+          hours: r.hours,
+          basisDays: r.daysWorked,
+          windowStart: r.windowStart,
+          totalHrs: r.totalHours,
+          // The exact days that qualified this person — the audit trail the
+          // Stat Pay export sheet lists so staff can check the math by hand.
+          days: r.days,
         });
       }
       person.statHours = Math.round(person.statHours * 100) / 100;
@@ -3466,13 +3456,12 @@ export default function Admin() {
   const statDiagnostic = useMemo(() => {
     if (!payStart || !payEnd) return null;
     const holidaysList = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
-    const inPeriod = holidaysList.filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
-
-    const minusDays = (dateStr, n) => {
-      const d = new Date(dateStr + 'T00:00:00');
-      d.setDate(d.getDate() - n);
-      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-    };
+    const allInPeriod = holidaysList.filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
+    // Only real statutory holidays pay. Plain closures are surfaced
+    // separately so it's obvious why they aren't generating stat pay,
+    // rather than them just silently vanishing from this tab.
+    const inPeriod = allInPeriod.filter(isPaidStatHoliday);
+    const closuresInPeriod = allInPeriod.filter(h => !isPaidStatHoliday(h));
     // Aggregate by a STABLE identity (userId, else roster-name→uid, else raw
     // name) so a timesheet import that renames a person slightly doesn't
     // split their shifts and hide their stat-pay qualification. Mirrors the
@@ -3499,24 +3488,19 @@ export default function Admin() {
       if (!byPerson[id]) byPerson[id] = { name: dispName, shifts: [] };
       byPerson[id].shifts.push(s);
     }
+    // Uses the same lib as the payroll calc, so this tab and the money can
+    // never disagree — they used to be two separate copies of the rule.
     const detail = inPeriod.map(h => {
-      const windowStart = minusDays(h.date, 30);
       const perPerson = Object.values(byPerson).map(p => {
-        const relevant = p.shifts.filter(s => s.date >= windowStart && s.date < h.date);
-        const count = relevant.length;
-        const qualifies = count >= 15;
-        // Stat-pay hours = BC ESA "average day": average hours per shift over
-        // the qualifying window (only paid when they hit 15+).
-        const statHours = qualifies
-          ? Math.round((relevant.reduce((sum, s) => sum + shiftHours(s), 0) / count) * 100) / 100
-          : 0;
-        return { name: p.name, count, qualifies, statHours };
+        const r = statPayForHoliday(p.shifts, h.date, shiftHours);
+        return { name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours };
       }).sort((a, b) => b.count - a.count);
-      return { holiday: h, windowStart, perPerson };
+      return { holiday: h, windowStart: statPayForHoliday([], h.date, shiftHours).windowStart, perPerson };
     });
     return {
       holidaysConfigured: holidaysList.length,
       inPeriod,
+      closuresInPeriod,
       detail,
     };
   }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps]);
@@ -3817,7 +3801,7 @@ export default function Admin() {
     const statRows = [];
     if (anyStat) {
       statRows.push(['Stat Pay Audit', `${payStart} to ${payEnd}`]);
-      statRows.push(['Qualify = 15+ shifts in the 30 days before the holiday. Stat pay hours = average hours per qualifying shift in that window.']);
+      statRows.push(['Qualify = 15+ DAYS worked in the 30 days before the holiday (two shifts in one day count once). Stat pay hours = total hours in that window ÷ days worked. Drafts, no-shows and volunteer shifts are excluded; paid sick days count.']);
       statRows.push([]);
       // Distinct holidays in play, chronological.
       const holidayMap = new Map();
@@ -3835,13 +3819,10 @@ export default function Admin() {
         for (const p of people) {
           const e = p.statEntries.find(x => x.date === h.date);
           statRows.push([]);
-          statRows.push([p.name, `${e.basisShifts} shifts`, `stat pay: ${e.hours.toFixed(2)}h`]);
-          statRows.push(['', 'Shift Date', 'Shift Time', 'Hours']);
-          for (const s of (e.shifts || [])) {
-            const t = (s.startTime && s.endTime) ? `${s.startTime} - ${s.endTime}` : '';
-            statRows.push(['', s.date, t, s.hours]);
-          }
-          statRows.push(['', '', `Total ${e.totalHrs}h ÷ ${e.basisShifts} shifts`, `avg ${e.hours.toFixed(2)}h`]);
+          statRows.push([p.name, `${e.basisDays} days worked`, `stat pay: ${e.hours.toFixed(2)}h`]);
+          statRows.push(['', 'Date', 'Hours that day', '']);
+          for (const d of (e.days || [])) statRows.push(['', d.date, d.hours, '']);
+          statRows.push(['', '', `Total ${e.totalHrs}h ÷ ${e.basisDays} days`, `avg ${e.hours.toFixed(2)}h`]);
         }
         statRows.push([]);
         statRows.push([]);
@@ -5907,6 +5888,15 @@ export default function Admin() {
                   Includes {statDiagnostic.inPeriod.map(h => `${h.name || 'a statutory holiday'} (${h.date})`).join(', ')}.
                   {' '}{statPaySummary.rows.filter(r => r.qualifies).length} of {statPaySummary.rows.length} staff qualify — open the Stat Pay tab for the breakdown.
                 </p>
+                {/* Closures sitting in the same period. Stating them plainly
+                    so a day that stopped paying is visibly a decision rather
+                    than something that quietly went missing. */}
+                {statDiagnostic.closuresInPeriod?.length > 0 && (
+                  <p className="mt-1 text-xs text-purple-600">
+                    Also closed {statDiagnostic.closuresInPeriod.map(h => `${h.name || 'closure'} (${h.date})`).join(', ')} —
+                    {' '}not {statDiagnostic.closuresInPeriod.length === 1 ? 'a statutory holiday, so it pays' : 'statutory holidays, so they pay'} no stat pay.
+                  </p>
+                )}
               </div>
               <button onClick={() => setPayrollSubtab('stat')}
                 className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition-colors">
@@ -6305,7 +6295,7 @@ export default function Admin() {
                         {(person.statDays || 0) > 0 && (
                           <div
                             className="mt-1 text-xs font-semibold text-purple-700"
-                            title={(person.statEntries || []).map(e => `${e.name} (${e.date}): ${e.hours.toFixed(2)}h · ${e.basisShifts} shifts in prior 30d`).join('\n')}
+                            title={(person.statEntries || []).map(e => `${e.name} (${e.date}): ${e.hours.toFixed(2)}h · ${e.basisDays} days worked in prior 30d`).join('\n')}
                           >
                             <span className="rounded bg-purple-100 px-1.5 py-0.5">
                               Stat: {person.statHours.toFixed(2)}h · {person.statDays} day{person.statDays !== 1 ? 's' : ''}
