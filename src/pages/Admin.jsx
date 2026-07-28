@@ -4323,12 +4323,32 @@ export default function Admin() {
       .filter(r => !attributedIdxs.has(r._idx));
 
     const synthByUserId = new Map();
+    // Radius rows belonging to people who are not on hourly payroll at all.
+    // Volunteers clock in and out like everyone else, so their timesheet
+    // entries match no payroll row and used to get promoted into payroll as
+    // synthetic "unscheduled" people with 0 scheduled hours and a permanent
+    // red discrepancy. Nothing was ever going to resolve them — they aren't
+    // paid. Same for salaried staff and hidden-from-ops accounts.
+    //
+    // Their rows are still marked attributed so they don't fall through to
+    // the orphan panel either; they're simply counted and set aside.
+    const ignoredRadius = [];
     for (const r of leftover) {
       const user = approvedUsers.find(u =>
         namesMatch(u.displayName, r.name) ||
         (u.radiusName && namesMatch(u.radiusName, r.name))
       );
       if (!user) continue;
+      const name = user.displayName;
+      const offPayroll = user.isVolunteer === true
+        || volunteerNames.has(name)
+        || salaryStaff.has(name)
+        || hiddenFromOps.has(name);
+      if (offPayroll) {
+        attributedIdxs.add(r._idx);
+        ignoredRadius.push({ name, hours: r.actualHours, date: r.date });
+        continue;
+      }
       attributedIdxs.add(r._idx);
       let synth = synthByUserId.get(user.uid);
       if (!synth) {
@@ -4362,8 +4382,9 @@ export default function Admin() {
     const orphans = radiusData
       .map((r, idx) => ({ ...r, _idx: idx }))
       .filter(r => !attributedIdxs.has(r._idx));
-    return { perPerson, orphans };
-  }, [payrollSummary, radiusData, usersForCentre, approvedUsers]);
+    return { perPerson, orphans, ignoredRadius };
+  }, [payrollSummary, radiusData, usersForCentre, approvedUsers,
+      volunteerNames, salaryStaff, hiddenFromOps]);
 
   // Save a Radius-name alias on a staff user. Used by the orphan-mapping
   // dropdown — after this, the matcher attributes that Radius row (and
@@ -6035,6 +6056,29 @@ export default function Admin() {
               </div>
             )}
           </div>
+
+          {/* Radius entries for people who aren't on hourly payroll. Stated
+              plainly rather than dropped in silence, so it's clear they were
+              seen and deliberately set aside. */}
+          {comparisonSummary?.ignoredRadius?.length > 0 && (() => {
+            const byName = new Map();
+            for (const r of comparisonSummary.ignoredRadius) {
+              byName.set(r.name, (byName.get(r.name) || 0) + (Number(r.hours) || 0));
+            }
+            return (
+              <div className="mt-4 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+                <p className="text-xs font-semibold text-sky-900">
+                  {comparisonSummary.ignoredRadius.length} Radius {comparisonSummary.ignoredRadius.length === 1 ? 'entry' : 'entries'} skipped — not on hourly payroll
+                </p>
+                <p className="mt-0.5 text-[11px] text-sky-800">
+                  {[...byName.entries()].map(([n, h]) => `${n} (${Math.round(h * 100) / 100}h)`).join(' · ')}
+                </p>
+                <p className="mt-1 text-[10px] text-sky-600">
+                  Volunteers, salaried staff and hidden accounts clock in like everyone else, but aren't paid hourly — so their timesheet entries don't create payroll rows.
+                </p>
+              </div>
+            );
+          })()}
 
           {/* Shifts in this period that pay nothing — the silent-failure
               catcher. A worked-but-unpublished shift used to vanish from
