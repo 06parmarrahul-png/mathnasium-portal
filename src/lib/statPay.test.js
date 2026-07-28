@@ -77,6 +77,38 @@ describe('earnsWages', () => {
 });
 
 describe('qualifying days are DAYS, not shift records', () => {
+  // The split-shift shapes that actually occur: half online / half in-centre,
+  // or a Lead block followed by a Host block. Grouping is purely by DATE, so
+  // role, shiftType and sub-role are all irrelevant — same day, one day.
+  it('online + in-centre on the same day counts as ONE day', () => {
+    const day = '2026-07-20';
+    const r = statPayForHoliday([
+      shift(day, '10:00', '14:00', { role: 'Online Instructor', shiftType: 'Online' }),
+      shift(day, '15:00', '19:00', { role: 'Instructor', shiftType: 'In-Centre' }),
+    ], BC_DAY, hoursOf);
+    expect(r.daysWorked).toBe(1);
+    expect(r.totalHours).toBe(8); // both shifts' hours still count
+  });
+
+  it('Lead then Host on the same day counts as ONE day', () => {
+    const day = '2026-07-21';
+    const r = statPayForHoliday([
+      shift(day, '11:00', '15:00', { role: 'Lead' }),
+      shift(day, '15:00', '19:00', { role: 'Host' }),
+    ], BC_DAY, hoursOf);
+    expect(r.daysWorked).toBe(1);
+    expect(r.totalHours).toBe(8);
+  });
+
+  it('three shifts in one day still counts as ONE day', () => {
+    const day = '2026-07-22';
+    const r = statPayForHoliday([
+      shift(day, '09:00', '11:00'), shift(day, '12:00', '14:00'), shift(day, '15:00', '18:00'),
+    ], BC_DAY, hoursOf);
+    expect(r.daysWorked).toBe(1);
+    expect(r.totalHours).toBe(7);
+  });
+
   it('a split shift is one day, not two', () => {
     const day = '2026-07-20';
     const byDate = qualifyingDayHours(
