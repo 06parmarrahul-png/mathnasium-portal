@@ -54,7 +54,7 @@ function countsAsWork(s, excluded) {
 // resolution chain below). Update these when the underlying model changes;
 // periods already saved under byPeriod are unaffected.
 const DEFAULT_TARGETS = {
-  instructional: 315, online: 54, steam: 46, summerCamp: 54,
+  instructional: 315, online: 38, steam: 46, summerCamp: 54,
   adminHours: 68, adminAssistant: 40, host: 46,
 };
 const TARGET_KEYS = Object.keys(DEFAULT_TARGETS);
