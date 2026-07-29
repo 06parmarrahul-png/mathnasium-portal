@@ -345,12 +345,49 @@ export default function StaffingBudget() {
     return { days, alloc, hours: days.reduce((n, d) => n + d.total, 0), periodDays };
   }, [periodStart, periodEnd, opDays, extraDays]);
 
-  // What every bar on this page actually measures against: base + top-up.
+  // ── Days the centre was shut ────────────────────────────────────────────
+  // The base targets describe a normal 14-day cycle, so they include a full
+  // Saturday and a full Monday. If the centre is closed on those days — a
+  // stat holiday, a one-off closure — nobody is rostered and nobody is paid,
+  // yet the budget still expected the hours. The period then reads wildly
+  // under budget for no reason anyone can act on.
+  //
+  // Exactly the inverse of the extra-day top-up: an extra day ADDS that
+  // weekday's category budget, a closure SUBTRACTS it. The by-day view
+  // already zeroes these days out, so this also makes the headline agree
+  // with the sum of the bars beneath it.
+  const closures = useMemo(() => {
+    const days = [];
+    let d = periodStart;
+    while (format(d, 'yyyy-MM-dd') <= hiStr) {
+      const ds = format(d, 'yyyy-MM-dd');
+      const weekday = DOW_NAMES[d.getDay()];
+      const holiday = holidayFor(ds, centerConfig);
+      // Only days the centre would otherwise have been open cost anything.
+      if (holiday && opDays.includes(weekday)) {
+        const cats = {};
+        for (const c of CATEGORIES) cats[c.key] = Number(WEEKDAY_DEFAULTS[weekday]?.[c.key]) || 0;
+        const total = CATEGORIES.reduce((n, c) => n + cats[c.key], 0);
+        if (total > 0) days.push({ date: ds, weekday, name: holiday.name || 'Closed', label: format(d, 'EEE MMM d'), cats, total });
+      }
+      d = addDays(d, 1);
+    }
+    const alloc = {};
+    for (const day of days) {
+      for (const c of CATEGORIES) if (day.cats[c.key] > 0) alloc[c.key] = (alloc[c.key] || 0) + day.cats[c.key];
+    }
+    return { days, alloc, hours: days.reduce((n, x) => n + x.total, 0) };
+  }, [periodStart, hiStr, opDays, centerConfig]);
+
+  // What every bar on this page measures against: base + extra day − closures.
   const effTargets = useMemo(() => {
     const out = {};
-    for (const c of CATEGORIES) out[c.key] = (Number(targets[c.key]) || 0) + (extra.alloc[c.key] || 0);
+    for (const c of CATEGORIES) {
+      const v = (Number(targets[c.key]) || 0) + (extra.alloc[c.key] || 0) - (closures.alloc[c.key] || 0);
+      out[c.key] = Math.max(0, v); // a category can't owe negative hours
+    }
     return out;
-  }, [targets, extra]);
+  }, [targets, extra, closures]);
   const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (effTargets[c.key] || 0), 0), [effTargets]);
 
   const catScale = useMemo(
@@ -414,8 +451,19 @@ export default function StaffingBudget() {
       const src = saved[wd] || WEEKDAY_DEFAULTS[wd] || {};
       for (const c of CATEGORIES) topUp += Number(src[c.key]) || 0;
     }
-    return base + topUp;
-  }, [targetsFor, extraDaysFor]);
+    // Deduct closures for THIS period too, or a period containing a holiday
+    // shows a full-height budget line the centre never had a chance to spend
+    // — the trend would read as a slump rather than a shorter fortnight.
+    let closed = 0;
+    for (let i = 0; i < len; i++) {
+      const d = addDays(st, i);
+      const wd = DOW_NAMES[d.getDay()];
+      if (!opDays.includes(wd)) continue;
+      if (!holidayFor(format(d, 'yyyy-MM-dd'), centerConfig)) continue;
+      closed += weekdayBudgetTotal(wd);
+    }
+    return Math.max(0, base + topUp - closed);
+  }, [targetsFor, extraDaysFor, opDays, centerConfig]);
 
   const trend = useMemo(() => {
     const starts = [];
@@ -526,9 +574,15 @@ export default function StaffingBudget() {
             <span className="text-xs text-gray-400">/ {round1(totalTarget)}</span>
           </div>
           <div className="mt-2"><HBar value={period.total} target={totalTarget} scale={Math.max(period.total, totalTarget) * 1.1} over={period.total > totalTarget} /></div>
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             <VarPill diff={period.total - totalTarget} />
             {period.sick > 0 && <span className="text-[10px] text-gray-400">+{round1(period.sick)}h sick (separate)</span>}
+            {closures.hours > 0 && (
+              <span className="text-[10px] text-gray-400"
+                title={closures.days.map(d => `${d.label} — ${d.name} (${round1(d.total)}h)`).join('\n')}>
+                −{round1(closures.hours)}h closed
+              </span>
+            )}
           </div>
         </div>
         <div className="rounded-2xl border bg-white p-4 shadow-sm">
@@ -777,6 +831,9 @@ export default function StaffingBudget() {
               <div className="mt-1 text-right text-[11px] font-medium text-amber-700">
                 {round1(baseTarget)}h base (14-day cycle)
                 {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => d.total > 0).map(d => d.weekday).join(' + ')}</>}
+                {closures.hours > 0 && (
+                  <> − {round1(closures.hours)}h closed ({closures.days.map(d => d.name).join(', ')})</>
+                )}
               </div>
             </div>
 
