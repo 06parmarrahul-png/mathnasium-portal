@@ -10,7 +10,7 @@ import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
 import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
-import { isFlexRole } from '../lib/subRoles';
+import { isFlexRole, DEFAULT_TARGET_RATIO } from '../lib/subRoles';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -324,7 +324,7 @@ export default function SupplyDemand() {
   const [overrides, setOverrides] = useState({
     ALL: { demand: {}, supply: {} },
   });
-  const [ratios, setRatios] = useState({ ALL: 3 });
+  const [ratios, setRatios] = useState({ ALL: DEFAULT_TARGET_RATIO });
   const [snapshotDirty, setSnapshotDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState(null);

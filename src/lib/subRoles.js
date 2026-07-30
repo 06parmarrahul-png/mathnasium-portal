@@ -16,6 +16,11 @@
 
 export const SUB_ROLES = ['Elementary', 'Highschool', 'Online'];
 
+// Students per instructor the centre staffs to. Only the starting value for
+// the Supply vs Demand picker — a day that has been saved keeps whatever
+// ratio was saved with it.
+export const DEFAULT_TARGET_RATIO = 3.5;
+
 // ─── Capability matching ────────────────────────────────────────────────
 // Sub-role strings are not consistent in stored data: 'Highschool' is the
 // canonical form, but 'High School' (with a space) exists on older shifts
