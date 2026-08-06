@@ -6497,6 +6497,7 @@ export default function Admin() {
                           <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Scheduled</th>
                           {hasRadius && <th className="text-left px-4 py-2 text-xs font-medium text-gray-500">Clocked in/out</th>}
                           {!hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500">Hours</th>}
+                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-20">Diff</th>}
                           {hasRadius && (
                             <th className="text-right px-5 py-2 text-xs font-medium text-purple-600" title="Hours actually paid. Defaults to scheduled; click any cell to override. This is the value Export Final Payroll uses for QuickBooks.">
                               <div className="flex flex-col items-end leading-tight">
@@ -6505,7 +6506,6 @@ export default function Admin() {
                               </div>
                             </th>
                           )}
-                          {hasRadius && <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-20">Diff</th>}
                           {hasRadius && (
                             <th className="text-right px-5 py-2 text-xs font-medium text-gray-500 w-48"
                               title="Resolve = I've reviewed this. No show = they didn't come in, so it pays 0 and leaves the period total. The note icon records why.">
@@ -6628,6 +6628,25 @@ export default function Admin() {
                                   can tell it's interactive without being
                                   told. Purple ring when an override is
                                   active so manual edits stand out. */}
+                              {/* Diff sits immediately left of Payroll h so the
+                                  gap reads next to the number you'd change in
+                                  response to it. Colour means one thing only:
+                                  "this needs your attention." A green +0.20h
+                                  and a red +1.98h on a row already marked
+                                  Resolved were both noise — the number stays
+                                  visible but goes quiet once the row is
+                                  handled, clean, or hasn't happened yet. Red is
+                                  reserved for live, unreviewed exceptions. */}
+                              {hasRadius && (
+                                <td className={`px-5 py-2.5 text-right font-semibold text-xs ${
+                                  showRedFlag ? 'text-red-600' : 'text-gray-400'
+                                }`}>
+                                  {isNoShow ? 'not paid'
+                                    : (s.isFuture && s.missingFromRadius) ? '—'
+                                    : s.missingFromRadius ? (showRedFlag ? '⚠ missing' : 'missing')
+                                    : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
+                                </td>
+                              )}
                               {hasRadius && (
                                 <td className="px-5 py-2.5 text-right font-semibold">
                                   {isNoShow ? (
@@ -6675,23 +6694,6 @@ export default function Admin() {
                                       <span>{s.payHours.toFixed(2)}h</span>
                                     </button>
                                   )}
-                                </td>
-                              )}
-                              {/* Diff colour now means one thing only: "this
-                                  needs your attention." A green +0.20h and a
-                                  red +1.98h on a row already marked Resolved
-                                  were both noise — the number stays visible
-                                  but goes quiet once the row is handled,
-                                  clean, or hasn't happened yet. Red is
-                                  reserved for live, unreviewed exceptions. */}
-                              {hasRadius && (
-                                <td className={`px-5 py-2.5 text-right font-semibold text-xs ${
-                                  showRedFlag ? 'text-red-600' : 'text-gray-400'
-                                }`}>
-                                  {isNoShow ? 'not paid'
-                                    : (s.isFuture && s.missingFromRadius) ? '—'
-                                    : s.missingFromRadius ? (showRedFlag ? '⚠ missing' : 'missing')
-                                    : s.shiftDiff > 0 ? `+${s.shiftDiff.toFixed(2)}h` : `${s.shiftDiff.toFixed(2)}h`}
                                 </td>
                               )}
                               {/* Resolve column — only meaningful on red
@@ -6856,10 +6858,6 @@ export default function Admin() {
                                   consolidated Clocked in/out column above. */}
                               <div className="mt-0.5 text-[11px] text-gray-400">{r.actualHours.toFixed(2)}h</div>
                             </td>
-                            {/* Payroll h placeholder — unscheduled rows aren't
-                                payable (no scheduled basis), so we render a
-                                dash to keep the grid aligned. */}
-                            <td className="px-5 py-2.5 text-right text-gray-300">–</td>
                             <td className="px-5 py-2.5 text-right">
                               {/* "Schedule shift" button removed per owner
                                   request — payroll is not the right surface
@@ -6868,6 +6866,10 @@ export default function Admin() {
                                   before running payroll. */}
                               <span className="text-xs font-semibold text-amber-600 whitespace-nowrap">unscheduled</span>
                             </td>
+                            {/* Payroll h placeholder — unscheduled rows aren't
+                                payable (no scheduled basis), so we render a
+                                dash to keep the grid aligned. */}
+                            <td className="px-5 py-2.5 text-right text-gray-300">–</td>
                             {/* Actions placeholder — keeps the 6-column grid aligned. */}
                             <td className="px-5 py-2.5"></td>
                           </tr>
@@ -6894,14 +6896,14 @@ export default function Admin() {
                           </td>
                           {hasRadius && <td className="px-4 py-2 text-sm font-semibold text-gray-700">{person.actualHours.toFixed(2)}h</td>}
                           {hasRadius && (
-                            <td className="px-5 py-2 text-right text-sm font-bold text-purple-700"
-                              title="Sum of Payroll h — what we actually pay this person.">
-                              {(person.payHours ?? person.totalHours).toFixed(2)}h
+                            <td className="px-5 py-2 text-right text-xs font-semibold text-gray-400">
+                              {person.diff > 0 ? '+' : ''}{person.diff.toFixed(2)}h
                             </td>
                           )}
                           {hasRadius && (
-                            <td className="px-5 py-2 text-right text-xs font-semibold text-gray-400">
-                              {person.diff > 0 ? '+' : ''}{person.diff.toFixed(2)}h
+                            <td className="px-5 py-2 text-right text-sm font-bold text-purple-700"
+                              title="Sum of Payroll h — what we actually pay this person.">
+                              {(person.payHours ?? person.totalHours).toFixed(2)}h
                             </td>
                           )}
                           {hasRadius && <td />}
