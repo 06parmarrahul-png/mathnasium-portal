@@ -3746,8 +3746,19 @@ export default function Admin() {
     ]);
 
     // ── Sheet 2: Attendance (QuickBooks-shaped) ──
+    // Column meanings, left to right:
+    //   Employee Attendance — name (role abbrev)
+    //   Regular Pay         — hours actually worked (was "Total Hours")
+    //   Employees           — 1 per paid head, blank for volunteers
+    //   Sick Pay            — payable sick hours (first 5 days/yr, post-probation)
+    //   Sick (Unpaid)       — sick beyond entitlement: recorded, not paid
+    //   Stat Holiday Pay    — stat hours (was "Stat Pay Hrs")
+    //   Total Hours         — worked + payable sick + stat (was "Total Payable Hrs")
+    //   Special Cases       — data-gap notes
+    // Heads up for future edits: "Total Hours" names the GRAND TOTAL here.
+    // It used to name the worked-hours column, which is now "Regular Pay".
     const attendanceRows = [
-      ['Employee Attendance', 'Total Hours', 'Employees', 'Sick Pay', 'Sick (unpaid)', 'Stat Pay Hrs', 'Total Payable Hrs', 'Special Cases'],
+      ['Employee Attendance', 'Regular Pay', 'Employees', 'Sick Pay', 'Sick (Unpaid)', 'Stat Holiday Pay', 'Total Hours', 'Special Cases'],
     ];
     let totalHoursSum = 0;
     let employeesCount = 0;
@@ -3848,8 +3859,10 @@ export default function Admin() {
     const wsAttendance = XLSX.utils.aoa_to_sheet(attendanceRows);
     const wsDetail     = XLSX.utils.aoa_to_sheet(detailRows);
     // Reasonable default column widths so the file opens looking right.
+    // Sized to the header text — "Stat Holiday Pay" and "Sick (Unpaid)" are
+    // wider than the old titles, and Special Cases holds a full sentence.
     wsAttendance['!cols'] = [
-      { wch: 28 }, { wch: 12 }, { wch: 11 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 18 },
+      { wch: 28 }, { wch: 13 }, { wch: 11 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 13 }, { wch: 52 },
     ];
     wsDetail['!cols'] = [
       { wch: 22 }, { wch: 14 }, { wch: 16 }, { wch: 10 }, { wch: 10 },
