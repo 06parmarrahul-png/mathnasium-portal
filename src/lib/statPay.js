@@ -144,6 +144,28 @@ export function earnsWages(shift) {
  * @returns {Map<string, number>} date -> hours earned that day
  */
 export function qualifyingDayHours(shifts, holidayDate, hoursOf) {
+  const byDate = new Map();
+  for (const [date, d] of qualifyingDayBreakdown(shifts, holidayDate, hoursOf)) {
+    byDate.set(date, d.hours);
+  }
+  return byDate;
+}
+
+/**
+ * Same window and filtering as qualifyingDayHours, but keeps track of WHY
+ * each day counted. Paid sick days are legally qualifying (see the note at
+ * the top of this file), which surprises people looking at a roster — a
+ * staffer can clear the 15-day bar partly on sick leave. Rather than change
+ * the arithmetic, we carry the breakdown through so the UI can show
+ * "18 worked + 2 sick" and nobody has to guess.
+ *
+ * A day is `sickOnly` when EVERY wage-earning shift on it was sick leave.
+ * Work a real shift and call in sick for a second one on the same date and
+ * it counts as a worked day — you were there.
+ *
+ * @returns {Map<string, {hours:number, sickOnly:boolean}>}
+ */
+export function qualifyingDayBreakdown(shifts, holidayDate, hoursOf) {
   const windowStart = minusDays(holidayDate, STAT_WINDOW_DAYS);
   const byDate = new Map();
   for (const s of shifts || []) {
@@ -152,7 +174,14 @@ export function qualifyingDayHours(shifts, holidayDate, hoursOf) {
     if (!earnsWages(s)) continue;
     const h = hoursOf(s);
     if (!(h > 0)) continue; // a zero-hour shift earned nothing
-    byDate.set(s.date, (byDate.get(s.date) || 0) + h);
+    const isSick = s.sickPay === true;
+    const prev = byDate.get(s.date);
+    if (prev) {
+      prev.hours += h;
+      prev.sickOnly = prev.sickOnly && isSick;
+    } else {
+      byDate.set(s.date, { hours: h, sickOnly: isSick });
+    }
   }
   return byDate;
 }
@@ -166,18 +195,28 @@ export function qualifyingDayHours(shifts, holidayDate, hoursOf) {
  * }}  `hours` is the average day's pay, 0 when they don't qualify.
  */
 export function statPayForHoliday(shifts, holidayDate, hoursOf) {
-  const byDate = qualifyingDayHours(shifts, holidayDate, hoursOf);
+  const byDate = qualifyingDayBreakdown(shifts, holidayDate, hoursOf);
   const daysWorked = byDate.size;
-  const totalHours = [...byDate.values()].reduce((a, b) => a + b, 0);
+  const totalHours = [...byDate.values()].reduce((a, d) => a + d.hours, 0);
+  // Split the qualifying days so callers can show their make-up. sickDays
+  // is a subset of daysWorked, not an addition to it — daysWorked is still
+  // the number checked against the 15-day bar.
+  const sickDays = [...byDate.values()].filter(d => d.sickOnly).length;
   const qualifies = daysWorked >= STAT_MIN_QUALIFYING_DAYS;
   return {
     qualifies,
     daysWorked,
+    sickDays,
+    workedDays: daysWorked - sickDays,
     totalHours: Math.round(totalHours * 100) / 100,
     hours: qualifies ? Math.round((totalHours / daysWorked) * 100) / 100 : 0,
     windowStart: minusDays(holidayDate, STAT_WINDOW_DAYS),
     days: [...byDate.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([date, hours]) => ({ date, hours: Math.round(hours * 100) / 100 })),
+      .map(([date, d]) => ({
+        date,
+        hours: Math.round(d.hours * 100) / 100,
+        sick: d.sickOnly,
+      })),
   };
 }

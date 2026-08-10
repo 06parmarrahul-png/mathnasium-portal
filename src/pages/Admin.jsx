@@ -39,7 +39,7 @@ import {
 } from '../lib/emailService';
 import { attachEmails } from '../lib/userContact';
 import { weekdayBudgetTotal } from '../lib/budgetBuckets';
-import { isPaidStatHoliday, statPayForHoliday } from '../lib/statPay';
+import { isPaidStatHoliday, statPayForHoliday, minusDays } from '../lib/statPay';
 import {
   resolveUserForCenter,
   membershipFieldPath,
@@ -1676,9 +1676,14 @@ function StatPayTab({ holidays, rows }) {
   const shownEligible = filtered.filter(r => r.qualifies).length;
   const shownTotal = Math.round(filtered.reduce((s, r) => s + (r.qualifies ? r.totalStat : 0), 0) * 100) / 100;
   const multi = holidays.length > 1;
+  // Spell out the qualifying window rather than making people count back 30
+  // days by hand. It runs from 30 days before the holiday up to the day
+  // before it — the holiday itself is never part of its own window.
+  const shortDate = (iso) => new Date(iso + 'T00:00:00')
+    .toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   const subtitle = holidays.length === 0
     ? 'No statutory holiday falls in this pay period.'
-    : holidays.map(h => `${h.name || 'Holiday'} · ${h.date}`).join('   ·   ');
+    : holidays.map(h => `${h.name || 'Holiday'} · ${h.date} (window: ${shortDate(minusDays(h.date, 30))} – ${shortDate(minusDays(h.date, 1))})`).join('   ·   ');
 
   return (
     <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
@@ -1688,7 +1693,7 @@ function StatPayTab({ holidays, rows }) {
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900">Stat Pay</h3>
             <p className="text-xs text-gray-600">
-              {subtitle} — qualify at 15+ <b>days worked</b> in the 30 days before the holiday. Stat hours = an average day's pay: total hours ÷ days worked (BC ESA). Two shifts in one day count as one day.
+              {subtitle} — qualify at 15+ <b>days worked</b> in the 30 days before the holiday. Stat hours = an average day's pay: total hours ÷ days worked (BC ESA). Two shifts in one day count as one day. <b>Paid sick days count</b> toward the 15 — the Act says "worked or earned wages" — and rows that include them are broken out below.
             </p>
           </div>
         </div>
@@ -1752,8 +1757,18 @@ function StatPayTab({ holidays, rows }) {
                 <tr key={r.name} className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
                   <td className="px-4 py-2 text-xs text-gray-600">{r.role}</td>
+                  {/* Paid sick days count toward the 15 under the BC ESA
+                      ("worked OR earned wages"), so a roster number can look
+                      inflated with no visible reason. Show the split whenever
+                      sick days are part of it. */}
                   <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-emerald-700' : 'text-gray-400'}`}>
                     {shifts}<span className="text-[10px] font-normal text-gray-400"> / 15</span>
+                    {(r.sickDays || 0) > 0 && (
+                      <div className="text-[10px] font-normal text-gray-500"
+                        title="Paid sick days count as qualifying days under the BC Employment Standards Act — the Act says 'worked or earned wages'.">
+                        {shifts - r.sickDays} worked + {r.sickDays} sick
+                      </div>
+                    )}
                   </td>
                   <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-purple-700' : 'text-gray-300'}`}>
                     {r.qualifies ? `${r.totalStat.toFixed(2)}h` : '—'}
@@ -3501,7 +3516,13 @@ export default function Admin() {
     const detail = inPeriod.map(h => {
       const perPerson = Object.values(byPerson).map(p => {
         const r = statPayForHoliday(p.shifts, h.date, shiftHours);
-        return { name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours };
+        return {
+          name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours,
+          // Carried through so the roster can show what made up the count.
+          // Paid sick days legally qualify, which looks wrong at a glance
+          // unless the split is visible.
+          sickDays: r.sickDays, workedDays: r.workedDays,
+        };
       }).sort((a, b) => b.count - a.count);
       return { holiday: h, windowStart: statPayForHoliday([], h.date, shiftHours).windowStart, perPerson };
     });
@@ -3540,7 +3561,10 @@ export default function Admin() {
           });
         }
         const row = byName.get(p.name);
-        row.perHoliday.push({ holiday: d.holiday, count: p.count, qualifies: p.qualifies, statHours: p.statHours });
+        row.perHoliday.push({
+          holiday: d.holiday, count: p.count, qualifies: p.qualifies, statHours: p.statHours,
+          sickDays: p.sickDays, workedDays: p.workedDays,
+        });
         if (p.qualifies) { row.totalStat += p.statHours; row.qualifies = true; }
       }
     }
@@ -3551,6 +3575,11 @@ export default function Admin() {
         // Highest window shift count across the period's holidays — used to
         // rank the not-yet-eligible staff by who's closest to the 15 mark.
         shifts: r.perHoliday.reduce((mx, h) => Math.max(mx, h.count || 0), 0),
+        // Sick/worked split from whichever holiday supplied that peak count,
+        // so the breakdown shown always adds up to the number beside it.
+        sickDays: (r.perHoliday.reduce(
+          (best, h) => (!best || (h.count || 0) > (best.count || 0)) ? h : best, null,
+        ) || {}).sickDays || 0,
       }))
       .sort((a, b) => {
         if (a.qualifies !== b.qualifies) return Number(b.qualifies) - Number(a.qualifies);

@@ -208,6 +208,50 @@ describe("average day's pay", () => {
   });
 });
 
+describe('sick / worked split', () => {
+  it('reports how many qualifying days came from paid sick leave', () => {
+    const shifts = [
+      ...workDays(13, BC_DAY),
+      shift(minusDays(BC_DAY, 14), '15:00', '20:00', { sickPay: true }),
+      shift(minusDays(BC_DAY, 15), '15:00', '20:00', { sickPay: true }),
+    ];
+    const r = statPayForHoliday(shifts, BC_DAY, hoursOf);
+    expect(r.daysWorked).toBe(15);
+    expect(r.sickDays).toBe(2);
+    expect(r.workedDays).toBe(13);
+    // The split is descriptive only — it must not move the money.
+    expect(r.qualifies).toBe(true);
+  });
+
+  it('sickDays is 0 when nobody was sick', () => {
+    const r = statPayForHoliday(workDays(15, BC_DAY), BC_DAY, hoursOf);
+    expect(r.sickDays).toBe(0);
+    expect(r.workedDays).toBe(15);
+  });
+
+  it('a day with real work AND a sick shift counts as worked, not sick', () => {
+    const d = minusDays(BC_DAY, 3);
+    const shifts = [
+      ...workDays(14, BC_DAY).filter(s => s.date !== d),
+      shift(d, '11:00', '15:00'),
+      shift(d, '15:00', '19:00', { sickPay: true }),
+    ];
+    const r = statPayForHoliday(shifts, BC_DAY, hoursOf);
+    expect(r.days.find(x => x.date === d).sick).toBe(false);
+    expect(r.sickDays).toBe(0);
+  });
+
+  it('workedDays + sickDays always equals daysWorked', () => {
+    const shifts = [
+      ...workDays(10, BC_DAY),
+      ...Array.from({ length: 4 }, (_, i) =>
+        shift(minusDays(BC_DAY, i + 11), '15:00', '20:00', { sickPay: true })),
+    ];
+    const r = statPayForHoliday(shifts, BC_DAY, hoursOf);
+    expect(r.workedDays + r.sickDays).toBe(r.daysWorked);
+  });
+});
+
 describe('audit trail', () => {
   it('returns the qualifying days in date order for the export', () => {
     const r = statPayForHoliday(workDays(15, BC_DAY), BC_DAY, hoursOf);
