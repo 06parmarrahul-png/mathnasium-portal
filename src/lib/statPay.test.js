@@ -14,6 +14,18 @@ const hoursOf = (s) => {
   return isNaN(r) || r < 0 ? 0 : r;
 };
 
+// Mirrors payableShiftHours in Admin.jsx: what we actually PAY for a shift.
+// Stat pay averages wages "paid or payable" (ESA s.46), not clock time, so
+// a manual Payroll h override has to reach the average.
+const payableHoursOf = (s) => {
+  if (!s) return 0;
+  if (s.noShow === true) return 0;
+  if (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride)) {
+    return Math.max(0, s.payHoursOverride);
+  }
+  return hoursOf(s);
+};
+
 const shift = (date, start, end, extra = {}) => ({ date, startTime: start, endTime: end, ...extra });
 
 // n consecutive weekdays of work ending the day before `before`.
@@ -249,6 +261,48 @@ describe('sick / worked split', () => {
     ];
     const r = statPayForHoliday(shifts, BC_DAY, hoursOf);
     expect(r.workedDays + r.sickDays).toBe(r.daysWorked);
+  });
+});
+
+describe('averages what we PAY, not what the clock said', () => {
+  it('a Payroll h override reaches the average', () => {
+    // 15 x 5h days = 5.00h average. Correct one day down to 2.00h (a
+    // resolved forgotten sign-out) and the average must follow.
+    const shifts = workDays(15, BC_DAY);
+    const plain = statPayForHoliday(shifts, BC_DAY, payableHoursOf);
+    expect(plain.hours).toBe(5);
+
+    const corrected = shifts.map((s, i) => i === 0 ? { ...s, payHoursOverride: 2 } : s);
+    const r = statPayForHoliday(corrected, BC_DAY, payableHoursOf);
+    expect(r.daysWorked).toBe(15);          // still a qualifying day
+    expect(r.totalHours).toBe(72);          // 14x5 + 2
+    expect(r.hours).toBe(4.8);              // 72 / 15
+  });
+
+  it('an override of 0 drops the day out entirely', () => {
+    // Zero paid hours earned no wages, so the day cannot qualify.
+    const shifts = workDays(15, BC_DAY).map((s, i) => i === 0 ? { ...s, payHoursOverride: 0 } : s);
+    const r = statPayForHoliday(shifts, BC_DAY, payableHoursOf);
+    expect(r.daysWorked).toBe(14);
+    expect(r.qualifies).toBe(false);
+  });
+
+  it('an override above the scheduled length is honoured too', () => {
+    const shifts = workDays(15, BC_DAY).map((s, i) => i === 0 ? { ...s, payHoursOverride: 9 } : s);
+    const r = statPayForHoliday(shifts, BC_DAY, payableHoursOf);
+    expect(r.totalHours).toBe(79);          // 14x5 + 9
+    expect(r.hours).toBe(5.27);             // 79 / 15
+  });
+
+  it('overrides on a split-shift day sum within the one day', () => {
+    const d = minusDays(BC_DAY, 1);
+    const shifts = [
+      ...workDays(14, BC_DAY).filter(s => s.date !== d),
+      shift(d, '11:00', '15:00', { payHoursOverride: 3 }),
+      shift(d, '15:00', '19:00'),
+    ];
+    const r = statPayForHoliday(shifts, BC_DAY, payableHoursOf);
+    expect(r.days.find(x => x.date === d).hours).toBe(7); // 3 (override) + 4
   });
 });
 

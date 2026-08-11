@@ -169,6 +169,24 @@ function shiftHours(s) {
   return isNaN(result) || result < 0 ? 0 : result;
 }
 
+// Hours we actually PAY for a shift: the manual Payroll h override when one
+// is set, otherwise the scheduled length. No-shows pay nothing.
+//
+// This is the figure stat pay must average. BC ESA s.46 bases an average
+// day's pay on wages "paid or payable", not on time physically on site —
+// so when someone clocks 8.17h against an 8.00h shift and we pay 8.00h,
+// 8.00h is the wage earned. Feeding raw scheduled time in meant a resolved
+// discrepancy (say, a forgotten sign-out corrected down to 2.00h) never
+// reached the stat average, which then disagreed with the money we paid.
+function payableShiftHours(s) {
+  if (!s) return 0;
+  if (s.noShow === true) return 0;
+  if (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride)) {
+    return Math.max(0, s.payHoursOverride);
+  }
+  return shiftHours(s);
+}
+
 function normalizeTimeToHHMM(str) {
   if (!str) return '';
   str = str.trim();
@@ -3315,7 +3333,7 @@ export default function Admin() {
       for (const h of statHolidays) {
         // Qualification is by DAY worked, not by shift record, and skips
         // drafts / no-shows / volunteer shifts. See lib/statPay.js.
-        const r = statPayForHoliday(personShifts, h.date, shiftHours);
+        const r = statPayForHoliday(personShifts, h.date, payableShiftHours);
         if (!r.qualifies) continue;
         person.statHours += r.hours;
         person.statDays  += 1;
@@ -3515,7 +3533,7 @@ export default function Admin() {
     // never disagree — they used to be two separate copies of the rule.
     const detail = inPeriod.map(h => {
       const perPerson = Object.values(byPerson).map(p => {
-        const r = statPayForHoliday(p.shifts, h.date, shiftHours);
+        const r = statPayForHoliday(p.shifts, h.date, payableShiftHours);
         return {
           name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours,
           // Carried through so the roster can show what made up the count.
@@ -3524,7 +3542,7 @@ export default function Admin() {
           sickDays: r.sickDays, workedDays: r.workedDays,
         };
       }).sort((a, b) => b.count - a.count);
-      return { holiday: h, windowStart: statPayForHoliday([], h.date, shiftHours).windowStart, perPerson };
+      return { holiday: h, windowStart: statPayForHoliday([], h.date, payableShiftHours).windowStart, perPerson };
     });
     return {
       holidaysConfigured: holidaysList.length,
