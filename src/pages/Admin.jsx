@@ -1680,6 +1680,14 @@ function StatPayTab({ holidays, rows }) {
   const [query, setQuery] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [minShifts, setMinShifts] = useState(0);
+  // Which staff have their day-by-day working open. Keyed by name; several
+  // can be open at once so two people's windows can be compared side by side.
+  const [expanded, setExpanded] = useState(() => new Set());
+  const toggleExpanded = (name) => setExpanded(prev => {
+    const next = new Set(prev);
+    if (next.has(name)) next.delete(name); else next.add(name);
+    return next;
+  });
 
   const roles = [...new Set(rows.map(r => r.role).filter(Boolean))].sort();
   const filtered = rows.filter(r => {
@@ -1771,22 +1779,39 @@ function StatPayTab({ holidays, rows }) {
           <tbody>
             {filtered.map(r => {
               const shifts = r.shifts ?? 0;
+              const isOpen = expanded.has(r.name);
               return (
-                <tr key={r.name} className="border-t border-gray-100 hover:bg-gray-50">
+                <Fragment key={r.name}>
+                <tr className="border-t border-gray-100 hover:bg-gray-50">
                   <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
                   <td className="px-4 py-2 text-xs text-gray-600">{r.role}</td>
                   {/* Paid sick days count toward the 15 under the BC ESA
                       ("worked OR earned wages"), so a roster number can look
                       inflated with no visible reason. Show the split whenever
-                      sick days are part of it. */}
-                  <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-emerald-700' : 'text-gray-400'}`}>
-                    {shifts}<span className="text-[10px] font-normal text-gray-400"> / 15</span>
-                    {(r.sickDays || 0) > 0 && (
-                      <div className="text-[10px] font-normal text-gray-500"
-                        title="Paid sick days count as qualifying days under the BC Employment Standards Act — the Act says 'worked or earned wages'.">
-                        {shifts - r.sickDays} worked + {r.sickDays} sick
-                      </div>
-                    )}
+                      sick days are part of it, and let the whole cell expand
+                      into the day-by-day working behind the number. */}
+                  <td className="px-4 py-2 text-center">
+                    <button
+                      type="button"
+                      onClick={() => toggleExpanded(r.name)}
+                      aria-expanded={isOpen}
+                      title="Show every qualifying day and the average-day maths"
+                      className={`group inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-bold transition-colors hover:bg-purple-50 ${
+                        r.qualifies ? 'text-emerald-700' : 'text-gray-400'
+                      }`}>
+                      <ChevronRight
+                        size={13}
+                        className={`shrink-0 text-gray-400 transition-transform ${isOpen ? 'rotate-90' : ''}`}
+                      />
+                      <span>
+                        {shifts}<span className="text-[10px] font-normal text-gray-400"> / 15</span>
+                        {(r.sickDays || 0) > 0 && (
+                          <span className="block text-[10px] font-normal text-gray-500">
+                            {shifts - r.sickDays} worked + {r.sickDays} sick
+                          </span>
+                        )}
+                      </span>
+                    </button>
                   </td>
                   <td className={`px-4 py-2 text-center font-bold ${r.qualifies ? 'text-purple-700' : 'text-gray-300'}`}>
                     {r.qualifies ? `${r.totalStat.toFixed(2)}h` : '—'}
@@ -1808,6 +1833,75 @@ function StatPayTab({ holidays, rows }) {
                     </td>
                   )}
                 </tr>
+                {/* Day-by-day working. Everything here is already computed by
+                    statPayForHoliday — showing it just saves exporting a
+                    spreadsheet to answer "why is this number what it is?". */}
+                {isOpen && (
+                  <tr className="border-t border-gray-100 bg-gray-50/70">
+                    <td colSpan={multi ? 6 : 5} className="px-4 py-3">
+                      {r.perHoliday.length === 0 && (
+                        <p className="text-xs text-gray-500">No qualifying window for this person.</p>
+                      )}
+                      {r.perHoliday.map(h => {
+                        const days = h.days || [];
+                        const lastDay = minusDays(h.holiday.date, 1);
+                        return (
+                          <div key={h.holiday.date} className="mb-3 last:mb-0">
+                            <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                              <span className="text-xs font-semibold text-gray-800">
+                                {h.holiday.name || 'Holiday'} · {h.holiday.date}
+                              </span>
+                              <span className="text-[11px] text-gray-500">
+                                window {shortDate(h.windowStart || minusDays(h.holiday.date, 30))} – {shortDate(lastDay)}
+                              </span>
+                            </div>
+                            {/* The arithmetic, spelled out. */}
+                            <div className="mb-2 rounded-md border border-gray-200 bg-white px-2.5 py-1.5 text-xs">
+                              {h.qualifies ? (
+                                <span className="text-gray-700">
+                                  <b>{(h.totalHours ?? 0).toFixed(2)}h</b> paid over <b>{h.count}</b> qualifying day{h.count !== 1 ? 's' : ''}
+                                  {' '}÷ {h.count} = <b className="text-purple-700">{h.statHours.toFixed(2)}h</b> average day's pay
+                                  {(h.sickDays || 0) > 0 && (
+                                    <span className="text-gray-500"> · includes {h.sickDays} paid sick day{h.sickDays !== 1 ? 's' : ''}</span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-gray-600">
+                                  <b>{h.count}</b> qualifying day{h.count !== 1 ? 's' : ''} — needs 15.
+                                  {' '}<span className="text-gray-500">
+                                    {15 - h.count} more day{15 - h.count !== 1 ? 's' : ''} in the window would qualify. No stat pay.
+                                  </span>
+                                </span>
+                              )}
+                            </div>
+                            {days.length === 0 ? (
+                              <p className="text-[11px] text-gray-500">No wage-earning days in this window.</p>
+                            ) : (
+                              <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5">
+                                {days.map(d => (
+                                  <div key={d.date}
+                                    className={`flex items-center justify-between rounded border px-2 py-1 text-[11px] ${
+                                      d.sick
+                                        ? 'border-amber-200 bg-amber-50 text-amber-800'
+                                        : 'border-gray-200 bg-white text-gray-700'
+                                    }`}>
+                                    <span>{shortDate(d.date)}{d.sick && <span className="ml-1 font-semibold">sick</span>}</span>
+                                    <span className="font-semibold">{d.hours.toFixed(2)}h</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <p className="mt-1.5 text-[10px] text-gray-400">
+                              Hours shown are what we pay — the Payroll h override where one is set, otherwise the
+                              scheduled length. Drafts, no-shows and volunteer shifts are excluded.
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
             {filtered.length === 0 && (
@@ -1819,7 +1913,7 @@ function StatPayTab({ holidays, rows }) {
         </table>
       </div>
       <p className="px-5 py-3 text-[11px] text-gray-500 border-t bg-gray-50/50">
-        Stat hours are paid on top of worked hours. For the exact shift-by-shift breakdown behind each number, export payroll and open the "Stat Pay" sheet.
+        Stat hours are paid on top of worked hours. Click any <b>days worked</b> figure to expand the day-by-day working behind it. The same breakdown is in the "Stat Pay" sheet of the payroll export.
       </p>
     </div>
   );
@@ -3540,6 +3634,11 @@ export default function Admin() {
           // Paid sick days legally qualify, which looks wrong at a glance
           // unless the split is visible.
           sickDays: r.sickDays, workedDays: r.workedDays,
+          // Full working for the expandable breakdown: every qualifying day
+          // and the two numbers the average is built from. Cheap to carry —
+          // it's already computed — and it saves exporting a spreadsheet
+          // just to answer "why is this person's stat pay 4.88?".
+          days: r.days, totalHours: r.totalHours, windowStart: r.windowStart,
         };
       }).sort((a, b) => b.count - a.count);
       return { holiday: h, windowStart: statPayForHoliday([], h.date, payableShiftHours).windowStart, perPerson };
@@ -3582,6 +3681,7 @@ export default function Admin() {
         row.perHoliday.push({
           holiday: d.holiday, count: p.count, qualifies: p.qualifies, statHours: p.statHours,
           sickDays: p.sickDays, workedDays: p.workedDays,
+          days: p.days, totalHours: p.totalHours, windowStart: p.windowStart,
         });
         if (p.qualifies) { row.totalStat += p.statHours; row.qualifies = true; }
       }
