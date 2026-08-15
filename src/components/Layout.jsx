@@ -11,7 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
-  UserPlus, FileBarChart, Activity,
+  UserPlus, FileBarChart, Activity, Package,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -209,6 +209,12 @@ export default function Layout({ children }) {
   // as sub-tabs.
   const centre = [];
   if (useOwnerLayout) {
+    // Inventory sits above Centre Settings: supplies get touched weekly,
+    // settings get touched twice a year. Admin-and-above only — the route
+    // and the Firestore rules enforce it too, this just hides the link.
+    if (canSeeAdminPanel) {
+      centre.push({ to: '/inventory', label: 'Inventory', icon: Package });
+    }
     centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
   }
 
@@ -224,6 +230,7 @@ export default function Layout({ children }) {
       { to: '/scheduler-creation',    label: 'Scheduler Creation',    icon: ClipboardList },
       { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
+      { to: '/inventory',             label: 'Inventory',             icon: Package },
     );
   } else if (!useOwnerLayout && isLead) {
     // Lead instructors get Student Scheduler — but NOT the broader

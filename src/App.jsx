@@ -42,6 +42,7 @@ const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'))
 const Leads                     = lazy(() => import('./pages/Leads'));
 const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
 const Onboarding                = lazy(() => import('./pages/Onboarding'));
+const Inventory                 = lazy(() => import('./pages/Inventory'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -122,6 +123,10 @@ function AppRoutes() {
         <Route path="/staffing-budget" element={<ProtectedRoute><Layout><StaffingBudget /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
+        {/* Centre supply inventory. `requireOwner` on ProtectedRoute means
+            "has admin-panel access" — admin, admin_assistant, director,
+            owner, super_admin. Instructors get Not Authorized. */}
+        <Route path="/inventory" element={<ProtectedRoute requireOwner><Layout><Inventory /></Layout></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />

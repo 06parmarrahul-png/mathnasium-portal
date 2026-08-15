@@ -182,6 +182,32 @@ service cloud.firestore {
       match /leads/{leadId} {
         allow read, write: if isOwnerLike() || isSuperAdmin();
       }
+
+      // ─── Inventory (centre supplies) ────────────────────────────────
+      // Admin-and-above ONLY, both read AND write. Supply counts, unit
+      // costs and vendor links are operating data — instructors have no
+      // reason to see what the centre pays for prize-box toys, and the
+      // {document=**} catchall above would otherwise hand every signed-in
+      // staff account read access. More-specific match wins, so this
+      // block overrides it for /inventory/*.
+      //
+      // The alert-settings doc (id '__settings') lives in this same
+      // collection deliberately, so it inherits this exact rule instead
+      // of needing one of its own.
+      match /inventory/{itemId} {
+        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
+      // ─── Inventory change log ───────────────────────────────────────
+      // Append-only for admins: they can add entries (every count change
+      // writes one) and read the history, but cannot rewrite or delete
+      // it. Only the platform operator can prune. Same posture as
+      // auditLog — a history someone can quietly edit isn't a history.
+      match /inventoryLog/{entryId} {
+        allow read:   if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow create: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow update, delete: if isSuperAdmin();
+      }
     }
 
     // ─── Centre intakes (native booking flow) ──────────────────────────
