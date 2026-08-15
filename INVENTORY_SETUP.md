@@ -9,10 +9,10 @@ director, owner, super-admin). Instructors never see it.
 |---|---|
 | `src/lib/inventory.js` | **new** — categories, item model, low-stock logic, Firestore reads/writes, change log, CSV, order-list email |
 | `src/pages/Inventory.jsx` | **new** — the page |
-| `api/cron/check-inventory.js` | **new** — weekly low-stock email to the admin team |
+| `api/_lib/inventory-alerts.js` | **new** — low-stock sweep + reorder email. A module, not a route (see below) |
 | `src/App.jsx` | +1 lazy import, +1 route (`/inventory`, admin-gated) |
 | `src/components/Layout.jsx` | +1 sidebar link (Centre section for owners, Manage for admins) |
-| `vercel.json` | +1 cron entry |
+| `api/cron/send-shift-reminders.js` | +1 import, +1 sweep call, `inventory` added to the response |
 | `firestore.rules` | +2 match blocks (`inventory`, `inventoryLog`) |
 
 Nothing existing was rewritten — every edit is additive.
@@ -25,7 +25,7 @@ Fun Days · Administrative · Cleaning · Rewards
 Defined once in `INVENTORY_CATEGORIES` (`src/lib/inventory.js`). Adding an
 eleventh category is one entry in that array — filters, forms, CSV and the
 reorder email all pick it up. If you add one, mirror the label into
-`CATEGORY_LABELS` in `api/cron/check-inventory.js` (API routes can't import
+`CATEGORY_LABELS` in `api/_lib/inventory-alerts.js` (API routes can't import
 from `src/`).
 
 ## Data model
@@ -45,6 +45,23 @@ admin sets up once — Amazon saved cart, Staples list, the franchise supply
 portal). `qty <= par` → **Low**. `qty <= 0` → **Out**. `par = 0` → never
 alerts, for things you don't restock.
 
+## Why the sweep is a module, not a route
+
+Vercel's Hobby plan caps a deployment at **12 Serverless Functions** and this
+project was already at the ceiling. Anything under `api/_lib/` is bundled as
+a module rather than counted as a function, so the low-stock sweep rides
+along inside the existing daily cron (`api/cron/send-shift-reminders.js`)
+and costs nothing.
+
+Two dead Stripe routes were also removed — `create-checkout-session.js` and
+`create-portal-session.js` were superseded by `api/stripe/billing.js` back in
+`d0aa08e` but never deleted, so they'd been silently burning two slots.
+Nothing in `src/` references them.
+
+If the project moves to Pro, lifting the sweep back into its own
+`api/cron/check-inventory.js` is a copy-paste: import `runInventorySweep`,
+call it, add a cron entry to `vercel.json`.
+
 ## Deploy
 
 ```bash
@@ -53,8 +70,8 @@ git commit -m "Add centre inventory tracker (admin+)"
 git push
 ```
 
-Vercel picks up the new API route and cron automatically. Then push the
-rules — they are NOT deployed by `git push`:
+Vercel picks it up automatically. Then push the rules — they are NOT
+deployed by `git push`:
 
 ```bash
 firebase deploy --only firestore:rules
@@ -66,7 +83,7 @@ every signed-in staff account **read** it. Deploy the rules the same day.
 
 ## Environment variables
 
-The weekly email reuses what `send-shift-reminders` already needs:
+The low-stock email reuses what `send-shift-reminders` already needs:
 
 | Var | Needed | Notes |
 |---|---|---|
@@ -76,29 +93,41 @@ The weekly email reuses what `send-shift-reminders` already needs:
 | `FIREBASE_SERVICE_ACCOUNT` | already set | |
 | `PORTAL_URL` | **optional, new** | Absolute portal URL for the email button, e.g. `https://your-portal.vercel.app`. Falls back to `VERCEL_URL`. |
 
-## The weekly email
+## The low-stock email
 
-Runs Mondays at 08:00 Pacific (`0 15 * * 1` UTC in `vercel.json`).
+The sweep runs every morning on the back of the existing shift-reminder cron
+(06:00 Pacific). For each centre it collects every Low/Out item, groups them
+by category, and emails the admin team a list with the order link on each
+row. Recipients are whoever is set in **Inventory → Alerts**; if that's blank
+it falls back to every approved owner / admin assistant / director / admin at
+that centre. Super-admins are excluded on purpose — otherwise the platform
+operator gets one per centre.
 
-For each centre it collects every Low/Out item, groups them by category,
-and emails the admin team a list with the order link on each row. Recipients
-are whoever is set in **Inventory → Alerts**; if that's blank it falls back
-to every approved owner / admin assistant / director / admin at that centre.
-Super-admins are excluded on purpose — otherwise the platform operator gets
-one per centre.
+Daily doesn't mean daily email. A centre only hears from it when there's
+something new to say:
 
-It won't nag. The endpoint fingerprints the outstanding list; if nothing has
-changed it stays quiet for 7 days. The moment something new runs low, or
-something gets restocked, the fingerprint changes and the next run sends.
+| Situation | What happens |
+|---|---|
+| Something just hit **zero** that wasn't out before | Emails that morning |
+| List changed and it's been 3+ days | Emails |
+| List hasn't changed at all | Repeats once a week |
+| Nothing is low | Silence |
 
-Test it without waiting for Monday:
+So a slow drip of items going low doesn't produce a daily nag, but "we are
+OUT of printer toner" reaches the team the morning it happens rather than the
+following Monday.
+
+Test it without firing shift reminders at real staff:
 
 ```bash
 curl -H "Authorization: Bearer $CRON_SECRET" \
-  https://your-portal.vercel.app/api/cron/check-inventory
+  "https://your-portal.vercel.app/api/cron/send-shift-reminders?inventoryOnly=1&force=1"
 ```
 
-Returns a per-centre JSON report (`sent`, `lowItems`, or why it skipped).
+`inventoryOnly=1` skips the shift reminders; `force=1` bypasses the
+throttling. Returns a per-centre JSON report (`sent`, `reason`, `lowItems`,
+or why it skipped). Drop `force` to see the throttle decision as it will
+actually run.
 
 There's also an **Email the admin team now** button inside the Order list
 modal, which sends the same list on demand via `/api/send-email`.
@@ -112,7 +141,7 @@ modal, which sends the same list on demand via `/api/send-email`.
 4. Open a few items and paste the **order link** you use for each. That's
    the field that makes the low-stock email actionable rather than
    informational.
-5. **Alerts** → set who gets the Monday email.
+5. **Alerts** → set who gets the low-stock email.
 
 Day to day, staff use the `−` / `+` buttons as they use things up, and the
 Order list button tells you what to buy.

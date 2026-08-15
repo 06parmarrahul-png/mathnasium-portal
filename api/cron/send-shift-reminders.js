@@ -35,6 +35,7 @@
 
 import { Resend } from 'resend';
 import { getFirestore } from '../_lib/firebase-admin.js';
+import { runInventorySweep } from '../_lib/inventory-alerts.js';
 
 // Lazy Resend client — same pattern as the rest of api/.
 let _resend = null;
@@ -170,6 +171,36 @@ export default async function handler(req, res) {
 
   const db = getFirestore();
 
+  // ─── Inventory low-stock sweep ──────────────────────────────────────
+  // Rides along inside this cron rather than owning a Serverless Function
+  // of its own — Vercel's Hobby plan caps a deployment at 12 and this
+  // project sits at the ceiling. Anything under api/_lib/ is a module,
+  // not a function, so this costs nothing.
+  //
+  // The sweep self-throttles (see api/_lib/inventory-alerts.js): a daily
+  // run only emails a centre when something newly hits zero, when the
+  // low-stock list has changed and it's been 3+ days, or once a week
+  // while the same list stays outstanding. Wrapped in try/catch so an
+  // inventory problem can never stop shift reminders going out.
+  let inventory = null;
+  try {
+    inventory = await runInventorySweep({
+      db,
+      fromAddress,
+      force: !!req.query?.force,
+    });
+  } catch (err) {
+    console.error('[inventory-alerts] sweep failed:', err);
+    inventory = { error: err.message || String(err) };
+  }
+
+  // ?inventoryOnly=1 runs just the sweep and returns — lets you test the
+  // low-stock email without firing shift reminders at real staff.
+  // Add &force=1 to bypass throttling.
+  if (req.query?.inventoryOnly) {
+    return res.status(200).json({ inventoryOnly: true, inventory });
+  }
+
   // Load every notification-preferences doc. Typical deployment is a
   // handful of centres × ~30 staff each, so this collection stays small
   // enough to scan in one read. If it ever grows past a few thousand,
@@ -194,7 +225,7 @@ export default async function handler(req, res) {
   });
 
   if (lookups.length === 0) {
-    return res.status(200).json({ scanned: 0, sent: 0, message: 'No users due reminders' });
+    return res.status(200).json({ scanned: 0, sent: 0, message: 'No users due reminders', inventory });
   }
 
   // For each (user, target date) pair, pull the matching shift(s) and decide
@@ -237,7 +268,7 @@ export default async function handler(req, res) {
   }
 
   if (toSend.length === 0) {
-    return res.status(200).json({ scanned: lookups.length, sent: 0, message: 'No matching shifts' });
+    return res.status(200).json({ scanned: lookups.length, sent: 0, message: 'No matching shifts', inventory });
   }
 
   const resend = resendClient();
@@ -277,5 +308,6 @@ export default async function handler(req, res) {
     sent,
     failed,
     errors,
+    inventory,
   });
 }

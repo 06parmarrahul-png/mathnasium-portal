@@ -1,42 +1,48 @@
-// GET /api/cron/check-inventory
+// Inventory low-stock sweep.
 //
-// Weekly low-stock sweep. For every centre, finds the supplies at or
-// below their reorder point and emails the admin team a ready-to-order
-// list — item, how many to buy, and the order link an admin set up on
-// the item. That link is the whole point: "we're low on glue sticks"
-// becomes one click instead of a hunt for last year's invoice.
+// WHY THIS IS A LIBRARY AND NOT A ROUTE
+//   Vercel's Hobby plan caps a deployment at 12 Serverless Functions and
+//   this project is at the ceiling. Anything under api/_lib/ is treated
+//   as a module, not a function, so the sweep rides along inside the
+//   existing daily cron (api/cron/send-shift-reminders.js) instead of
+//   costing a slot. If the project ever moves to Pro, lifting this back
+//   out into api/cron/check-inventory.js is a copy-paste.
+//
+// WHAT IT DOES
+//   For every centre, finds the supplies at or below their reorder point
+//   and emails the admin team a ready-to-order list — item, how many to
+//   buy, and the order link an admin set up on the item. That link is the
+//   whole point: "we're low on glue sticks" becomes one click instead of
+//   a hunt for last year's invoice.
 //
 // WHO GETS IT
-//   1. The recipients set on the centre's inventory alert settings
-//      (Inventory → Alerts), if any.
+//   1. The recipients set on the centre's alert settings (Inventory →
+//      Alerts), if any.
 //   2. Otherwise every approved owner / admin_assistant / director /
 //      admin at that centre. Instructors are never included — inventory
 //      is an admin-and-above surface.
-//   Platform super-admins are deliberately excluded; they'd otherwise
-//   receive one of these for every centre on the platform.
+//   Platform super-admins are deliberately excluded; they'd otherwise get
+//   one of these for every centre on the platform.
 //
-// SETUP (one-time)
-//   1. CRON_SECRET   — already set if send-shift-reminders is running.
-//                      Vercel Cron attaches it as `Authorization: Bearer <secret>`.
-//   2. RESEND_API_KEY + RESEND_FROM — same vars /api/send-email uses.
-//   3. FIREBASE_SERVICE_ACCOUNT — same var the other API routes use.
-//   4. PORTAL_URL (optional) — absolute URL of the portal for the email
-//      button, e.g. https://portal.ratio.app. Falls back to VERCEL_URL.
-//   5. vercel.json already carries the schedule (Mondays 08:00 Pacific).
+// THROTTLING — this is what makes a DAILY run safe
+//   The host cron runs every morning, but a centre only gets an email
+//   when there's something new to say:
 //
-// IDEMPOTENCY
-//   Each centre's settings doc stores `lastAlertKey` (a fingerprint of
-//   the exact low-stock list) and `lastAlertSentAt`. If the same list is
-//   still outstanding we stay quiet for 7 days rather than emailing the
-//   identical list every time the endpoint is pinged. As soon as the
-//   list CHANGES — something new runs low, or something gets restocked —
-//   the fingerprint changes and the next run sends immediately.
+//     • something just hit ZERO that wasn't out before  → send today
+//     • the list changed and it's been 3+ days          → send
+//     • the list hasn't changed at all                  → resend after 7 days
+//     • nothing is low                                  → silence
 //
-// SAFE TO RE-RUN
-//   Hitting this URL twice in a row sends nothing the second time.
+//   So a slow drip of items going low doesn't produce a daily nag, but a
+//   genuine "we are OUT of printer toner" reaches the team the morning it
+//   happens rather than the following Monday.
+//
+// ENV
+//   RESEND_API_KEY, RESEND_FROM — same vars the host cron already needs.
+//   PORTAL_URL (optional) — absolute portal URL for the email button.
+//                           Falls back to VERCEL_URL.
 
 import { Resend } from 'resend';
-import { getFirestore } from '../_lib/firebase-admin.js';
 
 let _resend = null;
 function resendClient() {
@@ -47,15 +53,8 @@ function resendClient() {
   return _resend;
 }
 
-function checkAuth(req) {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return false;
-  const auth = req.headers.authorization || '';
-  return auth === `Bearer ${secret}`;
-}
-
 // Roles that receive the low-stock email when no explicit recipients are
-// set. Mirrors canSeeAdminPanel in AuthContext minus super_admin.
+// set. Mirrors canSeeAdminPanel in AuthContext, minus super_admin.
 const ADMIN_ROLES = new Set(['owner', 'admin_assistant', 'director', 'admin']);
 const DIRECTOR_TITLES = new Set([
   'center director', 'centre director',
@@ -68,9 +67,9 @@ function isAdminish(u) {
   return DIRECTOR_TITLES.has(t);
 }
 
-// Category keys → display labels. Kept in sync with
-// src/lib/inventory.js INVENTORY_CATEGORIES; duplicated here because API
-// routes can't import from src/ in this deployment layout.
+// Category keys → display labels. Kept in sync with INVENTORY_CATEGORIES
+// in src/lib/inventory.js; duplicated because API routes can't import
+// from src/ in this deployment layout. Add a category there, add it here.
 const CATEGORY_LABELS = {
   steam:          'STEAM (STEM + Art)',
   events:         'Events',
@@ -83,6 +82,9 @@ const CATEGORY_LABELS = {
   cleaning:       'Cleaning',
   rewards:        'Rewards',
 };
+
+const MIN_GAP_MS    = 3 * 24 * 60 * 60 * 1000; // changed list: wait 3 days
+const REPEAT_GAP_MS = 7 * 24 * 60 * 60 * 1000; // unchanged list: repeat weekly
 
 function statusOf(item) {
   const qty = Number(item.qty) || 0;
@@ -106,17 +108,31 @@ function esc(s) {
 
 /** Fingerprint of the outstanding list — id + status, order-independent. */
 function alertKey(items) {
-  return items
-    .map(i => `${i.id}:${statusOf(i)}`)
-    .sort()
-    .join('|');
+  return items.map(i => `${i.id}:${statusOf(i)}`).sort().join('|');
+}
+
+/**
+ * Should this centre be emailed right now?
+ * Returns a reason string when yes, or null when we stay quiet.
+ */
+function shouldSend(key, low, settings) {
+  const lastAt = settings.lastAlertSentAt ? Date.parse(settings.lastAlertSentAt) : 0;
+  if (!lastAt) return 'first alert';
+
+  // Anything that has just hit zero jumps the queue — an OUT item is
+  // blocking a session today, not next week.
+  const prev = new Set(String(settings.lastAlertKey || '').split('|').filter(Boolean));
+  const newlyOut = low.some(i => statusOf(i) === 'out' && !prev.has(`${i.id}:out`));
+  if (newlyOut) return 'something newly out of stock';
+
+  const age = Date.now() - lastAt;
+  if (key !== settings.lastAlertKey && age >= MIN_GAP_MS) return 'list changed';
+  if (age >= REPEAT_GAP_MS) return 'weekly reminder, still outstanding';
+  return null;
 }
 
 function buildText(centreName, groups, link) {
-  const lines = [
-    `Supply reorder list — ${centreName}`,
-    '',
-  ];
+  const lines = [`Supply reorder list — ${centreName}`, ''];
   for (const [label, items] of groups) {
     lines.push(label.toUpperCase());
     for (const i of items) {
@@ -135,8 +151,7 @@ function buildHtml(centreName, groups, link) {
   const sections = groups.map(([label, items]) => {
     const rows = items.map(i => {
       const want = Number(i.reorderQty) || Number(i.par) || 1;
-      const out = statusOf(i) === 'out';
-      const badge = out
+      const badge = statusOf(i) === 'out'
         ? '<span style="background:#fee2e2;color:#991b1b;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:700;">OUT</span>'
         : '<span style="background:#fef3c7;color:#92400e;border-radius:9999px;padding:2px 8px;font-size:11px;font-weight:700;">LOW</span>';
       const orderCell = i.orderUrl
@@ -169,30 +184,31 @@ ${cta}
 </div>`;
 }
 
-export default async function handler(req, res) {
-  if (!checkAuth(req)) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-  const fromAddress = process.env.RESEND_FROM;
-  if (!fromAddress) {
-    return res.status(500).json({ error: 'RESEND_FROM env var is not set' });
-  }
+/**
+ * Run the sweep across every centre.
+ *
+ * @param {object}  args
+ * @param {object}  args.db           firebase-admin Firestore instance
+ * @param {string}  args.fromAddress  RESEND_FROM
+ * @param {boolean} [args.force]      ignore throttling (manual test runs)
+ * @returns {Promise<object>} per-centre report — safe to include in a
+ *                            cron response body.
+ */
+export async function runInventorySweep({ db, fromAddress, force = false }) {
+  if (!fromAddress) throw new Error('RESEND_FROM env var is not set');
 
-  const db = getFirestore();
   const link = portalUrl();
   const nowIso = new Date().toISOString();
-  const QUIET_MS = 7 * 24 * 60 * 60 * 1000; // don't resend an unchanged list inside a week
-
   const centersSnap = await db.collection('centers').get();
   const report = [];
-  let sentTotal = 0;
+  let emailsSent = 0;
 
   for (const centreDoc of centersSnap.docs) {
     const centerId = centreDoc.id;
     const centreData = centreDoc.data() || {};
+
     // The human name ("Mathnasium Langley") lives in config/main — the
-    // top-level centres doc is mostly identity/billing. Fall back through
-    // both so a centre missing either still gets a sensible subject line.
+    // top-level centres doc is mostly identity/billing.
     let configName = null;
     try {
       const cfg = await db.collection('centers').doc(centerId)
@@ -233,11 +249,11 @@ export default async function handler(req, res) {
       continue;
     }
 
-    // ─── Idempotency ─────────────────────────────────────────────────
+    // ─── Throttling ──────────────────────────────────────────────────
     const key = alertKey(low);
-    const lastAt = settings.lastAlertSentAt ? Date.parse(settings.lastAlertSentAt) : 0;
-    if (settings.lastAlertKey === key && lastAt && (Date.now() - lastAt) < QUIET_MS) {
-      report.push({ centerId, skipped: 'same list already sent this week' });
+    const reason = force ? 'forced' : shouldSend(key, low, settings);
+    if (!reason) {
+      report.push({ centerId, skipped: 'throttled', lowItems: low.length });
       continue;
     }
 
@@ -256,7 +272,6 @@ export default async function handler(req, res) {
         .map(u => String(u.email).trim());
     }
 
-    // De-dupe (someone can appear both explicitly and by role).
     recipients = [...new Set(recipients)];
 
     if (recipients.length === 0) {
@@ -287,8 +302,7 @@ export default async function handler(req, res) {
     }));
 
     try {
-      const resend = resendClient();
-      const { error } = await resend.batch.send(payload);
+      const { error } = await resendClient().batch.send(payload);
       if (error) throw new Error(error.message || 'Resend batch error');
 
       await db.collection('centers').doc(centerId)
@@ -300,17 +314,13 @@ export default async function handler(req, res) {
           lastAlertKey:    key,
         }, { merge: true });
 
-      sentTotal += payload.length;
-      report.push({ centerId, sent: payload.length, lowItems: low.length, outItems: outCount });
+      emailsSent += payload.length;
+      report.push({ centerId, sent: payload.length, reason, lowItems: low.length, outItems: outCount });
     } catch (err) {
-      console.error(`[check-inventory] ${centerId} failed:`, err);
+      console.error(`[inventory-alerts] ${centerId} failed:`, err);
       report.push({ centerId, error: err.message || String(err) });
     }
   }
 
-  return res.status(200).json({
-    centres: centersSnap.size,
-    emailsSent: sentTotal,
-    report,
-  });
+  return { centres: centersSnap.size, emailsSent, report };
 }
