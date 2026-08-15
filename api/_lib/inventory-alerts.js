@@ -102,6 +102,36 @@ const CATEGORY_LABELS = {
   rewards:        'Rewards',
 };
 
+// Unit words. Mirrors INVENTORY_UNITS in src/lib/inventory.js — API
+// routes can't import from src/, same reason as CATEGORY_LABELS above.
+// Keys include the legacy values ('each', 'pack') so items saved before
+// the dropdown existed still read correctly in the email.
+const UNIT_WORDS = {
+  individual: ['unit', 'units'],
+  each:       ['unit', 'units'],
+  package:    ['package', 'packages'],
+  pack:       ['package', 'packages'],
+  box:        ['box', 'boxes'],
+  case:       ['case', 'cases'],
+  set:        ['set', 'sets'],
+  kit:        ['kit', 'kits'],
+  pair:       ['pair', 'pairs'],
+  bag:        ['bag', 'bags'],
+  bottle:     ['bottle', 'bottles'],
+  roll:       ['roll', 'rolls'],
+  ream:       ['ream', 'reams'],
+  bundle:     ['bundle', 'bundles'],
+  container:  ['container', 'containers'],
+};
+
+/** '3 boxes' / '1 box' — so the reorder email reads like English. */
+function unitText(unit, qty) {
+  const n = Number(qty) || 0;
+  const key = String(unit || '').toLowerCase().replace(/[^a-z]/g, '');
+  const pair = UNIT_WORDS[key] || UNIT_WORDS.individual;
+  return `${n} ${Math.abs(n) === 1 ? pair[0] : pair[1]}`;
+}
+
 const MIN_GAP_MS    = 3 * 24 * 60 * 60 * 1000; // changed list: wait 3 days
 const REPEAT_GAP_MS = 7 * 24 * 60 * 60 * 1000; // unchanged list: repeat weekly
 
@@ -177,7 +207,7 @@ function buildText(centreName, groups, link) {
     for (const i of items) {
       const want = Number(i.reorderQty) || Number(i.par) || 1;
       const tag = statusOf(i) === 'out' ? 'OUT OF STOCK' : 'low';
-      lines.push(`  - ${i.name}: order ${want} ${i.unit || 'each'} (have ${Number(i.qty) || 0}, ${tag})`);
+      lines.push(`  - ${i.name}: order ${unitText(i.unit, want)} (have ${Number(i.qty) || 0}, ${tag})`);
       if (i.orderUrl) lines.push(`      ${i.orderUrl}`);
     }
     lines.push('');
@@ -199,7 +229,7 @@ function buildHtml(centreName, groups, link) {
       return `<tr>
   <td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;">
     <strong style="color:#111827;">${esc(i.name)}</strong><br>
-    <span style="color:#6b7280;font-size:12px;">Order ${want} ${esc(i.unit || 'each')} &middot; have ${Number(i.qty) || 0}</span>
+    <span style="color:#6b7280;font-size:12px;">Order ${esc(unitText(i.unit, want))} &middot; have ${Number(i.qty) || 0}</span>
   </td>
   <td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:center;">${badge}</td>
   <td style="padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-size:13px;">${orderCell}</td>

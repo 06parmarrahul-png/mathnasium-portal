@@ -4,6 +4,7 @@ import { toast, confirmDialog } from '../lib/notify';
 import {
   INVENTORY_CATEGORIES, INVENTORY_UNITS, DEFAULT_ITEM, DEFAULT_SETTINGS,
   STATUS, STATUS_STYLE, categoryFor, itemStatus, needsOrdering,
+  unitLabel, unitText, normalizeUnit,
   subscribeInventory, subscribeSettings, subscribeLog,
   saveItem, adjustQty, markOrdered, removeItem, saveSettings,
   seedStarterCatalog, itemsToCsv, buildOrderListText, sendOrderListEmail,
@@ -251,16 +252,12 @@ function ItemModal({ item, onClose, onSave, saving }) {
           </select>
         </Field>
 
-        <Field label="Unit">
-          <input
-            className={inputCls}
-            list="inventory-units"
-            value={draft.unit}
-            onChange={e => set('unit', e.target.value)}
-          />
-          <datalist id="inventory-units">
-            {INVENTORY_UNITS.map(u => <option key={u} value={u} />)}
-          </datalist>
+        <Field label="Unit" hint="What one of these is, when you count them">
+          <select className={inputCls} value={normalizeUnit(draft.unit)} onChange={e => set('unit', e.target.value)}>
+            {INVENTORY_UNITS.map(u => (
+              <option key={u.value} value={u.value}>{u.label}</option>
+            ))}
+          </select>
         </Field>
 
         <Field label="On hand" hint="Count what's on the shelf right now">
@@ -410,7 +407,7 @@ function OrderModal({ items, centerName, recipients, onClose, onMarkOrdered, onE
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold text-gray-900">{i.name}</p>
                         <p className="text-xs text-gray-500">
-                          Have {i.qty} {i.unit} · reorder at {i.par} · order {i.reorderQty || i.par || 1} {i.unit}
+                          Have {unitText(i.unit, i.qty)} · reorder at {i.par} · order {unitText(i.unit, i.reorderQty || i.par || 1)}
                         </p>
                       </div>
                       <StatusChip item={i} />
@@ -1014,7 +1011,7 @@ export default function Inventory() {
                         <p className="text-xs text-gray-500">
                           {item.location || 'No location set'}
                           {item.sku ? ` · ${item.sku}` : ''}
-                          {item.costPerUnit != null ? ` · ${money(item.costPerUnit)}/${item.unit}` : ''}
+                          {item.costPerUnit != null ? ` · ${money(item.costPerUnit)} per ${unitLabel(item.unit).toLowerCase()}` : ''}
                         </p>
                       </td>
                       <td className="px-4 py-3"><CategoryChip categoryKey={item.category} /></td>
@@ -1025,7 +1022,7 @@ export default function Inventory() {
                           onDelta={d => handleDelta(item, d)}
                           onSet={n => handleSet(item, n)}
                         />
-                        <p className="mt-0.5 text-xs text-gray-400">{item.unit}</p>
+                        <p className="mt-0.5 text-xs text-gray-400">{unitLabel(item.unit).toLowerCase()}</p>
                       </td>
                       <td className="px-4 py-3 text-gray-700">{item.par || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3"><StatusChip item={item} /></td>

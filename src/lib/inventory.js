@@ -171,11 +171,101 @@ export function categoryFor(key) {
 }
 
 // ─── Units ─────────────────────────────────────────────────────────────
-// Free text is allowed, but offering a short list stops the same thing
-// being counted in "boxes" on one row and "box" on the next.
+//
+// A CLOSED list, not free text. When this was a text box you'd get "box"
+// on one row and "Boxes" on the next, and then the reorder email reads
+// "order 3 Boxes, order 2 box" and nobody trusts the numbers.
+//
+// `one` / `many` exist so sentences come out in English: "have 1 box"
+// but "order 3 boxes". Individual is the odd one — "order 10 individual"
+// is not a sentence, so it renders as unit/units.
+//
+// Legacy values ('each', 'pack') from the first version fold into their
+// modern equivalents via UNIT_ALIASES, so nothing needs migrating — an
+// item saved as 'each' displays as Individual on its next render.
 export const INVENTORY_UNITS = [
-  'each', 'pack', 'box', 'case', 'set', 'roll', 'bottle', 'bag', 'ream', 'kit',
+  { value: 'individual', label: 'Individual', one: 'unit',    many: 'units'    },
+  { value: 'package',    label: 'Package',    one: 'package', many: 'packages' },
+  { value: 'box',        label: 'Box',        one: 'box',     many: 'boxes'    },
+  { value: 'case',       label: 'Case',       one: 'case',    many: 'cases'    },
+  { value: 'set',        label: 'Set',        one: 'set',     many: 'sets'     },
+  { value: 'kit',        label: 'Kit',        one: 'kit',     many: 'kits'     },
+  { value: 'pair',       label: 'Pair',       one: 'pair',    many: 'pairs'    },
+  { value: 'bag',        label: 'Bag',        one: 'bag',     many: 'bags'     },
+  { value: 'bottle',     label: 'Bottle',     one: 'bottle',  many: 'bottles'  },
+  { value: 'roll',       label: 'Roll',       one: 'roll',    many: 'rolls'    },
+  { value: 'ream',       label: 'Ream',       one: 'ream',    many: 'reams'    },
+  { value: 'bundle',     label: 'Bundle',     one: 'bundle',  many: 'bundles'  },
+  { value: 'container',  label: 'Container',  one: 'container', many: 'containers' },
 ];
+
+export const UNIT_VALUES = INVENTORY_UNITS.map(u => u.value);
+
+const UNIT_BY_VALUE = Object.fromEntries(INVENTORY_UNITS.map(u => [u.value, u]));
+
+// Anything that used to be storable, mapped to what it is now. Keys are
+// lowercased and stripped of non-letters before lookup, so 'Each', 'EACH'
+// and 'each ' all land in the same place.
+const UNIT_ALIASES = {
+  each:      'individual',
+  ea:        'individual',
+  unit:      'individual',
+  units:     'individual',
+  single:    'individual',
+  individual:'individual',
+  pack:      'package',
+  packs:     'package',
+  packet:    'package',
+  packages:  'package',
+  boxes:     'box',
+  cases:     'case',
+  sets:      'set',
+  kits:      'kit',
+  pairs:     'pair',
+  bags:      'bag',
+  bottles:   'bottle',
+  rolls:     'roll',
+  reams:     'ream',
+  bundles:   'bundle',
+  tub:       'container',
+  tubs:      'container',
+  containers:'container',
+};
+
+/**
+ * Fold any stored unit down to a canonical value. Returns 'individual'
+ * for anything unrecognised — a sane default that never renders blank.
+ */
+export function normalizeUnit(value) {
+  if (!value || typeof value !== 'string') return 'individual';
+  const key = value.toLowerCase().replace(/[^a-z]/g, '');
+  if (UNIT_BY_VALUE[key]) return key;
+  const aliased = UNIT_ALIASES[key];
+  // Belt and braces: an alias pointing at a value that isn't in the table
+  // must not reach unitLabel(), where `.label` of undefined would blank
+  // out the whole page.
+  return aliased && UNIT_BY_VALUE[aliased] ? aliased : 'individual';
+}
+
+/** Dropdown label, e.g. 'Box'. */
+export function unitLabel(value) {
+  return UNIT_BY_VALUE[normalizeUnit(value)].label;
+}
+
+/**
+ * The unit word to put after a number: unitWord('box', 3) → 'boxes'.
+ * Pass no qty for the singular form.
+ */
+export function unitWord(value, qty = 1) {
+  const u = UNIT_BY_VALUE[normalizeUnit(value)];
+  return Math.abs(Number(qty) || 0) === 1 ? u.one : u.many;
+}
+
+/** '3 boxes' / '1 unit' — the whole phrase, ready to drop into a string. */
+export function unitText(value, qty) {
+  const n = Number(qty) || 0;
+  return `${n} ${unitWord(value, n)}`;
+}
 
 // ─── Stock status ──────────────────────────────────────────────────────
 
@@ -247,7 +337,7 @@ function isItemDoc(id) {
 export const DEFAULT_ITEM = {
   name:        '',
   category:    'administrative',
-  unit:        'each',
+  unit:        'individual',
   qty:         0,
   par:         5,
   reorderQty:  10,
@@ -331,7 +421,7 @@ export function normalizeItem(draft) {
   return {
     name:        String(draft.name || '').trim(),
     category:    CATEGORY_KEYS.includes(draft.category) ? draft.category : 'administrative',
-    unit:        String(draft.unit || 'each').trim(),
+    unit:        normalizeUnit(draft.unit),
     qty:         Math.max(0, toNumber(draft.qty, 0)),
     par:         Math.max(0, toNumber(draft.par, 0)),
     reorderQty:  Math.max(0, toNumber(draft.reorderQty, 0)),
@@ -374,7 +464,7 @@ export async function saveItem(centerId, itemId, draft, profile) {
   });
   await writeLog(centerId, {
     itemId: ref.id, itemName: clean.name, action: 'create',
-    to: clean.qty, note: `Added to inventory (${clean.qty} ${clean.unit})`,
+    to: clean.qty, note: `Added to inventory (${unitText(clean.unit, clean.qty)})`,
   }, profile);
   return ref.id;
 }
@@ -418,7 +508,7 @@ export async function markOrdered(centerId, item, profile) {
   }, { merge: true });
   await writeLog(centerId, {
     itemId: item.id, itemName: item.name, action: 'ordered',
-    note: item.reorderQty ? `Ordered ${item.reorderQty} ${item.unit}` : 'Marked as ordered',
+    note: item.reorderQty ? `Ordered ${unitText(item.unit, item.reorderQty)}` : 'Marked as ordered',
   }, profile);
 }
 
@@ -467,63 +557,63 @@ async function writeLog(centerId, entry, profile) {
 
 export const STARTER_ITEMS = [
   // STEAM
-  { name: 'Base-ten blocks set',        category: 'steam',          unit: 'set',    par: 2,  reorderQty: 2  },
-  { name: 'Geometry solids kit',        category: 'steam',          unit: 'kit',    par: 1,  reorderQty: 1  },
-  { name: 'Building bricks tub',        category: 'steam',          unit: 'box',    par: 2,  reorderQty: 2  },
-  { name: 'Graph paper pads',           category: 'steam',          unit: 'pack',   par: 4,  reorderQty: 10 },
-  { name: 'Coloured pencils',           category: 'steam',          unit: 'pack',   par: 6,  reorderQty: 12 },
+  { name: 'Base-ten blocks set',        category: 'steam',          unit: 'set',        par: 2,  reorderQty: 2  },
+  { name: 'Geometry solids kit',        category: 'steam',          unit: 'kit',        par: 1,  reorderQty: 1  },
+  { name: 'Building bricks tub',        category: 'steam',          unit: 'box',        par: 2,  reorderQty: 2  },
+  { name: 'Graph paper pads',           category: 'steam',          unit: 'package',    par: 4,  reorderQty: 10 },
+  { name: 'Coloured pencils',           category: 'steam',          unit: 'package',    par: 6,  reorderQty: 12 },
   // Events
-  { name: 'Name tag stickers',          category: 'events',         unit: 'pack',   par: 2,  reorderQty: 5  },
-  { name: 'Table cloths',               category: 'events',         unit: 'each',   par: 3,  reorderQty: 6  },
-  { name: 'Open house flyers',          category: 'events',         unit: 'pack',   par: 2,  reorderQty: 5  },
-  { name: 'Balloons',                   category: 'events',         unit: 'bag',    par: 2,  reorderQty: 4  },
+  { name: 'Name tag stickers',          category: 'events',         unit: 'package',    par: 2,  reorderQty: 5  },
+  { name: 'Table cloths',               category: 'events',         unit: 'individual',par: 3,  reorderQty: 6  },
+  { name: 'Open house flyers',          category: 'events',         unit: 'package',    par: 2,  reorderQty: 5  },
+  { name: 'Balloons',                   category: 'events',         unit: 'bag',        par: 2,  reorderQty: 4  },
   // Games
-  { name: 'Playing card decks',         category: 'games',          unit: 'each',   par: 4,  reorderQty: 10 },
-  { name: 'Dice (assorted)',            category: 'games',          unit: 'set',    par: 3,  reorderQty: 5  },
-  { name: 'Connect Four',               category: 'games',          unit: 'each',   par: 1,  reorderQty: 1  },
-  { name: 'Uno decks',                  category: 'games',          unit: 'each',   par: 2,  reorderQty: 4  },
+  { name: 'Playing card decks',         category: 'games',          unit: 'individual',par: 4,  reorderQty: 10 },
+  { name: 'Dice (assorted)',            category: 'games',          unit: 'set',        par: 3,  reorderQty: 5  },
+  { name: 'Connect Four',               category: 'games',          unit: 'individual',par: 1,  reorderQty: 1  },
+  { name: 'Uno decks',                  category: 'games',          unit: 'individual',par: 2,  reorderQty: 4  },
   // Holidays
-  { name: 'Halloween decorations',      category: 'holidays',       unit: 'box',    par: 1,  reorderQty: 1  },
-  { name: 'Winter holiday decorations', category: 'holidays',       unit: 'box',    par: 1,  reorderQty: 1  },
-  { name: 'Seasonal candy',             category: 'holidays',       unit: 'bag',    par: 2,  reorderQty: 6  },
+  { name: 'Halloween decorations',      category: 'holidays',       unit: 'box',        par: 1,  reorderQty: 1  },
+  { name: 'Winter holiday decorations', category: 'holidays',       unit: 'box',        par: 1,  reorderQty: 1  },
+  { name: 'Seasonal candy',             category: 'holidays',       unit: 'bag',        par: 2,  reorderQty: 6  },
   // Summer camp
-  { name: 'Camp workbooks',             category: 'summer_camp',    unit: 'pack',   par: 3,  reorderQty: 10 },
-  { name: 'Camp t-shirts',              category: 'summer_camp',    unit: 'each',   par: 10, reorderQty: 30 },
-  { name: 'Water bottles',              category: 'summer_camp',    unit: 'each',   par: 6,  reorderQty: 24 },
-  { name: 'Sunscreen',                  category: 'summer_camp',    unit: 'bottle', par: 2,  reorderQty: 4  },
+  { name: 'Camp workbooks',             category: 'summer_camp',    unit: 'package',    par: 3,  reorderQty: 10 },
+  { name: 'Camp t-shirts',              category: 'summer_camp',    unit: 'individual',par: 10, reorderQty: 30 },
+  { name: 'Water bottles',              category: 'summer_camp',    unit: 'individual',par: 6,  reorderQty: 24 },
+  { name: 'Sunscreen',                  category: 'summer_camp',    unit: 'bottle',     par: 2,  reorderQty: 4  },
   // Crafts
-  { name: 'Construction paper',         category: 'crafts',         unit: 'pack',   par: 3,  reorderQty: 6  },
-  { name: 'Glue sticks',                category: 'crafts',         unit: 'pack',   par: 3,  reorderQty: 6  },
-  { name: 'Safety scissors',            category: 'crafts',         unit: 'each',   par: 8,  reorderQty: 12 },
-  { name: 'Washable markers',           category: 'crafts',         unit: 'pack',   par: 4,  reorderQty: 8  },
-  { name: 'Googly eyes',                category: 'crafts',         unit: 'bag',    par: 1,  reorderQty: 2  },
+  { name: 'Construction paper',         category: 'crafts',         unit: 'package',    par: 3,  reorderQty: 6  },
+  { name: 'Glue sticks',                category: 'crafts',         unit: 'package',    par: 3,  reorderQty: 6  },
+  { name: 'Safety scissors',            category: 'crafts',         unit: 'individual',par: 8,  reorderQty: 12 },
+  { name: 'Washable markers',           category: 'crafts',         unit: 'package',    par: 4,  reorderQty: 8  },
+  { name: 'Googly eyes',                category: 'crafts',         unit: 'bag',        par: 1,  reorderQty: 2  },
   // Fun days
-  { name: 'Paper plates',               category: 'fun_days',       unit: 'pack',   par: 2,  reorderQty: 6  },
-  { name: 'Napkins',                    category: 'fun_days',       unit: 'pack',   par: 2,  reorderQty: 6  },
-  { name: 'Popcorn kernels',            category: 'fun_days',       unit: 'bag',    par: 1,  reorderQty: 3  },
-  { name: 'Juice boxes',                category: 'fun_days',       unit: 'case',   par: 1,  reorderQty: 3  },
+  { name: 'Paper plates',               category: 'fun_days',       unit: 'package',    par: 2,  reorderQty: 6  },
+  { name: 'Napkins',                    category: 'fun_days',       unit: 'package',    par: 2,  reorderQty: 6  },
+  { name: 'Popcorn kernels',            category: 'fun_days',       unit: 'bag',        par: 1,  reorderQty: 3  },
+  { name: 'Juice boxes',                category: 'fun_days',       unit: 'case',       par: 1,  reorderQty: 3  },
   // Administrative
-  { name: 'Printer paper',              category: 'administrative', unit: 'ream',   par: 4,  reorderQty: 10 },
-  { name: 'Printer toner',              category: 'administrative', unit: 'each',   par: 1,  reorderQty: 2  },
-  { name: 'Dry erase markers',          category: 'administrative', unit: 'pack',   par: 4,  reorderQty: 10 },
-  { name: 'Pencils',                    category: 'administrative', unit: 'box',    par: 3,  reorderQty: 6  },
-  { name: 'Erasers',                    category: 'administrative', unit: 'pack',   par: 2,  reorderQty: 4  },
-  { name: 'Student folders',            category: 'administrative', unit: 'pack',   par: 2,  reorderQty: 5  },
-  { name: 'Sticky notes',               category: 'administrative', unit: 'pack',   par: 2,  reorderQty: 6  },
-  { name: 'Staples',                    category: 'administrative', unit: 'box',    par: 1,  reorderQty: 2  },
+  { name: 'Printer paper',              category: 'administrative', unit: 'ream',       par: 4,  reorderQty: 10 },
+  { name: 'Printer toner',              category: 'administrative', unit: 'individual',par: 1,  reorderQty: 2  },
+  { name: 'Dry erase markers',          category: 'administrative', unit: 'package',    par: 4,  reorderQty: 10 },
+  { name: 'Pencils',                    category: 'administrative', unit: 'box',        par: 3,  reorderQty: 6  },
+  { name: 'Erasers',                    category: 'administrative', unit: 'package',    par: 2,  reorderQty: 4  },
+  { name: 'Student folders',            category: 'administrative', unit: 'package',    par: 2,  reorderQty: 5  },
+  { name: 'Sticky notes',               category: 'administrative', unit: 'package',    par: 2,  reorderQty: 6  },
+  { name: 'Staples',                    category: 'administrative', unit: 'box',        par: 1,  reorderQty: 2  },
   // Cleaning
-  { name: 'Disinfectant wipes',         category: 'cleaning',       unit: 'each',   par: 4,  reorderQty: 12 },
-  { name: 'Hand sanitizer',             category: 'cleaning',       unit: 'bottle', par: 3,  reorderQty: 6  },
-  { name: 'Paper towel',                category: 'cleaning',       unit: 'roll',   par: 6,  reorderQty: 12 },
-  { name: 'Garbage bags',               category: 'cleaning',       unit: 'box',    par: 1,  reorderQty: 2  },
-  { name: 'Whiteboard cleaner',         category: 'cleaning',       unit: 'bottle', par: 1,  reorderQty: 2  },
-  { name: 'Vacuum bags',                category: 'cleaning',       unit: 'pack',   par: 1,  reorderQty: 2  },
+  { name: 'Disinfectant wipes',         category: 'cleaning',       unit: 'individual',par: 4,  reorderQty: 12 },
+  { name: 'Hand sanitizer',             category: 'cleaning',       unit: 'bottle',     par: 3,  reorderQty: 6  },
+  { name: 'Paper towel',                category: 'cleaning',       unit: 'roll',       par: 6,  reorderQty: 12 },
+  { name: 'Garbage bags',               category: 'cleaning',       unit: 'box',        par: 1,  reorderQty: 2  },
+  { name: 'Whiteboard cleaner',         category: 'cleaning',       unit: 'bottle',     par: 1,  reorderQty: 2  },
+  { name: 'Vacuum bags',                category: 'cleaning',       unit: 'package',    par: 1,  reorderQty: 2  },
   // Rewards
-  { name: 'Prize box toys',             category: 'rewards',        unit: 'bag',    par: 2,  reorderQty: 4  },
-  { name: 'Punch cards',                category: 'rewards',        unit: 'pack',   par: 2,  reorderQty: 5  },
-  { name: 'Achievement certificates',   category: 'rewards',        unit: 'pack',   par: 2,  reorderQty: 5  },
-  { name: 'Stickers',                   category: 'rewards',        unit: 'roll',   par: 3,  reorderQty: 6  },
-  { name: 'Pencil toppers',             category: 'rewards',        unit: 'bag',    par: 1,  reorderQty: 3  },
+  { name: 'Prize box toys',             category: 'rewards',        unit: 'bag',        par: 2,  reorderQty: 4  },
+  { name: 'Punch cards',                category: 'rewards',        unit: 'package',    par: 2,  reorderQty: 5  },
+  { name: 'Achievement certificates',   category: 'rewards',        unit: 'package',    par: 2,  reorderQty: 5  },
+  { name: 'Stickers',                   category: 'rewards',        unit: 'roll',       par: 3,  reorderQty: 6  },
+  { name: 'Pencil toppers',             category: 'rewards',        unit: 'bag',        par: 1,  reorderQty: 3  },
 ];
 
 /**
@@ -580,7 +670,7 @@ export function itemsToCsv(items) {
     i.name,
     categoryFor(i.category).label,
     i.qty,
-    i.unit,
+    unitLabel(i.unit),
     i.par,
     i.reorderQty,
     STATUS_STYLE[itemStatus(i)].label,
@@ -611,7 +701,7 @@ export function buildOrderListText(items, centerName) {
     for (const i of group) {
       const want = i.reorderQty || i.par || 1;
       const status = itemStatus(i) === STATUS.OUT ? 'OUT OF STOCK' : 'low';
-      lines.push(`  • ${i.name} — order ${want} ${i.unit} (have ${i.qty}, ${status})`);
+      lines.push(`  • ${i.name} — order ${unitText(i.unit, want)} (have ${i.qty}, ${status})`);
       if (i.orderUrl) lines.push(`      ${i.orderUrl}`);
     }
     lines.push('');
