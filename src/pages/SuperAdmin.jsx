@@ -10,9 +10,13 @@ import {
 } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import {
+  DEFAULT_PLATFORM_NOTIFY, subscribePlatformNotify, savePlatformNotify,
+} from '../lib/inventory';
+import { toast } from '../lib/notify';
+import {
   Shield, ShieldAlert, Globe, Plus, Building2, Users,
   ArrowRight, CheckCircle2, AlertTriangle, Save,
-  CalendarDays,
+  CalendarDays, Package,
 } from 'lucide-react';
 
 /**
@@ -238,6 +242,8 @@ export default function SuperAdmin() {
               can rebrand their own centre. Enterprise still edits per-centre
               colours from there after switching into the centre. */}
 
+          <PlatformNotificationsCard />
+
           <OperatingDaysEditor
             activeCenterId={activeCenterId}
             centerConfig={centerConfig}
@@ -267,6 +273,87 @@ export default function SuperAdmin() {
 
 // Recent Activity (audit log viewer) lives on its own page now —
 // see src/pages/AuditLogs.jsx.
+
+// ─── Sub-component: Platform notification switches ───────────────────────
+//
+// Master kill switch for inventory low-stock emails across EVERY centre.
+// Lives here because it's a platform-operator decision, not a centre one:
+// when it's off, no centre can email inventory alerts no matter what
+// their own settings say, and no individual admin can override it.
+//
+// The cascade, strictest-wins:
+//   this switch  →  centre's Inventory → Alerts  →  each person's own
+//                                                   notification prefs
+//
+// Stored at platform/notificationSettings. Firestore rules let any
+// signed-in user READ that one doc (so the Inventory page can explain
+// why alerts are off) but only Enterprise can write it.
+function PlatformNotificationsCard() {
+  const { profile } = useAuth();
+  const [settings, setSettings] = useState(DEFAULT_PLATFORM_NOTIFY);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => subscribePlatformNotify(setSettings), []);
+
+  const on = settings.inventoryAlertsEnabled !== false;
+
+  const toggle = async () => {
+    setSaving(true);
+    try {
+      await savePlatformNotify({ inventoryAlertsEnabled: !on }, profile);
+      toast.success(!on
+        ? 'Inventory email notifications enabled platform-wide.'
+        : 'Inventory email notifications disabled platform-wide.');
+    } catch (err) {
+      toast.error(err.message || 'Could not save the setting.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
+      <h4 className="mb-1 flex items-center gap-2 font-semibold text-gray-900">
+        <Package size={16} className="text-purple-600" /> Platform Notifications
+      </h4>
+      <p className="mb-4 text-xs text-gray-500">
+        Cross-centre switches. These override every centre and every individual setting.
+      </p>
+
+      <button
+        type="button"
+        onClick={toggle}
+        disabled={saving}
+        className={`flex w-full items-center justify-between gap-3 rounded-xl border p-4 text-left transition disabled:opacity-60 ${
+          on ? 'border-emerald-300 bg-emerald-50' : 'border-gray-200 bg-gray-50'
+        }`}
+      >
+        <span>
+          <span className="block text-sm font-semibold text-gray-900">
+            Email notifications for Inventory Management
+          </span>
+          <span className="mt-0.5 block text-xs text-gray-600">
+            {on
+              ? 'On — centres with alerts enabled email their admin team when supplies run low. Individuals can still opt out for themselves.'
+              : 'Off — no inventory emails send from any centre, regardless of centre or individual settings. Tracking still works.'}
+          </span>
+        </span>
+        <span className={`ml-1 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${on ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+          <span className={`block h-5 w-5 rounded-full bg-white transition ${on ? 'translate-x-5' : ''}`} />
+        </span>
+      </button>
+
+      {settings.updatedAt && (
+        <p className="mt-2 text-xs text-gray-400">
+          Last changed by {settings.updatedByName || 'Enterprise'} on{' '}
+          {new Date(settings.updatedAt).toLocaleDateString('en-US', {
+            month: 'short', day: 'numeric', year: 'numeric',
+          })}.
+        </p>
+      )}
+    </div>
+  );
+}
 
 // ─── Sub-component: Operating Days editor ────────────────────────────────
 

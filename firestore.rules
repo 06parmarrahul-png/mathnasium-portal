@@ -426,6 +426,18 @@ service cloud.firestore {
       allow read, write: if isSuperAdmin();
     }
 
+    // Exception to the Enterprise-only block above: the cross-centre
+    // notification switches are READABLE by any signed-in user, because
+    // the Inventory page needs to tell an admin "Enterprise has these
+    // turned off" rather than silently never sending. Firestore allow
+    // rules are additive (any matching rule granting access is enough),
+    // so this widens read on this one doc while writes stay Enterprise
+    // only — nobody but a super-admin can flip the switch.
+    match /platform/notificationSettings {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
     // ── Audit log ────────────────────────────────────────────────────
     // Append-only record of sensitive platform-operator actions. The
     // value of this collection comes from the fact that entries cannot

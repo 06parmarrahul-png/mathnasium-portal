@@ -14,7 +14,7 @@ const REMINDER_OPTIONS = [
 ];
 
 export default function NotificationPreferences() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
   const [prefs, setPrefs] = useState({
     emailEnabled: true,
     smsEnabled: false,
@@ -23,6 +23,11 @@ export default function NotificationPreferences() {
     phone: '',
     shiftSwapNotify: true,
     announcementNotify: true,
+    // Low-stock inventory alerts. Only admin-and-above ever receive
+    // these, so the toggle below is hidden for everyone else — but the
+    // field defaults to true for all so nobody is silently opted out if
+    // they're promoted later.
+    inventoryAlertNotify: true,
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -163,6 +168,18 @@ export default function NotificationPreferences() {
               <input type="checkbox" checked={prefs.announcementNotify}
                 onChange={e => setPrefs(p => ({ ...p, announcementNotify: e.target.checked }))} className="accent-red-600 h-4 w-4" />
             </label>
+            {canSeeAdminPanel && (
+              <label className="flex items-center justify-between rounded-lg border px-4 py-3 cursor-pointer hover:bg-gray-50">
+                <span>
+                  <span className="block text-sm text-gray-700">Inventory low-stock alerts</span>
+                  <span className="block text-xs text-gray-500">
+                    Emails listing supplies that need reordering. Admin-and-above only.
+                  </span>
+                </span>
+                <input type="checkbox" checked={prefs.inventoryAlertNotify !== false}
+                  onChange={e => setPrefs(p => ({ ...p, inventoryAlertNotify: e.target.checked }))} className="accent-red-600 h-4 w-4" />
+              </label>
+            )}
           </div>
         </div>
 

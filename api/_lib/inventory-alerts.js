@@ -24,6 +24,25 @@
 //   Platform super-admins are deliberately excluded; they'd otherwise get
 //   one of these for every centre on the platform.
 //
+// THREE SWITCHES, STRICTEST WINS
+//   An email only sends when all three agree. Each defaults to ON when
+//   unset, so nothing goes dark after a deploy.
+//
+//     1. ENTERPRISE  platform/notificationSettings.inventoryAlertsEnabled
+//                    Master kill switch, set on Manage Centres. Off = the
+//                    whole sweep no-ops for every centre.
+//     2. CENTRE      centers/{id}/inventory/__settings.alertsEnabled
+//                    Off = that centre goes quiet, others keep working.
+//     3. PERSON      notificationPreferences/{uid}.inventoryAlertNotify
+//                    (or their blanket emailEnabled: false) — individual
+//                    opt-out, removed from the recipient list.
+//
+//   Individual opt-outs are read from BOTH the personal prefs doc and the
+//   centre's optedOutEmails mirror, unioned. The mirror exists because
+//   the browser-side "email now" button can't read other people's prefs
+//   (self-only rules); treating them as a union means a drifted entry can
+//   only ever suppress an email, never leak one.
+//
 // THROTTLING — this is what makes a DAILY run safe
 //   The host cron runs every morning, but a centre only gets an email
 //   when there's something new to say:
@@ -85,6 +104,26 @@ const CATEGORY_LABELS = {
 
 const MIN_GAP_MS    = 3 * 24 * 60 * 60 * 1000; // changed list: wait 3 days
 const REPEAT_GAP_MS = 7 * 24 * 60 * 60 * 1000; // unchanged list: repeat weekly
+
+/**
+ * Every email address that has opted out of inventory alerts, platform
+ * wide. One scan of notificationPreferences — the same small collection
+ * the shift-reminder cron already reads.
+ */
+async function loadOptOuts(db) {
+  const blockedEmails = new Set();
+  const blockedUids = new Set();
+  const snap = await db.collection('notificationPreferences').get();
+  for (const d of snap.docs) {
+    const p = d.data() || {};
+    // Explicit inventory opt-out, or they've turned off email entirely.
+    if (p.inventoryAlertNotify === false || p.emailEnabled === false) {
+      blockedUids.add(d.id);
+      if (p.email) blockedEmails.add(String(p.email).trim().toLowerCase());
+    }
+  }
+  return { blockedEmails, blockedUids };
+}
 
 function statusOf(item) {
   const qty = Number(item.qty) || 0;
@@ -197,8 +236,31 @@ ${cta}
 export async function runInventorySweep({ db, fromAddress, force = false }) {
   if (!fromAddress) throw new Error('RESEND_FROM env var is not set');
 
+  // ─── Switch 1 of 3: the Enterprise master kill switch ──────────────
+  // Checked before anything else so a disabled platform costs one read
+  // rather than a full sweep of every centre's inventory.
+  let platform = {};
+  try {
+    const snap = await db.collection('platform').doc('notificationSettings').get();
+    platform = snap.exists ? (snap.data() || {}) : {};
+  } catch (err) {
+    // Unreadable settings doc must not silently start spamming — but it
+    // also shouldn't silently stop legitimate alerts. Default to ON
+    // (matching the unset case) and log loudly.
+    console.error('[inventory-alerts] could not read platform settings:', err);
+  }
+  if (platform.inventoryAlertsEnabled === false) {
+    return {
+      centres: 0,
+      emailsSent: 0,
+      skipped: 'inventory email notifications are disabled platform-wide',
+      report: [],
+    };
+  }
+
   const link = portalUrl();
   const nowIso = new Date().toISOString();
+  const { blockedEmails, blockedUids } = await loadOptOuts(db);
   const centersSnap = await db.collection('centers').get();
   const report = [];
   let emailsSent = 0;
@@ -267,15 +329,34 @@ export async function runInventorySweep({ db, fromAddress, force = false }) {
         .where('centerIds', 'array-contains', centerId)
         .get();
       recipients = usersSnap.docs
+        // Switch 3, by uid — the most reliable match, since a user doc
+        // and their preferences doc share an id.
+        .filter(d => !blockedUids.has(d.id))
         .map(d => d.data() || {})
         .filter(u => u.approved && u.email && isAdminish(u))
         .map(u => String(u.email).trim());
     }
 
-    recipients = [...new Set(recipients)];
+    // Switch 3, by email — catches addresses typed straight into the
+    // centre's recipient list, plus the centre-local mirror written when
+    // someone toggles their own preference from the Inventory page.
+    const centreOptOuts = new Set(
+      (Array.isArray(settings.optedOutEmails) ? settings.optedOutEmails : [])
+        .map(e => String(e).trim().toLowerCase()),
+    );
+    const before = recipients.length;
+    recipients = [...new Set(recipients)].filter(e => {
+      const key = e.toLowerCase();
+      return !blockedEmails.has(key) && !centreOptOuts.has(key);
+    });
+    const optedOut = before - recipients.length;
 
     if (recipients.length === 0) {
-      report.push({ centerId, skipped: 'no recipients' });
+      report.push({
+        centerId,
+        skipped: optedOut > 0 ? 'all recipients opted out' : 'no recipients',
+        optedOut,
+      });
       continue;
     }
 
@@ -315,7 +396,7 @@ export async function runInventorySweep({ db, fromAddress, force = false }) {
         }, { merge: true });
 
       emailsSent += payload.length;
-      report.push({ centerId, sent: payload.length, reason, lowItems: low.length, outItems: outCount });
+      report.push({ centerId, sent: payload.length, reason, lowItems: low.length, outItems: outCount, optedOut });
     } catch (err) {
       console.error(`[inventory-alerts] ${centerId} failed:`, err);
       report.push({ centerId, error: err.message || String(err) });

@@ -30,11 +30,12 @@
  *   Each item carries `par` — the count at or below which we need to
  *   order more — and `orderUrl`, the link an admin set up once (Amazon
  *   saved cart, Staples list, the franchise supply portal, whatever).
- *   When qty <= par the item turns Low; at 0 it turns Out. The weekly
- *   cron (api/cron/check-inventory.js) emails the admin team the list of
- *   Low/Out items with those links attached, so "we're running low on X"
- *   arrives before the shelf is empty and ordering is one click, not a
- *   scavenger hunt for last year's invoice.
+ *   When qty <= par the item turns Low; at 0 it turns Out. The daily
+ *   sweep (api/_lib/inventory-alerts.js, run from the shift-reminder
+ *   cron) emails the admin team the list of Low/Out items with those
+ *   links attached, so "we're running low on X" arrives before the shelf
+ *   is empty and ordering is one click, not a scavenger hunt for last
+ *   year's invoice.
  *
  * DATES
  *   ISO strings via toISOString(), matching the rest of the codebase
@@ -44,7 +45,7 @@
 
 import {
   collection, doc, onSnapshot, setDoc, addDoc, deleteDoc,
-  query, orderBy, limit, getDocs, writeBatch,
+  query, orderBy, limit, getDocs, writeBatch, arrayUnion, arrayRemove,
 } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 
@@ -264,7 +265,11 @@ export const DEFAULT_SETTINGS = {
   // Who gets the weekly low-stock email. Empty = fall back to every
   // admin-and-above account at this centre (see the cron).
   alertEmails:   [],
-  // Guard so re-running the cron doesn't re-send the same list.
+  // Individual opt-outs, mirrored from personal notification prefs so the
+  // browser-side "email now" button can honour them too (self-only rules
+  // stop it reading anyone else's preferences directly).
+  optedOutEmails: [],
+  // Guard so re-running the sweep doesn't re-send the same list.
   lastAlertSentAt: null,
   lastAlertKey:    null,
 };
@@ -621,9 +626,16 @@ export function buildOrderListText(items, centerName) {
 // The weekly automated version lives in api/cron/check-inventory.js; this
 // is the "don't wait until Monday, send it now" button.
 
-export async function sendOrderListEmail({ recipients, items, centerName }) {
-  const to = (recipients || []).map(r => String(r).trim()).filter(Boolean);
-  if (to.length === 0) throw new Error('No recipients set. Add them under Alert settings.');
+export async function sendOrderListEmail({ recipients, items, centerName, settings, platformOn = true }) {
+  if (!platformOn) {
+    throw new Error('Inventory emails are switched off platform-wide by Enterprise.');
+  }
+  const raw = (recipients || []).map(r => String(r).trim()).filter(Boolean);
+  if (raw.length === 0) throw new Error('No recipients set. Add them under Alert settings.');
+  const to = applyOptOuts(raw, settings);
+  if (to.length === 0) {
+    throw new Error('Everyone on the recipient list has turned these emails off for themselves.');
+  }
   if (!items || items.length === 0) throw new Error('Nothing is low or out of stock.');
 
   let idToken = null;
@@ -668,4 +680,126 @@ export async function sendOrderListEmail({ recipients, items, centerName }) {
     throw new Error(data.error || `Send failed (${r.status})`);
   }
   return to.length;
+}
+
+// ─── Three-layer notification control ──────────────────────────────────
+//
+// An inventory email only goes out when ALL THREE agree:
+//
+//   1. ENTERPRISE  platform/notificationSettings.inventoryAlertsEnabled
+//                  Master kill switch for the whole platform. Set by
+//                  super-admins on Manage Centres. Off = nobody anywhere
+//                  gets an inventory email, automated or manual.
+//   2. CENTRE      centers/{id}/inventory/__settings.alertsEnabled
+//                  Per-centre. Off = this centre goes quiet, others keep
+//                  working.
+//   3. PERSON      notificationPreferences/{uid}.inventoryAlertNotify
+//                  Individual opt-out. Someone who never wants these can
+//                  turn them off for themselves without affecting anyone.
+//                  Their global `emailEnabled: false` also opts them out
+//                  — if they've said "no email from this app", we mean it.
+//
+// Each layer defaults to ON when unset, so nothing silently goes dark
+// after a deploy. The strictest wins: any one of the three being off
+// stops the email.
+
+export const DEFAULT_PLATFORM_NOTIFY = {
+  inventoryAlertsEnabled: true,
+};
+
+export function platformNotifyDoc() {
+  return doc(db, 'platform', 'notificationSettings');
+}
+
+/**
+ * Live read of the enterprise master switch.
+ *
+ * Readable by any signed-in user (rules grant read on this one doc
+ * specifically) so the Inventory page can explain WHY alerts are off
+ * rather than silently doing nothing. Writes stay super-admin only.
+ */
+export function subscribePlatformNotify(onSettings) {
+  return onSnapshot(
+    platformNotifyDoc(),
+    snap => onSettings({ ...DEFAULT_PLATFORM_NOTIFY, ...(snap.exists() ? snap.data() : {}) }),
+    () => onSettings({ ...DEFAULT_PLATFORM_NOTIFY }),
+  );
+}
+
+export async function savePlatformNotify(patch, profile) {
+  await setDoc(platformNotifyDoc(), {
+    ...patch,
+    updatedAt: new Date().toISOString(),
+    updatedBy: profile?.uid || null,
+    updatedByName: profile?.displayName || profile?.email || 'Enterprise',
+  }, { merge: true });
+}
+
+/** Live read of the signed-in user's own opt-out. */
+export function subscribeMyInventoryNotify(uid, onValue) {
+  if (!uid) { onValue(true); return () => {}; }
+  return onSnapshot(
+    doc(db, 'notificationPreferences', uid),
+    snap => {
+      const d = snap.exists() ? snap.data() : {};
+      // Unset = opted in. Someone who turned off email entirely is out.
+      onValue(d.inventoryAlertNotify !== false && d.emailEnabled !== false);
+    },
+    () => onValue(true),
+  );
+}
+
+/**
+ * Flip the signed-in user's own inventory-alert preference.
+ *
+ * Writes to TWO places, on purpose:
+ *
+ *   1. notificationPreferences/{uid}.inventoryAlertNotify — the personal
+ *      record, alongside their shift-reminder settings, and what the
+ *      Notification Preferences page shows. Firestore rules make this
+ *      doc self-only, so nobody else can read or change it.
+ *   2. centers/{centerId}/inventory/__settings.optedOutEmails — an
+ *      admin-readable mirror of the same choice, scoped to this centre.
+ *
+ * Why the mirror: the "Email the admin team now" button runs in the
+ * browser as one admin, and self-only rules mean it CANNOT read anyone
+ * else's preferences to filter them out. Without the mirror, a manual
+ * send would ignore opt-outs that the automated sweep respects — the
+ * exact inconsistency people notice and lose trust over.
+ *
+ * The two can only ever drift toward MORE suppression, never less: both
+ * the sweep and the manual send treat the pair as a union, so a stale
+ * entry means someone gets one email fewer, not one more. That's the
+ * safe direction for a drift bug to fail in.
+ */
+export async function setMyInventoryNotify(profile, centerId, enabled) {
+  if (!profile?.uid) throw new Error('Not signed in.');
+  const email = String(profile.email || '').trim().toLowerCase();
+
+  await setDoc(doc(db, 'notificationPreferences', profile.uid), {
+    inventoryAlertNotify: !!enabled,
+    userId:    profile.uid,
+    userName:  profile.displayName || '',
+    email:     profile.email || '',
+    updatedAt: new Date().toISOString(),
+  }, { merge: true });
+
+  // Mirror into the centre suppression list. arrayUnion / arrayRemove so
+  // two admins toggling at once can't clobber each other's entry.
+  if (centerId && email) {
+    await setDoc(settingsDoc(centerId), {
+      optedOutEmails: enabled ? arrayRemove(email) : arrayUnion(email),
+    }, { merge: true });
+  }
+}
+
+/**
+ * Strip anyone who has opted out of the recipient list. Client-side
+ * counterpart to the same filter in api/_lib/inventory-alerts.js.
+ */
+export function applyOptOuts(recipients, settings) {
+  const blocked = new Set(
+    (settings?.optedOutEmails || []).map(e => String(e).trim().toLowerCase()),
+  );
+  return (recipients || []).filter(r => !blocked.has(String(r).trim().toLowerCase()));
 }

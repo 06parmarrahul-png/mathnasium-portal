@@ -7,11 +7,13 @@ import {
   subscribeInventory, subscribeSettings, subscribeLog,
   saveItem, adjustQty, markOrdered, removeItem, saveSettings,
   seedStarterCatalog, itemsToCsv, buildOrderListText, sendOrderListEmail,
+  DEFAULT_PLATFORM_NOTIFY, subscribePlatformNotify,
+  subscribeMyInventoryNotify, setMyInventoryNotify, applyOptOuts,
 } from '../lib/inventory';
 import {
   Package, Plus, Search, X, Pencil, Trash2, Minus, Download, Mail,
   Settings, AlertTriangle, ShoppingCart, ExternalLink, Copy, History,
-  Archive, ArchiveRestore, Check, Loader2, Boxes, PackageX,
+  Archive, ArchiveRestore, Check, Loader2, Boxes, PackageX, BellOff, ShieldOff,
   FlaskConical, PartyPopper, Gamepad2, Gift, Sun, Scissors, Smile,
   ClipboardList, SprayCan, Trophy,
 } from 'lucide-react';
@@ -335,7 +337,7 @@ function ItemModal({ item, onClose, onSave, saving }) {
 
 // ─── Order list ────────────────────────────────────────────────────────
 
-function OrderModal({ items, centerName, recipients, onClose, onMarkOrdered, onEmail, emailing }) {
+function OrderModal({ items, centerName, recipients, onClose, onMarkOrdered, onEmail, emailing, platformOn = true }) {
   const groups = useMemo(() => {
     const m = new Map();
     for (const i of items) {
@@ -378,8 +380,14 @@ function OrderModal({ items, centerName, recipients, onClose, onMarkOrdered, onE
             </button>
             <button
               onClick={onEmail}
-              disabled={emailing}
-              title={recipients.length ? `Sends to ${recipients.join(', ')}` : 'Set recipients under Alert settings first'}
+              disabled={emailing || !platformOn}
+              title={
+                !platformOn
+                  ? 'Enterprise has inventory emails switched off platform-wide'
+                  : recipients.length
+                    ? `Sends to ${recipients.join(', ')}`
+                    : 'Set recipients under Alert settings first'
+              }
               className="inline-flex items-center gap-2 rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
             >
               {emailing ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
@@ -438,7 +446,21 @@ function OrderModal({ items, centerName, recipients, onClose, onMarkOrdered, onE
 
 // ─── Alert settings ────────────────────────────────────────────────────
 
-function SettingsModal({ settings, onClose, onSave, saving }) {
+/**
+ * Alert settings — shows all three layers of the notification cascade in
+ * one place, so an admin can see exactly why they are (or aren't) getting
+ * emails instead of guessing:
+ *
+ *   Enterprise master switch → centre switch → their own opt-out
+ *
+ * Only the middle one is editable here by a centre admin; the top is
+ * read-only (Enterprise owns it) and the bottom writes to their personal
+ * notification preferences.
+ */
+function SettingsModal({
+  settings, onClose, onSave, saving,
+  platformOn, myNotify, onToggleMine, togglingMine,
+}) {
   const [enabled, setEnabled] = useState(settings.alertsEnabled !== false);
   const [emails, setEmails] = useState((settings.alertEmails || []).join(', '));
 
@@ -449,6 +471,20 @@ function SettingsModal({ settings, onClose, onSave, saving }) {
       onClose={onClose}
     >
       <div className="space-y-4">
+        {!platformOn && (
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4">
+            <ShieldOff size={18} className="mt-0.5 shrink-0 text-amber-600" />
+            <div className="text-sm">
+              <p className="font-semibold text-amber-900">Turned off platform-wide</p>
+              <p className="mt-0.5 text-amber-800">
+                Enterprise has inventory email notifications switched off for every centre,
+                so nothing will send regardless of the settings below. Your settings are
+                still saved and take effect the moment it's switched back on.
+              </p>
+            </div>
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => setEnabled(v => !v)}
@@ -479,6 +515,31 @@ function SettingsModal({ settings, onClose, onSave, saving }) {
             placeholder="owner@centre.com, admin@centre.com"
           />
         </Field>
+
+        <div className="rounded-lg border border-gray-200 p-4">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Just for you
+          </p>
+          <button
+            type="button"
+            disabled={togglingMine}
+            onClick={() => onToggleMine(!myNotify)}
+            className="flex w-full items-center justify-between gap-3 text-left disabled:opacity-60"
+          >
+            <span>
+              <span className="block text-sm font-medium text-gray-900">
+                Email me these alerts
+              </span>
+              <span className="block text-xs text-gray-500">
+                Turns inventory emails off for your account only — everyone else on the
+                list keeps getting them. Saved with your other notification preferences.
+              </span>
+            </span>
+            <span className={`ml-1 h-6 w-11 shrink-0 rounded-full p-0.5 transition ${myNotify ? 'bg-emerald-500' : 'bg-gray-300'}`}>
+              <span className={`block h-5 w-5 rounded-full bg-white transition ${myNotify ? 'translate-x-5' : ''}`} />
+            </span>
+          </button>
+        </div>
 
         {settings.lastAlertSentAt && (
           <p className="text-xs text-gray-500">Last alert sent {fmtWhen(settings.lastAlertSentAt)}.</p>
@@ -531,6 +592,11 @@ export default function Inventory() {
   const [busy, setBusy] = useState(false);
   const [emailing, setEmailing] = useState(false);
   const [seeding, setSeeding] = useState(false);
+  // Notification cascade: Enterprise master switch → centre switch →
+  // this person's own opt-out. All three must be on for an email to send.
+  const [platformNotify, setPlatformNotify] = useState(DEFAULT_PLATFORM_NOTIFY);
+  const [myNotify, setMyNotify] = useState(true);
+  const [togglingMine, setTogglingMine] = useState(false);
 
   // centers/{id}/config/main carries `name` (e.g. "Mathnasium Langley").
   const centerName = centerConfig?.name || centerConfig?.centerName || activeCenterId;
@@ -561,6 +627,19 @@ export default function Inventory() {
     if (!canSeeAdminPanel || !activeCenterId || !showHistory) return;
     return subscribeLog(activeCenterId, setLogEntries);
   }, [activeCenterId, canSeeAdminPanel, showHistory]);
+
+  // Enterprise master switch. Readable by any signed-in user (one
+  // permissive rule on this single doc) so the page can say WHY alerts
+  // are off instead of quietly doing nothing.
+  useEffect(() => {
+    if (!canSeeAdminPanel) return;
+    return subscribePlatformNotify(setPlatformNotify);
+  }, [canSeeAdminPanel]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
+    return subscribeMyInventoryNotify(profile.uid, setMyNotify);
+  }, [profile?.uid]);
 
   const visible = useMemo(
     () => items.filter(i => (showArchived ? true : !i.archived)),
@@ -662,23 +741,41 @@ export default function Inventory() {
     }
   }, [activeCenterId, profile]);
 
+  const platformOn = platformNotify.inventoryAlertsEnabled !== false;
+
   const recipients = useMemo(() => {
     const set = settings.alertEmails || [];
-    if (set.length > 0) return set;
-    return profile?.email ? [profile.email] : [];
-  }, [settings.alertEmails, profile]);
+    const base = set.length > 0 ? set : (profile?.email ? [profile.email] : []);
+    return applyOptOuts(base, settings);
+  }, [settings, profile]);
+
+  const handleToggleMine = useCallback(async (next) => {
+    setTogglingMine(true);
+    try {
+      await setMyInventoryNotify(profile, activeCenterId, next);
+      toast.success(next
+        ? 'You will get inventory alerts again.'
+        : 'Inventory alerts turned off for your account.');
+    } catch (err) {
+      toast.error(err.message || 'Could not update your preference.');
+    } finally {
+      setTogglingMine(false);
+    }
+  }, [profile, activeCenterId]);
 
   const handleEmailNow = useCallback(async () => {
     setEmailing(true);
     try {
-      const n = await sendOrderListEmail({ recipients, items: lowItems, centerName });
+      const n = await sendOrderListEmail({
+        recipients, items: lowItems, centerName, settings, platformOn,
+      });
       toast.success(`Order list sent to ${n} recipient${n === 1 ? '' : 's'}.`);
     } catch (err) {
       toast.error(err.message || 'Could not send the email.');
     } finally {
       setEmailing(false);
     }
-  }, [recipients, lowItems, centerName]);
+  }, [recipients, lowItems, centerName, settings, platformOn]);
 
   const handleSeed = useCallback(async () => {
     const ok = await confirmDialog({
@@ -757,6 +854,32 @@ export default function Inventory() {
           </button>
         </div>
       </div>
+
+      {/* Why-you're-not-getting-emails banners. Two distinct causes, so
+          two distinct messages — "notifications are off" with no reason
+          is the kind of thing people file a bug about. */}
+      {!platformOn && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
+          <ShieldOff size={18} className="mt-0.5 shrink-0 text-amber-600" />
+          <p className="text-sm text-amber-900">
+            <strong>Inventory emails are off platform-wide.</strong>{' '}
+            Enterprise has switched them off for every centre, so no low-stock alerts
+            will send. Tracking and the order list still work normally.
+          </p>
+        </div>
+      )}
+      {platformOn && !myNotify && (
+        <div className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4">
+          <BellOff size={18} className="mt-0.5 shrink-0 text-gray-400" />
+          <p className="text-sm text-gray-600">
+            You've turned inventory alerts off for your own account. The rest of the
+            team still gets them.{' '}
+            <button onClick={() => setShowSettings(true)} className="font-semibold text-red-600 hover:underline">
+              Change this
+            </button>
+          </p>
+        </div>
+      )}
 
       {/* ─── Stats ──────────────────────────────────────────────────── */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -1002,6 +1125,7 @@ export default function Inventory() {
           centerName={centerName}
           recipients={recipients}
           emailing={emailing}
+          platformOn={platformOn}
           onClose={() => setShowOrder(false)}
           onMarkOrdered={handleMarkOrdered}
           onEmail={handleEmailNow}
@@ -1011,6 +1135,10 @@ export default function Inventory() {
         <SettingsModal
           settings={settings}
           saving={busy}
+          platformOn={platformOn}
+          myNotify={myNotify}
+          togglingMine={togglingMine}
+          onToggleMine={handleToggleMine}
           onClose={() => setShowSettings(false)}
           onSave={handleSaveSettings}
         />
