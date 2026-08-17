@@ -47,6 +47,40 @@ function daysAgoIso(n) {
   return d.toISOString().slice(0, 10);
 }
 
+/**
+ * What to tell someone when the feed won't load. Branching on the error
+ * CODE rather than printing one line for everything: "you don't have
+ * access" and "setup is still finishing" need opposite reactions from the
+ * reader, and neither should name the infrastructure underneath.
+ */
+function errorCopy(err) {
+  switch (err?.code) {
+    case 'permission-denied':
+      return {
+        title: 'You do not have access to this history',
+        body: 'Your account is not permitted to view availability changes for this centre. '
+            + 'If that looks wrong, let your Enterprise contact know.',
+      };
+    case 'failed-precondition':
+      return {
+        title: 'Still finishing setup',
+        body: 'The availability history is completing a one-time setup step. It usually takes '
+            + 'a few minutes \u2014 refresh the page shortly and it should appear.',
+      };
+    case 'unavailable':
+      return {
+        title: 'Connection problem',
+        body: 'Could not reach the service. Check your connection and refresh the page.',
+      };
+    default:
+      return {
+        title: 'Could not load the history',
+        body: 'This centre\u2019s availability history is not available right now. Try again in a '
+            + 'few minutes \u2014 if it keeps happening, let your Enterprise contact know.',
+      };
+  }
+}
+
 function NotAuthorized() {
   return (
     <div className="mx-auto max-w-md rounded-xl bg-white p-8 text-center shadow-sm">
@@ -213,9 +247,7 @@ export default function AvailabilityLog() {
       err => {
         console.error('[availability-log] subscribe failed:', err);
         setLoadedCenter(activeCenterId);
-        // A missing composite index is by far the most likely failure on
-        // first run, and Firestore puts a one-click fix URL in the message.
-        setLoadError(err?.message || 'Could not load the log.');
+        setLoadError({ code: err?.code || '', message: err?.message || 'Unknown error' });
       },
     );
   }, [activeCenterId, canSeeAdminPanel]);
@@ -321,17 +353,14 @@ export default function AvailabilityLog() {
         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
           <div className="min-w-0 text-sm text-amber-900">
-            <p className="font-semibold">Couldn&rsquo;t load the history</p>
-            <p className="mt-0.5">
-              This centre&rsquo;s availability history isn&rsquo;t available right now. Try again in a
-              few minutes — if it keeps happening, let your Enterprise contact know.
-            </p>
+            <p className="font-semibold">{errorCopy(loadError).title}</p>
+            <p className="mt-0.5">{errorCopy(loadError).body}</p>
             {/* The underlying message names the infrastructure it came
                 from, which is meaningless to a centre admin and not
                 theirs to act on. Enterprise sees it; nobody else does. */}
             {isSuperAdmin && (
               <p className="mt-2 break-words rounded bg-amber-100 px-2 py-1 font-mono text-xs">
-                {loadError}
+                {loadError.code ? `${loadError.code}: ` : ''}{loadError.message}
               </p>
             )}
           </div>
