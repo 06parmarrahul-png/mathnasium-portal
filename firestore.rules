@@ -323,6 +323,31 @@ service cloud.firestore {
       allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
     }
 
+    // ── Availability change log ──────────────────────────────────────
+    // Immutable record of every add / change / removal of availability,
+    // so "my availability wasn't in, why am I scheduled?" has an answer.
+    //
+    // TOP-LEVEL, not under /centers/{id}/…, deliberately — same reason
+    // centerIntakes is. The recursive `match /{document=**}` inside
+    // /centers/{centerId} grants read to every signed-in staff account,
+    // and Firestore rules are ADDITIVE: a narrower rule nested under it
+    // CANNOT take that grant back. Only at the root does an admin-only
+    // read rule actually hold. Each doc carries `centerId` for filtering.
+    //
+    // Create is open to any signed-in user because the INSTRUCTOR's own
+    // browser writes the row when they edit their availability — but the
+    // actorUid must be themselves, so nobody can forge an entry naming
+    // someone else as the person who made the change.
+    //
+    // Update and delete are denied to everyone except the platform
+    // operator. A history that can be quietly revised is not a history.
+    match /availabilityLog/{entryId} {
+      allow read:   if isOwnerLike() || isSuperAdmin() || isAdmin();
+      allow create: if isSignedIn()
+                       && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if isSuperAdmin();
+    }
+
     match /availability/{availId} {
       allow read: if isSignedIn();
       // Create: must be your own doc.

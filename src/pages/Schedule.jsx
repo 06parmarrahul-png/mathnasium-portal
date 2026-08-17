@@ -20,6 +20,7 @@ import {
   getDay, addMonths, subMonths, isSameMonth,
 } from 'date-fns';
 import { toast } from '../lib/notify';
+import { logAvailabilityChange, logAvailabilityBatch } from '../lib/availabilityLog';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -1356,7 +1357,7 @@ export default function Schedule() {
     if (existing && existing.id !== id) {
       await deleteDoc(doc(db, 'availability', existing.id));
     }
-    await setDoc(doc(db, 'availability', id), {
+    const after = {
       userId: profile.uid,
       userName: profile.displayName,
       centerId: activeCenterId,
@@ -1368,6 +1369,13 @@ export default function Schedule() {
       // 'either' is the no-op default; 'centre' / 'online' override the
       // instructor's profile track for this one day.
       preferredAssignment: preferredAssignment || 'either',
+    };
+    await setDoc(doc(db, 'availability', id), after);
+    // Audit trail for the admin team — see src/lib/availabilityLog.js.
+    // Logged AFTER the write succeeds (never record a change that didn't
+    // happen) and never awaited in a way that can fail the save.
+    logAvailabilityChange(profile, activeCenterId, {
+      date: dateStr, before: existing || null, after, source: 'day',
     });
     setSelectedDate(null);
   };
@@ -1376,6 +1384,12 @@ export default function Schedule() {
   // modal apply different hours to different days (e.g., Saturday's full-day
   // range vs weekday's full-day range when "Full Day" is on).
   const handleSaveBulk = async (items) => {
+    // Snapshot what each day looked like BEFORE the batch runs — once the
+    // writes land, myAvailMap reflects the new state and the "before" is
+    // gone. Collected here, logged after the commit succeeds.
+    const priorByDate = {};
+    for (const item of items) priorByDate[item.date] = myAvailMap[item.date] || null;
+
     // Use a batched write: all-or-nothing, no partial state if it fails.
     // Firestore batch limit is 500 ops, so chunk if we somehow exceed that.
     const CHUNK = 200; // leave headroom for possible legacy deletes within a chunk
@@ -1407,11 +1421,35 @@ export default function Schedule() {
       }
       await batch.commit();
     }
+
+    // One row per day, sharing a batchId so the Availability Log can
+    // collapse a seven-day weekly set into a single expandable line
+    // instead of seven separate entries.
+    logAvailabilityBatch(profile, activeCenterId, items.map(item => ({
+      date:   item.date,
+      before: priorByDate[item.date],
+      after: {
+        startTime:           item.startTime,
+        endTime:             item.endTime,
+        comment:             item.comment || '',
+        preferredAssignment: item.preferredAssignment || 'either',
+      },
+    })));
+
     setShowWeeklyModal(false);
   };
 
   const handleDeleteAvail = async (id) => {
+    // Capture the record before it's gone — the removal row is the whole
+    // point of the log ("I took that day out weeks ago" / "you were still
+    // on the schedule for it").
+    const before = availability.find(a => a.id === id) || null;
     await deleteDoc(doc(db, 'availability', id));
+    if (before) {
+      logAvailabilityChange(profile, activeCenterId, {
+        date: before.date, before, after: null, source: 'day',
+      });
+    }
     setSelectedDate(null);
   };
 

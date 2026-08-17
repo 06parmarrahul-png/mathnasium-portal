@@ -11,7 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
-  UserPlus, FileBarChart, Activity, Package,
+  UserPlus, FileBarChart, Activity, Package, History,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -189,6 +189,10 @@ export default function Layout({ children }) {
       { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
       { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
+      // Availability history sits with the staff tools, not with Centre
+      // config: you open it while looking at a schedule dispute, which
+      // is exactly when Manage Staff Schedule is the tab next door.
+      { to: '/availability-log',      label: 'Availability Log',      icon: History },
     );
   }
 
@@ -231,6 +235,7 @@ export default function Layout({ children }) {
       { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
       { to: '/inventory',             label: 'Inventory',             icon: Package },
+      { to: '/availability-log',      label: 'Availability Log',      icon: History },
     );
   } else if (!useOwnerLayout && isLead) {
     // Lead instructors get Student Scheduler — but NOT the broader

@@ -43,6 +43,7 @@ const Leads                     = lazy(() => import('./pages/Leads'));
 const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
 const Onboarding                = lazy(() => import('./pages/Onboarding'));
 const Inventory                 = lazy(() => import('./pages/Inventory'));
+const AvailabilityLog           = lazy(() => import('./pages/AvailabilityLog'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -127,6 +128,10 @@ function AppRoutes() {
             "has admin-panel access" — admin, admin_assistant, director,
             owner, super_admin. Instructors get Not Authorized. */}
         <Route path="/inventory" element={<ProtectedRoute requireOwner><Layout><Inventory /></Layout></ProtectedRoute>} />
+        {/* Availability change history. Same admin-panel gate as
+            /inventory — admin, admin_assistant, director, owner,
+            super_admin. Instructors can't see who changed what. */}
+        <Route path="/availability-log" element={<ProtectedRoute requireOwner><Layout><AvailabilityLog /></Layout></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
