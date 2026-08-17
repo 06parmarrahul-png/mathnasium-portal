@@ -149,7 +149,10 @@ export default function Layout({ children }) {
   // Shift Board is for instructors and AA (anyone who can claim shifts).
   // Owners see open shifts inside Manage Schedule and don't need a
   // separate sidebar item.
-  if (!isSuperAdmin && !isOwner) {
+  // Volunteers don't pick up open shifts or swap — they work the shifts
+  // they're given and ask to cancel if something comes up. The Shift
+  // Board is entirely about claiming and swapping, so it's not theirs.
+  if (!isSuperAdmin && !isOwner && !isVolunteer) {
     general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
   }
 
@@ -263,7 +266,9 @@ export default function Layout({ children }) {
   if ((isAdmin || isAdminAssistant) && !isSuperAdmin && !isVolunteer) {
     communicate.push({ to: '/platform-chat', label: 'Management Chat', icon: Headphones });
   }
-  if (!isOwner) {
+  // Volunteers get the latest announcement on their Home page, which is
+  // the whole of what they need from it.
+  if (!isOwner && !isVolunteer) {
     communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
   }
   if (!isOwner) {

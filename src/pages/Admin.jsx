@@ -5097,6 +5097,12 @@ export default function Admin() {
                           }
                           const dayShifts = shifts.filter(s => s.userId === u.uid && s.date === ds);
                           const dayAvail = availability.filter(a => a.userId === u.uid && a.date === ds);
+                          // Time-off overlay. Approved wins over pending when
+                          // both cover the same date. MUST be declared before
+                          // hasAvail below, which reads it — having it after
+                          // was a temporal-dead-zone crash that took out the
+                          // whole Manage Staff Schedule tab in production.
+                          const cellTimeOff = timeOffOn(timeOffIndex, u.uid, ds);
                           // A time-off request OVERRIDES availability for the
                           // day — see src/lib/timeOff.js. Drawing a green
                           // "available" corner next to a red "off" corner on
@@ -5105,12 +5111,6 @@ export default function Admin() {
                           // aren't lost: they move into the time-off tooltip
                           // below, which is where you'd look to decide.
                           const hasAvail = dayAvail.length > 0 && !cellTimeOff;
-                          // Time-off overlay — pending shows yellow, approved
-                          // red. Triangle anchors top-LEFT so it doesn't
-                          // collide with the green availability triangle
-                          // (top-right). Approved wins if both pending and
-                          // approved cover the same date (unlikely but safe).
-                          const cellTimeOff = timeOffOn(timeOffIndex, u.uid, ds);
                           const timeOffColor = cellTimeOff?.status === 'approved'
                             ? 'border-t-red-500'
                             : cellTimeOff?.status === 'pending'

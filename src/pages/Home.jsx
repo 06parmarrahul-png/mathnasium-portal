@@ -70,7 +70,7 @@ const quickLinks = [
 ];
 
 export default function Home() {
-  const { profile, activeCenterId, canSeeAdminPanel } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel, isVolunteer } = useAuth();
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [careerPlanOpen, setCareerPlanOpen] = useState(false);
@@ -394,7 +394,7 @@ export default function Home() {
           Quick Actions
         </p>
         <div className="grid gap-3 sm:grid-cols-2">
-          {quickLinks.map(item => (
+          {quickLinks.filter(item => !(isVolunteer && item.to === '/chat')).map(item => (
             <Link
               key={item.to}
               to={item.to}

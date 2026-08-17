@@ -135,7 +135,7 @@ function buildFullDayByDow(centerConfig) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [] }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], isVolunteer = false }) {
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -281,12 +281,18 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
                       );
                     })()}
                   </div>
-                  <button
-                    onClick={() => onPostSwap(myShift)}
-                    className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
-                  >
-                    <ArrowRightLeft size={12} /> Post for Swap
-                  </button>
+                  {/* Swapping posts a message into the centre chat, which
+                      volunteers have no access to — and swapping isn't
+                      theirs to arrange anyway. They request time off
+                      instead, and an admin sorts the cover. */}
+                  {!isVolunteer && (
+                    <button
+                      onClick={() => onPostSwap(myShift)}
+                      className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
+                    >
+                      <ArrowRightLeft size={12} /> Post for Swap
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -337,7 +343,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullD
 
               {/* Open Shifts */}
               {openShifts.length > 0 && (
-                <div className="space-y-2">
+                <div className={`space-y-2 ${isVolunteer ? 'hidden' : ''}`}>
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Open Shifts</p>
                   {openShifts.map(s => {
                     const required = requiredCapabilityForShift(s);
@@ -1251,7 +1257,7 @@ function CalendarSyncModal({ profile, onClose }) {
 }
 
 export default function Schedule() {
-  const { profile, mySubRoles, activeCenterId, centerConfig } = useAuth();
+  const { profile, mySubRoles, activeCenterId, centerConfig, isVolunteer } = useAuth();
   const fullDayByDow = useMemo(() => buildFullDayByDow(centerConfig), [centerConfig]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -2043,6 +2049,7 @@ export default function Schedule() {
           onClaimOpenShift={handleClaimOpenShift}
           onRequestTimeOff={handleRequestTimeOff}
           mySubRoles={mySubRoles}
+          isVolunteer={isVolunteer}
         />
       )}
     </div>
