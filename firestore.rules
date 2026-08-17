@@ -96,13 +96,14 @@ service cloud.firestore {
     // collections below (assignments, check-ins, walk-ins) so Leads
     // can run the day-of-day Student Scheduler. NOT granted write
     // access to broader admin config / user docs.
-    function isLead() {
-      return profileExists() && profile().instructorType == 'Lead';
-    }
-
     // Lead detection SCOPED TO A CENTRE.
     //
-    // isLead() above only reads the legacy top-level instructorType.
+    // There used to be a plain isLead() here reading only the legacy
+    // top-level instructorType. It's gone — every caller now passes a
+    // centre, and leaving it around just produced an "unused function"
+    // warning on every deploy.
+    //
+    // Why the centre matters: the top-level instructorType is legacy.
     // Since roles went per-centre, the authoritative value lives in
     // centerMemberships[centreId].instructorType — a Lead at Langley who
     // was set up after that migration has NOTHING in the top-level field,
