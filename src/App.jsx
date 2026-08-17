@@ -112,12 +112,12 @@ function AppRoutes() {
         <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
         <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
         <Route path="/shift-board" element={<ProtectedRoute><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
-        <Route path="/chat" element={<ProtectedRoute><Layout><Chat /></Layout></ProtectedRoute>} />
+        <Route path="/chat" element={<ProtectedRoute blockVolunteers><Layout><Chat /></Layout></ProtectedRoute>} />
         <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
         <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
         <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
         <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
-        <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
+        <Route path="/platform-chat" element={<ProtectedRoute blockVolunteers><Layout><PlatformChat /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics/:section" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
         {/* Reads walk-ins and per-day check-ins (student names), so it
@@ -139,7 +139,7 @@ function AppRoutes() {
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
         <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
-        <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
+        <Route path="/chats" element={<ProtectedRoute blockVolunteers><Layout><ChatsHub /></Layout></ProtectedRoute>} />
         {/* Reads the centre's connector config — admin-and-above. */}
         <Route path="/apptoto" element={<ProtectedRoute requireOwner><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
         {/* Public, NO auth — parents land here from marketing links. */}

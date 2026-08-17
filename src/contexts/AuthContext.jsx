@@ -348,6 +348,19 @@ export function AuthProvider({ children }) {
   //
   // resolveUserForCenter layers the membership over the top-level values,
   // so this falls back correctly for anyone with no membership row yet.
+  // Volunteer is a PER-CENTRE flag on the membership row, not a role:
+  // someone can volunteer at Langley and be paid staff elsewhere, and
+  // their top-level `role` stays 'instructor' either way. That's why the
+  // chat roster was labelling volunteers "Instructor" — it was reading
+  // the role, which is correct and also not what anyone means.
+  //
+  // Volunteers get a deliberately bare-bones portal: their shifts, and
+  // not much else. Chat surfaces are gated on this.
+  const isVolunteer = useMemo(
+    () => resolveUserForCenter(profile, activeCenterId)?.isVolunteer === true,
+    [profile, activeCenterId],
+  );
+
   const mySubRoles = useMemo(() => {
     const resolved = resolveUserForCenter(profile, activeCenterId);
     return Array.isArray(resolved?.subRoles) ? resolved.subRoles : [];
@@ -382,6 +395,7 @@ export function AuthProvider({ children }) {
       isAdmin,
       isInstructor,
       isLead,
+      isVolunteer,
       canSeeAdminPanel,
       canSeeCenterSettings,
       canRunScheduler,

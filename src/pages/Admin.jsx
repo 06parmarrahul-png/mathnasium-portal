@@ -31,6 +31,7 @@ import {
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
+import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/timeOff';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
@@ -302,7 +303,7 @@ function FlexRolePicker({ value, onChange }) {
 }
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────────
-function AddShiftModal({ date, user, users, availability, centerConfig, onClose, onSave }) {
+function AddShiftModal({ date, user, users, availability, timeOffIndex, centerConfig, onClose, onSave }) {
   const [selectedUser, setSelectedUser] = useState(user?.uid || '');
   // Default the time fields from this centre's configured hours for the
   // picked date's day-of-week — Hosts get operating hours, instructors
@@ -327,6 +328,10 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
 
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
+  // Time off outranks availability (src/lib/timeOff.js). Adding a shift
+  // onto an approved day off is still ALLOWED — sometimes you agree a
+  // swap verbally — but it must never look like a normal green day.
+  const selectedTimeOff = timeOffOn(timeOffIndex, selectedUser, date);
 
   // When the instructor selection changes, re-guess the sub-role default
   // AND re-default the time fields (Host vs Instructor have different
@@ -392,17 +397,40 @@ function AddShiftModal({ date, user, users, availability, centerConfig, onClose,
         )}
 
         {/* Availability hint */}
-        {selectedUser && (
-          <div className={`rounded-lg px-3 py-2 text-xs ${avail.length > 0 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
-            {avail.length > 0
-              ? <>✓ Available: {avail.map(a => (
-                  (a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00'))
-                    ? 'Full day'
-                    : `${a.startTime}–${a.endTime}`
-                )).join(', ')}</>
-              : '⚠ No availability submitted for this date'}
-          </div>
-        )}
+        {selectedUser && (() => {
+          const availText = avail.map(a => (
+            (a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00'))
+              ? 'Full day'
+              : `${a.startTime}–${a.endTime}`
+          )).join(', ');
+          if (selectedTimeOff) {
+            const approved = selectedTimeOff.status === 'approved';
+            return (
+              <div className={`rounded-lg px-3 py-2 text-xs ${approved ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-800'}`}>
+                <p className="font-semibold">
+                  {approved ? '⛔ Approved time off on this date' : '⚠ Time off requested for this date'}
+                </p>
+                <p className="mt-0.5">
+                  {selectedTimeOff.startDate}
+                  {selectedTimeOff.endDate !== selectedTimeOff.startDate ? ` – ${selectedTimeOff.endDate}` : ''}
+                  {selectedTimeOff.reason ? ` · ${selectedTimeOff.reason}` : ''}
+                </p>
+                {avail.length > 0 && (
+                  <p className="mt-0.5 opacity-80">
+                    {approved ? 'Overrides' : 'Still marked'} available: {availText}
+                  </p>
+                )}
+              </div>
+            );
+          }
+          return (
+            <div className={`rounded-lg px-3 py-2 text-xs ${avail.length > 0 ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'}`}>
+              {avail.length > 0
+                ? <>✓ Available: {availText}</>
+                : '⚠ No availability submitted for this date'}
+            </div>
+          );
+        })()}
 
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -655,7 +683,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
 // Read-only: this is a viewing tool, not an editor. Includes their already-
 // scheduled shifts on each day so the admin can compare "available 3–7"
 // vs "scheduled 4–6" at a glance.
-function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }) {
+function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIndex, onClose }) {
   const userAvail = availability.filter(a => a.userId === user.uid);
   const userShifts = shifts.filter(s => s.userId === user.uid);
   const isFull = (a) => a?.startTime === '00:00' && (a?.endTime === '23:59' || a?.endTime === '24:00');
@@ -681,7 +709,8 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
           const ds = format(d, 'yyyy-MM-dd');
           const dayAvail   = userAvail.filter(a => a.date === ds);
           const dayShifts  = userShifts.filter(s => s.date === ds);
-          const hasAnything = dayAvail.length > 0 || dayShifts.length > 0;
+          const dayOff     = timeOffOn(timeOffIndex, user.uid, ds);
+          const hasAnything = dayAvail.length > 0 || dayShifts.length > 0 || !!dayOff;
           return (
             <div
               key={ds}
@@ -691,10 +720,27 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, onClose }
                 <p className="text-sm font-semibold text-gray-800">
                   {format(d, 'EEE')} <span className="text-gray-400 font-normal">· {format(d, 'MMM d')}</span>
                 </p>
-                {!hasAnything && (
+                {dayOff ? (
+                  <span className={`rounded-full border px-2 py-0.5 text-[11px] font-semibold ${
+                    dayOff.status === 'approved'
+                      ? 'border-red-200 bg-red-50 text-red-700'
+                      : 'border-amber-300 bg-amber-50 text-amber-800'
+                  }`}>
+                    Time off · {dayOff.status === 'approved' ? 'Approved' : 'Pending'}
+                  </span>
+                ) : !hasAnything && (
                   <span className="text-xs text-gray-400 italic">No availability submitted</span>
                 )}
               </div>
+              {/* When a day is off, the submitted hours below are shown
+                  struck through rather than removed — the record of what
+                  they originally offered still matters if the request is
+                  later denied. */}
+              {dayOff && dayAvail.length > 0 && (
+                <p className="mt-1 text-[11px] text-gray-500">
+                  {dayOff.status === 'approved' ? 'Overrides the availability below.' : 'Availability below is still pending a decision.'}
+                </p>
+              )}
               {dayAvail.length > 0 && (
                 <div className="mt-1 space-y-1">
                   {dayAvail.map((a, i) => (
@@ -1927,6 +1973,12 @@ export default function Admin() {
   const [shifts, setShifts]             = useState([]);
   const [openShiftsList, setOpenShiftsList] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
+  // One index for every (person, day) covered by a live time-off
+  // request, so the weekly grid doesn't re-scan the array in each of
+  // its ~200 cells. Declared beside the state rather than further down
+  // the component: everything below consumes it, and anything after
+  // the canSeeAdminPanel early return would be a conditional hook.
+  const timeOffIndex = useMemo(() => buildTimeOffIndex(timeOffRequests), [timeOffRequests]);
   // Active tab. Sidebar deep-links (?tab=analytics, ?tab=settings) seed the
   // initial state and re-sync if the URL changes — so clicking "Center
   // Analytics" in the super-admin sidebar opens the right tab.
@@ -2617,21 +2669,10 @@ export default function Admin() {
   const handleGenerate = async () => {
     setGenerating(true); setSchedError(''); setDraftSchedule(null);
     try {
-      const approvedTimeOff = new Set();
-      timeOffRequests
-        .filter(r => r.status === 'approved' && r.startDate && r.endDate)
-        .forEach(r => {
-          let d = new Date(r.startDate + 'T00:00:00');
-          const end = new Date(r.endDate + 'T00:00:00');
-          while (d <= end) {
-            approvedTimeOff.add(`${r.userId}-${format(d, 'yyyy-MM-dd')}`);
-            d.setDate(d.getDate() + 1);
-          }
-        });
-
-      const filteredAvailability = availability.filter(a =>
-        !approvedTimeOff.has(`${a.userId}-${a.date}`)
-      );
+      // Approved time off removes the day from what the scheduler can
+      // fill. Same helper the grid displays with, so what an admin SEES
+      // and what the generator DOES can't drift apart.
+      const filteredAvailability = withoutApprovedTimeOff(availability, timeOffIndex);
 
       // Build previous months availability fallback (up to 6 months back)
       const previousMonthsAvail = [];
@@ -2644,9 +2685,9 @@ export default function Admin() {
         if (prevMonth <= 0) { prevMonth += 12; prevYear -= 1; }
         const startStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
         const endStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-31`;
-        const monthAvail = availability.filter(a =>
-          a.date >= startStr && a.date <= endStr &&
-          !approvedTimeOff.has(`${a.userId}-${a.date}`)
+        const monthAvail = withoutApprovedTimeOff(
+          availability.filter(a => a.date >= startStr && a.date <= endStr),
+          timeOffIndex,
         );
         previousMonthsAvail.push(monthAvail);
       }
@@ -5056,18 +5097,20 @@ export default function Admin() {
                           }
                           const dayShifts = shifts.filter(s => s.userId === u.uid && s.date === ds);
                           const dayAvail = availability.filter(a => a.userId === u.uid && a.date === ds);
-                          const hasAvail = dayAvail.length > 0;
+                          // A time-off request OVERRIDES availability for the
+                          // day — see src/lib/timeOff.js. Drawing a green
+                          // "available" corner next to a red "off" corner on
+                          // the same cell made the grid contradict itself and
+                          // left admins guessing which to believe. The hours
+                          // aren't lost: they move into the time-off tooltip
+                          // below, which is where you'd look to decide.
+                          const hasAvail = dayAvail.length > 0 && !cellTimeOff;
                           // Time-off overlay — pending shows yellow, approved
                           // red. Triangle anchors top-LEFT so it doesn't
                           // collide with the green availability triangle
                           // (top-right). Approved wins if both pending and
                           // approved cover the same date (unlikely but safe).
-                          const cellTimeOff = timeOffRequests.find(t =>
-                            t.userId === u.uid &&
-                            t.startDate && t.endDate &&
-                            ds >= t.startDate && ds <= t.endDate &&
-                            (t.status === 'pending' || t.status === 'approved'),
-                          );
+                          const cellTimeOff = timeOffOn(timeOffIndex, u.uid, ds);
                           const timeOffColor = cellTimeOff?.status === 'approved'
                             ? 'border-t-red-500'
                             : cellTimeOff?.status === 'pending'
@@ -5101,6 +5144,20 @@ export default function Admin() {
                                     </p>
                                     {cellTimeOff.reason && (
                                       <p className="text-xs text-gray-500 italic mt-1">&quot;{cellTimeOff.reason}&quot;</p>
+                                    )}
+                                    {/* The availability this request overrode.
+                                        Kept visible so the day still answers
+                                        "what did they originally put in?" */}
+                                    {dayAvail.length > 0 && (
+                                      <p className="mt-1 text-[10px] text-gray-500">
+                                        {cellTimeOff.status === 'approved' ? 'Overrides' : 'Still marked'} available{' '}
+                                        {dayAvail.map(a => (
+                                          a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00')
+                                            ? 'all day'
+                                            : `${fmtHHMM(a.startTime)}–${fmtHHMM(a.endTime)}`
+                                        )).join(', ')}
+                                        {cellTimeOff.status === 'pending' ? ' — approve or deny to settle it.' : ''}
+                                      </p>
                                     )}
                                     {dayShifts.length > 0 && cellTimeOff.status === 'approved' && (
                                       <p className="text-[10px] text-red-600 font-semibold mt-1">⚠ Shift conflict — approve removes the shift.</p>
@@ -7295,6 +7352,7 @@ export default function Admin() {
           weekDays={weekDays}
           availability={availability}
           shifts={shifts}
+          timeOffIndex={timeOffIndex}
           onClose={() => setAvailabilityModalUser(null)}
         />
       )}
@@ -7305,6 +7363,7 @@ export default function Admin() {
           user={addShiftModal.user}
           users={approvedUsers}
           availability={availability}
+          timeOffIndex={timeOffIndex}
           centerConfig={centerConfig}
           onClose={() => setAddShiftModal(null)}
           onSave={handleAddShift}

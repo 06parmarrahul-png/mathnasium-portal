@@ -46,6 +46,21 @@ function NotAuthorized() {
   );
 }
 
+function NotForVolunteers() {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="mx-4 max-w-md rounded-xl bg-white p-8 shadow-lg text-center">
+        <h2 className="mb-2 text-xl font-bold text-gray-900">Not part of your access</h2>
+        <p className="text-sm text-gray-500">
+          Volunteer accounts have a simplified portal — your schedule and shifts.
+          Team messaging isn&rsquo;t included. Speak to a centre admin if you need something from it.
+        </p>
+        <a href="/" className="mt-4 inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Back to Home</a>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Route guard.
  *
@@ -55,8 +70,8 @@ function NotAuthorized() {
  *                  it really means "requires admin-panel access".)
  *   requireSuperAdmin — page is super-admin only.
  */
-export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false }) {
-  const { user, profile, loading, logout } = useAuth();
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false }) {
+  const { user, profile, loading, logout, isVolunteer } = useAuth();
 
   if (loading) return <LoadingScreen />;
 
@@ -78,6 +93,12 @@ export default function ProtectedRoute({ children, requireOwner = false, require
     || role === 'director'
     || role === 'owner'
     || role === 'super_admin';
+
+  // Volunteers are hidden from these surfaces in the sidebar too, but the
+  // nav only hides links — this is what actually stops a typed URL.
+  if (blockVolunteers && isVolunteer) {
+    return <NotForVolunteers />;
+  }
 
   if (requireSuperAdmin && role !== 'super_admin') {
     return <NotAuthorized />;

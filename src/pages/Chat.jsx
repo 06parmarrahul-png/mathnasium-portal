@@ -5,6 +5,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 import { toast } from '../lib/notify';
 import { hasCapability } from '../lib/subRoles';
+import { resolveUserForCenter } from '../lib/centerMembership';
 import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
@@ -86,8 +87,13 @@ export default function Chat() {
     const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2, instructor: 3, host: 4 };
     // Drop internal / system accounts (Admin Team etc.) from the visible
     // roster — they have access but aren't real people.
+    // Volunteers have no access to chat, so listing them as members
+    // would promise a reply that can never come.
     const base = centerUsers.filter(u =>
-      u.approved && u.internal !== true && u.displayName !== 'Admin Team',
+      u.approved
+      && u.internal !== true
+      && u.displayName !== 'Admin Team'
+      && resolveUserForCenter(u, activeCenterId)?.isVolunteer !== true,
     );
     // Online roster includes the Online sub-role plus leadership (admin /
     // owner / super-admin) so the Online team can see who's watching.
@@ -105,7 +111,7 @@ export default function Chat() {
       if (ra !== rb) return ra - rb;
       return (a.displayName || '').localeCompare(b.displayName || '');
     });
-  }, [centerUsers, channel]);
+  }, [centerUsers, channel, activeCenterId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -420,6 +426,7 @@ export default function Chat() {
               : role === 'owner'         ? 'Owner'
               : role === 'admin_assistant' ? 'Admin Assistant'
               : role === 'admin'         ? 'Admin'
+              : resolveUserForCenter(m, activeCenterId)?.isVolunteer === true ? 'Volunteer'
               : (m.instructorType || '');
             return (
               <button

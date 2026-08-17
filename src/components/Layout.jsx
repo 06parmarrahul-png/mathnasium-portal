@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, canSeeAdminPanel } = useAuth();
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -255,10 +255,12 @@ export default function Layout({ children }) {
   // COMMUNICATE — chat, announcements, personal notification prefs.
   // Owners skip this entirely (consolidated under General → Chats).
   const communicate = [];
-  if (!isSuperAdmin && !isOwner) {
+  // Volunteers get a bare-bones portal — no team messaging. The route
+  // guard enforces it; this just keeps the sidebar honest.
+  if (!isSuperAdmin && !isOwner && !isVolunteer) {
     communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
   }
-  if ((isAdmin || isAdminAssistant) && !isSuperAdmin) {
+  if ((isAdmin || isAdminAssistant) && !isSuperAdmin && !isVolunteer) {
     communicate.push({ to: '/platform-chat', label: 'Management Chat', icon: Headphones });
   }
   if (!isOwner) {
@@ -326,7 +328,13 @@ export default function Layout({ children }) {
   };
 
   // Role badge for the bottom user card
-  const roleLabel = ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor');
+  // Volunteer is a per-centre flag rather than a role, so it has to be
+  // checked before the role map — otherwise every volunteer reads as
+  // "Instructor", which is what they are in the data and not what they
+  // are to the team.
+  const roleLabel = isVolunteer
+    ? 'Volunteer'
+    : (ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor'));
 
   return (
     <div className="flex h-screen bg-gray-50">
