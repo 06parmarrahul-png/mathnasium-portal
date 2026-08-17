@@ -2242,7 +2242,7 @@ export default function Admin() {
     const ok = await confirmDialog({
       title: `Reject ${niceName}?`,
       message:
-        'Their Firebase login will be disabled and their profile will be removed. ' +
+        'Their sign-in will be disabled and their profile will be removed. ' +
         'They will need to sign up again from scratch if they want back in.',
       confirmText: 'Reject user',
       danger: true,
@@ -5554,7 +5554,7 @@ export default function Admin() {
               <h3 className="font-semibold text-gray-900">Generate Schedule</h3>
             </div>
             <p className="text-sm text-gray-500 mb-5">
-              Reads instructor availability from Firestore and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
+              Reads the availability your instructors have submitted and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
             </p>
             {/* Range type toggle — Day / Week / Month. Picker below
                 switches based on selection. */}

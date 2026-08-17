@@ -188,7 +188,7 @@ function BatchGroup({ entries }) {
 }
 
 export default function AvailabilityLog() {
-  const { activeCenterId, canSeeAdminPanel } = useAuth();
+  const { activeCenterId, canSeeAdminPanel, isSuperAdmin } = useAuth();
 
   const [entries, setEntries] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -321,12 +321,19 @@ export default function AvailabilityLog() {
         <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
           <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
           <div className="min-w-0 text-sm text-amber-900">
-            <p className="font-semibold">Could not load the log</p>
-            <p className="mt-0.5 break-words">{loadError}</p>
-            <p className="mt-1 text-xs">
-              If that mentions an index, the message contains a link that creates it in one click —
-              or run <code className="rounded bg-amber-100 px-1">firebase deploy --only firestore:indexes</code>.
+            <p className="font-semibold">Couldn&rsquo;t load the history</p>
+            <p className="mt-0.5">
+              This centre&rsquo;s availability history isn&rsquo;t available right now. Try again in a
+              few minutes — if it keeps happening, let your Enterprise contact know.
             </p>
+            {/* The underlying message names the infrastructure it came
+                from, which is meaningless to a centre admin and not
+                theirs to act on. Enterprise sees it; nobody else does. */}
+            {isSuperAdmin && (
+              <p className="mt-2 break-words rounded bg-amber-100 px-2 py-1 font-mono text-xs">
+                {loadError}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -397,12 +404,16 @@ export default function AvailabilityLog() {
           <div className="px-6 py-16 text-center">
             <ShieldCheck size={40} className="mx-auto mb-3 text-gray-300" />
             <p className="text-base font-semibold text-gray-900">
-              {entries.length === 0 ? 'No changes recorded yet' : 'Nothing matches those filters'}
+              {loadError
+                ? 'History unavailable'
+                : entries.length === 0 ? 'No changes recorded yet' : 'Nothing matches those filters'}
             </p>
             <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-              {entries.length === 0
-                ? 'Changes appear here as soon as staff start editing their availability. Anything changed before this log was added is not recorded.'
-                : 'Try widening the date range or clearing the conflicts filter.'}
+              {loadError
+                ? 'Changes will show up here once this clears — see the note above.'
+                : entries.length === 0
+                  ? 'Changes appear here as soon as staff start editing their availability. Anything changed before this log was added is not recorded.'
+                  : 'Try widening the date range or clearing the conflicts filter.'}
             </p>
           </div>
         ) : (

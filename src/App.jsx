@@ -120,7 +120,10 @@ function AppRoutes() {
         <Route path="/platform-chat" element={<ProtectedRoute><Layout><PlatformChat /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics/:section" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />
-        <Route path="/supply-demand" element={<ProtectedRoute><Layout><SupplyDemand /></Layout></ProtectedRoute>} />
+        {/* Reads walk-ins and per-day check-ins (student names), so it
+            carries the admin-panel gate. Previously any signed-in user
+            who knew the URL could open it. */}
+        <Route path="/supply-demand" element={<ProtectedRoute requireOwner><Layout><SupplyDemand /></Layout></ProtectedRoute>} />
         <Route path="/staffing-budget" element={<ProtectedRoute><Layout><StaffingBudget /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
@@ -137,12 +140,18 @@ function AppRoutes() {
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />
         <Route path="/connectors" element={<ProtectedRoute><Layout><Connectors /></Layout></ProtectedRoute>} />
         <Route path="/chats" element={<ProtectedRoute><Layout><ChatsHub /></Layout></ProtectedRoute>} />
-        <Route path="/apptoto" element={<ProtectedRoute><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
+        {/* Reads the centre's connector config — admin-and-above. */}
+        <Route path="/apptoto" element={<ProtectedRoute requireOwner><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
         {/* Public, NO auth — parents land here from marketing links. */}
         <Route path="/book/:centerId" element={<PublicBook />} />
         <Route path="/intakes" element={<ProtectedRoute><Layout><IntakeManagement /></Layout></ProtectedRoute>} />
-        <Route path="/leads"        element={<ProtectedRoute><Layout><Leads /></Layout></ProtectedRoute>} />
-        <Route path="/case-study"   element={<ProtectedRoute><Layout><CaseStudy /></Layout></ProtectedRoute>} />
+        {/* Parent contact info — name, email, phone. The page has no
+            internal role check, so the gate has to be here. Until the
+            rules were tightened, any signed-in instructor who knew this
+            URL could read the whole lead list. */}
+        <Route path="/leads"        element={<ProtectedRoute requireOwner><Layout><Leads /></Layout></ProtectedRoute>} />
+        {/* Pulls student counts out of the Student Scheduler data. */}
+        <Route path="/case-study"   element={<ProtectedRoute requireOwner><Layout><CaseStudy /></Layout></ProtectedRoute>} />
         {/* Onboarding runs full-screen (no sidebar) until the owner finishes setup. */}
         <Route path="/onboarding"   element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />

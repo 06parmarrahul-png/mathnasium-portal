@@ -77,7 +77,7 @@ export default function CaseStudy() {
           <h1 className="text-2xl font-bold text-gray-900">Mathnasium Langley case study</h1>
           <p className="text-sm text-gray-500 max-w-2xl">
             The numbers you can defend in front of a room of franchise owners.
-            Computed from your own Firestore data — no fake averages, no industry benchmarks borrowed from somewhere else.
+            Computed from your own centre's data — no fake averages, no industry benchmarks borrowed from somewhere else.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">

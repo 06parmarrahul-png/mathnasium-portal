@@ -100,6 +100,38 @@ service cloud.firestore {
       return profileExists() && profile().instructorType == 'Lead';
     }
 
+    // Lead detection SCOPED TO A CENTRE.
+    //
+    // isLead() above only reads the legacy top-level instructorType.
+    // Since roles went per-centre, the authoritative value lives in
+    // centerMemberships[centreId].instructorType — a Lead at Langley who
+    // was set up after that migration has NOTHING in the top-level field,
+    // so isLead() returns false for them. That was harmless while the
+    // centre catchall granted read to every signed-in user; now that
+    // Student Scheduler data is gated, it would lock a genuine Lead out
+    // of the floor tools. Check both, per centre.
+    //
+    // .get(key, default) rather than a bare index so a membership row
+    // that predates instructorType doesn't error the whole evaluation.
+    function isLeadAt(centerId) {
+      return profileExists() && (
+        profile().instructorType == 'Lead'
+        || (
+          'centerMemberships' in profile()
+          && centerId in profile().centerMemberships
+          && profile().centerMemberships[centerId].get('instructorType', '') == 'Lead'
+        )
+      );
+    }
+
+    // Anyone who legitimately runs the floor at this centre: the admin
+    // tier plus Lead instructors. Used for Student Scheduler working
+    // data (student names, check-ins, walk-ins) — the people who need it
+    // to do their job, and nobody else.
+    function canRunFloor(centerId) {
+      return isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
@@ -107,106 +139,170 @@ service cloud.firestore {
     // Update / delete: owner of THIS center, or super_admin. Admins can't
     // rename a centre, change its billing tier, etc.
     match /centers/{centerId} {
+      // The centre identity doc itself. Public read — the signup page
+      // shows a centre picker to people who don't have an account yet.
       allow read: if true;
       allow create: if isSuperAdmin();
       allow update, delete: if isOwnerLike() || isSuperAdmin();
 
-      // Sub-docs (config/main with holidays, salaryStaff, operating days,
-      // fixed staff, etc.) — admins can write these too so they can
-      // manage day-to-day operations from the Admin Panel.
-      match /{document=**} {
+      // ═══════════════════════════════════════════════════════════════
+      // SUBCOLLECTIONS
+      //
+      // There used to be a `match /{document=**}` here granting read to
+      // every signed-in staff account, with narrower blocks below it for
+      // /leads, /inventory and so on, and a comment claiming the narrower
+      // block "wins". IT DOES NOT. Firestore rules are ADDITIVE: every
+      // matching rule is evaluated and access is granted if ANY of them
+      // allows it. A nested rule cannot revoke a grant made by a rule
+      // above it. The practical effect was that any signed-in instructor
+      // could read /centers/{id}/leads — parent names, emails and phone
+      // numbers — despite the owner-only block that looked like it
+      // stopped them.
+      //
+      // So every subcollection is now listed EXPLICITLY, and the only
+      // catchall left grants READ to owner-equivalents. Consequences of
+      // that design, on purpose:
+      //   • A path nobody enumerated is readable by owners and invisible
+      //     to everyone else — quiet by default rather than public by
+      //     default.
+      //   • There is NO catchall write. Every write path is named below.
+      //     A new subcollection fails loudly on first write instead of
+      //     silently inheriting broad permissions.
+      // If you add a subcollection, add its rule here.
+      // ═══════════════════════════════════════════════════════════════
+
+      // ─── Centre configuration ───────────────────────────────────────
+      // config/main holds operating days, instructional hours, holidays,
+      // fixed staff, branding. EVERY signed-in user reads this —
+      // AuthContext subscribes to it on login regardless of role — so
+      // read must stay open to all staff. Writes are admin-and-above.
+      match /config/{docId} {
         allow read:  if isSignedIn();
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
 
-      // ─── Walk-in / manual student additions per day ────────────────
-      // One doc per centre per date, ID = YYYY-MM-DD. Written when staff
-      // adds a call-in / drop-in via the +student button on a slot.
-      // Same access posture as schedulerInstructorAssignments — readable
-      // by signed-in staff, writable by anyone running the dashboard
-      // (now includes Lead instructors).
+      // ─── Student Scheduler working data ─────────────────────────────
+      // Student names, session times, check-in state, walk-ins. Read is
+      // admin-and-above PLUS Lead instructors, who run the floor and use
+      // the Student Scheduler daily. Ordinary instructors have no UI that
+      // reads any of this, so restricting it costs them nothing — and
+      // these are children's records, which is reason enough not to leave
+      // them open to every account at the centre.
+
+      match /schedulerStudents/{studentId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
+      match /schedulerAliases/{aliasId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
+      match /schedulerSettings/{docId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
+      // Walk-in / manual student additions per day. One doc per date,
+      // id = YYYY-MM-DD, written when staff add a call-in via the
+      // +student button on a slot.
       match /scheduleAddOns/{dateId} {
-        allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
       }
 
-      // ─── Per-day instructor assignments (slot → staff names) ───────
-      // The Today tab's "+ add" dropdown writes here. Leads need write
-      // access since they often staff the floor minute-by-minute.
+      // Per-day instructor assignments (slot -> staff names). Leads staff
+      // the floor minute by minute, so they write here.
       match /schedulerInstructorAssignments/{dateId} {
-        allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
       }
 
-      // ─── Per-day check-ins (student presence / tags / desks) ───────
-      // Driven by clicking a student name on Today. Leads need write
-      // access to mark students in / late / no-show as they arrive.
+      // Per-day check-ins (student presence / tags / desks), plus the
+      // per-student docs underneath. Leads mark students in / late /
+      // no-show as they arrive.
       match /schedulerCheckIns/{dateId} {
-        allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+
+        match /students/{studentId} {
+          allow read:  if canRunFloor(centerId);
+          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        }
       }
 
-      // ─── Daily schedule snapshots (analytics history) ──────────────
-      // One doc per centre per day, ID = YYYY-MM-DD. Captured lazily
-      // by the Today tab once a day completes. No PII (just counts +
-      // ratios) so read access mirrors the broader centre catchall —
-      // signed-in. Writes also open to Leads since they trigger the
-      // lazy capture by opening completed-day views.
+      // Walk-ins recorded against a date, and the entries underneath.
+      match /walkIns/{dateId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+
+        match /entries/{entryId} {
+          allow read:  if canRunFloor(centerId);
+          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        }
+      }
+
+      // ─── Analytics snapshots ────────────────────────────────────────
+      // Counts and ratios, no PII — but they are management numbers, so
+      // they stay on the admin side rather than being centre-wide.
       match /scheduleSnapshots/{snapshotId} {
-        allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLead();
+        allow read:  if canRunFloor(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
       }
 
-      // ─── Demand snapshots (Supply & Demand override history) ────────
-      // One doc per date holding the owner's saved demand + supply
-      // overrides for that day. Read is signed-in (harmless numbers —
-      // no PII). Write is owner-like only since it feeds into the
-      // auto-scheduler's staffing recommendations.
+      // Saved demand + supply overrides per day. Feeds the auto-
+      // scheduler's staffing recommendations, so writes stay owner-like.
       match /demandSnapshots/{dateId} {
-        allow read:  if isSignedIn();
+        allow read:  if isOwnerLike() || isSuperAdmin() || isAdmin();
         allow write: if isOwnerLike() || isSuperAdmin();
       }
 
-      // ─── Leads (the CRM funnel) ──────────────────────────────────────
-      // Leads carry parent contact info (email, phone) the same way the
-      // top-level centerIntakes collection does. We deliberately keep
-      // leads under centers/{centerId}/leads (not top-level) for query
-      // ergonomics, but TIGHTEN the catchall above: only owner-like and
-      // super-admin can read OR write. Plain admins and instructors are
-      // shut out — they don't need to see prospect contact info.
-      // Server-side intake mirror writes via firebase-admin and bypasses
-      // these rules, so the auto-create flow keeps working.
-      //
-      // More-specific match wins in Firestore, so this overrides the
-      // {document=**} grant above for any path matching /leads/*.
+      // ─── Leads (the CRM funnel) ─────────────────────────────────────
+      // Parent contact info: name, email, phone. Owner-equivalent only —
+      // this is the collection the old catchall was quietly exposing.
+      // Server-side intake mirroring writes via firebase-admin and
+      // bypasses rules entirely, so the auto-create flow is unaffected.
       match /leads/{leadId} {
         allow read, write: if isOwnerLike() || isSuperAdmin();
       }
 
+      // ─── Connectors ─────────────────────────────────────────────────
+      // Per-vendor integration state: { connected, requested, settings }.
+      // Actual API credentials live in the top-level centerIntegrations
+      // collection, not here. Read/write is admin-and-above because the
+      // Apptoto appointments card renders inside the Admin Panel.
+      match /connectors/{connectorId} {
+        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
       // ─── Inventory (centre supplies) ────────────────────────────────
-      // Admin-and-above ONLY, both read AND write. Supply counts, unit
-      // costs and vendor links are operating data — instructors have no
-      // reason to see what the centre pays for prize-box toys, and the
-      // {document=**} catchall above would otherwise hand every signed-in
-      // staff account read access. More-specific match wins, so this
-      // block overrides it for /inventory/*.
-      //
+      // Supply counts, unit costs and vendor links. Admin-and-above.
       // The alert-settings doc (id '__settings') lives in this same
-      // collection deliberately, so it inherits this exact rule instead
-      // of needing one of its own.
+      // collection deliberately, so it inherits this exact rule.
       match /inventory/{itemId} {
         allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin();
       }
 
       // ─── Inventory change log ───────────────────────────────────────
-      // Append-only for admins: they can add entries (every count change
-      // writes one) and read the history, but cannot rewrite or delete
-      // it. Only the platform operator can prune. Same posture as
-      // auditLog — a history someone can quietly edit isn't a history.
+      // Append-only: admins add entries (every count change writes one)
+      // and read the history, but cannot rewrite or delete it. Only the
+      // platform operator can prune. This guarantee only holds because
+      // the catchall below grants READ and nothing else — a catchall
+      // `write` would have handed every owner a delete button here.
       match /inventoryLog/{entryId} {
         allow read:   if isOwnerLike() || isSuperAdmin() || isAdmin();
         allow create: if isOwnerLike() || isSuperAdmin() || isAdmin();
         allow update, delete: if isSuperAdmin();
+      }
+
+      // ─── Catchall: read-only, owner-equivalent ──────────────────────
+      // The safety net for any subcollection not named above. Read so a
+      // missed path degrades to "only owners can see it" rather than
+      // "everyone can". No write, so a missed path fails loudly on the
+      // first attempt and gets a proper rule instead of inheriting one.
+      match /{document=**} {
+        allow read: if isOwnerLike() || isSuperAdmin();
       }
     }
 
@@ -449,6 +545,18 @@ service cloud.firestore {
     // user docs, so even if the hash leaked nothing escalates.
     match /platform/{docId} {
       allow read, write: if isSuperAdmin();
+    }
+
+    // ── Connectors, as a COLLECTION GROUP ────────────────────────────
+    // The Enterprise demand leaderboard on /connectors runs
+    // collectionGroup(db, 'connectors') to count which integrations
+    // centres have requested. Collection-group queries are NOT covered
+    // by a nested `match /centers/{id}/connectors/...` rule — they need
+    // a rule anchored with {path=**}, which didn't exist, so that panel
+    // has been failing its read since it shipped. Super-admin only:
+    // it's a cross-tenant aggregate and nobody else should run it.
+    match /{path=**}/connectors/{connectorId} {
+      allow read: if isSuperAdmin();
     }
 
     // Exception to the Enterprise-only block above: the cross-centre

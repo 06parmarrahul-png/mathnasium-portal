@@ -2368,7 +2368,7 @@ function SetupTab({ centerId }) {
       </section>
 
       <p className="text-xs text-gray-400">
-        Data is per centre and persisted in Firestore.
+        Data is saved per centre.
         iCal URLs are stored encrypted at rest and never sent to the browser — only the server fetches them.
       </p>
 

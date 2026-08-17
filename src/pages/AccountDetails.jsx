@@ -407,7 +407,8 @@ function ProfilePictureCard({ profile }) {
     const timeout = setTimeout(() => {
       timedOut = true;
       setUploading(false);
-      setError('Upload timed out after 30 seconds. Likely cause: Firebase Storage isn\'t enabled yet, or storage.rules hasn\'t been deployed. Run: npx firebase-tools deploy --only storage');
+      console.warn('[avatar] upload timed out — storage may not be enabled or its rules are not deployed');
+      setError('That took too long and timed out. Picture uploads aren\'t available right now — please try again later or let your Enterprise contact know.');
     }, 30000);
     try {
       // Stable path per user — uploading overwrites the previous one,
@@ -430,9 +431,9 @@ function ProfilePictureCard({ profile }) {
       // hints — most "stuck" uploads turn out to be one of these.
       const code = err?.code || '';
       if (code === 'storage/unauthorized') {
-        setError('Permission denied. Storage rules need to be deployed: npx firebase-tools deploy --only storage');
+        setError('You don\'t have permission to upload a picture right now. Let your Enterprise contact know.');
       } else if (code === 'storage/bucket-not-found' || code === 'storage/project-not-found') {
-        setError('Storage bucket isn\'t set up. Enable Storage in Firebase Console → Build → Storage.');
+        setError('Picture uploads aren\'t set up yet. Let your Enterprise contact know.');
       } else if (code === 'storage/unauthenticated') {
         setError('You appear to be signed out. Refresh the page and sign back in.');
       } else if (code === 'storage/quota-exceeded') {

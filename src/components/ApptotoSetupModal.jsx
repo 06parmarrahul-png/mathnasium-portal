@@ -151,7 +151,7 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
               autoComplete="off"
             />
             <p className="mt-1 text-[11px] text-gray-400">
-              Stored encrypted at rest in Firestore. Never sent to the browser after save — the server proxies calls.
+              Stored encrypted at rest. Never sent to the browser after save — the server makes the calls on your behalf.
             </p>
           </div>
 
