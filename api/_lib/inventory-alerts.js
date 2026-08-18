@@ -99,6 +99,7 @@ const CATEGORY_LABELS = {
   fun_days:       'Fun Days',
   administrative: 'Administrative',
   cleaning:       'Cleaning',
+  merch:          'Merch',
   rewards:        'Rewards',
 };
 

@@ -139,6 +139,14 @@ export const INVENTORY_CATEGORIES = [
     icon: 'SprayCan',
   },
   {
+    key: 'merch',
+    label: 'Merch',
+    sublabel: 'Branded apparel and giveaways',
+    hex: '#c026d3',
+    chip: 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+    icon: 'Shirt',
+  },
+  {
     key: 'rewards',
     label: 'Rewards',
     sublabel: 'Prize box, punch cards, certificates',
@@ -608,6 +616,12 @@ export const STARTER_ITEMS = [
   { name: 'Garbage bags',               category: 'cleaning',       unit: 'box',        par: 1,  reorderQty: 2  },
   { name: 'Whiteboard cleaner',         category: 'cleaning',       unit: 'bottle',     par: 1,  reorderQty: 2  },
   { name: 'Vacuum bags',                category: 'cleaning',       unit: 'package',    par: 1,  reorderQty: 2  },
+  // Merch
+  { name: 'Branded t-shirts',           category: 'merch',          unit: 'individual', par: 10, reorderQty: 25 },
+  { name: 'Branded hoodies',            category: 'merch',          unit: 'individual', par: 5,  reorderQty: 15 },
+  { name: 'Tote bags',                  category: 'merch',          unit: 'individual', par: 6,  reorderQty: 20 },
+  { name: 'Wristbands',                 category: 'merch',          unit: 'bag',        par: 1,  reorderQty: 3  },
+  { name: 'Lanyards',                   category: 'merch',          unit: 'individual', par: 5,  reorderQty: 20 },
   // Rewards
   { name: 'Prize box toys',             category: 'rewards',        unit: 'bag',        par: 2,  reorderQty: 4  },
   { name: 'Punch cards',                category: 'rewards',        unit: 'package',    par: 2,  reorderQty: 5  },

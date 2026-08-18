@@ -20,10 +20,10 @@ Nothing existing was rewritten — every edit is additive.
 ## Categories
 
 STEAM (STEM + Art) · Events · Games · Holidays · Summer Camp · Crafts ·
-Fun Days · Administrative · Cleaning · Rewards
+Fun Days · Administrative · Cleaning · Merch · Rewards
 
-Defined once in `INVENTORY_CATEGORIES` (`src/lib/inventory.js`). Adding an
-eleventh category is one entry in that array — filters, forms, CSV and the
+Defined once in `INVENTORY_CATEGORIES` (`src/lib/inventory.js`). Adding a
+category is one entry in that array — filters, forms, CSV and the
 reorder email all pick it up. If you add one, mirror the label into
 `CATEGORY_LABELS` in `api/_lib/inventory-alerts.js` (API routes can't import
 from `src/`).

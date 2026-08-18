@@ -16,7 +16,7 @@ import {
   Settings, AlertTriangle, ShoppingCart, ExternalLink, Copy, History,
   Archive, ArchiveRestore, Check, Loader2, Boxes, PackageX, BellOff, ShieldOff,
   FlaskConical, PartyPopper, Gamepad2, Gift, Sun, Scissors, Smile,
-  ClipboardList, SprayCan, Trophy,
+  ClipboardList, SprayCan, Trophy, Shirt,
 } from 'lucide-react';
 
 /**
@@ -36,7 +36,7 @@ import {
 // Category icon lookup. Keys match INVENTORY_CATEGORIES[].icon.
 const CATEGORY_ICONS = {
   FlaskConical, PartyPopper, Gamepad2, Gift, Sun, Scissors, Smile,
-  ClipboardList, SprayCan, Trophy, Package,
+  ClipboardList, SprayCan, Trophy, Shirt, Package,
 };
 
 function CategoryIcon({ name, size = 14, className = '', style }) {
