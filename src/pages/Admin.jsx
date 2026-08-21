@@ -2391,9 +2391,76 @@ export default function Admin() {
   // yet, we create the whole map so subsequent edits don't see undefined
   // siblings. This is what keeps a user's Centre A edits truly isolated
   // from their Centre B settings.
+  /**
+   * A person's name is COPIED onto every shift when the shift is created,
+   * and the centre's salaryStaff list stores names rather than ids. Both
+   * are snapshots, so renaming someone silently breaks them:
+   *
+   *   • their old-name shifts stop matching the roster, so hours land in
+   *     "no account" instead of the assigned total
+   *   • a salaried person who renames drops out of the salary exclusion
+   *     and starts appearing in hourly payroll — a real money bug
+   *
+   * Rather than teach all ~50 name-matching sites about renames, repair
+   * the copies once, here, at the moment the name actually changes.
+   */
+  const propagateRename = async (uid, oldName, newName) => {
+    let shiftsFixed = 0;
+    try {
+      const snap = await getDocs(query(collection(db, 'shifts'), where('userId', '==', uid)));
+      const stale = snap.docs.filter(d => (d.data().userName || '') !== newName);
+      // writeBatch caps at 500 ops; chunk so a long-tenured staffer with
+      // hundreds of shifts doesn't blow the limit.
+      for (let i = 0; i < stale.length; i += 400) {
+        const batch = writeBatch(db);
+        for (const d of stale.slice(i, i + 400)) batch.update(d.ref, { userName: newName });
+        await batch.commit();
+        shiftsFixed += Math.min(400, stale.length - i);
+      }
+    } catch (err) {
+      console.error('[rename] shift backfill failed:', err);
+      toast.error('Name saved, but their past shifts still show the old name. Tell Enterprise.');
+      return;
+    }
+
+    // salaryStaff is a list of names on the centre config.
+    try {
+      const list = Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [];
+      if (list.includes(oldName)) {
+        await setDoc(
+          doc(db, 'centers', activeCenterId, 'config', 'main'),
+          { salaryStaff: list.map(n => (n === oldName ? newName : n)) },
+          { merge: true },
+        );
+      }
+    } catch (err) {
+      console.error('[rename] salaryStaff update failed:', err);
+      toast.error('Name saved, but check the salaried staff list in Centre Settings.');
+      return;
+    }
+
+    if (shiftsFixed > 0) {
+      toast.success(`Renamed. Updated ${shiftsFixed} shift${shiftsFixed === 1 ? '' : 's'} to match.`);
+    }
+  };
+
   const handleUpdateUserField = async (uid, field, value) => {
     if (!isPerCentreField(field)) {
+      const before = field === 'displayName'
+        ? (users.find(u => u.uid === uid || u.id === uid)?.displayName || '')
+        : null;
       await updateDoc(doc(db, 'users', uid), { [field]: value });
+      // Only after the write lands — never repair toward a name that
+      // didn't save.
+      //
+      // Deliberately runs even when the text is UNCHANGED: anyone renamed
+      // before this repair existed still has stale shifts, and re-saving
+      // their name is the obvious way for an admin to fix it without a
+      // special button. It's a no-op (one indexed query, no writes) when
+      // nothing is stale.
+      if (field === 'displayName' && value) {
+        await propagateRename(uid, before, value);
+      }
       return;
     }
     const target = users.find(u => u.uid === uid || u.id === uid);
@@ -2635,6 +2702,15 @@ export default function Admin() {
     // the day headers sitting right below it — those hours get their own
     // chip instead so nothing is silently dropped.
     const portalNames = new Set(users.map(u => u.displayName));
+    // …and by uid. A shift stores a SNAPSHOT of the person's name at the
+    // moment it was created, so anyone who has since been renamed stops
+    // matching portalNames and gets counted as "no account" — subtracting
+    // their hours from the assigned total even though the grid, which
+    // matches on s.userId === u.uid, is happily rendering their shifts in
+    // their row. Checking the id first makes the two agree.
+    const portalIds = new Set(users.map(u => u.uid).filter(Boolean));
+    const hasPortalAccount = (sh) =>
+      (sh.userId && portalIds.has(sh.userId)) || portalNames.has(sh.userName);
 
     let paid = 0;
     let volunteer = 0;
@@ -2671,7 +2747,7 @@ export default function Admin() {
       // its own chip so the cost is visible rather than hidden.
       else if (isTrainingShift(s))                        training  += hrs;
       else if (s.userName && salaryNames.has(s.userName)) salary    += hrs;
-      else if (!portalNames.has(s.userName))              noAccount += hrs;
+      else if (!hasPortalAccount(s))                      noAccount += hrs;
       else                                                paid      += hrs;
     }
     return {
@@ -4962,7 +5038,12 @@ export default function Admin() {
                       const isToday = isSameDay(d, new Date());
                       const ds = format(d, 'yyyy-MM-dd');
                       const holiday = holidayFor(d, centerConfig);
+                      // Id-first, same as the weekly tally and the day footer. A
+                      // renamed staffer's hours must still land in this day's total.
                       const portalNames = new Set(users.map(u => u.displayName));
+                      const portalIds3 = new Set(users.map(u => u.uid).filter(Boolean));
+                      const hasAccount3 = (sh) =>
+                        (sh.userId && portalIds3.has(sh.userId)) || portalNames.has(sh.userName);
                       // Include drafts in the planned-hours header so admin sees
                       // the full scheduled picture; visual stripes on the cells
                       // already mark which ones are draft vs published.
@@ -4974,7 +5055,7 @@ export default function Admin() {
                       const dayTotalHrs = shifts
                         .filter(s =>
                           s.date === ds
-                          && portalNames.has(s.userName)
+                          && hasAccount3(s)
                           && s.noShow !== true
                           && s.sickPay !== true
                           && !volunteerNames.has(s.userName)
@@ -5317,13 +5398,19 @@ export default function Admin() {
                           </td>
                         );
                       }
+                      // Same id-first rule as the weekly tally above — a
+                      // renamed staffer must not read as "no account" in the
+                      // day footer while their shifts render in their row.
                       const portalNames2 = new Set(users.map(u => u.displayName));
+                      const portalIds2 = new Set(users.map(u => u.uid).filter(Boolean));
+                      const hasAccount2 = (sh) =>
+                        (sh.userId && portalIds2.has(sh.userId)) || portalNames2.has(sh.userName);
                       // Totals include drafts (admin needs to see total planned
                       // headcount + hours) but flag how many are still in draft
                       // so they know there's work to publish.
                       const dayShiftsAll = shifts.filter(s => s.date === ds);
-                      const dayShiftsPortal = dayShiftsAll.filter(s => portalNames2.has(s.userName));
-                      const dayShiftsNoAccount = dayShiftsAll.filter(s => !portalNames2.has(s.userName));
+                      const dayShiftsPortal = dayShiftsAll.filter(s => hasAccount2(s));
+                      const dayShiftsNoAccount = dayShiftsAll.filter(s => !hasAccount2(s));
                       const draftCount = dayShiftsAll.filter(s => s.status === 'draft').length;
                       const count = dayShiftsAll.length;
                       // Exclude no-show, sick, volunteer and salary shifts from
