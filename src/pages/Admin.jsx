@@ -32,6 +32,7 @@ import {
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
 import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/timeOff';
+import { isTrainingShift, trainingIds as trainingIdsFor } from '../lib/staffTypes';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
@@ -56,7 +57,7 @@ const MONTHS = [
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
-  'Volunteer',
+  'Training', 'Volunteer',
 ];
 
 // Roles that don't teach a specific level — the "Teaching Level" field is
@@ -1275,7 +1276,10 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
     if (p.includes('elementary'))  return { role: 'Instructor', subRole: 'Elementary' };
     if (p.includes('@home') || p.includes('m@home') || p.includes('online'))
                                    return { role: 'Instructor', subRole: 'Online' };
-    if (p.includes('training'))    return { role: 'Instructor', subRole: 'Elementary' };
+    // Imported 'training' rows now keep their own role rather than being
+    // flattened into Instructor — otherwise they'd silently count toward
+    // coverage the moment they were pasted in.
+    if (p.includes('training'))    return { role: 'Training', subRole: 'Elementary' };
     if (p.includes('lead'))        return { role: 'Lead Instructor', subRole: 'Highschool' };
     if (p.includes('admin'))       return { role: 'Host',  subRole: 'Elementary' };
     if (p.includes('manager') || p.includes('director'))
@@ -2174,6 +2178,14 @@ export default function Admin() {
     [users, activeCenterId],
   );
 
+  // Trainees at this centre: paid and scheduled, but never auto-assigned
+  // and never counted as coverage. Derived here, beside usersForCentre,
+  // so both the tally and the auto-scheduler read the same set.
+  const trainingUserIds = useMemo(
+    () => trainingIdsFor(usersForCentre, activeCenterId),
+    [usersForCentre, activeCenterId],
+  );
+
   const approvedUsers = usersForCentre
     .filter(u => u.approved && isVisibleStaff(u))
     .sort((a, b) => {
@@ -2581,7 +2593,7 @@ export default function Admin() {
   [weekStart, centerConfig]);
 
   const {
-    totalAssignedHours, volunteerHoursThisWeek, salaryHoursThisWeek,
+    totalAssignedHours, volunteerHoursThisWeek, trainingHoursThisWeek, salaryHoursThisWeek,
     sickHoursThisWeek, sickByDate, noAccountHoursThisWeek,
   } = useMemo(() => {
     const ws = format(weekStart, 'yyyy-MM-dd');
@@ -2626,6 +2638,7 @@ export default function Admin() {
 
     let paid = 0;
     let volunteer = 0;
+    let training = 0;
     let salary = 0;
     let sick = 0;
     let noAccount = 0;
@@ -2651,6 +2664,12 @@ export default function Admin() {
         continue;
       }
       if (isVolunteer)                                    volunteer += hrs;
+      // Training hours are PAID but deliberately kept out of `paid`, which
+      // is the number the staffing budget is managed against. Counting a
+      // shadowing trainee there would make the centre look like it spent
+      // its floor budget on coverage it didn't actually get. Surfaced as
+      // its own chip so the cost is visible rather than hidden.
+      else if (isTrainingShift(s))                        training  += hrs;
       else if (s.userName && salaryNames.has(s.userName)) salary    += hrs;
       else if (!portalNames.has(s.userName))              noAccount += hrs;
       else                                                paid      += hrs;
@@ -2658,6 +2677,7 @@ export default function Admin() {
     return {
       totalAssignedHours: paid,
       volunteerHoursThisWeek: volunteer,
+      trainingHoursThisWeek: training,
       salaryHoursThisWeek: salary,
       sickHoursThisWeek: sick,
       sickByDate: sickDates,
@@ -2672,7 +2692,12 @@ export default function Admin() {
       // Approved time off removes the day from what the scheduler can
       // fill. Same helper the grid displays with, so what an admin SEES
       // and what the generator DOES can't drift apart.
-      const filteredAvailability = withoutApprovedTimeOff(availability, timeOffIndex);
+      const filteredAvailability = withoutApprovedTimeOff(availability, timeOffIndex)
+        // Trainees never get auto-scheduled. They shadow a specific person
+        // on a specific day, which is a judgement call an admin makes — and
+        // if the generator placed them they'd be filling a slot they can't
+        // actually cover.
+        .filter(a => !trainingUserIds.has(a.userId));
 
       // Build previous months availability fallback (up to 6 months back)
       const previousMonthsAvail = [];
@@ -4852,6 +4877,14 @@ export default function Admin() {
                     +{Math.round(sickHoursThisWeek * 10) / 10} sick hrs
                   </span>
                 )}
+                {trainingHoursThisWeek > 0 && (
+                  <span
+                    title="Training hours are paid like any other, but sit outside assigned coverage — a trainee shadows an instructor rather than covering a slot, so counting them here would overstate your staffing."
+                    className="inline-flex items-center gap-1 rounded-full bg-purple-100 px-2 py-0.5 text-[11px] font-semibold text-purple-800"
+                  >
+                    +{Math.round(trainingHoursThisWeek * 10) / 10} training hrs
+                  </span>
+                )}
                 {volunteerHoursThisWeek > 0 && (
                   <span
                     title="Volunteer hours are tracked but excluded from the paid total and from payroll."
@@ -5208,6 +5241,7 @@ export default function Admin() {
                                 const isSick      = !!s.sickPay;
                                 const isNoShow    = !!s.noShow;
                                 const isVolunteer = s.userName && volunteerNames.has(s.userName);
+                                const isTraining  = isTrainingShift(s);
                                 const isDraft     = s.status === 'draft';
                                 // Flex roles (STEAM / Summer Camp) and shift
                                 // states all read from the centre's editable
@@ -5217,6 +5251,7 @@ export default function Admin() {
                                         : isNoShow    ? stateColorHex('No-Show', centerConfig)
                                         : flexHex     ? flexHex
                                         : isVolunteer ? stateColorHex('Volunteer', centerConfig)
+                                        : isTraining  ? stateColorHex('Training', centerConfig)
                                         : assignmentColorHex(assignment, centerConfig);
                                 const text = contrastText(bg);
                                 const hrs = shiftHours(s);
@@ -5229,6 +5264,7 @@ export default function Admin() {
                                   : isNoShow ? 'NO-SHOW'
                                   : flexHex ? s.flexRole.toUpperCase()
                                   : isVolunteer ? 'VOLUNTEER'
+                                  : isTraining ? 'TRAINING'
                                   : assignmentShort(assignment);
                                 // Diagonal stripes via repeating-linear-gradient.
                                 // Layered on top of the base color so the assignment

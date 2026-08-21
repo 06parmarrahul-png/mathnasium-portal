@@ -3,6 +3,7 @@ import { collection, onSnapshot, query, where, doc, setDoc, deleteField, serverT
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
+import { isTrainingType } from '../lib/staffTypes';
 import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
 import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, weekdayBudgetTotal, bucketHoursForShift } from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
@@ -185,6 +186,11 @@ export default function StaffingBudget() {
       const resolved = resolveUserForCenter(u, activeCenterId);
       // Volunteers (per-centre flag) — unpaid, off the hourly budget.
       if (resolved?.isVolunteer === true && resolved.displayName) set.add(resolved.displayName);
+      // Trainees — PAID (they still appear in Manage Payroll), but their
+      // hours aren't coverage, so they don't belong in the budget you're
+      // managing your floor against. Different reason from volunteers,
+      // same outcome here.
+      if (isTrainingType(resolved?.instructorType) && resolved.displayName) set.add(resolved.displayName);
       // Hidden-from-ops accounts — same set Manage Payroll drops.
       const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
         || u.internal === true || u.displayName === 'Admin Team';

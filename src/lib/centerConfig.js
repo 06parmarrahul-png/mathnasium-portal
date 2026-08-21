@@ -185,6 +185,7 @@ export const DEFAULT_STATE_COLORS = {
   'STEAM':       '#a16207', // yellow-700 — dark yellow, distinct from Manager gold
   'Summer Camp': '#f97316', // orange-500
   'Volunteer':   '#0284c7', // sky-600
+  'Training':    '#9333ea', // purple-600 — paid, present, not counted
   'Sick Pay':    '#7f1d1d', // red-900 — deep burgundy
   'No-Show':     '#374151', // gray-700 — slate
 };

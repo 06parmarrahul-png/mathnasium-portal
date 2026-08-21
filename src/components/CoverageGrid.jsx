@@ -108,11 +108,17 @@ function parseShift(str) {
 //
 // Checks BOTH role and subRole because most centres tag online staff as
 // role:'Instructor' + subRole:'Online' rather than role:'Online Instructor'.
+// Tier 5 — trainees. Paid and present, but shadowing rather than
+// covering, so they must never sit in the in-centre instructor block
+// where someone reading the grid would count them as staffing.
+const isTrainingRole = (role) => String(role || '').trim().toLowerCase() === 'training';
+
 const rolePriority = (role, subRole, isVolunteer, flexRole) => {
   // Flex (STEAM / Summer Camp) sits in its own bottom tier — present and
   // paid, but not part of the teaching workforce, so it never mixes into
   // the in-centre instructor block.
   if (flexRole) return 4;
+  if (isTrainingRole(role)) return 5;
   if (isVolunteer) return 3;
   if (role === 'Online Instructor' || subRole === 'Online') return 1;
   if (role === 'Instructor' || role === 'Lead')             return 2;
