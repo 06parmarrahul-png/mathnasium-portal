@@ -354,6 +354,17 @@ export default function CoverageGrid({ day, centerConfig }) {
               // this person today" cue so it doesn't look like a duplicate.
               const sameNameCount = sortedEntries.reduce((n, e) => e.name === name ? n + 1 : n, 0);
               const isDoubleBooked = sameNameCount > 1;
+              // A shift whose end isn't after its start can never fill a
+              // slot: the column window is derived from the shifts, so it
+              // is excluded from the bounds AND from every slot test. The
+              // row still renders, giving a person with a full-width name
+              // badge and a completely empty track — which reads as "not
+              // working today" when the truth is "these times are wrong".
+              // Flag it rather than letting the row lie.
+              const hasNoBar = !shift
+                || !Number.isFinite(shift.startMins)
+                || !Number.isFinite(shift.endMins)
+                || shift.endMins <= shift.startMins;
               return (
                 <Fragment key={entry.key}>
                   {isFirstOfTier && (
@@ -367,6 +378,14 @@ export default function CoverageGrid({ day, centerConfig }) {
                 <tr className="border-t border-gray-100 hover:bg-gray-50/40">
                   <td className="sticky left-0 z-10 bg-white border-r border-gray-200 px-2 py-1 font-medium text-gray-800 truncate min-w-[180px]">
                     <div className="flex items-center gap-1.5">
+                      {hasNoBar && (
+                        <span
+                          title={`Can't draw this shift — its times read "${shiftTime || 'blank'}", which doesn't end after it starts. Fix them on the schedule and the bar will appear.`}
+                          className="shrink-0 rounded bg-amber-100 px-1 text-[10px] font-bold text-amber-800"
+                        >
+                          ?
+                        </span>
+                      )}
                       <span
                         className="shrink-0 w-1.5 h-1.5 rounded-full"
                         style={{ backgroundColor: roleBg }}
