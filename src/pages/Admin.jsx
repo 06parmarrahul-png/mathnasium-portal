@@ -54,6 +54,36 @@ const MONTHS = [
   'July','August','September','October','November','December',
 ];
 
+/**
+ * Why a shift must end after it starts.
+ *
+ * Nothing stopped an 11pm–7pm shift being saved, and once saved it went
+ * quiet rather than loud: the coverage grid derives its columns from the
+ * shifts themselves and only counts ones with a forward range, so a
+ * reversed shift vanished from the window AND from every half-hour slot
+ * while still producing a staff row and still counting in "N staff
+ * total". The person looked rostered and un-scheduled at the same time.
+ *
+ * Overnight shifts aren't a missing feature here — every surface in the
+ * app treats a shift as living inside one calendar day — so end <= start
+ * is always a typo, and the right place to catch it is before it's
+ * written.
+ *
+ * Returns a human-readable reason, or null when the times are fine.
+ */
+function shiftTimeProblem(startTime, endTime) {
+  const toMins = (t) => {
+    const [h, m] = String(t || '').split(':').map(Number);
+    return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : NaN;
+  };
+  const s = toMins(startTime);
+  const e = toMins(endTime);
+  if (!Number.isFinite(s) || !Number.isFinite(e)) return 'Enter both a start and an end time.';
+  if (e === s) return 'The start and end times are identical.';
+  if (e < s)   return 'The end time is before the start time.';
+  return null;
+}
+
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
@@ -348,6 +378,8 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
 
   const handleSubmit = async () => {
     if (!selectedUser || !date) return;
+    const problem = shiftTimeProblem(startTime, endTime);
+    if (problem) { toast.error(`${problem} A shift has to end after it starts.`); return; }
     const profile = users.find(u => u.uid === selectedUser);
     await onSave({
       userId: profile.uid,
@@ -663,7 +695,11 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
         )}
         <div className="flex gap-2 pt-1">
           <button
-            onClick={() => onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole })}
+            onClick={() => {
+              const problem = shiftTimeProblem(startTime, endTime);
+              if (problem) { toast.error(`${problem} A shift has to end after it starts.`); return; }
+              onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole });
+            }}
             disabled={!(shiftHours({ startTime, endTime }) > 0)}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40">
             Save Changes
@@ -1103,6 +1139,8 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   const [subRole, setSubRole] = useState('Elementary');
 
   const handleSubmit = async () => {
+    const problem = shiftTimeProblem(startTime, endTime);
+    if (problem) { toast.error(`${problem} A shift has to end after it starts.`); return; }
     await onSave({ date, startTime, endTime, role, subRole: shiftNeedsTeachingLevel(role) ? subRole : '' });
     onClose();
   };
@@ -2492,6 +2530,11 @@ export default function Admin() {
 
   // Shift CRUD
   const handleAddShift = async (shiftData) => {
+    // Backstop: the modals validate before calling, but this is the last
+    // gate before a bad range reaches the database, and every other
+    // surface trusts what's stored here.
+    const problem = shiftTimeProblem(shiftData.startTime, shiftData.endTime);
+    if (problem) { toast.error(`${problem} Shift not saved.`); return; }
     await addDoc(collection(db, 'shifts'), { ...shiftData, centerId: shiftData.centerId || activeCenterId });
   };
 
