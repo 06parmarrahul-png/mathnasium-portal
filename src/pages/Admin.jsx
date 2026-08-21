@@ -2696,6 +2696,21 @@ export default function Admin() {
         || u.internal === true || u.displayName === 'Admin Team';
       if (hidden && u.displayName) salaryNames.add(u.displayName);
     }
+    // Ids for the same people. Without this, making the "no account" check
+    // id-aware below would REMOVE the accidental safety net that used to
+    // catch a renamed salaried person: they'd stop being "no account",
+    // fail the name-only salary check, and land in the paid total.
+    //
+    // Resolved HERE from salaryNames rather than reusing the component's
+    // salaryIds/hiddenIds — those are declared further down the file, and
+    // this memo's callback runs during render before that line executes.
+    // Referencing them was a temporal-dead-zone crash.
+    const salaryIdSet = new Set();
+    for (const u of usersForCentre) {
+      if (u.uid && u.displayName && salaryNames.has(u.displayName)) salaryIdSet.add(u.uid);
+    }
+    const isSalaryLike = (sh) =>
+      (sh.userId && salaryIdSet.has(sh.userId)) || (sh.userName && salaryNames.has(sh.userName));
     // The grid only has rows for people with a portal account; shifts for
     // anyone else surface as the footer's "+N no account" note. This total
     // has to use the same rule or "Total assigned" wouldn't equal the sum of
@@ -2746,7 +2761,7 @@ export default function Admin() {
       // its floor budget on coverage it didn't actually get. Surfaced as
       // its own chip so the cost is visible rather than hidden.
       else if (isTrainingShift(s))                        training  += hrs;
-      else if (s.userName && salaryNames.has(s.userName)) salary    += hrs;
+      else if (isSalaryLike(s))                           salary    += hrs;
       else if (!hasPortalAccount(s))                      noAccount += hrs;
       else                                                paid      += hrs;
     }
@@ -3278,6 +3293,46 @@ export default function Admin() {
   const salaryStaff = useMemo(() => (
     new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : [])
   ), [centerConfig]);
+
+  // salaryStaff and hiddenFromOps are lists of NAMES, and a shift carries
+  // the name it was created with — so a rename silently breaks both. The
+  // id sets below resolve those names against the CURRENT roster, letting
+  // every check match on uid first and fall back to name.
+  //
+  // This matters more than it looks: these sets decide who is EXCLUDED
+  // from assigned hours. A salaried person whose shifts no longer match
+  // by name stops being excluded and starts inflating the total as if you
+  // were paying them hourly.
+  const salaryIds = (() => {
+    const set = new Set();
+    for (const u of users) {
+      if (u.uid && u.displayName && salaryStaff.has(u.displayName)) set.add(u.uid);
+    }
+    return set;
+  })();
+
+  const hiddenIds = (() => {
+    const set = new Set();
+    for (const u of users) {
+      const hidden = u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
+        || u.internal === true
+        || u.displayName === 'Admin Team';
+      if (hidden && u.uid) set.add(u.uid);
+    }
+    return set;
+  })();
+
+  const volunteerIdSet = (() => {
+    const set = new Set();
+    for (const u of usersForCentre) {
+      if (u.isVolunteer === true && u.uid) set.add(u.uid);
+    }
+    return set;
+  })();
+
+  /** Does this shift belong to someone in `ids` / `names`? Id wins. */
+  const shiftIsFor = (sh, ids, names) =>
+    (sh.userId && ids.has(sh.userId)) || (sh.userName && names.has(sh.userName));
 
   // Volunteers — per-user toggle in Manage Users. Excluded from hourly
   // payroll AND from the Radius timesheet compare so they don't appear on
@@ -5058,9 +5113,9 @@ export default function Admin() {
                           && hasAccount3(s)
                           && s.noShow !== true
                           && s.sickPay !== true
-                          && !volunteerNames.has(s.userName)
-                          && !salaryStaff.has(s.userName)
-                          && !hiddenFromOps.has(s.userName)
+                          && !shiftIsFor(s, volunteerIdSet, volunteerNames)
+                          && !shiftIsFor(s, salaryIds, salaryStaff)
+                          && !shiftIsFor(s, hiddenIds, hiddenFromOps)
                         )
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const dayHrsDisplay = isNaN(dayTotalHrs) ? 0 : Math.round(dayTotalHrs * 10) / 10;
