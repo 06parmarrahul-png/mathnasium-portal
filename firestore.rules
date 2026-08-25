@@ -125,12 +125,28 @@ service cloud.firestore {
       );
     }
 
+    // Same per-centre-then-legacy pattern as isLeadAt, for the Manager
+    // title. Managers get Student Scheduler access identical to Leads
+    // (see canRunFloor), PLUS write access to shifts/openShifts/
+    // timeOffRequests/inventory that Leads don't get — see those match
+    // blocks below.
+    function isManagerAt(centerId) {
+      return profileExists() && (
+        profile().instructorType == 'Manager'
+        || (
+          'centerMemberships' in profile()
+          && centerId in profile().centerMemberships
+          && profile().centerMemberships[centerId].get('instructorType', '') == 'Manager'
+        )
+      );
+    }
+
     // Anyone who legitimately runs the floor at this centre: the admin
-    // tier plus Lead instructors. Used for Student Scheduler working
-    // data (student names, check-ins, walk-ins) — the people who need it
-    // to do their job, and nobody else.
+    // tier plus Lead instructors and Managers. Used for Student Scheduler
+    // working data (student names, check-ins, walk-ins) — the people who
+    // need it to do their job, and nobody else.
     function canRunFloor(centerId) {
-      return isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+      return isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
     }
 
     // ─── Centers (top-level identity docs) ─────────────────────────────
@@ -210,14 +226,14 @@ service cloud.firestore {
       // +student button on a slot.
       match /scheduleAddOns/{dateId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
       }
 
       // Per-day instructor assignments (slot -> staff names). Leads staff
       // the floor minute by minute, so they write here.
       match /schedulerInstructorAssignments/{dateId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
       }
 
       // Per-day check-ins (student presence / tags / desks), plus the
@@ -225,22 +241,22 @@ service cloud.firestore {
       // no-show as they arrive.
       match /schedulerCheckIns/{dateId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
 
         match /students/{studentId} {
           allow read:  if canRunFloor(centerId);
-          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
         }
       }
 
       // Walk-ins recorded against a date, and the entries underneath.
       match /walkIns/{dateId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
 
         match /entries/{entryId} {
           allow read:  if canRunFloor(centerId);
-          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+          allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
         }
       }
 
@@ -249,7 +265,7 @@ service cloud.firestore {
       // they stay on the admin side rather than being centre-wide.
       match /scheduleSnapshots/{snapshotId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId);
       }
 
       // Saved demand + supply overrides per day. Feeds the auto-
@@ -278,22 +294,24 @@ service cloud.firestore {
       }
 
       // ─── Inventory (centre supplies) ────────────────────────────────
-      // Supply counts, unit costs and vendor links. Admin-and-above.
+      // Supply counts, unit costs and vendor links. Admin-and-above,
+      // plus Managers (they run day-to-day ordering).
       // The alert-settings doc (id '__settings') lives in this same
       // collection deliberately, so it inherits this exact rule.
       match /inventory/{itemId} {
-        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(centerId);
       }
 
       // ─── Inventory change log ───────────────────────────────────────
-      // Append-only: admins add entries (every count change writes one)
-      // and read the history, but cannot rewrite or delete it. Only the
-      // platform operator can prune. This guarantee only holds because
-      // the catchall below grants READ and nothing else — a catchall
-      // `write` would have handed every owner a delete button here.
+      // Append-only: admins (and Managers) add entries (every count
+      // change writes one) and read the history, but cannot rewrite or
+      // delete it. Only the platform operator can prune. This guarantee
+      // only holds because the catchall below grants READ and nothing
+      // else — a catchall `write` would have handed every owner a
+      // delete button here.
       match /inventoryLog/{entryId} {
-        allow read:   if isOwnerLike() || isSuperAdmin() || isAdmin();
-        allow create: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow read:   if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(centerId);
+        allow create: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(centerId);
         allow update, delete: if isSuperAdmin();
       }
 
@@ -416,8 +434,9 @@ service cloud.firestore {
       allow read:   if isSignedIn();
       allow create: if isSignedIn();
       allow update: if isSignedIn();
-      // Admins can delete shifts too — they manage the schedule day-to-day.
-      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      // Admins (and Managers, at their own centre) can delete shifts too —
+      // they manage the schedule day-to-day.
+      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId);
     }
 
     // ── Availability change log ──────────────────────────────────────
@@ -457,25 +476,26 @@ service cloud.firestore {
 
     match /openShifts/{openShiftId} {
       allow read:   if isSignedIn();
-      // Admins create + delete open shifts too — same surface they see in
-      // the Scheduler tab.
-      allow create: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      // Admins (and Managers, at their own centre) create + delete open
+      // shifts too — same surface they see in the Scheduler tab.
+      allow create: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(request.resource.data.centerId);
       // Update needed for claim flow — any signed-in user can mark
       // an open shift as claimed via transaction.
       allow update: if isSignedIn();
-      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId);
     }
 
     match /timeOffRequests/{reqId} {
       allow read: if isSignedIn();
       // Create: must be your own.
       allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      // Update: managers (admin / owner / super-admin) can approve, deny or
-      // amend anything. The instructor who owns the request may edit it ONLY
-      // while it is still pending, and may not change its status (no
-      // self-approving, and once approved/denied it is locked).
+      // Update: managers (admin / owner / super-admin / Manager-titled
+      // staff at their own centre) can approve, deny or amend anything.
+      // The instructor who owns the request may edit it ONLY while it is
+      // still pending, and may not change its status (no self-approving,
+      // and once approved/denied it is locked).
       allow update: if isSignedIn() && (
-        isOwnerLike() || isSuperAdmin() || isAdmin() || (
+        isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId) || (
           resource.data.userId == request.auth.uid
           && resource.data.status == 'pending'
           && request.resource.data.status == 'pending'
@@ -484,7 +504,7 @@ service cloud.firestore {
       );
       // Delete: the owner can withdraw their request; managers can remove any.
       allow delete: if isSignedIn() && (
-        resource.data.userId == request.auth.uid || isOwnerLike() || isSuperAdmin() || isAdmin()
+        resource.data.userId == request.auth.uid || isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId)
       );
     }
 

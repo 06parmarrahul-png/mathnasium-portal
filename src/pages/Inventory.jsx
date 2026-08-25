@@ -49,7 +49,7 @@ function NotAuthorized() {
     <div className="mx-auto max-w-md rounded-xl bg-white p-8 text-center shadow-sm">
       <h2 className="mb-2 text-xl font-bold text-gray-900">Not authorized</h2>
       <p className="text-sm text-gray-500">
-        Inventory is available to admins, admin assistants, directors and owners.
+        Inventory is available to admins, admin assistants, directors, owners and managers.
       </p>
     </div>
   );
@@ -566,7 +566,10 @@ function SettingsModal({
 // ─── Page ──────────────────────────────────────────────────────────────
 
 export default function Inventory() {
-  const { profile, activeCenterId, canSeeAdminPanel, centerConfig } = useAuth();
+  const { profile, activeCenterId, canSeeAdminPanel, isManager, centerConfig } = useAuth();
+  // Managers get full inventory access (unlike the narrower /admin tab
+  // clamp) — they're the ones ordering supplies day to day.
+  const canSeeInventory = canSeeAdminPanel || isManager;
 
   const [items, setItems] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
@@ -602,7 +605,7 @@ export default function Inventory() {
   // Live data. Re-subscribes on centre switch so the Langley → Burnaby
   // toggle in the sidebar swaps the whole table.
   useEffect(() => {
-    if (!canSeeAdminPanel || !activeCenterId) return;
+    if (!canSeeInventory || !activeCenterId) return;
     const unsub = subscribeInventory(
       activeCenterId,
       list => { setItems(list); setLoadedCenter(activeCenterId); },
@@ -613,25 +616,25 @@ export default function Inventory() {
       },
     );
     return unsub;
-  }, [activeCenterId, canSeeAdminPanel]);
+  }, [activeCenterId, canSeeInventory]);
 
   useEffect(() => {
-    if (!canSeeAdminPanel || !activeCenterId) return;
+    if (!canSeeInventory || !activeCenterId) return;
     return subscribeSettings(activeCenterId, setSettings);
-  }, [activeCenterId, canSeeAdminPanel]);
+  }, [activeCenterId, canSeeInventory]);
 
   useEffect(() => {
-    if (!canSeeAdminPanel || !activeCenterId || !showHistory) return;
+    if (!canSeeInventory || !activeCenterId || !showHistory) return;
     return subscribeLog(activeCenterId, setLogEntries);
-  }, [activeCenterId, canSeeAdminPanel, showHistory]);
+  }, [activeCenterId, canSeeInventory, showHistory]);
 
   // Enterprise master switch. Readable by any signed-in user (one
   // permissive rule on this single doc) so the page can say WHY alerts
   // are off instead of quietly doing nothing.
   useEffect(() => {
-    if (!canSeeAdminPanel) return;
+    if (!canSeeInventory) return;
     return subscribePlatformNotify(setPlatformNotify);
-  }, [canSeeAdminPanel]);
+  }, [canSeeInventory]);
 
   useEffect(() => {
     if (!profile?.uid) return;
@@ -803,7 +806,7 @@ export default function Inventory() {
     URL.revokeObjectURL(url);
   }, [filtered, activeCenterId]);
 
-  if (!canSeeAdminPanel) return <NotAuthorized />;
+  if (!canSeeInventory) return <NotAuthorized />;
 
   return (
     <div className="space-y-6">
