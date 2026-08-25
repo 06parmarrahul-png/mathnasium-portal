@@ -49,13 +49,51 @@ export function normalizeCapability(value) {
 }
 
 /**
+ * Legacy sub-role values that stand for MORE than one modern capability,
+ * so they can't just be aliased (an alias is one-to-one).
+ *
+ * 'Both' predates the current Elementary/Highschool/Online/Host set and
+ * meant "can teach both teaching levels". Because nothing maps it,
+ * normalizeCapability('Both') → 'both', which matches no capability at
+ * all — so anyone carrying it was silently granted NOTHING: locked out
+ * of claiming teaching shifts, and invisible to the auto-scheduler's
+ * Highschool/Elementary checks (which test subRoles.includes(...)
+ * directly). Expanding it restores the intent instead of dropping the
+ * tag and quietly removing capability.
+ */
+const LEGACY_SUB_ROLE_EXPANSIONS = {
+  both: ['Elementary', 'Highschool'],
+};
+
+/**
+ * Resolve a stored sub-roles array to current capability values,
+ * expanding legacy multi-value tags and de-duplicating. Safe on any
+ * input; unknown values pass through untouched so they stay visible
+ * rather than being silently swallowed.
+ */
+export function expandSubRoles(subRoles) {
+  if (!Array.isArray(subRoles)) return [];
+  const out = [];
+  for (const sr of subRoles) {
+    const expansion = typeof sr === 'string'
+      ? LEGACY_SUB_ROLE_EXPANSIONS[sr.trim().toLowerCase()]
+      : null;
+    if (expansion) out.push(...expansion);
+    else out.push(sr);
+  }
+  return [...new Set(out)];
+}
+
+/**
  * Can someone holding `userSubRoles` work a shift requiring `required`?
  *
  * - no requirement (legacy shift with no subRole) → anyone can take it
  * - no sub-roles recorded at all → locked out, as before
  */
 export function hasCapability(userSubRoles, required) {
-  const subs = Array.isArray(userSubRoles) ? userSubRoles : [];
+  // Expand first so a legacy 'Both' counts as Elementary + Highschool
+  // rather than matching nothing.
+  const subs = expandSubRoles(userSubRoles);
   if (subs.length === 0) return false;
   const want = normalizeCapability(required);
   if (!want) return true;

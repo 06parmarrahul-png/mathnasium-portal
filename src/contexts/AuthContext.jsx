@@ -12,6 +12,7 @@ import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiv
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { buildInitialMembership, resolveUserForCenter } from '../lib/centerMembership';
+import { expandSubRoles } from '../lib/subRoles';
 
 const AuthContext = createContext(null);
 
@@ -390,10 +391,12 @@ export function AuthProvider({ children }) {
     [profile, activeCenterId],
   );
 
-  const mySubRoles = useMemo(() => {
-    const resolved = resolveUserForCenter(profile, activeCenterId);
-    return Array.isArray(resolved?.subRoles) ? resolved.subRoles : [];
-  }, [profile, activeCenterId]);
+  // Expanded so a legacy 'Both' tag resolves to Elementary + Highschool
+  // for every downstream eligibility check and pill.
+  const mySubRoles = useMemo(
+    () => expandSubRoles(resolveUserForCenter(profile, activeCenterId)?.subRoles),
+    [profile, activeCenterId],
+  );
 
   // Who may claim an open shift or post/accept a swap. Volunteers work
   // the shifts they're given (they request time off instead), and

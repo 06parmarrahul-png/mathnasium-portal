@@ -20,7 +20,7 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, subRoleShort, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, subRoleShort, expandSubRoles, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
@@ -997,7 +997,10 @@ function AddStaffModal({ onClose, onSubmit }) {
 // membership semantics + Firestore rules apply automatically.
 function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset }) {
   if (!user) return null;
-  const subRoles = user.subRoles || [];
+  // Expanded, so a legacy 'Both' shows as Elementary + Highschool ticked.
+  // Toggling anything here then writes the expanded list back, which
+  // retires the old tag on that user without a bulk migration.
+  const subRoles = expandSubRoles(user.subRoles);
   return (
     <Modal title={`Edit — ${user.displayName || user.email}`} onClose={onClose}>
       <p className="text-xs text-gray-500 -mt-2 mb-3 truncate">
@@ -5704,7 +5707,7 @@ export default function Admin() {
                 ) : (
                   <ul className="divide-y divide-gray-100">
                     {filtered.map(u => {
-                      const subs = u.subRoles || [];
+                      const subs = expandSubRoles(u.subRoles);
                       // Colour comes from the same per-centre palette that
                       // paints the weekly grid (see staffTypeColorHex), so
                       // a Manager chip here is the Manager colour there,
@@ -6198,7 +6201,7 @@ export default function Admin() {
                             </p>
                             <div className="flex flex-wrap gap-1.5 mb-4">
                               {approvedUsers.filter(u => !editingDay.assignedEmployees.includes(u.displayName)).map(u => {
-                                const subs = u.subRoles || [];
+                                const subs = expandSubRoles(u.subRoles);
                                 // Online is its own platform — check it first.
                                 const primarySub = subs.includes('Online')
                                   ? 'Online'

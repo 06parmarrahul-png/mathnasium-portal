@@ -33,6 +33,11 @@ const MONTH_NAME_TO_NUMBER = {
   september: 9, october: 10, november: 11, december: 12,
 };
 
+// The one import in this otherwise dependency-free engine. subRoles.js is
+// itself pure (no Firebase, no React), so this keeps the module unit-
+// testable while avoiding a second copy of the legacy-tag mapping.
+import { expandSubRoles } from './subRoles';
+
 export const ROLE_DISPLAY_ORDER = {
   'Center Director': 0, 'Dir. of Education': 1, 'Manager': 2,
   'Lead': 3, 'Host': 4, 'Admin': 5, 'Instructor': 6,
@@ -528,13 +533,17 @@ export function generateSchedule({
   // scheduler pool (they're salaried and their shifts are set via
   // fixedStaff). Admin Assistants DO appear — they're owner-equivalent
   // for permissions but operate as staff for scheduling.
+  // Sub-roles are expanded ONCE here, at the single point instructors
+  // enter the engine, so every subRoles.includes('Highschool') check
+  // below sees current capability values. Without this a legacy 'Both'
+  // tag reads as neither level and the person is skipped for both.
   const formInstructors = instructors.filter(
     u => u.approved
       && u.role !== 'owner'
       && u.role !== 'super_admin'
       && u.role !== 'director'
       && !fixedStaffNames.has(u.displayName)
-  );
+  ).map(u => ({ ...u, subRoles: expandSubRoles(u.subRoles) }));
 
   // Tracking
   const totalAssignments = {};   // uid -> total shifts assigned

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normalizeCapability, hasCapability, requiredCapabilityForShift, SUB_ROLES } from './subRoles';
+import { normalizeCapability, hasCapability, requiredCapabilityForShift, expandSubRoles, SUB_ROLES } from './subRoles';
 
 describe('normalizeCapability', () => {
   it('folds every spelling of Highschool together', () => {
@@ -70,5 +70,45 @@ describe('requiredCapabilityForShift', () => {
     }
     // and still cannot host
     expect(hasCapability(arham, requiredCapabilityForShift({ role: 'Host' }))).toBe(false);
+  });
+});
+
+// ── Legacy 'Both' tag ─────────────────────────────────────────────────
+// 'Both' predates the current capability set and meant "can teach both
+// teaching levels". It matched no capability, so anyone carrying it was
+// silently granted nothing — locked out of claiming teaching shifts and
+// skipped by the auto-scheduler's level checks.
+describe('expandSubRoles', () => {
+  it('expands a legacy Both tag to both teaching levels', () => {
+    expect(expandSubRoles(['Both']).sort()).toEqual(['Elementary', 'Highschool']);
+  });
+  it('is case- and whitespace-insensitive about it', () => {
+    expect(expandSubRoles([' both ']).sort()).toEqual(['Elementary', 'Highschool']);
+  });
+  it('does not duplicate levels the user already has', () => {
+    expect(expandSubRoles(['Both', 'Highschool', 'Elementary']).sort())
+      .toEqual(['Elementary', 'Highschool']);
+  });
+  it('leaves current values untouched', () => {
+    expect(expandSubRoles(['Elementary', 'Host'])).toEqual(['Elementary', 'Host']);
+  });
+  it('passes unknown values through rather than swallowing them', () => {
+    expect(expandSubRoles(['Mystery'])).toEqual(['Mystery']);
+  });
+  it('survives junk input', () => {
+    expect(expandSubRoles(null)).toEqual([]);
+    expect(expandSubRoles(undefined)).toEqual([]);
+    expect(expandSubRoles([null, 'Elementary'])).toEqual([null, 'Elementary']);
+  });
+});
+
+describe('hasCapability with a legacy Both tag', () => {
+  it('lets a Both-tagged instructor claim either teaching level', () => {
+    expect(hasCapability(['Both'], 'Elementary')).toBe(true);
+    expect(hasCapability(['Both'], 'Highschool')).toBe(true);
+  });
+  it('does not grant capabilities Both never implied', () => {
+    expect(hasCapability(['Both'], 'Online')).toBe(false);
+    expect(hasCapability(['Both'], 'Host')).toBe(false);
   });
 });
