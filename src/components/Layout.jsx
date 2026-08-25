@@ -92,7 +92,7 @@ export default function Layout({ children }) {
     ).length;
 
     return openCount + swapCount;
-  }, [openShifts, chatDocs, profile]);
+  }, [openShifts, chatDocs, profile, mySubRoles]);
 
   // Build nav based on role.
   //

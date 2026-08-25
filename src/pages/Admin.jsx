@@ -2087,13 +2087,6 @@ export default function Admin() {
     });
   };
 
-  const expandAllDays = () => {
-    if (!draftSchedule) return;
-    setExpandedDays(new Set(draftSchedule.days.map((_, i) => i)));
-  };
-
-  const collapseAllDays = () => setExpandedDays(new Set());
-
   // Payroll state
   const today = new Date();
   const defaultPeriod = today.getDate() >= 11 && today.getDate() <= 25
@@ -5277,7 +5270,6 @@ export default function Admin() {
                         .reduce((s2, sh) => s2 + shiftHours(sh), 0);
                     }, 0);
                     const displayHrs = isNaN(totalHrs) ? 0 : Math.round(totalHrs * 10) / 10;
-                    const initials = u.displayName?.split(' ').map(w => w[0]).join('').toUpperCase().slice(0,2);
                     return (
                       <tr key={u.uid} className="border-b hover:bg-gray-50 transition-colors group">
                         <td className="px-4 py-2 border-r">
@@ -6771,7 +6763,6 @@ export default function Admin() {
           ) : (
             <div className="space-y-4">
               {((comparisonSummary?.perPerson) || payrollSummary).map(person => {
-                const bg = assignmentColorHex(assignmentFor(person), centerConfig);
                 const hasRadius = !!comparisonSummary;
                 const shiftRows = hasRadius ? person.shiftComparisons : person.shifts;
                 // "Discrepancy" now means rows that still need a human, not

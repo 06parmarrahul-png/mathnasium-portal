@@ -284,7 +284,6 @@ export default async function handler(req, res) {
       resetEmailSent = true;
     } catch (err) {
       resetEmailError = err?.message || String(err);
-      // eslint-disable-next-line no-console
       console.error('[create-staff] reset email failed:', resetEmailError);
     }
   }

@@ -108,7 +108,9 @@ export default function ApptotoSchedule() {
       setError(e.message); setEvents([]);
     }
   };
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeCenterId, connected, offsetDays]);
+  // Intentionally re-runs only on these three params, not on `load` identity.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [activeCenterId, connected, offsetDays]);
 
   // Group + filter the events into a day-keyed map for the render pass.
   const groups = useMemo(() => {

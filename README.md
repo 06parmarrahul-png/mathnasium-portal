@@ -1,21 +1,29 @@
-# Mathnasium Langley · Instructor Portal
+# Ratio
 
-A web app for the Mathnasium Langley team. Instructors submit availability, request time off, swap shifts, view announcements, and chat with the team. Owners run the schedule, approve users, manage roles, post open shifts, run payroll, and cross-reference Radius timesheet data against scheduled shifts.
+A multi-tenant platform for running Mathnasium-style learning centers. What started as a single-location instructor portal (Mathnasium Langley) has grown into a product that any center can onboard onto: staff scheduling and payroll on one side, lead intake and business analytics on the other, with a platform-admin layer to operate across every center.
+
+## Who uses it
+
+- **Instructors** — submit availability, request time off, claim/swap shifts on the shift board, chat with the team, read announcements.
+- **Leads** — same as instructors, plus can run the day-of-day Student Scheduler.
+- **Owners / Admin Assistants / Directors** (`admin_assistant`, `director` are owner-equivalent at the center level) — run the schedule, approve/promote users, manage roles, post open shifts, run payroll (including cross-referencing Radius timesheet exports against scheduled shifts), manage supply inventory, review the availability/audit logs, configure center settings, and manage lead intake with a public booking page for prospective families.
+- **Super admins** — operate the platform across every center: cross-center chat, platform revenue/billing, role management, and a center switcher for support.
+
+A single account can belong to multiple centers (`centerIds[]`), with per-center role/state stored in `centerMemberships`.
 
 ## Stack
 
-- **Frontend:** React 19 + Vite
-- **Routing:** react-router-dom v7
-- **Styling:** Tailwind CSS v4
-- **Backend:** Firebase (Auth + Firestore)
-- **Email notifications:** EmailJS (browser SDK)
+- **Frontend:** React 19 + Vite, Tailwind CSS v4, react-router-dom v7
+- **Backend:** Firebase (Auth + Firestore), plus Vercel serverless functions under `api/` (Firebase Admin SDK) for anything that needs a trusted server: Stripe billing + webhooks, Resend email, Apptoto appointment sync, scheduled shift-reminder cron, calendar token links, an AI owner-assistant ("Jarvis") chat, and staff create/reject actions that touch Firebase Auth directly.
+- **Payments:** Stripe (platform billing)
+- **Email:** Resend (server-side) and EmailJS (some legacy client-side notifications)
 - **Deploy:** Vercel
 
 ## Prerequisites
 
 - Node.js 18+ (recommend 20)
-- A Firebase project with Email/Password auth enabled and Firestore in production mode
-- (Optional) An EmailJS account for outgoing email notifications
+- A Firebase project with Email/Password auth enabled, Firestore in production mode, and a service account for the Admin SDK (used by `api/`)
+- Stripe and Resend accounts if you're exercising billing or transactional email locally
 
 ## Getting started
 
@@ -26,77 +34,57 @@ npm run dev
 
 The dev server runs at `http://localhost:5173`.
 
-To build for production:
-
 ```bash
-npm run build       # output goes to dist/
+npm run build       # production build → dist/
 npm run preview     # serve the prod build locally
-npm run lint        # run eslint
+npm run lint        # eslint
+npm run test        # vitest (watch)
+npm run test:run    # vitest (single run)
 ```
 
 ## Project layout
 
 ```
 src/
-├── App.jsx                      # routes + error boundary
+├── App.jsx                      # routes, lazy-loaded pages, error boundary
 ├── main.jsx                     # React entrypoint
-├── firebase.js                  # Firebase init (auth + firestore)
+├── firebase.js                  # Firebase init (auth + firestore, offline persistence)
 ├── contexts/
-│   └── AuthContext.jsx          # login / signup / logout / password reset
-├── components/
-│   ├── ErrorBoundary.jsx        # catches render errors
-│   ├── Layout.jsx               # sidebar + header shell
-│   ├── Logo.jsx
-│   └── ProtectedRoute.jsx       # auth + approval + owner gating
-├── pages/
-│   ├── Login.jsx                # sign in + forgot password
-│   ├── Signup.jsx
-│   ├── Home.jsx                 # dashboard
-│   ├── Schedule.jsx             # calendar, availability, swaps, time off
-│   ├── Chat.jsx                 # team chat + shift swap accept
-│   ├── Announcements.jsx
-│   ├── NotificationPreferences.jsx
-│   └── Admin.jsx                # owner-only: scheduler, users, payroll, requests
-└── lib/
-    ├── scheduler.js             # auto-scheduler engine (pure logic)
-    └── emailService.js          # EmailJS wrappers
+│   └── AuthContext.jsx          # auth, active center, role helpers, center config
+├── components/                  # shared UI: layout, modals, cards, editors
+├── pages/                       # one file per route — see App.jsx for the full route table
+└── lib/                         # pure logic + Firestore helpers (scheduler engine,
+                                  # analytics, inventory, leads, audit log, etc.)
+
+api/
+├── assistant/                   # owner-facing AI assistant chat
+├── stripe/                      # billing + webhook handlers
+├── users/                       # server-side create/reject (needs Admin SDK)
+├── cron/                        # scheduled shift-reminder emails
+├── calendar/, scheduler/        # tokenized calendar links, appointment sync
+└── apptoto.js, intakes.js, ...  # third-party integrations
 ```
 
-## Firestore collections
+## Data model
 
-- `users` — one doc per user, keyed by uid. Fields: `email`, `displayName`, `role` (`'instructor'` or `'owner'`), `instructorType` (Instructor/Lead/Host/Admin/Manager/Center Director/Dir. of Education), `priority`, `maxDaysPerWeek`, `subRoles[]`, `approved`, `phone`, `createdAt`.
-- `availability` — one doc per (user, date). Doc id is `${uid}_${dateStr}` so writes are idempotent.
-- `shifts` — assigned shifts. Fields include `userId`, `userName`, `date`, `startTime`, `endTime`, `role`, `shiftType`, `status`.
-- `openShifts` — shifts available to claim. `status` is `'open'` or `'claimed'`.
-- `timeOffRequests` — `status` is `'pending'`, `'approved'`, or `'denied'`.
-- `chat` — messages + system events (shift swaps, schedule postings).
-- `announcements` — posts visible to everyone.
-- `notificationPreferences` — one doc per user, keyed by uid.
+Firestore is multi-tenant: most collections carry a `centerId` field, and per-center config lives at `centers/{centerId}/config/main`. Core collections include `users`, `availability`, `shifts`, `openShifts`, `timeOffRequests`, `chat`, `announcements`, `notificationPreferences`, plus newer ones backing inventory, leads/intake, and audit logging. See `src/lib/` for the read/write helpers around each.
 
 ## Security model
 
 1. **Auth:** Firebase email/password.
-2. **Approval gate:** New signups land with `approved: false`. The owner approves from the admin panel. `ProtectedRoute` blocks anyone without an approved profile. Users with a deleted profile are also blocked.
-3. **Owner gate:** `/admin` is wrapped in `<ProtectedRoute requireOwner>`. Non-owners get a "Not authorized" screen and never subscribe to the admin data feeds.
-4. **Role on signup:** All new accounts are created as plain `instructorType: 'Instructor'`. The owner promotes from the admin panel — users can't pick "Admin" at signup.
-5. **Firestore rules:** *(Recommended; not yet shipped in this repo.)* Lock the `users` collection so only the owner reads it; everyone reads/writes only their own `availability`, `notificationPreferences`, and `timeOffRequests`; anyone authenticated can read `announcements`, `chat`, `shifts`, `openShifts` but only the owner can write outside their own claim/swap actions.
+2. **Approval gate:** new signups land unapproved; the owner approves from the admin panel. `ProtectedRoute` blocks unapproved or deleted profiles.
+3. **Role gates:** routes are wrapped in `<ProtectedRoute requireOwner>` / `requireSuperAdmin>` / `blockVolunteers` as appropriate — see the route table in `src/App.jsx` for exactly which pages require which role.
+4. **Role on signup:** the first approved signup at a center is auto-promoted to owner; everyone after that lands as a plain `instructorType: 'Instructor'` and is promoted only by an owner/admin.
+5. **Firestore rules:** see `firestore.rules` in the repo root.
 
 ## Environment / config
 
-Firebase web config and the EmailJS public key currently live in source. They are technically safe to expose (Firebase web keys + EmailJS public keys are both designed to be public) but rotation requires a code commit. A future improvement is to move these to `import.meta.env.VITE_*` in `.env.local` (already gitignored).
+Firebase web config lives in `src/firebase.js` (Firebase web keys are designed to be public). Server-side secrets (Firebase Admin service account, Stripe keys, Resend key, EmailJS keys) belong in Vercel environment variables / `.env.local`, not in source.
 
 ## Deploying
 
-The repo deploys cleanly to Vercel with the included `vercel.json`. SPA rewrites are configured (any deep link falls back to `index.html`) and security headers are set. Push to `main` triggers a deploy via the Vercel GitHub integration.
-
-## Useful commands
-
-```bash
-npm run lint          # check code
-npm run build         # production build
-git status            # see what's changed
-```
+The repo deploys to Vercel via `vercel.json` (SPA rewrites + security headers). Push to `main` triggers a deploy through the Vercel GitHub integration.
 
 ## Auditing & known issues
 
-See `AUDIT.md` for a prioritized list of items found during code review, including ones not yet fixed. Open issues like Firestore rules and bigger refactors are tracked there.
+`AUDIT.md` is a point-in-time code review from May 2026 against a much smaller version of this codebase; most of its items have since been fixed (see `CHANGES.md`), but it's kept for historical context rather than as a current issue tracker.

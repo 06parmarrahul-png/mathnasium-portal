@@ -230,6 +230,10 @@ export function AuthProvider({ children }) {
   // out also avoids a noisy permission-denied error in dev tools.
   useEffect(() => {
     if (!user) {
+      // Synchronizing external auth state (signed out) into local state —
+      // the sanctioned exception, same rationale as the activeCenterId
+      // resync effect above.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setCenterConfig(DEFAULT_CENTER_CONFIG);
       return;
     }

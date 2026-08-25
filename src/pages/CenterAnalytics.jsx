@@ -30,8 +30,25 @@ export default function CenterAnalytics() {
 
   useEffect(() => {
     if (!activeCenterId || !canSeeCenterSettings) return;
+    // Sliding date window so live reads don't scale with centre-age — same
+    // 180-day window Admin.jsx's AnalyticsTab data feed already uses for
+    // this exact component; older docs still exist in Firestore for
+    // ad-hoc queries.
+    const WINDOW_DAYS = 180;
+    const cutoff = new Date();
+    cutoff.setDate(cutoff.getDate() - WINDOW_DAYS);
+    const y = cutoff.getFullYear();
+    const m = String(cutoff.getMonth() + 1).padStart(2, '0');
+    const d = String(cutoff.getDate()).padStart(2, '0');
+    const windowStart = `${y}-${m}-${d}`;
+
     const u1 = onSnapshot(
-      query(collection(db, 'shifts'), where('centerId', '==', activeCenterId), orderBy('date')),
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', windowStart),
+        orderBy('date'),
+      ),
       snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
     );
     const u2 = onSnapshot(

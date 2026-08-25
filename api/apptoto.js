@@ -218,7 +218,7 @@ export default async function handler(req, res) {
     if (req.method === 'POST') return await handlePost(req, res, auth);
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
-    console.error('apptoto endpoint error:', e); // eslint-disable-line no-console
+    console.error('apptoto endpoint error:', e);
     return res.status(500).json({ error: e?.message || 'Internal error' });
   }
 }

@@ -132,7 +132,6 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
     } catch (err) {
       // Roll the optimistic update back so the user sees the data revert.
       setLocalHolidays(prev);
-      // eslint-disable-next-line no-console
       console.error('[holidays] save failed:', err);
       const msg = `Could not save: ${err?.message || err?.code || 'unknown error'}`;
       setError(`${msg}. Try again or contact your platform operator.`);

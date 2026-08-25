@@ -271,7 +271,11 @@ export default function StaffingBudget() {
     if (!activeCenterId) return;
     const windowStart = format(subDays(new Date(), 220), 'yyyy-MM-dd');
     return onSnapshot(
-      query(collection(db, 'shifts'), where('centerId', '==', activeCenterId)),
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', windowStart),
+      ),
       snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(s => s.date && s.date >= windowStart)),
       () => setShifts([]),
     );

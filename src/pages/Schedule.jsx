@@ -21,6 +21,7 @@ import {
 } from 'date-fns';
 import { toast } from '../lib/notify';
 import { logAvailabilityChange, logAvailabilityBatch } from '../lib/availabilityLog';
+import { getWeekOfMonth } from '../lib/scheduler';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -40,17 +41,8 @@ function fmtTime(t) {
  * 00:00 – 23:59). Used to render "Full day" instead of a literal time
  * range anywhere availability is displayed.
  */
-export function isFullDayAvail(startTime, endTime) {
+function isFullDayAvail(startTime, endTime) {
   return startTime === '00:00' && (endTime === '23:59' || endTime === '24:00');
-}
-
-/**
- * Format an availability range for display. Returns "Full day" when the
- * range covers the whole 24h, otherwise "9:00 AM – 5:00 PM"-style.
- */
-export function fmtAvailRange(startTime, endTime) {
-  if (isFullDayAvail(startTime, endTime)) return 'Full day';
-  return `${fmtTime(startTime)} – ${fmtTime(endTime)}`;
 }
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -105,37 +97,9 @@ function shiftTypeStyle(shiftType) {
   return SHIFT_TYPE_STYLES[shiftType] || SHIFT_TYPE_STYLES['In-Centre'];
 }
 
-// Default operating-hours map (JS getDay() 1=Mon..6=Sat). Used as fallback
-// when no per-center config is loaded. The actual values flow in from the
-// active center's `centerConfig.operatingHours` (passed via props) so each
-// Mathnasium location can have its own hours.
-const DEFAULT_FULL_DAY_BY_DOW = {
-  1: { start: '10:00', end: '20:00' }, // Mon
-  2: { start: '10:00', end: '20:00' }, // Tue
-  3: { start: '10:00', end: '20:00' }, // Wed
-  4: { start: '10:00', end: '20:00' }, // Thu
-  5: { start: '10:00', end: '19:00' }, // Fri
-  6: { start: '09:00', end: '15:00' }, // Sat
-};
-
-// Convert the center config's day-name-keyed operatingHours into the
-// JS-getDay()-keyed shape used by the modals.
-function buildFullDayByDow(centerConfig) {
-  const op = centerConfig?.operatingHours;
-  if (!op) return DEFAULT_FULL_DAY_BY_DOW;
-  return {
-    1: op.Monday    || DEFAULT_FULL_DAY_BY_DOW[1],
-    2: op.Tuesday   || DEFAULT_FULL_DAY_BY_DOW[2],
-    3: op.Wednesday || DEFAULT_FULL_DAY_BY_DOW[3],
-    4: op.Thursday  || DEFAULT_FULL_DAY_BY_DOW[4],
-    5: op.Friday    || DEFAULT_FULL_DAY_BY_DOW[5],
-    6: op.Saturday  || DEFAULT_FULL_DAY_BY_DOW[6],
-  };
-}
-
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, fullDayByDow, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], isVolunteer = false }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], isVolunteer = false }) {
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -675,10 +639,6 @@ const RECURRENCE_OPTIONS = [
   { value: 'week4',       label: 'Week 4 only' },
 ];
 
-function getWeekOfMonth(date) {
-  return Math.ceil(date.getDate() / 7);
-}
-
 function weekMatchesRecurrence(date, recurrence) {
   const w = getWeekOfMonth(date);
   if (recurrence === 'every') return true;
@@ -691,7 +651,7 @@ function weekMatchesRecurrence(date, recurrence) {
   return false;
 }
 
-function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayByDow, centerConfig, onClose, onSaveBulk }) {
+function WeeklyAvailabilityModal({ currentMonth, availability, profile, centerConfig, onClose, onSaveBulk }) {
   const [selectedDays, setSelectedDays] = useState([]);
   const [recurrence, setRecurrence] = useState('every');
   // Default custom-time inputs to this centre's Monday instructional
@@ -775,13 +735,14 @@ function WeeklyAvailabilityModal({ currentMonth, availability, profile, fullDayB
       }
     }
     return items;
-  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, fullDayByDow, excludedDates, note, noteAppliesToAll, noteExcludedDates, weeklyPreferredAssignment]);
+  }, [selectedDays, recurrence, scope, currentMonth, useFullDay, startTime, endTime, excludedDates, note, noteAppliesToAll, noteExcludedDates, weeklyPreferredAssignment]);
 
   // Reset the excluded-dates set when the generators change — otherwise
   // an old exclude on Aug 19 would silently apply if the user later
   // switches days/recurrence/scope. Per-note opt-outs reset on the same
   // triggers for the same reason.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setExcludedDates(new Set());
     setNoteExcludedDates(new Set());
   }, [selectedDays, recurrence, scope]);
@@ -1258,7 +1219,6 @@ function CalendarSyncModal({ profile, onClose }) {
 
 export default function Schedule() {
   const { profile, mySubRoles, activeCenterId, centerConfig, isVolunteer } = useAuth();
-  const fullDayByDow = useMemo(() => buildFullDayByDow(centerConfig), [centerConfig]);
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
@@ -1558,13 +1518,14 @@ export default function Schedule() {
 
       // Email confirmation to claimer + CC admins/owners. Fire-and-forget.
       try {
-        const usersSnap = await getDocs(collection(db, 'users'));
+        const usersSnap = await getDocs(query(
+          collection(db, 'users'),
+          where('role', 'in', ['admin', 'owner', 'super_admin']),
+        ));
         const adminRecipients = [];
         usersSnap.forEach(u => {
           const d = u.data();
-          if (d.email && ['admin', 'owner', 'super_admin'].includes(d.role)) {
-            adminRecipients.push({ email: d.email, displayName: d.displayName });
-          }
+          if (d.email) adminRecipients.push({ email: d.email, displayName: d.displayName });
         });
         notifyShiftClaimed(
           openShift,
@@ -2019,7 +1980,6 @@ export default function Schedule() {
           currentMonth={currentMonth}
           availability={availability}
           profile={profile}
-          fullDayByDow={fullDayByDow}
           centerConfig={centerConfig}
           onClose={() => setShowWeeklyModal(false)}
           onSaveBulk={handleSaveBulk}
@@ -2039,7 +1999,6 @@ export default function Schedule() {
           myShift={myShifts.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))}
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
-          fullDayByDow={fullDayByDow}
           centerConfig={centerConfig}
           isClosedDay={isCenterClosedOn(selectedDate, centerConfig)}
           onClose={() => setSelectedDate(null)}

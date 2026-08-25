@@ -473,7 +473,6 @@ function TodayTab({ centerId }) {
         await saveSnapshot(centerId, date, dayAnalytics);
       } catch (e) {
         // Capture failures are non-blocking — schedule still works.
-        // eslint-disable-next-line no-console
         console.warn('[snapshot] capture skipped:', e?.message || e);
       }
     })();

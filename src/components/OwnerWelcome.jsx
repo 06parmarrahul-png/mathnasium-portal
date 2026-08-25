@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { collection, onSnapshot, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, getDocs, doc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import {
@@ -83,11 +83,18 @@ export default function OwnerWelcome({ onContinue }) {
     () => setCenters([]),
   ), []);
 
-  useEffect(() => onSnapshot(
-    collection(db, 'users'),
-    snap => setUserCount(snap.docs.filter(d => d.data()?.approved !== false).length),
-    () => setUserCount(null),
-  ), []);
+  // Welcome-banner stat, not a live dashboard number — a one-time read on
+  // mount is plenty and avoids re-billing on every user-doc write platform-
+  // wide for as long as this (first-14-days-only) banner stays mounted.
+  useEffect(() => {
+    let cancelled = false;
+    getDocs(collection(db, 'users'))
+      .then(snap => {
+        if (!cancelled) setUserCount(snap.docs.filter(d => d.data()?.approved !== false).length);
+      })
+      .catch(() => { if (!cancelled) setUserCount(null); });
+    return () => { cancelled = true; };
+  }, []);
 
   const myCentre = useMemo(
     () => centers.find(c => c.id === activeCenterId),

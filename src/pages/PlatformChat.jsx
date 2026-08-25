@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { collection, addDoc, onSnapshot, query, orderBy, limit, where } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { MessageSquare, Send, ShieldAlert, Building2, Users, Globe } from 'lucide-react';
@@ -93,13 +93,16 @@ export default function PlatformChat() {
     );
   }, [canSeeOwners]);
 
-  // Members list — read once for the channel-roster sidebar. Filtered
+  // Members list — read once for the channel-roster sidebar (it's a
+  // roster, not something that needs to update mid-session). Filtered
   // per-tab below.
   useEffect(() => {
-    if (!canSeeCentre && !canSeeOwners) return undefined;
-    return onSnapshot(collection(db, 'users'), snap => {
-      setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    if (!canSeeCentre && !canSeeOwners) return;
+    let cancelled = false;
+    getDocs(collection(db, 'users')).then(snap => {
+      if (!cancelled) setAllUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    return () => { cancelled = true; };
   }, [canSeeCentre, canSeeOwners]);
 
   const centreMembers = useMemo(() => {

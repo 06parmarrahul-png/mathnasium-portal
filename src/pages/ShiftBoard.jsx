@@ -336,13 +336,13 @@ export default function ShiftBoard() {
     hideIneligible
       ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), mySubRoles))
       : visibleOpen
-  ), [visibleOpen, hideIneligible, profile]);
+  ), [visibleOpen, hideIneligible, mySubRoles]);
 
   const filteredSwaps = useMemo(() => (
     hideIneligible
       ? visibleSwaps.filter(s => s.userId === profile?.uid || canTake(s.shiftSubRole, mySubRoles))
       : visibleSwaps
-  ), [visibleSwaps, hideIneligible, profile]);
+  ), [visibleSwaps, hideIneligible, profile, mySubRoles]);
 
   // Counters for the empty / hidden states
   const hiddenOpenCount  = visibleOpen.length  - filteredOpen.length;
@@ -408,13 +408,14 @@ export default function ShiftBoard() {
 
       // Email confirmation to claimer + CC admins/owners. Fire-and-forget.
       try {
-        const usersSnap = await getDocs(collection(db, 'users'));
+        const usersSnap = await getDocs(query(
+          collection(db, 'users'),
+          where('role', 'in', ['admin', 'owner', 'super_admin']),
+        ));
         const adminRecipients = [];
         usersSnap.forEach(u => {
           const d = u.data();
-          if (d.email && ['admin', 'owner', 'super_admin'].includes(d.role)) {
-            adminRecipients.push({ email: d.email, displayName: d.displayName });
-          }
+          if (d.email) adminRecipients.push({ email: d.email, displayName: d.displayName });
         });
         notifyShiftClaimed(
           openShift,

@@ -203,7 +203,7 @@ async function handleCreate(req, res) {
       updatedAt: new Date(),
     });
   } catch (e) {
-    console.error('Lead mirror failed:', e?.message || e); // eslint-disable-line no-console
+    console.error('Lead mirror failed:', e?.message || e);
   }
 
   try {
@@ -233,7 +233,7 @@ async function handleCreate(req, res) {
       ].join('\n'),
     });
   } catch (e) {
-    console.error('Confirmation email failed:', e?.message || e); // eslint-disable-line no-console
+    console.error('Confirmation email failed:', e?.message || e);
   }
 
   res.status(200).json({
@@ -251,7 +251,7 @@ export default async function handler(req, res) {
     if (req.method === 'POST') return await handleCreate(req, res);
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
-    console.error('intakes endpoint error:', e); // eslint-disable-line no-console
+    console.error('intakes endpoint error:', e);
     return res.status(500).json({ error: e?.message || 'Internal error' });
   }
 }

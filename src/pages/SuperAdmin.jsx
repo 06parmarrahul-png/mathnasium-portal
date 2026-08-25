@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import {
   collection, doc, getDoc, getDocs, onSnapshot,
+  query, where, limit,
   setDoc, updateDoc, serverTimestamp,
 } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -72,9 +73,10 @@ export default function SuperAdmin() {
     let cancelled = false;
     (async () => {
       try {
-        const snap = await getDocs(collection(db, 'users'));
-        const existing = snap.docs.find(d => d.data()?.role === 'super_admin');
-        if (!cancelled) setNeedsBootstrap(!existing);
+        const snap = await getDocs(query(
+          collection(db, 'users'), where('role', '==', 'super_admin'), limit(1),
+        ));
+        if (!cancelled) setNeedsBootstrap(snap.empty);
       } catch {
         if (!cancelled) setNeedsBootstrap(false);
       }
@@ -101,9 +103,10 @@ export default function SuperAdmin() {
     setBootstrapError('');
     try {
       // Double-check no super-admin exists (race safety)
-      const usersSnap = await getDocs(collection(db, 'users'));
-      const exists = usersSnap.docs.find(d => d.data()?.role === 'super_admin');
-      if (exists) {
+      const usersSnap = await getDocs(query(
+        collection(db, 'users'), where('role', '==', 'super_admin'), limit(1),
+      ));
+      if (!usersSnap.empty) {
         setBootstrapError('A super-admin already exists. Bootstrap not allowed.');
         setBootstrapping(false);
         return;
