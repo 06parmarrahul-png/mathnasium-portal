@@ -20,13 +20,13 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, subRoleShort, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
-  stateColorHex,
+  stateColorHex, staffTypeColorHex,
   isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
@@ -5705,36 +5705,12 @@ export default function Admin() {
                   <ul className="divide-y divide-gray-100">
                     {filtered.map(u => {
                       const subs = u.subRoles || [];
-                      // Hue = access tier, so the list reads at a glance:
-                      // magenta family = leadership, warm = operational
-                      // admin, cool = teaching staff, neutral = doesn't
-                      // count toward coverage. Within a family the word
-                      // itself does the fine distinction.
-                      //
-                      // Every value in ROLE_OPTIONS needs an entry here,
-                      // plus 'Owner' (signup writes it, the dropdown
-                      // doesn't offer it). Training used to be missing
-                      // and fell through to the Instructor blue, so a
-                      // trainee and an instructor looked identical.
-                      const typeColours = {
-                        // Leadership
-                        Owner:                'bg-rose-100 text-rose-800 border-rose-300',
-                        'Center Director':    'bg-pink-100 text-pink-700 border-pink-200',
-                        'Dir. of Education':  'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200',
-                        // Operational admin
-                        Admin:                'bg-amber-100 text-amber-800 border-amber-200',
-                        Manager:              'bg-orange-100 text-orange-800 border-orange-200',
-                        Host:                 'bg-yellow-100 text-yellow-800 border-yellow-300',
-                        // Teaching staff
-                        Lead:                 'bg-indigo-100 text-indigo-700 border-indigo-200',
-                        Instructor:           'bg-sky-100 text-sky-700 border-sky-200',
-                        // Excluded from coverage / ratio maths — quieter
-                        // on purpose, so exceptions read as exceptions.
-                        Training:             'bg-slate-100 text-slate-700 border-slate-300',
-                        Volunteer:            'bg-teal-100 text-teal-700 border-teal-200',
-                      };
-                      const typeCls = typeColours[u.instructorType || 'Instructor']
-                        || 'bg-gray-100 text-gray-700 border-gray-300';
+                      // Colour comes from the same per-centre palette that
+                      // paints the weekly grid (see staffTypeColorHex), so
+                      // a Manager chip here is the Manager colour there,
+                      // and repainting it in Appearance moves both.
+                      const typeName = u.instructorType || 'Instructor';
+                      const typeBg   = staffTypeColorHex(typeName, centerConfig);
                       return (
                         <li
                           key={u.id}
@@ -5745,8 +5721,11 @@ export default function Admin() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium text-gray-900 truncate">{u.displayName || u.email}</p>
-                              <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeCls}`}>
-                                {u.instructorType || 'Instructor'}
+                              <span
+                                className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                style={{ backgroundColor: typeBg, color: contrastText(typeBg) }}
+                              >
+                                {typeName}
                               </span>
                               {/* The isVolunteer flag and the 'Volunteer'
                                   instructorType are separate fields that
@@ -5755,7 +5734,13 @@ export default function Admin() {
                                   colours on the same row. Same word =
                                   same colour, and only once. */}
                               {u.isVolunteer && u.instructorType !== 'Volunteer' && (
-                                <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-100 px-2 py-0.5 text-[11px] font-semibold text-teal-700">
+                                <span
+                                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                                  style={{
+                                    backgroundColor: stateColorHex('Volunteer', centerConfig),
+                                    color: contrastText(stateColorHex('Volunteer', centerConfig)),
+                                  }}
+                                >
                                   Volunteer
                                 </span>
                               )}
@@ -5772,8 +5757,12 @@ export default function Admin() {
                                   {subs.map(sr => {
                                     const st = SUB_ROLE_STYLES[sr];
                                     return (
-                                      <span key={sr} className={`inline-flex items-center gap-1 rounded-full ${st?.pillBg || 'bg-gray-100'} ${st?.pillText || 'text-gray-600'} px-1.5 py-px text-[10px] font-semibold`}>
-                                        {sr.charAt(0)}
+                                      <span
+                                        key={sr}
+                                        title={st ? sr : `${sr} — not a current sub-role`}
+                                        className={`inline-flex items-center gap-1 rounded-full ${st?.pillBg || 'bg-gray-100'} ${st?.pillText || 'text-gray-500 italic'} px-1.5 py-px text-[10px] font-semibold`}
+                                      >
+                                        {subRoleShort(sr)}
                                       </span>
                                     );
                                   })}

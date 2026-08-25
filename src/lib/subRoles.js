@@ -119,6 +119,27 @@ export const SUB_ROLE_STYLES = {
   },
 };
 
+/**
+ * Compact pill labels. Deliberately NOT first-initial: 'Highschool' and
+ * 'Host' both start with H, so a one-letter pill made a highschool
+ * instructor and a front-of-house host visually identical in the staff
+ * list — the exact pair you most need to tell apart when staffing.
+ *
+ * Anything not listed (stale values from before the current capability
+ * set) returns unchanged, so it reads as its full self rather than an
+ * unexplained initial.
+ */
+export const SUB_ROLE_SHORT = {
+  Elementary: 'Elem',
+  Highschool: 'HS',
+  Online:     'Online',
+  Host:       'Host',
+};
+
+export function subRoleShort(subRole) {
+  return SUB_ROLE_SHORT[subRole] || subRole;
+}
+
 // What a STAFF MEMBER can be assigned for swap / open-shift eligibility:
 // the three teaching sub-roles PLUS Host. Kept separate from SUB_ROLES
 // (which is only the teaching LEVEL a shift can carry — Host is a role, not

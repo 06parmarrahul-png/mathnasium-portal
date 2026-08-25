@@ -185,7 +185,11 @@ export const DEFAULT_STATE_COLORS = {
   'STEAM':       '#a16207', // yellow-700 — dark yellow, distinct from Manager gold
   'Summer Camp': '#f97316', // orange-500
   'Volunteer':   '#0284c7', // sky-600
-  'Training':    '#9333ea', // purple-600 — paid, present, not counted
+  // Was #9333ea, byte-identical to the 'Lead Instructor' assignment colour
+  // — a Lead block and a Training block were the same purple on the grid,
+  // and the two chips were indistinguishable in Manage Staff. Teal keeps
+  // it clearly "not a Lead" while staying distinct from No-Show's grey.
+  'Training':    '#0d9488', // teal-600 — paid, present, not counted
   'Sick Pay':    '#7f1d1d', // red-900 — deep burgundy
   'No-Show':     '#374151', // gray-700 — slate
 };
@@ -229,6 +233,49 @@ export function assignmentColorHex(assignment, centerConfig) {
   const custom = centerConfig?.assignmentColors?.[assignment];
   if (custom) return custom;
   return DEFAULT_ASSIGNMENT_COLORS[assignment] || '#64748b';
+}
+
+// ─── Staff-type colours (person-level) ───────────────────────────────────
+// ONE source of truth for "what colour is this role", so a Manager chip in
+// Manage Staff is the same colour as a Manager block on the weekly grid,
+// and repainting Manager in Super Admin → Appearance moves both.
+//
+// Each instructorType points at an existing assignment or state colour
+// rather than carrying its own hex, so there is nothing to keep in sync.
+// Only Owner is fixed here — it never appears on the grid, so it has no
+// assignment colour to borrow.
+//
+// Both the 'Center'/'Centre' and abbreviated/full director spellings are
+// listed because user docs carry either, depending on when they were made.
+const STAFF_TYPE_COLOR_SOURCE = {
+  Instructor:              { from: 'assignment', key: 'Elementary Instructor' },
+  Lead:                    { from: 'assignment', key: 'Lead Instructor' },
+  Host:                    { from: 'assignment', key: 'Host' },
+  Admin:                   { from: 'assignment', key: 'Admin' },
+  Manager:                 { from: 'assignment', key: 'Manager' },
+  'Center Director':       { from: 'assignment', key: 'Centre Director' },
+  'Centre Director':       { from: 'assignment', key: 'Centre Director' },
+  'Dir. of Education':     { from: 'assignment', key: 'Director of Education' },
+  'Director of Education': { from: 'assignment', key: 'Director of Education' },
+  Training:                { from: 'state',      key: 'Training' },
+  Volunteer:               { from: 'state',      key: 'Volunteer' },
+  Owner:                   { from: 'fixed',      key: '#0f172a' }, // slate-900
+};
+
+export const STAFF_TYPE_COLOR_KEYS = Object.keys(STAFF_TYPE_COLOR_SOURCE);
+
+/**
+ * Resolve a staff member's instructorType to its colour, honouring any
+ * per-centre customisation of the underlying assignment / state colour.
+ * Unknown types get the same neutral slate the other resolvers use, so a
+ * stale value reads as "unrecognised" instead of impersonating a real role.
+ */
+export function staffTypeColorHex(instructorType, centerConfig) {
+  const src = STAFF_TYPE_COLOR_SOURCE[instructorType];
+  if (!src) return '#64748b';
+  if (src.from === 'assignment') return assignmentColorHex(src.key, centerConfig);
+  if (src.from === 'state')      return stateColorHex(src.key, centerConfig);
+  return src.key;
 }
 
 /**
