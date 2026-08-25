@@ -207,11 +207,23 @@ export function AuthProvider({ children }) {
     profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Lead'
     || profile?.instructorType === 'Lead'
   );
+  // Same per-centre-then-legacy pattern as isLead, for the Manager title.
+  const isManager = (
+    profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Manager'
+    || profile?.instructorType === 'Manager'
+  );
   // Roles allowed to drive the Student Scheduler day-of-day —
-  // owners, admin-assistants, plain admins, super-admins, AND lead
+  // owners, admin-assistants, plain admins, super-admins, lead
   // instructors (per Rahul's request: Leads often run the floor and
-  // need to assign instructors / print / check students in).
-  const canRunScheduler = canSeeAdminPanel || isLead;
+  // need to assign instructors / print / check students in), AND
+  // managers (same rationale — see isManager above).
+  const canRunScheduler = canSeeAdminPanel || isLead || isManager;
+  // Managers additionally get the "Manage Staff Schedule" bundle in the
+  // admin panel (weekly grid + auto-scheduler + time-off requests) —
+  // NOT the rest of the admin panel (Manage Staff / Payroll / Inventory
+  // / Centre Settings stay owner-and-above only). Deliberately narrower
+  // than canSeeAdminPanel: don't reuse this flag to gate anything else.
+  const canManageStaffSchedule = canSeeAdminPanel || isManager;
   const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
@@ -399,10 +411,12 @@ export function AuthProvider({ children }) {
       isAdmin,
       isInstructor,
       isLead,
+      isManager,
       isVolunteer,
       canSeeAdminPanel,
       canSeeCenterSettings,
       canRunScheduler,
+      canManageStaffSchedule,
     }}>
       {children}
     </AuthContext.Provider>

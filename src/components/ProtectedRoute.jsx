@@ -69,9 +69,14 @@ function NotForVolunteers() {
  *                  owner, super_admin. (Name kept for backwards-compat;
  *                  it really means "requires admin-panel access".)
  *   requireSuperAdmin — page is super-admin only.
+ *   allowManager — ALSO let a Manager-titled user through a `requireOwner`
+ *                  gate. Only set this on /admin — Admin.jsx itself clamps
+ *                  a Manager to the "Manage Staff Schedule" tabs and
+ *                  denies the rest. Every other requireOwner route (Users,
+ *                  Payroll, Inventory, Leads, etc.) must NOT set this.
  */
-export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false }) {
-  const { user, profile, loading, logout, isVolunteer } = useAuth();
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, allowManager = false }) {
+  const { user, profile, loading, logout, isVolunteer, isManager } = useAuth();
 
   if (loading) return <LoadingScreen />;
 
@@ -104,7 +109,7 @@ export default function ProtectedRoute({ children, requireOwner = false, require
     return <NotAuthorized />;
   }
 
-  if (requireOwner && !canSeeAdminPanel) {
+  if (requireOwner && !canSeeAdminPanel && !(allowManager && isManager)) {
     return <NotAuthorized />;
   }
 

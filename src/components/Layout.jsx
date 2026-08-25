@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canSeeAdminPanel } = useAuth();
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isManager, isVolunteer, canSeeAdminPanel } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -246,6 +246,16 @@ export default function Layout({ children }) {
     // the floor; they don't run HR.
     manage.push(
       { to: '/scheduler-creation',    label: 'Student Scheduler',     icon: ClipboardList },
+    );
+  } else if (!useOwnerLayout && isManager) {
+    // Managers get Student Scheduler (like Leads) PLUS Manage Staff
+    // Schedule (weekly grid + auto-scheduler + time-off requests, via
+    // Admin.jsx's tab clamp) and full Inventory — still not Manage
+    // Staff / Payroll / Centre Settings.
+    manage.push(
+      { to: '/scheduler-creation',    label: 'Student Scheduler',     icon: ClipboardList },
+      { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
+      { to: '/inventory',             label: 'Inventory',             icon: Package },
     );
   }
 

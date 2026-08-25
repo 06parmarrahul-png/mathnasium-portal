@@ -2009,7 +2009,7 @@ function StatPayTab({ holidays, rows }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings } = useAuth();
+  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings, isManager } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -2025,10 +2025,19 @@ export default function Admin() {
   // initial state and re-sync if the URL changes — so clicking "Center
   // Analytics" in the super-admin sidebar opens the right tab.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState(searchParams.get('tab') || 'spreadsheet');
+  // Managers get in via ProtectedRoute's allowManager, but only for the
+  // "Manage Staff Schedule" bundle (weekly grid + auto-scheduler + time
+  // off) — never Manage Staff / Payroll / Holidays. Clamped right here,
+  // at the tab's source of truth, so a hand-edited ?tab=payroll URL can
+  // never render owner-only content even for a single frame. No-op for
+  // every other role (canSeeAdminPanel is true for all of them).
+  const clampTabForManager = (t) => (
+    !canSeeAdminPanel && isManager && !['spreadsheet', 'scheduler', 'requests'].includes(t) ? 'spreadsheet' : t
+  );
+  const [tab, setTab] = useState(() => clampTabForManager(searchParams.get('tab') || 'spreadsheet'));
   useEffect(() => {
     const t = searchParams.get('tab');
-    if (t && t !== tab) setTab(t);
+    if (t && t !== tab) setTab(clampTabForManager(t));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   // Keep the URL in sync when the user clicks a tab so refreshing or sharing
@@ -4889,9 +4898,11 @@ export default function Admin() {
     } catch { /* notify optional */ }
   };
 
-  // Admin Panel is open to admins, owners, and super-admins. Plain
-  // instructors get bounced (the route guard also enforces this).
-  if (!canSeeAdminPanel) {
+  // Admin Panel is open to admins, owners, and super-admins — plus
+  // Managers, who are clamped above to the spreadsheet/scheduler/requests
+  // tabs only. Plain instructors get bounced (the route guard also
+  // enforces this).
+  if (!canSeeAdminPanel && !isManager) {
     return <div className="text-center text-gray-500 py-16">Access denied. Admin / owner only.</div>;
   }
 

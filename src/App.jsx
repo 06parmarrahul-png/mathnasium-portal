@@ -113,7 +113,9 @@ function AppRoutes() {
         <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
         <Route path="/shift-board" element={<ProtectedRoute blockVolunteers><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute blockVolunteers><Layout><Chat /></Layout></ProtectedRoute>} />
-        <Route path="/admin" element={<ProtectedRoute requireOwner><Layout><Admin /></Layout></ProtectedRoute>} />
+        {/* allowManager: a Manager-titled user also gets in here — Admin.jsx
+            itself clamps them to the "Manage Staff Schedule" tabs only. */}
+        <Route path="/admin" element={<ProtectedRoute requireOwner allowManager><Layout><Admin /></Layout></ProtectedRoute>} />
         <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
         <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
         <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
@@ -129,8 +131,10 @@ function AppRoutes() {
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
         {/* Centre supply inventory. `requireOwner` on ProtectedRoute means
             "has admin-panel access" — admin, admin_assistant, director,
-            owner, super_admin. Instructors get Not Authorized. */}
-        <Route path="/inventory" element={<ProtectedRoute requireOwner><Layout><Inventory /></Layout></ProtectedRoute>} />
+            owner, super_admin — plus Managers via allowManager (full
+            inventory access, unlike the narrower /admin tab clamp).
+            Instructors get Not Authorized. */}
+        <Route path="/inventory" element={<ProtectedRoute requireOwner allowManager><Layout><Inventory /></Layout></ProtectedRoute>} />
         {/* Availability change history. Same admin-panel gate as
             /inventory — admin, admin_assistant, director, owner,
             super_admin. Instructors can't see who changed what. */}
