@@ -113,9 +113,10 @@ function AppRoutes() {
         <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
         <Route path="/shift-board" element={<ProtectedRoute blockVolunteers><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute blockVolunteers><Layout><Chat /></Layout></ProtectedRoute>} />
-        {/* allowManager: a Manager-titled user also gets in here — Admin.jsx
-            itself clamps them to the "Manage Staff Schedule" tabs only. */}
-        <Route path="/admin" element={<ProtectedRoute requireOwner allowManager><Layout><Admin /></Layout></ProtectedRoute>} />
+        {/* allowOps: Manager- and Host-titled users also get in here, with
+            full admin-panel access — same "operational admin" tier as
+            /inventory and /availability-log below. */}
+        <Route path="/admin" element={<ProtectedRoute requireOwner allowOps><Layout><Admin /></Layout></ProtectedRoute>} />
         <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
         <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
         <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
@@ -131,14 +132,14 @@ function AppRoutes() {
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />
         {/* Centre supply inventory. `requireOwner` on ProtectedRoute means
             "has admin-panel access" — admin, admin_assistant, director,
-            owner, super_admin — plus Managers via allowManager (full
-            inventory access, unlike the narrower /admin tab clamp).
+            owner, super_admin — plus Managers/Hosts via allowOps.
             Instructors get Not Authorized. */}
-        <Route path="/inventory" element={<ProtectedRoute requireOwner allowManager><Layout><Inventory /></Layout></ProtectedRoute>} />
+        <Route path="/inventory" element={<ProtectedRoute requireOwner allowOps><Layout><Inventory /></Layout></ProtectedRoute>} />
         {/* Availability change history. Same admin-panel gate as
             /inventory — admin, admin_assistant, director, owner,
-            super_admin. Instructors can't see who changed what. */}
-        <Route path="/availability-log" element={<ProtectedRoute requireOwner><Layout><AvailabilityLog /></Layout></ProtectedRoute>} />
+            super_admin, plus Managers/Hosts via allowOps. Instructors
+            can't see who changed what. */}
+        <Route path="/availability-log" element={<ProtectedRoute requireOwner allowOps><Layout><AvailabilityLog /></Layout></ProtectedRoute>} />
         <Route path="/notifications" element={<ProtectedRoute><Layout><NotificationPreferences /></Layout></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />

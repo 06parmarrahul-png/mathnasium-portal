@@ -2009,7 +2009,7 @@ function StatPayTab({ holidays, rows }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings, isManager } = useAuth();
+  const { user, activeCenterId, centerConfig, canSeeCenterSettings, canManageOperations } = useAuth();
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -2019,25 +2019,18 @@ export default function Admin() {
   // request, so the weekly grid doesn't re-scan the array in each of
   // its ~200 cells. Declared beside the state rather than further down
   // the component: everything below consumes it, and anything after
-  // the canSeeAdminPanel early return would be a conditional hook.
+  // the canManageOperations early return would be a conditional hook.
   const timeOffIndex = useMemo(() => buildTimeOffIndex(timeOffRequests), [timeOffRequests]);
   // Active tab. Sidebar deep-links (?tab=analytics, ?tab=settings) seed the
   // initial state and re-sync if the URL changes — so clicking "Center
   // Analytics" in the super-admin sidebar opens the right tab.
   const [searchParams, setSearchParams] = useSearchParams();
-  // Managers get in via ProtectedRoute's allowManager, but only for the
-  // "Manage Staff Schedule" bundle (weekly grid + auto-scheduler + time
-  // off) — never Manage Staff / Payroll / Holidays. Clamped right here,
-  // at the tab's source of truth, so a hand-edited ?tab=payroll URL can
-  // never render owner-only content even for a single frame. No-op for
-  // every other role (canSeeAdminPanel is true for all of them).
-  const clampTabForManager = (t) => (
-    !canSeeAdminPanel && isManager && !['spreadsheet', 'scheduler', 'requests'].includes(t) ? 'spreadsheet' : t
-  );
-  const [tab, setTab] = useState(() => clampTabForManager(searchParams.get('tab') || 'spreadsheet'));
+  // Managers and Hosts get in via ProtectedRoute's allowOps with full
+  // admin-panel access (same as plain Admin) — no tab restriction needed.
+  const [tab, setTab] = useState(searchParams.get('tab') || 'spreadsheet');
   useEffect(() => {
     const t = searchParams.get('tab');
-    if (t && t !== tab) setTab(clampTabForManager(t));
+    if (t && t !== tab) setTab(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
   // Keep the URL in sync when the user clicks a tab so refreshing or sharing
@@ -4898,11 +4891,11 @@ export default function Admin() {
     } catch { /* notify optional */ }
   };
 
-  // Admin Panel is open to admins, owners, and super-admins — plus
-  // Managers, who are clamped above to the spreadsheet/scheduler/requests
-  // tabs only. Plain instructors get bounced (the route guard also
-  // enforces this).
-  if (!canSeeAdminPanel && !isManager) {
+  // Admin Panel is open to admins, owners, super-admins, and the
+  // operational tier (Managers, Hosts) — full access, same as plain
+  // Admin. Plain instructors get bounced (the route guard also enforces
+  // this).
+  if (!canManageOperations) {
     return <div className="text-center text-gray-500 py-16">Access denied. Admin / owner only.</div>;
   }
 

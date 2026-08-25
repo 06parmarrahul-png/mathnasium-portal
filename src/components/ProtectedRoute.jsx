@@ -69,14 +69,15 @@ function NotForVolunteers() {
  *                  owner, super_admin. (Name kept for backwards-compat;
  *                  it really means "requires admin-panel access".)
  *   requireSuperAdmin — page is super-admin only.
- *   allowManager — ALSO let a Manager-titled user through a `requireOwner`
- *                  gate. Only set this on /admin — Admin.jsx itself clamps
- *                  a Manager to the "Manage Staff Schedule" tabs and
- *                  denies the rest. Every other requireOwner route (Users,
- *                  Payroll, Inventory, Leads, etc.) must NOT set this.
+ *   allowOps — ALSO let a Manager- or Host-titled user through a
+ *              `requireOwner` gate ("operational admin" tier — full
+ *              admin panel, Inventory, Availability Log). Only set this
+ *              on those three routes. The PII/analytics routes (Leads,
+ *              Case Study, Apptoto, Supply & Demand) and Centre Settings
+ *              must NOT set this — Manager/Host stay locked out of those.
  */
-export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, allowManager = false }) {
-  const { user, profile, loading, logout, isVolunteer, isManager } = useAuth();
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, allowOps = false }) {
+  const { user, profile, loading, logout, isVolunteer, canManageOperations } = useAuth();
 
   if (loading) return <LoadingScreen />;
 
@@ -109,7 +110,7 @@ export default function ProtectedRoute({ children, requireOwner = false, require
     return <NotAuthorized />;
   }
 
-  if (requireOwner && !canSeeAdminPanel && !(allowManager && isManager)) {
+  if (requireOwner && !canSeeAdminPanel && !(allowOps && canManageOperations)) {
     return <NotAuthorized />;
   }
 

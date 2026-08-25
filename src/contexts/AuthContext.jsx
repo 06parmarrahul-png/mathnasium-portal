@@ -212,18 +212,26 @@ export function AuthProvider({ children }) {
     profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Manager'
     || profile?.instructorType === 'Manager'
   );
+  // Same pattern again, for Host.
+  const isHost = (
+    profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Host'
+    || profile?.instructorType === 'Host'
+  );
   // Roles allowed to drive the Student Scheduler day-of-day —
   // owners, admin-assistants, plain admins, super-admins, lead
   // instructors (per Rahul's request: Leads often run the floor and
   // need to assign instructors / print / check students in), AND
-  // managers (same rationale — see isManager above).
-  const canRunScheduler = canSeeAdminPanel || isLead || isManager;
-  // Managers additionally get the "Manage Staff Schedule" bundle in the
-  // admin panel (weekly grid + auto-scheduler + time-off requests) —
-  // NOT the rest of the admin panel (Manage Staff / Payroll / Inventory
-  // / Centre Settings stay owner-and-above only). Deliberately narrower
-  // than canSeeAdminPanel: don't reuse this flag to gate anything else.
-  const canManageStaffSchedule = canSeeAdminPanel || isManager;
+  // managers + hosts (same operational-tier rationale — see below).
+  const canRunScheduler = canSeeAdminPanel || isLead || isManager || isHost;
+  // Managers and Hosts are "operational admin" tier: the full admin
+  // panel (weekly grid, auto-scheduler, time off, Manage Staff, Payroll,
+  // Holidays), Inventory, and Availability Log — everything a plain
+  // Admin gets INSIDE those pages. Deliberately NOT the PII/analytics
+  // routes (Leads, Case Study, Apptoto, Supply & Demand) or Centre
+  // Settings — those stay owner/director/admin_assistant/super_admin
+  // (and plain Admin, via canSeeAdminPanel) only. Don't reuse this flag
+  // to gate anything beyond admin-panel / inventory / availability-log.
+  const canManageOperations = canSeeAdminPanel || isManager || isHost;
   const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
@@ -412,11 +420,12 @@ export function AuthProvider({ children }) {
       isInstructor,
       isLead,
       isManager,
+      isHost,
       isVolunteer,
       canSeeAdminPanel,
       canSeeCenterSettings,
       canRunScheduler,
-      canManageStaffSchedule,
+      canManageOperations,
     }}>
       {children}
     </AuthContext.Provider>

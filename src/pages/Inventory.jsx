@@ -49,7 +49,7 @@ function NotAuthorized() {
     <div className="mx-auto max-w-md rounded-xl bg-white p-8 text-center shadow-sm">
       <h2 className="mb-2 text-xl font-bold text-gray-900">Not authorized</h2>
       <p className="text-sm text-gray-500">
-        Inventory is available to admins, admin assistants, directors, owners and managers.
+        Inventory is available to admins, admin assistants, directors, owners, managers and hosts.
       </p>
     </div>
   );
@@ -566,10 +566,10 @@ function SettingsModal({
 // ─── Page ──────────────────────────────────────────────────────────────
 
 export default function Inventory() {
-  const { profile, activeCenterId, canSeeAdminPanel, isManager, centerConfig } = useAuth();
-  // Managers get full inventory access (unlike the narrower /admin tab
-  // clamp) — they're the ones ordering supplies day to day.
-  const canSeeInventory = canSeeAdminPanel || isManager;
+  const { profile, activeCenterId, canManageOperations, centerConfig } = useAuth();
+  // Managers and Hosts get full inventory access too — they're the ones
+  // ordering supplies day to day.
+  const canSeeInventory = canManageOperations;
 
   const [items, setItems] = useState([]);
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);

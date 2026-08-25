@@ -86,7 +86,7 @@ function NotAuthorized() {
     <div className="mx-auto max-w-md rounded-xl bg-white p-8 text-center shadow-sm">
       <h2 className="mb-2 text-xl font-bold text-gray-900">Not authorized</h2>
       <p className="text-sm text-gray-500">
-        The availability log is available to admins, admin assistants, directors and owners.
+        The availability log is available to admins, admin assistants, directors, owners, managers and hosts.
       </p>
     </div>
   );
@@ -222,7 +222,7 @@ function BatchGroup({ entries }) {
 }
 
 export default function AvailabilityLog() {
-  const { activeCenterId, canSeeAdminPanel, isSuperAdmin } = useAuth();
+  const { activeCenterId, canManageOperations, isSuperAdmin } = useAuth();
 
   const [entries, setEntries] = useState([]);
   const [shifts, setShifts] = useState([]);
@@ -239,7 +239,7 @@ export default function AvailabilityLog() {
   const loading = loadedCenter !== activeCenterId;
 
   useEffect(() => {
-    if (!canSeeAdminPanel || !activeCenterId) return;
+    if (!canManageOperations || !activeCenterId) return;
     return subscribeAvailabilityLog(
       activeCenterId,
       { max: 400 },
@@ -250,12 +250,12 @@ export default function AvailabilityLog() {
         setLoadError({ code: err?.code || '', message: err?.message || 'Unknown error' });
       },
     );
-  }, [activeCenterId, canSeeAdminPanel]);
+  }, [activeCenterId, canManageOperations]);
 
   // Shifts, for conflict detection. Same (centerId, date) index the rest
   // of the app already uses.
   useEffect(() => {
-    if (!canSeeAdminPanel || !activeCenterId) return;
+    if (!canManageOperations || !activeCenterId) return;
     return onSnapshot(
       query(
         collection(db, 'shifts'),
@@ -265,7 +265,7 @@ export default function AvailabilityLog() {
       snap => setShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       err => console.error('[availability-log] shifts subscribe failed:', err),
     );
-  }, [activeCenterId, canSeeAdminPanel]);
+  }, [activeCenterId, canManageOperations]);
 
   const shiftIndex = useMemo(() => indexShifts(shifts), [shifts]);
 
@@ -327,7 +327,7 @@ export default function AvailabilityLog() {
     URL.revokeObjectURL(url);
   };
 
-  if (!canSeeAdminPanel) return <NotAuthorized />;
+  if (!canManageOperations) return <NotAuthorized />;
 
   return (
     <div className="space-y-6">
