@@ -99,7 +99,7 @@ function shiftTypeStyle(shiftType) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], isVolunteer = false }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], canTakeShifts = true }) {
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -249,7 +249,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                       volunteers have no access to — and swapping isn't
                       theirs to arrange anyway. They request time off
                       instead, and an admin sorts the cover. */}
-                  {!isVolunteer && (
+                  {canTakeShifts && (
                     <button
                       onClick={() => onPostSwap(myShift)}
                       className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
@@ -307,7 +307,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
 
               {/* Open Shifts */}
               {openShifts.length > 0 && (
-                <div className={`space-y-2 ${isVolunteer ? 'hidden' : ''}`}>
+                <div className={`space-y-2 ${canTakeShifts ? '' : 'hidden'}`}>
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Open Shifts</p>
                   {openShifts.map(s => {
                     const required = requiredCapabilityForShift(s);
@@ -1218,7 +1218,7 @@ function CalendarSyncModal({ profile, onClose }) {
 }
 
 export default function Schedule() {
-  const { profile, mySubRoles, activeCenterId, centerConfig, isVolunteer } = useAuth();
+  const { profile, mySubRoles, activeCenterId, centerConfig, canTakeShifts } = useAuth();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
@@ -1420,6 +1420,12 @@ export default function Schedule() {
   };
 
   const handlePostSwap = async (shift) => {
+    // Trainees and volunteers don't trade shifts. The button is hidden
+    // for them; this guards the path itself.
+    if (!canTakeShifts) {
+      toast.error('Your account can’t post shifts for swap. Speak to a centre admin.');
+      return;
+    }
     const dateFormatted = new Date(shift.date + 'T00:00:00').toLocaleDateString('en-US', {
       weekday: 'long', month: 'short', day: 'numeric',
     });
@@ -1451,6 +1457,13 @@ export default function Schedule() {
   };
 
   const handleClaimOpenShift = async (openShift) => {
+    // Trainees and volunteers don't pick up open shifts, whatever their
+    // sub-roles say. Checked before the capability gate below, which is
+    // a separate and narrower rule.
+    if (!canTakeShifts) {
+      toast.error('Your account can’t claim open shifts. Speak to a centre admin.');
+      return;
+    }
     if (openShift.status !== 'open') {
       toast.error('This shift has already been claimed.');
       return;
@@ -2008,7 +2021,7 @@ export default function Schedule() {
           onClaimOpenShift={handleClaimOpenShift}
           onRequestTimeOff={handleRequestTimeOff}
           mySubRoles={mySubRoles}
-          isVolunteer={isVolunteer}
+          canTakeShifts={canTakeShifts}
         />
       )}
     </div>

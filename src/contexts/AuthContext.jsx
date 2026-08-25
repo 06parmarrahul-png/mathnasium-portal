@@ -217,6 +217,11 @@ export function AuthProvider({ children }) {
     profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Host'
     || profile?.instructorType === 'Host'
   );
+  // Same pattern again, for Training.
+  const isTraining = (
+    profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Training'
+    || profile?.instructorType === 'Training'
+  );
   // Roles allowed to drive the Student Scheduler day-of-day —
   // owners, admin-assistants, plain admins, super-admins, lead
   // instructors (per Rahul's request: Leads often run the floor and
@@ -390,6 +395,14 @@ export function AuthProvider({ children }) {
     return Array.isArray(resolved?.subRoles) ? resolved.subRoles : [];
   }, [profile, activeCenterId]);
 
+  // Who may claim an open shift or post/accept a swap. Volunteers work
+  // the shifts they're given (they request time off instead), and
+  // trainees shadow a real instructor rather than covering a slot — so
+  // neither picks up or trades shifts, whatever their sub-roles say.
+  // Sub-role capability checks are a SEPARATE, narrower gate on top of
+  // this one; this flag overrides them entirely.
+  const canTakeShifts = !isVolunteer && !isTraining;
+
   return (
     <AuthContext.Provider value={{
       user,
@@ -421,7 +434,9 @@ export function AuthProvider({ children }) {
       isLead,
       isManager,
       isHost,
+      isTraining,
       isVolunteer,
+      canTakeShifts,
       canSeeAdminPanel,
       canSeeCenterSettings,
       canRunScheduler,

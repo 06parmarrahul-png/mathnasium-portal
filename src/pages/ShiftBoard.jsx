@@ -276,7 +276,7 @@ function EditOpenShiftModal({ shift, onClose, onSave }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, centerConfig } = useAuth();
+  const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, canTakeShifts, centerConfig } = useAuth();
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
@@ -351,6 +351,12 @@ export default function ShiftBoard() {
   // ─── Actions ──────────────────────────────────────────────────────────────
 
   const handleClaim = async (openShift) => {
+    // Trainees and volunteers never claim, whatever their sub-roles are.
+    // The route blocks them from this page; this guards the path itself.
+    if (!canTakeShifts) {
+      toast.error('Your account can’t claim open shifts. Speak to a centre admin.');
+      return;
+    }
     if (!canTake(openShift.subRole, mySubRoles)) {
       toast.error('You don\'t have the right teaching sub-role to claim this shift.');
       return;
@@ -430,6 +436,10 @@ export default function ShiftBoard() {
 
   const handleTakeSwap = async (swap) => {
     if (swap.userId === profile?.uid) return;
+    if (!canTakeShifts) {
+      toast.error('Your account can’t take shift swaps. Speak to a centre admin.');
+      return;
+    }
     if (!canTake(swap.shiftSubRole, mySubRoles)) {
       toast.error(swap.shiftSubRole === 'Host'
         ? 'Only staff who can host can take this shift.'

@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canSeeAdminPanel, canManageOperations } = useAuth();
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -150,9 +150,11 @@ export default function Layout({ children }) {
   // Owners see open shifts inside Manage Schedule and don't need a
   // separate sidebar item.
   // Volunteers don't pick up open shifts or swap — they work the shifts
-  // they're given and ask to cancel if something comes up. The Shift
-  // Board is entirely about claiming and swapping, so it's not theirs.
-  if (!isSuperAdmin && !isOwner && !isVolunteer) {
+  // they're given and ask to cancel if something comes up. Trainees
+  // shadow an instructor rather than covering a slot, so the same
+  // applies. The Shift Board is entirely about claiming and swapping,
+  // so it's not theirs — see canTakeShifts in AuthContext.
+  if (!isSuperAdmin && !isOwner && canTakeShifts) {
     general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
   }
 

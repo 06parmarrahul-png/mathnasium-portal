@@ -5705,17 +5705,36 @@ export default function Admin() {
                   <ul className="divide-y divide-gray-100">
                     {filtered.map(u => {
                       const subs = u.subRoles || [];
+                      // Hue = access tier, so the list reads at a glance:
+                      // magenta family = leadership, warm = operational
+                      // admin, cool = teaching staff, neutral = doesn't
+                      // count toward coverage. Within a family the word
+                      // itself does the fine distinction.
+                      //
+                      // Every value in ROLE_OPTIONS needs an entry here,
+                      // plus 'Owner' (signup writes it, the dropdown
+                      // doesn't offer it). Training used to be missing
+                      // and fell through to the Instructor blue, so a
+                      // trainee and an instructor looked identical.
                       const typeColours = {
-                        Instructor:           'bg-blue-100 text-blue-700 border-blue-200',
-                        Lead:                 'bg-purple-100 text-purple-700 border-purple-200',
-                        Host:                 'bg-amber-100 text-amber-700 border-amber-200',
-                        Admin:                'bg-emerald-100 text-emerald-700 border-emerald-200',
-                        Manager:              'bg-orange-100 text-orange-700 border-orange-200',
+                        // Leadership
+                        Owner:                'bg-rose-100 text-rose-800 border-rose-300',
                         'Center Director':    'bg-pink-100 text-pink-700 border-pink-200',
-                        'Dir. of Education':  'bg-pink-100 text-pink-700 border-pink-200',
+                        'Dir. of Education':  'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200',
+                        // Operational admin
+                        Admin:                'bg-amber-100 text-amber-800 border-amber-200',
+                        Manager:              'bg-orange-100 text-orange-800 border-orange-200',
+                        Host:                 'bg-yellow-100 text-yellow-800 border-yellow-300',
+                        // Teaching staff
+                        Lead:                 'bg-indigo-100 text-indigo-700 border-indigo-200',
+                        Instructor:           'bg-sky-100 text-sky-700 border-sky-200',
+                        // Excluded from coverage / ratio maths — quieter
+                        // on purpose, so exceptions read as exceptions.
+                        Training:             'bg-slate-100 text-slate-700 border-slate-300',
                         Volunteer:            'bg-teal-100 text-teal-700 border-teal-200',
                       };
-                      const typeCls = typeColours[u.instructorType || 'Instructor'] || typeColours.Instructor;
+                      const typeCls = typeColours[u.instructorType || 'Instructor']
+                        || 'bg-gray-100 text-gray-700 border-gray-300';
                       return (
                         <li
                           key={u.id}
@@ -5729,8 +5748,14 @@ export default function Admin() {
                               <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeCls}`}>
                                 {u.instructorType || 'Instructor'}
                               </span>
-                              {u.isVolunteer && (
-                                <span className="inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                              {/* The isVolunteer flag and the 'Volunteer'
+                                  instructorType are separate fields that
+                                  often both get set — showing both put
+                                  two "Volunteer" chips in two different
+                                  colours on the same row. Same word =
+                                  same colour, and only once. */}
+                              {u.isVolunteer && u.instructorType !== 'Volunteer' && (
+                                <span className="inline-flex items-center rounded-full border border-teal-200 bg-teal-100 px-2 py-0.5 text-[11px] font-semibold text-teal-700">
                                   Volunteer
                                 </span>
                               )}

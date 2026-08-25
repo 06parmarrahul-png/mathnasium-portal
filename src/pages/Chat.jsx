@@ -9,7 +9,7 @@ import { resolveUserForCenter } from '../lib/centerMembership';
 import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
-  const { profile, mySubRoles, activeCenterId } = useAuth();
+  const { profile, mySubRoles, activeCenterId, canTakeShifts } = useAuth();
   const [allMessages, setAllMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -143,6 +143,13 @@ export default function Chat() {
 
   const handleAcceptShift = async (msg) => {
     if (!profile || msg.userId === profile.uid) return;
+    // Trainees and volunteers don't take swaps. Swap posts still appear
+    // in chat for them as messages, but the Take button is hidden below
+    // and this guards the path.
+    if (!canTakeShifts) {
+      toast.error('Your account can’t take shift swaps. Speak to a centre admin.');
+      return;
+    }
     if (msg.swapStatus !== 'open') {
       toast.error('This shift has already been taken.');
       return;
@@ -317,7 +324,7 @@ export default function Chat() {
                       {msg.userName} &middot; {formatTime(msg.createdAt)}
                     </div>
                     <p className="mb-3 whitespace-pre-wrap text-sm text-gray-700">{msg.text}</p>
-                    {msg.swapStatus === 'open' && !isMe ? (
+                    {msg.swapStatus === 'open' && !isMe && canTakeShifts ? (
                       <button onClick={() => handleAcceptShift(msg)}
                         className="w-full rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white hover:bg-green-700 transition-colors">
                         Take This Shift

@@ -62,6 +62,27 @@ function NotForVolunteers() {
 }
 
 /**
+ * Shown on the Shift Board to anyone who can't pick up or trade shifts.
+ * Copy differs by reason: a trainee is shadowing (temporary), a
+ * volunteer works what they're given (ongoing).
+ */
+function NotForShiftTakers({ isTraining }) {
+  return (
+    <div className="flex h-screen items-center justify-center bg-gray-50">
+      <div className="mx-4 max-w-md rounded-xl bg-white p-8 shadow-lg text-center">
+        <h2 className="mb-2 text-xl font-bold text-gray-900">Not part of your access</h2>
+        <p className="text-sm text-gray-500">
+          {isTraining
+            ? 'While you’re in training you work alongside an instructor rather than picking up or trading shifts. Your own schedule is on the Schedule page — speak to a centre admin if something needs to change.'
+            : 'Volunteer accounts work the shifts they’re given rather than claiming or swapping. Your schedule is on the Schedule page — request time off there if you can’t make one.'}
+        </p>
+        <a href="/" className="mt-4 inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Back to Home</a>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Route guard.
  *
  * Props:
@@ -76,8 +97,8 @@ function NotForVolunteers() {
  *              Case Study, Apptoto, Supply & Demand) and Centre Settings
  *              must NOT set this — Manager/Host stay locked out of those.
  */
-export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, allowOps = false }) {
-  const { user, profile, loading, logout, isVolunteer, canManageOperations } = useAuth();
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, requireShiftTaking = false, allowOps = false }) {
+  const { user, profile, loading, logout, isVolunteer, isTraining, canTakeShifts, canManageOperations } = useAuth();
 
   if (loading) return <LoadingScreen />;
 
@@ -104,6 +125,13 @@ export default function ProtectedRoute({ children, requireOwner = false, require
   // nav only hides links — this is what actually stops a typed URL.
   if (blockVolunteers && isVolunteer) {
     return <NotForVolunteers />;
+  }
+
+  // Shift Board is entirely about claiming and swapping, so anyone who
+  // can't do either has no reason to be here. Covers volunteers AND
+  // trainees — see canTakeShifts in AuthContext.
+  if (requireShiftTaking && !canTakeShifts) {
+    return <NotForShiftTakers isTraining={isTraining} />;
   }
 
   if (requireSuperAdmin && role !== 'super_admin') {

@@ -111,7 +111,9 @@ function AppRoutes() {
         <Route path="/" element={<RootGate />} />
         <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
         <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
-        <Route path="/shift-board" element={<ProtectedRoute blockVolunteers><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
+        {/* requireShiftTaking covers volunteers AND trainees — neither
+            claims or swaps, which is all this page does. */}
+        <Route path="/shift-board" element={<ProtectedRoute requireShiftTaking><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute blockVolunteers><Layout><Chat /></Layout></ProtectedRoute>} />
         {/* allowOps: Manager- and Host-titled users also get in here, with
             full admin-panel access — same "operational admin" tier as
