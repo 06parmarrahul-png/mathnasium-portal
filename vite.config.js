@@ -12,4 +12,10 @@ export default defineConfig({
     // into its own chunk.
     chunkSizeWarningLimit: 900,
   },
+  test: {
+    // Rules tests need the Firestore emulator running, so they're kept out
+    // of the default suite — `npm test` must stay fast and dependency-free.
+    // Run them with `npm run test:rules`, which boots the emulator first.
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/rules/**'],
+  },
 })

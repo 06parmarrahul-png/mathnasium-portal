@@ -48,18 +48,18 @@ service cloud.firestore {
     }
 
     function isOwner() {
-      return profileExists() && profile().role == 'owner';
+      return profileExists() && profile().get('role', '') == 'owner';
     }
 
     function isSuperAdmin() {
-      return profileExists() && profile().role == 'super_admin';
+      return profileExists() && profile().get('role', '') == 'super_admin';
     }
 
     // Administrative Assistant — owner-equivalent for everything except
     // the Owners-only platformChat. Treated like an owner by isOwnerLike()
     // below; the platformChat block uses the strict isOwner() above.
     function isAdminAssistant() {
-      return profileExists() && profile().role == 'admin_assistant';
+      return profileExists() && profile().get('role', '') == 'admin_assistant';
     }
 
     // Centre Directors and Directors of Education are top-of-org staff
@@ -71,11 +71,11 @@ service cloud.firestore {
     // set instructorType when saving the profile.
     function isDirector() {
       return profileExists() && (
-        profile().role == 'director'
-        || profile().instructorType == 'Center Director'
-        || profile().instructorType == 'Centre Director'
-        || profile().instructorType == 'Dir. of Education'
-        || profile().instructorType == 'Director of Education'
+        profile().get('role', '') == 'director'
+        || profile().get('instructorType', '') == 'Center Director'
+        || profile().get('instructorType', '') == 'Centre Director'
+        || profile().get('instructorType', '') == 'Dir. of Education'
+        || profile().get('instructorType', '') == 'Director of Education'
       );
     }
 
@@ -88,7 +88,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return profileExists() && profile().role == 'admin';
+      return profileExists() && profile().get('role', '') == 'admin';
     }
 
     // Lead instructors — not a top-level role, but an instructorType
@@ -116,7 +116,7 @@ service cloud.firestore {
     // that predates instructorType doesn't error the whole evaluation.
     function isLeadAt(centerId) {
       return profileExists() && (
-        profile().instructorType == 'Lead'
+        profile().get('instructorType', '') == 'Lead'
         || (
           'centerMemberships' in profile()
           && centerId in profile().centerMemberships
@@ -134,7 +134,7 @@ service cloud.firestore {
     // Scheduler slice only, not the rest.
     function isManagerAt(centerId) {
       return profileExists() && (
-        profile().instructorType == 'Manager'
+        profile().get('instructorType', '') == 'Manager'
         || (
           'centerMemberships' in profile()
           && centerId in profile().centerMemberships
@@ -145,7 +145,7 @@ service cloud.firestore {
 
     function isHostAt(centerId) {
       return profileExists() && (
-        profile().instructorType == 'Host'
+        profile().get('instructorType', '') == 'Host'
         || (
           'centerMemberships' in profile()
           && centerId in profile().centerMemberships
@@ -162,7 +162,7 @@ service cloud.firestore {
     // the /availabilityLog read rule below.
     function isManagerAnywhere() {
       return profileExists() && (
-        profile().instructorType == 'Manager'
+        profile().get('instructorType', '') == 'Manager'
         || (
           'centerMemberships' in profile()
           && profile().centerMemberships.keys().exists(c, profile().centerMemberships[c].get('instructorType', '') == 'Manager')
@@ -172,12 +172,61 @@ service cloud.firestore {
 
     function isHostAnywhere() {
       return profileExists() && (
-        profile().instructorType == 'Host'
+        profile().get('instructorType', '') == 'Host'
         || (
           'centerMemberships' in profile()
           && profile().centerMemberships.keys().exists(c, profile().centerMemberships[c].get('instructorType', '') == 'Host')
         )
       );
+    }
+
+    // Who may build and edit the schedule at this centre. Mirrors the
+    // app's "operational admin" tier (see canManageOperations in
+    // AuthContext). Leads are deliberately NOT here: they run the floor
+    // day-of, they don't author the schedule.
+    function canManageShiftsAt(centerId) {
+      return isOwnerLike() || isSuperAdmin() || isAdmin()
+          || isManagerAt(centerId) || isHostAt(centerId);
+    }
+
+    // Staff who are on the schedule but never pick work up themselves.
+    // Volunteers and trainees are handed shifts by an admin; they don't
+    // claim open shifts or take swaps. The app already hides those
+    // controls — these mirror it in the rules so the restriction is real
+    // rather than merely invisible.
+    //
+    // Both spellings of the volunteer flag are checked: `isVolunteer` is
+    // the per-centre boolean, and 'Volunteer' also exists as an
+    // instructorType on older records.
+    function isTrainingAt(centerId) {
+      return profileExists() && (
+        profile().get('instructorType', '') == 'Training'
+        || (
+          'centerMemberships' in profile()
+          && centerId in profile().centerMemberships
+          && profile().centerMemberships[centerId].get('instructorType', '') == 'Training'
+        )
+      );
+    }
+
+    function isVolunteerAt(centerId) {
+      return profileExists() && (
+        profile().get('instructorType', '') == 'Volunteer'
+        || profile().get('isVolunteer', false) == true
+        || (
+          'centerMemberships' in profile()
+          && centerId in profile().centerMemberships
+          && (
+            profile().centerMemberships[centerId].get('instructorType', '') == 'Volunteer'
+            || profile().centerMemberships[centerId].get('isVolunteer', false) == true
+          )
+        )
+      );
+    }
+
+    /** May this person pick up work for themselves at this centre? */
+    function canPickUpShiftsAt(centerId) {
+      return !isTrainingAt(centerId) && !isVolunteerAt(centerId);
     }
 
     // Anyone who legitimately runs the floor at this centre: the admin
@@ -472,13 +521,48 @@ service cloud.firestore {
     // (creating their own availability, accepting an open shift, etc.)
     // and admin actions limited to owner.
 
+    // Shifts are what payroll bills from, so writes are no longer open to
+    // "any signed-in user". Create and update used to be bare isSignedIn(),
+    // which let any approved instructor author a shift for anyone or edit
+    // someone else's hours straight into the pay run.
+    //
+    // Reads stay open: the weekly grid, coverage views and everyone's own
+    // calendar all read the whole centre's schedule.
+    //
+    // The two non-admin paths that legitimately write here are both
+    // transactions, and both were checked line by line before this rule
+    // was written:
+    //   • claiming an open shift  → CREATES a row assigned to the claimer
+    //   • accepting a swap        → UPDATES userId/userName only
+    // Neither touches date or times, which is what makes the clock-lock
+    // below safe.
     match /shifts/{shiftId} {
-      allow read:   if isSignedIn();
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      // Admins (and Managers, at their own centre) can delete shifts too —
-      // they manage the schedule day-to-day.
-      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId) || isHostAt(resource.data.centerId);
+      allow read: if isSignedIn();
+
+      // Ops staff schedule anybody. Everyone else may only create a row
+      // assigned to themselves, and only if they're allowed to pick work
+      // up at all (not a trainee or volunteer).
+      allow create: if canManageShiftsAt(request.resource.data.get('centerId', ''))
+                    || (
+                         request.resource.data.get('userId', '') == request.auth.uid
+                         && canPickUpShiftsAt(request.resource.data.get('centerId', ''))
+                       );
+
+      // Ops staff edit freely. Everyone else may only take a shift OVER —
+      // ending up as its owner — and may NEVER move the clock: date and
+      // times must survive the write untouched. That is the bit that
+      // stops an instructor editing their own hours upward before a pay
+      // run, which the old rule allowed outright.
+      allow update: if canManageShiftsAt(resource.data.get('centerId', ''))
+                    || (
+                         request.resource.data.get('userId', '') == request.auth.uid
+                         && canPickUpShiftsAt(resource.data.get('centerId', ''))
+                         && request.resource.data.get('date', '')      == resource.data.get('date', '')
+                         && request.resource.data.get('startTime', '') == resource.data.get('startTime', '')
+                         && request.resource.data.get('endTime', '')   == resource.data.get('endTime', '')
+                       );
+
+      allow delete: if canManageShiftsAt(resource.data.get('centerId', ''));
     }
 
     // ── Availability change log ──────────────────────────────────────
@@ -518,13 +602,26 @@ service cloud.firestore {
 
     match /openShifts/{openShiftId} {
       allow read:   if isSignedIn();
-      // Admins (and Managers, at their own centre) create + delete open
-      // shifts too — same surface they see in the Scheduler tab.
-      allow create: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(request.resource.data.centerId) || isHostAt(request.resource.data.centerId);
-      // Update needed for claim flow — any signed-in user can mark
-      // an open shift as claimed via transaction.
-      allow update: if isSignedIn();
-      allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin() || isManagerAt(resource.data.centerId) || isHostAt(resource.data.centerId);
+      allow create: if canManageShiftsAt(request.resource.data.get('centerId', ''));
+
+      // Update was bare isSignedIn() to let the claim transaction run,
+      // which also allowed anyone to rewrite an open shift's hours or
+      // hand it to someone else. Ops staff still edit freely; everyone
+      // else now gets exactly ONE transition — taking an open shift and
+      // stamping themselves on it — with the clock pinned, matching the
+      // claim transaction in Schedule.jsx / ShiftBoard.jsx.
+      allow update: if canManageShiftsAt(resource.data.get('centerId', ''))
+                    || (
+                         resource.data.get('status', '') == 'open'
+                         && request.resource.data.get('status', '') == 'claimed'
+                         && request.resource.data.get('claimedBy', '') == request.auth.uid
+                         && canPickUpShiftsAt(resource.data.get('centerId', ''))
+                         && request.resource.data.get('date', '')      == resource.data.get('date', '')
+                         && request.resource.data.get('startTime', '') == resource.data.get('startTime', '')
+                         && request.resource.data.get('endTime', '')   == resource.data.get('endTime', '')
+                       );
+
+      allow delete: if canManageShiftsAt(resource.data.get('centerId', ''));
     }
 
     match /timeOffRequests/{reqId} {
