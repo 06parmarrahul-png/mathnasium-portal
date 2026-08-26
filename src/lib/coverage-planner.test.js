@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planCoverage, planDay, smoothTroughs, toHHMM, toMinutes } from './coverage-planner';
+import { planCoverage, planDay, smoothTroughs, toHHMM, toMinutes, requiredFromDemand } from './coverage-planner';
 
 // A 3:00–7:00 afternoon in 30-minute slots.
 const SLOTS = ['15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30'];
@@ -165,5 +165,45 @@ describe('planDay — several capabilities at once', () => {
     });
     // 3 people × 4h + 4 people × 3h = 24h
     expect(totalMinutes).toBe(24 * 60);
+  });
+});
+
+describe('requiredFromDemand', () => {
+  it('rounds UP — a partial group still needs a whole instructor', () => {
+    // 3 students at 1:3.5 is not 0.86 of a person.
+    expect(requiredFromDemand([3, 7, 8], 3.5)).toEqual([1, 2, 3]);
+  });
+
+  it('needs nobody when nobody is booked', () => {
+    expect(requiredFromDemand([0, 0], 3.5)).toEqual([0, 0]);
+  });
+
+  it('raising the ratio lowers the headcount — the owner\'s dial', () => {
+    const demand = [14, 14, 14];
+    expect(requiredFromDemand(demand, 3.5)).toEqual([4, 4, 4]);
+    expect(requiredFromDemand(demand, 7)).toEqual([2, 2, 2]);
+  });
+
+  it('survives junk without producing NaN', () => {
+    expect(requiredFromDemand([null, undefined, 'x'], 3.5)).toEqual([0, 0, 0]);
+    expect(requiredFromDemand([7], 0)).toEqual([7]); // ratio 0 → treated as 1
+  });
+});
+
+// End-to-end: the exact path the Coverage Plan panel takes on a real day.
+describe('demand → roster, end to end', () => {
+  it('turns a booked afternoon into rosterable shifts', () => {
+    // Students booked per half-hour, quiet open then a busy evening.
+    const booked = [7, 7, 24, 24, 21, 21, 24, 24];
+    const required = requiredFromDemand(booked, 3.5); // → [2,2,7,7,6,6,7,7]
+    expect(required).toEqual([2, 2, 7, 7, 6, 6, 7, 7]);
+
+    const { shifts, totalMinutes } = planCoverage({
+      required, slotStarts: SLOTS, minShiftMinutes: 120,
+    });
+    // Same shape as the owner's Monday: the 5:00 dip gets held through.
+    expect(shifts).toHaveLength(7);
+    expect(shifts.every(s => s.minutes >= 120)).toBe(true);
+    expect(totalMinutes).toBe((2 * 4 + 5 * 3) * 60); // 2 open at 3:00, 5 join at 4:00
   });
 });

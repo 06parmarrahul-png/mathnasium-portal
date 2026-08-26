@@ -50,6 +50,19 @@ export function toHHMM(mins) {
 }
 
 /**
+ * Students booked per slot → instructors required per slot.
+ *
+ * The same `ceil(demand / ratio)` Supply & Demand already uses for its
+ * "Match Demand" button, lifted out so the planner and the page can't
+ * drift apart, and so it can be tested. Ceil, not round: three students
+ * at a 1:3.5 ratio still needs a whole instructor.
+ */
+export function requiredFromDemand(demand = [], ratio = 1) {
+  const r = Number(ratio) || 1;
+  return demand.map(d => Math.ceil((Number(d) || 0) / r));
+}
+
+/**
  * Fill dips too short to legally send anybody home.
  *
  * A trough is a maximal run of slots sitting below BOTH the level before

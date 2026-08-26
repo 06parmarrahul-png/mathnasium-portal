@@ -11,6 +11,7 @@ import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-s
 import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 import { isFlexRole, DEFAULT_TARGET_RATIO } from '../lib/subRoles';
+import CoveragePlanPanel from '../components/CoveragePlanPanel';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -701,6 +702,21 @@ export default function SupplyDemand() {
           centerConfig={centerConfig}
         />
       ))}
+
+      {/* What this demand implies as an actual roster. Read-only — it
+          schedules nobody. Sits under the demand card because that's the
+          question it answers: "fine, so who do I need on?" */}
+      {sideData?.ALL && (
+        <CoveragePlanPanel
+          slotKeys={dayWindow.slotKeys}
+          sides={[{
+            label:  'Instructor',
+            demand: sideData.ALL.demand,
+            ratio:  ratios.ALL,
+            supply: sideData.ALL.supply,
+          }]}
+        />
+      )}
     </div>
   );
 }
