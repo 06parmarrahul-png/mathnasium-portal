@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import {
   initializeTestEnvironment, assertSucceeds, assertFails,
 } from '@firebase/rules-unit-testing';
-import { doc, setDoc, updateDoc, deleteDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc, deleteDoc, getDoc } from 'firebase/firestore';
 import { beforeAll, afterAll, beforeEach, describe, it } from 'vitest';
 
 const CENTRE = 'langley';
@@ -207,5 +207,36 @@ describe('openShifts', () => {
     await assertSucceeds(setDoc(doc(as('mgr1'), 'openShifts', 'o2'), openShift()));
     await assertFails(deleteDoc(doc(as('inst1'), 'openShifts', 'o1')));
     await assertSucceeds(deleteDoc(doc(as('host1'), 'openShifts', 'o1')));
+  });
+});
+
+describe('schedulerTemplates — saved staffing shapes', () => {
+  const tpl = { name: 'Term time', config: { minPerDay: 8, maxPerDay: 11, perDay: {} }, centerId: CENTRE };
+  const path = `centers/${CENTRE}/schedulerTemplates`;
+
+  it('lets schedule-builders save a shape', async () => {
+    for (const uid of ['owner1', 'admin1', 'mgr1', 'host1']) {
+      await assertSucceeds(setDoc(doc(as(uid), path, `t-${uid}`), tpl));
+    }
+  });
+
+  it('stops instructors and trainees writing one', async () => {
+    await assertFails(setDoc(doc(as('inst1'), path, 't1'), tpl));
+    await assertFails(setDoc(doc(as('trainee1'), path, 't2'), tpl));
+  });
+
+  it('stops a manager from another centre writing here', async () => {
+    await assertFails(setDoc(doc(as('mgrOther'), path, 't1'), tpl));
+  });
+
+  // Read is deliberately the same tier as write. The picker only renders
+  // inside the Auto-Scheduler panel, which instructors can't open, so
+  // granting them read would be access nothing in the app uses.
+  it('lets schedule-builders read the picker, and nobody else', async () => {
+    await seed(path, 't1', tpl);
+    await assertSucceeds(getDoc(doc(as('mgr1'), path, 't1')));
+    await assertSucceeds(getDoc(doc(as('owner1'), path, 't1')));
+    await assertFails(getDoc(doc(as('inst1'), path, 't1')));
+    await assertFails(getDoc(doc(as('mgrOther'), path, 't1')));
   });
 });

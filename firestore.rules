@@ -348,6 +348,19 @@ service cloud.firestore {
         }
       }
 
+      // ─── Scheduler templates (saved staffing shapes) ────────────────
+      // Named min/max + per-day staffing targets the auto-scheduler is
+      // seeded from. No PII and no student data — it's numbers and
+      // weekday names — but it steers how the centre gets staffed.
+      //
+      // Read is the SAME tier as write, not the wider canRunFloor: the
+      // picker only ever renders inside the Auto-Scheduler panel, which
+      // Leads and instructors can't open. Granting them read would hand
+      // out access nothing in the app asks for.
+      match /schedulerTemplates/{templateId} {
+        allow read, write: if canManageShiftsAt(centerId);
+      }
+
       // ─── Analytics snapshots ────────────────────────────────────────
       // Counts and ratios, no PII — but they are management numbers, so
       // they stay on the admin side rather than being centre-wide.

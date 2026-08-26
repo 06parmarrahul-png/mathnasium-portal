@@ -8,6 +8,10 @@ import { db, auth, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
 import {
+  subscribeTemplates, saveTemplate, deleteTemplate,
+  applyTemplateConfig, describeTemplate,
+} from '../lib/schedulerTemplates';
+import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
   AlertTriangle, Send, RotateCcw, Edit3, ArrowRightLeft, Plus, X, StickyNote,
@@ -84,10 +88,17 @@ function shiftTimeProblem(startTime, endTime) {
   return null;
 }
 
+// instructorType values. This is a JOB TITLE, not a permission — access
+// comes from `role` (owner / admin_assistant / director / admin / …) plus
+// the title-based tiers in AuthContext. 'Owner' is included because
+// signup stamps it on the first account at a centre: without it in the
+// list the select had no matching option on an owner's own record and
+// rendered blank, so editing anything else about them could commit the
+// wrong title.
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
-  'Training', 'Volunteer',
+  'Training', 'Volunteer', 'Owner',
 ];
 
 // Roles that don't teach a specific level — the "Teaching Level" field is
@@ -7682,6 +7693,59 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
   const [savingDays, setSavingDays] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
 
+  // ─── Saved staffing shapes ────────────────────────────────────────────
+  // A template is this whole panel's settings under a name. Applying one
+  // only seeds the form — the owner still reviews and hits Generate, so a
+  // template can never quietly publish shifts on its own.
+  const { profile } = useAuth();
+  const [templates, setTemplates] = useState([]);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [namingTemplate, setNamingTemplate] = useState(false);
+  const [templateName, setTemplateName] = useState('');
+  useEffect(
+    () => subscribeTemplates(activeCenterId, setTemplates, () => setTemplates([])),
+    [activeCenterId],
+  );
+
+  const handleSaveTemplate = async () => {
+    if (!templateName.trim()) return;
+    setSavingTemplate(true);
+    try {
+      await saveTemplate(activeCenterId, templateName, schedConfig, {
+        uid: profile?.uid, displayName: profile?.displayName,
+      });
+      toast.success(`Saved “${templateName.trim()}”.`);
+      setTemplateName('');
+      setNamingTemplate(false);
+    } catch (err) {
+      toast.error(err?.message || 'Could not save the template.');
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleApplyTemplate = (tpl) => {
+    if (!tpl) return;
+    setSchedConfig(c => applyTemplateConfig(c, tpl));
+    toast.success(`Loaded “${tpl.name}”. Review the numbers, then Generate.`);
+  };
+
+  const handleDeleteTemplate = async (tpl) => {
+    const ok = await confirmDialog({
+      title: `Delete “${tpl.name}”?`,
+      message: 'The saved staffing shape is removed. Schedules you already generated from it are unaffected.',
+      confirmText: 'Delete',
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteTemplate(activeCenterId, tpl.id);
+      toast.success('Template deleted.');
+    } catch (err) {
+      toast.error(err?.message || 'Could not delete the template.');
+    }
+  };
+
   const perDay = schedConfig.perDay || {};
 
   // Load recommended min/max per weekday from saved demand snapshots.
@@ -7775,8 +7839,27 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
             Blank cells use the defaults above. Uncheck a day to mark the centre closed.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {savingDays && <span className="text-xs text-purple-600 italic">Saving…</span>}
+          {/* Saved shapes. The picker seeds the form only — nothing is
+              published until the owner reviews and hits Generate. */}
+          {templates.length > 0 && (
+            <select
+              value=""
+              onChange={(e) => {
+                const tpl = templates.find(t => t.id === e.target.value);
+                handleApplyTemplate(tpl);
+                e.target.value = '';
+              }}
+              title="Load a saved staffing shape into the form below"
+              className="rounded-md border border-purple-300 bg-white px-2 py-1 text-xs font-semibold text-purple-700 max-w-[190px]"
+            >
+              <option value="">Load saved shape…</option>
+              {templates.map(t => (
+                <option key={t.id} value={t.id}>{t.name} · {describeTemplate(t)}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={loadFromHistory}
             disabled={loadingHistory}
@@ -7785,8 +7868,67 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
           >
             {loadingHistory ? '…' : '⟲'} Load from history
           </button>
+          <button
+            onClick={() => setNamingTemplate(v => !v)}
+            title="Save the current staffing shape so you can reuse it next term"
+            className="inline-flex items-center gap-1 rounded-md border border-purple-300 bg-white px-2.5 py-1 text-xs font-semibold text-purple-700 hover:bg-purple-50"
+          >
+            ☆ Save shape
+          </button>
         </div>
       </div>
+
+      {namingTemplate && (
+        <div className="px-4 py-2.5 border-b border-purple-200 bg-white/70 flex items-center gap-2 flex-wrap">
+          <input
+            autoFocus
+            value={templateName}
+            onChange={e => setTemplateName(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter') handleSaveTemplate();
+              if (e.key === 'Escape') { setNamingTemplate(false); setTemplateName(''); }
+            }}
+            placeholder="Name it — “Term time”, “Summer camp”…"
+            className="flex-1 min-w-[180px] rounded-md border border-purple-300 px-2 py-1 text-xs focus:border-purple-500 focus:outline-none"
+          />
+          <button
+            onClick={handleSaveTemplate}
+            disabled={savingTemplate || !templateName.trim()}
+            className="rounded-md bg-purple-600 px-3 py-1 text-xs font-semibold text-white hover:bg-purple-700 disabled:opacity-40"
+          >
+            {savingTemplate ? 'Saving…' : 'Save'}
+          </button>
+          <button
+            onClick={() => { setNamingTemplate(false); setTemplateName(''); }}
+            className="rounded-md border border-gray-300 bg-white px-3 py-1 text-xs font-semibold text-gray-600 hover:bg-gray-50"
+          >
+            Cancel
+          </button>
+          <span className="w-full text-[10px] text-purple-700/70 italic">
+            Saves the staffing shape — the min/max numbers and per-day rules on this panel. Not the people: the auto-scheduler fills it from whoever&rsquo;s actually available that month.
+          </span>
+        </div>
+      )}
+
+      {templates.length > 0 && (
+        <div className="px-4 py-2 border-b border-purple-200 bg-white/40 flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-purple-700/70 mr-1">Saved shapes</span>
+          {templates.map(t => (
+            <span key={t.id} className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-purple-800">
+              <button onClick={() => handleApplyTemplate(t)} title={`Load ${t.name}`} className="hover:underline">
+                {t.name}
+              </button>
+              <button
+                onClick={() => handleDeleteTemplate(t)}
+                title={`Delete ${t.name}`}
+                className="text-purple-400 hover:text-red-600"
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-xs">
           <thead className="bg-white/60 text-purple-900">
