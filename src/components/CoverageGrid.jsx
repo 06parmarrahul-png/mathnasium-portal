@@ -322,32 +322,47 @@ export default function CoverageGrid({ day, centerConfig }) {
                 ? -1
                 : rolePriority(sortedEntries[idx - 1].role, sortedEntries[idx - 1].subRole, sortedEntries[idx - 1].isVolunteer, sortedEntries[idx - 1].flexRole);
               const isFirstOfTier = myPriority !== prevPriority;
+              // Every tier rolePriority() can return needs a label here.
+              // Training (tier 5) previously had none and fell through to
+              // the STEAM catch-all, so trainees were filed under a
+              // "STEAM / Summer Camp" heading — and because 4 and 5 are
+              // different tiers, that heading rendered twice.
               const tierLabel = myPriority === 0 ? 'Hosts & Management'
                               : myPriority === 1 ? 'Online Instructors'
                               : myPriority === 2 ? 'In-Centre Instructors'
                               : myPriority === 3 ? 'Volunteers'
-                              : 'STEAM / Summer Camp';
+                              : myPriority === 4 ? 'STEAM / Summer Camp'
+                              : 'Training';
               const colspan = 1 + slots.length;
               // Colour precedence: Sick > No-Show > Flex > Volunteer >
               // assignment. Same palette used on the Manage Staff Schedule
               // grid so the two surfaces stay visually consistent.
               const flexHex = flexRole ? stateColorHex(flexRole, centerConfig) : null;
               const assignment = assignmentFor({ role, subRole });
+              // Trainees sit just above the plain assignment in this chain.
+              // Without a branch of their own they took the assignment
+              // colour and read as ELEM — indistinguishable from an
+              // instructor who actually counts toward the ratio, on the one
+              // grid whose whole job is showing real floor coverage.
+              const isTraining = isTrainingRole(role);
               const roleBg = isSick      ? stateColorHex('Sick Pay', centerConfig)
                           : isNoShow    ? stateColorHex('No-Show', centerConfig)
                           : flexHex     ? flexHex
                           : isVolunteer ? stateColorHex('Volunteer', centerConfig)
+                          : isTraining  ? stateColorHex('Training', centerConfig)
                           : assignmentColorHex(assignment, centerConfig);
               const roleText = contrastText(roleBg);
               const badgeLabel = isSick ? 'SICK'
                 : isNoShow ? 'NO-SHOW'
                 : flexRole ? flexRole.toUpperCase()
                 : isVolunteer ? 'VOLUNTEER'
+                : isTraining ? 'TRAINING'
                 : assignmentShort(assignment);
               const badgeTooltip = isSick ? `${assignment} · Sick Pay`
                 : isNoShow ? `${assignment} · No-Show`
                 : flexRole ? flexRole
                 : isVolunteer ? `${assignment} · Volunteer`
+                : isTraining ? `${assignment} · Training — not counted toward coverage`
                 : assignment;
               // Flag rows where the same person has another entry on the
               // day — gives an at-a-glance "this is one of two shifts for
