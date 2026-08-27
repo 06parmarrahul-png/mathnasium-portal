@@ -56,8 +56,13 @@ export function toHHMM(mins) {
  * Lives here rather than in a component so the editor, the scheduler and
  * the tests all derive the day window the same way.
  */
-export function slotKeysForDay(centerConfig, dayName, slotMinutes = 30) {
-  const hours = resolveInstructionalHours(centerConfig, new Date())?.[dayName];
+export function slotKeysForDay(centerConfig, dayName, date = new Date(), slotMinutes = 30) {
+  // Resolve against the date being SCHEDULED, not today. Instructional
+  // hours are date-sensitive — a summer override can run Tue/Thu 10am–2pm
+  // while the rest of the year runs afternoons — so using today's rules
+  // for a future date builds the wrong window, and every booking on that
+  // date then falls outside it and reads as zero demand.
+  const hours = resolveInstructionalHours(centerConfig, date)?.[dayName];
   const start = toMinutes(hours?.start || '15:00');
   const end   = toMinutes(hours?.end || '20:00');
   if (start == null || end == null || end <= start) return [];

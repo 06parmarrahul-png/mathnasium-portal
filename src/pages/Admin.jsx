@@ -2957,7 +2957,7 @@ export default function Admin() {
                 dateStr: format(d, 'yyyy-MM-dd'),
                 dayName,
                 dayNumber: d.getDate(),
-                slotKeys: slotKeysForDay(centerConfig, dayName),
+                slotKeys: slotKeysForDay(centerConfig, dayName, new Date(d)),
               });
             }
 
@@ -2976,10 +2976,31 @@ export default function Admin() {
               activeCenterId, dayList.map(d => d.dateStr),
             );
             const curvesByDate = {};
+            const outsideHours = [];
             let datesWithBookings = 0;
             for (const d of dayList) {
-              const students = demandForSlots(booked[d.dateStr], d.slotKeys);
-              if (!students.some(n => n > 0)) continue;
+              const byTime = booked[d.dateStr] || {};
+              const students = demandForSlots(byTime, d.slotKeys);
+              if (!students.some(n => n > 0)) {
+                // Distinguish "nobody booked" from "people ARE booked, but
+                // at times this day's configured hours don't cover" — the
+                // second looks identical on screen and is a settings
+                // problem, not a quiet day.
+                const bookedTimes = Object.entries(byTime)
+                  .filter(([, n]) => Number(n) > 0)
+                  .map(([t]) => t)
+                  .sort();
+                if (bookedTimes.length > 0) {
+                  outsideHours.push(
+                    `⚠ ${d.dayName} ${d.dayNumber}: ${bookedTimes.length} booked slot`
+                    + `${bookedTimes.length > 1 ? 's' : ''} between ${bookedTimes[0]} and `
+                    + `${bookedTimes[bookedTimes.length - 1]}, but this day's instructional hours `
+                    + `only cover ${d.slotKeys[0] || '—'}–${d.slotKeys[d.slotKeys.length - 1] || '—'}. `
+                    + `Check the day's hours in Centre Settings.`,
+                  );
+                }
+                continue;
+              }
               datesWithBookings++;
               curvesByDate[d.dateStr] = [{
                 capability: 'Instructor',
@@ -3002,7 +3023,7 @@ export default function Admin() {
             });
             // Say plainly when there was nothing to schedule from, rather
             // than handing back an empty draft that looks like a bug.
-            const warnings = [...cov.warnings];
+            const warnings = [...outsideHours, ...cov.warnings];
             if (datesWithBookings === 0) {
               warnings.unshift(
                 '⚠ No students are booked on these dates yet, and no coverage curve is set. '

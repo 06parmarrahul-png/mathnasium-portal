@@ -230,4 +230,24 @@ describe('slotKeysForDay', () => {
       { instructionalHours: { Monday: { start: '19:00', end: '15:00' } } }, 'Monday',
     )).toEqual([]);
   });
+
+  it('resolves hours for the date being scheduled, not today', () => {
+    // A summer override runs Tue/Thu mornings. Asking for a Tuesday
+    // INSIDE the window must give morning slots; outside it, afternoons.
+    // Reading today's rules for a future date is what silently emptied
+    // Tue/Thu — every booking fell outside the window and read as zero.
+    const summer = {
+      instructionalHours: { Tuesday: { start: '15:00', end: '19:00' } },
+      summerHours2026: {
+        from: '2026-07-01', to: '2026-08-31',
+        byDay: { Tuesday: { start: '10:00', end: '14:00' } },
+      },
+    };
+    const inSummer  = slotKeysForDay(summer, 'Tuesday', new Date('2026-08-25T12:00:00'));
+    const afterTerm = slotKeysForDay(summer, 'Tuesday', new Date('2026-10-06T12:00:00'));
+    expect(inSummer[0]).toBe('10:00');
+    expect(afterTerm[0]).toBe('15:00');
+    expect(inSummer).not.toEqual(afterTerm);
+  });
 });
+
