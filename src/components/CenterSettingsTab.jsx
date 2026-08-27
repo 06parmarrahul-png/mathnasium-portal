@@ -384,8 +384,21 @@ function SummerOverrideEditor({ override, baseHours, onChange }) {
     delete next[day];
     onChange({ ...o, byDay: next });
   };
-  const addDay = (day) => setDayHours(day, 'start', baseHours?.[day]?.start || '10:00') &&
-                          setDayHours(day, 'end',   baseHours?.[day]?.end   || '14:00');
+  // Both ends in ONE update. This used to be two setDayHours() calls
+  // joined by `&&`: setDayHours returns undefined, so the second never
+  // ran and the day was added with a start and no end — and both calls
+  // derived from the same stale `o`, so the second would have clobbered
+  // the first anyway.
+  const addDay = (day) => onChange({
+    ...o,
+    byDay: {
+      ...(o.byDay || {}),
+      [day]: {
+        start: baseHours?.[day]?.start || '10:00',
+        end:   baseHours?.[day]?.end   || '14:00',
+      },
+    },
+  });
 
   return (
     <div className="space-y-3">
