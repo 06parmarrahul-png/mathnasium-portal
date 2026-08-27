@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { planDay, requiredFromDemand, slotKeysForDay } from '../lib/coverage-planner';
 import { Activity, Wand2, Eraser, Info } from 'lucide-react';
 
@@ -20,13 +20,42 @@ const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
  */
 export default function CoverageCurveEditor({
   centerConfig, curvesByWeekday = {}, onChange, typicalDemand = {}, targetRatio = 3.5,
-  minShiftMinutes = 120,
+  minShiftMinutes = 120, loading = false,
 }) {
   const [activeDay, setActiveDay] = useState('Monday');
   const slotKeys = useMemo(
     () => slotKeysForDay(centerConfig, activeDay),
     [centerConfig, activeDay],
   );
+
+  /** Students typically booked in each of this day's slots. */
+  const demandFor = useMemo(() => (dayName) => {
+    const byTime = typicalDemand[dayName];
+    if (!byTime) return null;
+    const keys = slotKeysForDay(centerConfig, dayName);
+    const vals = keys.map(k => Number(byTime[k]) || 0);
+    return vals.some(v => v > 0) ? vals : null;
+  }, [typicalDemand, centerConfig]);
+
+  // Seed every weekday from real demand the first time history arrives.
+  // Starting from a blank grid means an owner has to author ~50 numbers
+  // before the mode does anything — the useful default is "here's what
+  // your bookings actually looked like", which they then adjust.
+  const nothingAuthored = Object.keys(curvesByWeekday).length === 0;
+  const hasHistory = Object.keys(typicalDemand).length > 0;
+  useEffect(() => {
+    if (!nothingAuthored || !hasHistory) return;
+    const seeded = {};
+    for (const d of WEEKDAYS) {
+      const demand = demandFor(d);
+      if (!demand) continue;
+      seeded[d] = [{ capability: 'Instructor', required: requiredFromDemand(demand, targetRatio) }];
+    }
+    if (Object.keys(seeded).length > 0) onChange(seeded);
+    // onChange is a setState from the parent; re-running on its identity
+    // would loop. Seeding is a one-shot on first history load.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nothingAuthored, hasHistory, targetRatio]);
 
   const curve = useMemo(() => {
     const rows = curvesByWeekday[activeDay];
@@ -53,10 +82,9 @@ export default function CoverageCurveEditor({
   };
 
   const fillFromDemand = () => {
-    const demand = typicalDemand[activeDay];
-    if (!Array.isArray(demand) || demand.length === 0) return;
-    const req = requiredFromDemand(demand, targetRatio);
-    setCurve(slotKeys.map((_, i) => req[i] || 0));
+    const demand = demandFor(activeDay);
+    if (!demand) return;
+    setCurve(requiredFromDemand(demand, targetRatio));
   };
 
   const plan = useMemo(() => planDay({
@@ -73,9 +101,15 @@ export default function CoverageCurveEditor({
     }, {}),
   ), [plan]);
 
-  const hasDemand = Array.isArray(typicalDemand[activeDay]) && typicalDemand[activeDay].length > 0;
-  const configuredDays = WEEKDAYS.filter(d =>
-    (curvesByWeekday[d]?.[0]?.required || []).some(n => Number(n) > 0));
+  const hasDemand = !!demandFor(activeDay);
+  const activeDemand = demandFor(activeDay);
+  const peakStudents = activeDemand ? Math.max(0, ...activeDemand) : 0;
+
+  /** Peak headcount a weekday's curve asks for — shown on its tab. */
+  const peakFor = (d) => {
+    const req = curvesByWeekday[d]?.[0]?.required || [];
+    return req.length ? Math.max(0, ...req.map(Number)) : 0;
+  };
 
   return (
     <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 overflow-hidden mb-5">
@@ -84,8 +118,16 @@ export default function CoverageCurveEditor({
           <h4 className="text-sm font-bold text-indigo-900 flex items-center gap-1.5">
             <Activity size={14} /> Coverage curve
           </h4>
+          {/* Say where the numbers came from. Pre-filled figures with no
+              provenance are the fastest way to lose an owner's trust. */}
           <p className="text-xs text-indigo-700/80">
-            How many instructors you need, half-hour by half-hour. The scheduler builds shifts to match.
+            {loading
+              ? 'Reading your booking history…'
+              : hasDemand
+                ? <>Pre-filled from your typical <b>{activeDay}</b> — {peakStudents} students at peak,
+                    at 1:{targetRatio}. Adjust anything that looks off.</>
+                : <>No saved booking history for {activeDay} yet — set the numbers by hand,
+                    or open Supply &amp; Demand for a few {activeDay}s to build history.</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -113,19 +155,25 @@ export default function CoverageCurveEditor({
       <div className="flex gap-1 px-3 pt-2 flex-wrap">
         {WEEKDAYS.map(d => {
           const active = d === activeDay;
-          const set = configuredDays.includes(d);
+          const peak = peakFor(d);
           return (
             <button
               key={d}
               onClick={() => setActiveDay(d)}
+              title={peak ? `${d}: peaks at ${peak} instructors` : `${d}: no coverage set`}
               className={`inline-flex items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs font-semibold transition-colors ${
                 active
                   ? 'bg-white text-indigo-900 border border-b-white border-indigo-200'
                   : 'text-indigo-600 hover:bg-white/60'
               }`}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${set ? 'bg-indigo-500' : 'bg-gray-300'}`} />
               {d.slice(0, 3)}
+              {/* The headcount, right on the tab — the number an owner
+                  actually wants, without opening each day to find it. */}
+              <span className={`rounded-full px-1.5 text-[10px] font-bold ${
+                peak ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-500'}`}>
+                {peak || '–'}
+              </span>
             </button>
           );
         })}

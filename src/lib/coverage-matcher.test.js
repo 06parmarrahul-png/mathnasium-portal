@@ -174,4 +174,19 @@ describe('toDraftDay', () => {
       capability: 'Highschool', startTime: '15:00', endTime: '19:00',
     });
   });
+
+  it('states the day\'s own target so the review screen stops using minPerDay', () => {
+    const day = toDraftDay({
+      dateStr: '2026-09-07', dayName: 'Monday', dayNumber: 7,
+      assignments: [
+        { displayName: 'a', capability: 'Instructor', startTime: '15:00', endTime: '19:00' },
+        { displayName: 'b', capability: 'Instructor', startTime: '16:00', endTime: '19:00' },
+      ],
+      unfilled: [block('16:00', '19:00')],
+    });
+    // 2 filled + 1 nobody could work = the day genuinely wanted 3.
+    expect(day.countingStaffCount).toBe(2);
+    expect(day.targetStaffCount).toBe(3);
+  });
 });
+

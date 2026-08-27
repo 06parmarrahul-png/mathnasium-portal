@@ -13,6 +13,7 @@ import {
 } from '../lib/schedulerTemplates';
 import { generateCoverageSchedule } from '../lib/coverage-schedule';
 import { slotKeysForDay } from '../lib/coverage-planner';
+import { computeTypicalDemand, typicalDemandByTime } from '../lib/demand-snapshots';
 import CoverageCurveEditor from '../components/CoverageCurveEditor';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
@@ -2096,6 +2097,39 @@ export default function Admin() {
   //              live path is unchanged until an owner chooses it.
   const [schedMode, setSchedMode] = useState('classic');
   const [curvesByWeekday, setCurvesByWeekday] = useState({});
+  // Typical students-per-slot by weekday, from the last ~8 weeks of saved
+  // Supply & Demand snapshots. Keyed by clock time so a day that doesn't
+  // start at 3pm still lines up.
+  const [typicalDemand, setTypicalDemand] = useState({});
+  const [demandLoading, setDemandLoading] = useState(false);
+  const [demandLoaded, setDemandLoaded] = useState(false);
+
+  // Coverage mode is useless starting from a blank curve — an owner would
+  // have to click every half-hour of every weekday before it did anything.
+  // So the moment the mode is chosen we fetch real demand history and
+  // pre-fill the curves from it. The owner adjusts rather than authors.
+  useEffect(() => {
+    if (schedMode !== 'coverage' || !activeCenterId || demandLoaded) return;
+    let cancelled = false;
+    setDemandLoading(true);
+    computeTypicalDemand(activeCenterId)
+      .then((typical) => {
+        if (cancelled) return;
+        setTypicalDemand(typicalDemandByTime(typical));
+        setDemandLoaded(true);
+      })
+      .catch(() => { if (!cancelled) setDemandLoaded(true); })
+      .finally(() => { if (!cancelled) setDemandLoading(false); });
+    return () => { cancelled = true; };
+  }, [schedMode, activeCenterId, demandLoaded]);
+
+  // Re-fetch when the centre changes — one centre's history must never
+  // seed another's schedule.
+  useEffect(() => {
+    setTypicalDemand({});
+    setDemandLoaded(false);
+    setCurvesByWeekday({});
+  }, [activeCenterId]);
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
   // Day-centric draft review — which day index is focused in the week strip.
@@ -6081,6 +6115,8 @@ export default function Admin() {
                 centerConfig={centerConfig}
                 curvesByWeekday={curvesByWeekday}
                 onChange={setCurvesByWeekday}
+                typicalDemand={typicalDemand}
+                loading={demandLoading}
                 targetRatio={centerConfig?.targetRatio || 3.5}
               />
             ) : (
@@ -6189,13 +6225,13 @@ export default function Admin() {
                     coverage. Click a day to focus it below. */}
                 <div className="border-b bg-white px-4 py-3 flex flex-wrap gap-1.5">
                   {draftSchedule.days.map((day, i) => {
-                    const low = day.countingStaffCount < schedConfig.minPerDay;
+                    const low = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
                     const sel = i === selectedDayIndex;
                     return (
                       <button key={day.date} onClick={() => setSelectedDayIndex(i)}
                         className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
                         <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
-                        <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>
+                        <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>
                       </button>
                     );
                   })}
@@ -6204,7 +6240,7 @@ export default function Admin() {
                 <div className="divide-y divide-gray-100">
                   {draftSchedule.days.map((day, i) => {
                     if (i !== selectedDayIndex) return null;
-                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
+                    const isLow = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
                     const isEditing = editingDay?.index === i;
 
                     // Sort assigned names by role priority: Instructor/Lead first,
@@ -6240,7 +6276,7 @@ export default function Admin() {
                             {isLow ? (
                               <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
                                 <AlertTriangle size={11} />
-                                Low staff — need {schedConfig.minPerDay - day.countingStaffCount} more
+                                Low staff — need {(day.targetStaffCount ?? schedConfig.minPerDay) - day.countingStaffCount} more
                               </span>
                             ) : (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
@@ -8207,7 +8243,7 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
                 <tr className="bg-gray-50">
                   <th className="text-left px-3 py-2 font-semibold text-gray-600 w-32">INSTRUCTOR</th>
                   {week.map(day => {
-                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
+                    const isLow = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
                     const dl = fmtDate(day.date);
                     return (
                       <th key={day.date}
@@ -8215,7 +8251,7 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
                         <div className={`text-[10px] uppercase tracking-wide ${isLow ? 'text-red-700' : 'text-gray-500'}`}>{dl.dow}</div>
                         <div className={`${isLow ? 'text-red-800' : 'text-gray-800'} text-xs`}>{dl.dn}</div>
                         <div className={`text-[10px] ${isLow ? 'text-red-700 font-bold' : 'text-gray-500'} mt-0.5`}>
-                          {day.countingStaffCount}/{schedConfig.minPerDay}{isLow ? ' ⚠' : ''}
+                          {day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{isLow ? ' ⚠' : ''}
                         </div>
                       </th>
                     );

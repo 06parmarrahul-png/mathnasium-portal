@@ -131,6 +131,36 @@ export async function computeTypicalDemand(centerId, lookbackDays = 56) {
   return out;
 }
 
+// Snapshot arrays are positional and anchored at 3pm — index 0 is 15:00,
+// index 1 is 15:30, and so on. That's fine while every day runs 3pm–8pm,
+// but Saturday opens in the morning, so anything reading these by INDEX
+// against a day's real hours silently lines the wrong numbers up.
+const SNAPSHOT_START_MIN = 15 * 60;
+const SNAPSHOT_SLOT_MIN  = 30;
+
+/**
+ * Re-key typical demand from positional arrays to 'HH:MM' → students,
+ * with Elementary and Highschool summed.
+ *
+ * Callers can then look demand up by the actual clock time of their own
+ * slots and get 0 for times the snapshot never covered, instead of
+ * accidentally reading 3pm's numbers into a 9am slot.
+ */
+export function typicalDemandByTime(typical = {}) {
+  const out = {};
+  for (const [dayName, sides] of Object.entries(typical || {})) {
+    const byTime = {};
+    for (let i = 0; i < SLOT_COUNT; i++) {
+      const mins = SNAPSHOT_START_MIN + i * SNAPSHOT_SLOT_MIN;
+      const key = `${String(Math.floor(mins / 60)).padStart(2, '0')}:${String(mins % 60).padStart(2, '0')}`;
+      byTime[key] = (Number(sides?.EM?.demand?.[i]) || 0)
+                  + (Number(sides?.HS?.demand?.[i]) || 0);
+    }
+    out[dayName] = byTime;
+  }
+  return out;
+}
+
 /**
  * Convenience wrapper: given a typical-demand map + a target ratio, work
  * out how many instructors that day-of-week needs at peak to hit the

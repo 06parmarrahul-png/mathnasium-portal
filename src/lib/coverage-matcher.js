@@ -160,6 +160,12 @@ export function toDraftDay({ dateStr, dayName, dayNumber, assignments, unfilled 
     countingStaffCount: assignments.filter(a => a.capability !== 'Host').length,
     onlineCount: assignments.filter(a => a.capability === 'Online').length,
     openSlotsNeeded: unfilled.length,
+    // What this day actually asked for = filled + couldn't-fill. The
+    // review screen compares against this instead of the classic
+    // engine's min-per-day, which is a headcount setting that means
+    // nothing once the curve decides the number. A classic draft omits
+    // it and the screen falls back, so both engines read correctly.
+    targetStaffCount: assignments.filter(a => a.capability !== 'Host').length + unfilled.length,
     // Carried through so the review screen can show exactly which blocks
     // nobody could work, rather than just a count.
     unfilledShifts: unfilled.map(s => ({
