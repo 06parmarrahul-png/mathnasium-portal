@@ -23,6 +23,10 @@ import { matchDay, toDraftDay } from './coverage-matcher';
  * @param {Object} params
  * @param {Array}  params.days              - [{ dateStr, dayName, dayNumber, slotKeys }]
  * @param {Object} params.curvesByWeekday   - { Monday: [{ capability, required:number[] }] }
+ * @param {Object} [params.curvesByDate]    - { 'YYYY-MM-DD': [{ capability, required }] }
+ *                                            Real bookings for a specific date. Wins over
+ *                                            the weekday curve, which is only a fallback
+ *                                            for dates with nothing booked yet.
  * @param {Array}  params.instructors       - [{ uid, displayName, subRoles, priority }]
  * @param {Object} params.availabilityByDate- { 'YYYY-MM-DD': [{ userId, startTime, endTime }] }
  * @param {number} [params.minShiftMinutes=120]
@@ -31,6 +35,7 @@ import { matchDay, toDraftDay } from './coverage-matcher';
 export function generateCoverageSchedule({
   days = [],
   curvesByWeekday = {},
+  curvesByDate = {},
   instructors = [],
   availabilityByDate = {},
   minShiftMinutes = 120,
@@ -43,7 +48,11 @@ export function generateCoverageSchedule({
   const draftDays = [];
 
   for (const day of days) {
-    const requirements = curvesByWeekday[day.dayName];
+    // Real bookings for THIS date beat a weekday pattern. The pattern is
+    // the fallback for dates far enough out that nothing is booked yet.
+    const requirements = curvesByDate[day.dateStr]?.length
+      ? curvesByDate[day.dateStr]
+      : curvesByWeekday[day.dayName];
     if (!requirements || requirements.length === 0) {
       // No shape for this weekday is a deliberate "we're shut / nothing
       // planned", not an error — but say so once rather than silently

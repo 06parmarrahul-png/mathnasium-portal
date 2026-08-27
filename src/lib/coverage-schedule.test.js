@@ -182,5 +182,32 @@ describe('generateCoverageSchedule', () => {
     expect(Object.values(result.employeeSummary).filter(n => n === 0).length)
       .toBeGreaterThan(0);
   });
+
+  // Real bookings for a specific date must beat the weekday pattern —
+  // that's the whole point of scheduling a chosen week.
+  it('prefers a date\'s real bookings over the weekday curve', () => {
+    const people = staff(8);
+    const { days } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByWeekday: { Monday: [{ capability: 'Instructor', required: [1, 1, 1, 1, 1, 1, 1, 1] }] },
+      curvesByDate:    { '2026-09-07': [{ capability: 'Instructor', required: [5, 5, 5, 5, 5, 5, 5, 5] }] },
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+    });
+    // 5 from the real bookings, not 1 from the pattern.
+    expect(days[0].assignedEmployees).toHaveLength(5);
+  });
+
+  it('falls back to the weekday curve for a date with nothing booked', () => {
+    const people = staff(8);
+    const { days } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByWeekday: { Monday: [{ capability: 'Instructor', required: [2, 2, 2, 2, 2, 2, 2, 2] }] },
+      curvesByDate:    { '2026-09-14': [{ capability: 'Instructor', required: [9, 9, 9, 9, 9, 9, 9, 9] }] },
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+    });
+    expect(days[0].assignedEmployees).toHaveLength(2);
+  });
 });
 

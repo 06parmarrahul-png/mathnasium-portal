@@ -12,7 +12,8 @@ import {
   applyTemplateConfig, describeTemplate,
 } from '../lib/schedulerTemplates';
 import { generateCoverageSchedule } from '../lib/coverage-schedule';
-import { slotKeysForDay } from '../lib/coverage-planner';
+import { slotKeysForDay, requiredFromDemand } from '../lib/coverage-planner';
+import { fetchBookedDemand, demandForSlots } from '../lib/booked-demand';
 import { computeTypicalDemand, typicalDemandByTime } from '../lib/demand-snapshots';
 import CoverageCurveEditor from '../components/CoverageCurveEditor';
 import {
@@ -2096,6 +2097,13 @@ export default function Admin() {
   // 'coverage' — demand curve → shift shapes → people. Opt-in, so the
   //              live path is unchanged until an owner chooses it.
   const [schedMode, setSchedMode] = useState('classic');
+  // Coverage mode has no Month option, so a user who picked Month in
+  // classic mode and switched over would otherwise be left on a range
+  // the mode can't offer.
+  useEffect(() => {
+    if (schedMode === 'coverage' && schedRangeType === 'month') setSchedRangeType('week');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schedMode]);
   const [curvesByWeekday, setCurvesByWeekday] = useState({});
   // Typical students-per-slot by weekday, from the last ~8 weeks of saved
   // Supply & Demand snapshots. Keyed by clock time so a day that doesn't
@@ -2931,7 +2939,7 @@ export default function Admin() {
       // mode is the original headcount engine, untouched. Both return the
       // same draft shape, so everything downstream is shared.
       const result = schedMode === 'coverage'
-        ? (() => {
+        ? await (async () => {
             const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
             const first = rangeArgs.startDate
               ? new Date(rangeArgs.startDate + 'T12:00:00')
@@ -2958,9 +2966,31 @@ export default function Admin() {
               (availabilityByDate[a.date] ||= []).push(a);
             }
 
+            // Pull the students ACTUALLY booked on these dates, straight
+            // from the same Acuity feed the Student Scheduler reads. This
+            // is the number that should drive the schedule — a saved
+            // "typical Monday" is only a fallback for dates nobody has
+            // booked into yet.
+            const ratio = Number(centerConfig?.targetRatio) || 3.5;
+            const booked = await fetchBookedDemand(
+              activeCenterId, dayList.map(d => d.dateStr),
+            );
+            const curvesByDate = {};
+            let datesWithBookings = 0;
+            for (const d of dayList) {
+              const students = demandForSlots(booked[d.dateStr], d.slotKeys);
+              if (!students.some(n => n > 0)) continue;
+              datesWithBookings++;
+              curvesByDate[d.dateStr] = [{
+                capability: 'Instructor',
+                required: requiredFromDemand(students, ratio),
+              }];
+            }
+
             const cov = generateCoverageSchedule({
               days: dayList,
               curvesByWeekday,
+              curvesByDate,
               instructors: schedulableUsers.map(u => ({
                 uid: u.uid,
                 displayName: u.displayName,
@@ -2970,11 +3000,26 @@ export default function Admin() {
               })),
               availabilityByDate,
             });
+            // Say plainly when there was nothing to schedule from, rather
+            // than handing back an empty draft that looks like a bug.
+            const warnings = [...cov.warnings];
+            if (datesWithBookings === 0) {
+              warnings.unshift(
+                '⚠ No students are booked on these dates yet, and no coverage curve is set. '
+                + 'Nothing to build a schedule from — pick a week with bookings, or set the '
+                + 'coverage numbers by hand above.',
+              );
+            }
             return {
               month: schedMonth, year: schedYear,
               days: cov.days,
-              warnings: cov.warnings,
-              coverage: { fairness: cov.fairness, minutesByPerson: cov.minutesByPerson },
+              warnings,
+              employeeSummary: cov.employeeSummary,
+              coverage: {
+                fairness: cov.fairness,
+                minutesByPerson: cov.minutesByPerson,
+                datesWithBookings,
+              },
             };
           })()
         : generateSchedule({
@@ -6010,7 +6055,11 @@ export default function Admin() {
                 {[
                   { key: 'day',   label: 'Day'   },
                   { key: 'week',  label: 'Week'  },
-                  { key: 'month', label: 'Month' },
+                  // Coverage mode reads real bookings per date, and a whole
+                  // month that far out generally has none — so it schedules
+                  // a day or a week at a time, which is how the bookings
+                  // actually firm up.
+                  ...(schedMode === 'coverage' ? [] : [{ key: 'month', label: 'Month' }]),
                 ].map(opt => {
                   const active = schedRangeType === opt.key;
                   return (
