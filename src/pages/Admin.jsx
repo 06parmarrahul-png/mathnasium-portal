@@ -11,6 +11,9 @@ import {
   subscribeTemplates, saveTemplate, deleteTemplate,
   applyTemplateConfig, describeTemplate,
 } from '../lib/schedulerTemplates';
+import { generateCoverageSchedule } from '../lib/coverage-schedule';
+import { slotKeysForDay } from '../lib/coverage-planner';
+import CoverageCurveEditor from '../components/CoverageCurveEditor';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
@@ -2087,6 +2090,12 @@ export default function Admin() {
   const [schedConfig, setSchedConfig] = useState({
     minPerDay: 8, maxPerDay: 11, maxDaysPerWeek: 5, fairDistribution: true,
   });
+  // 'classic'  — the original engine: pick N people per day, times come
+  //              from their availability.
+  // 'coverage' — demand curve → shift shapes → people. Opt-in, so the
+  //              live path is unchanged until an owner chooses it.
+  const [schedMode, setSchedMode] = useState('classic');
+  const [curvesByWeekday, setCurvesByWeekday] = useState({});
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
   // Day-centric draft review — which day index is focused in the week strip.
@@ -2883,15 +2892,66 @@ export default function Admin() {
         return { month: schedMonth, year: schedYear };
       })();
 
-      const result = generateSchedule({
-        instructors: schedulableUsers,
-        availability: filteredAvailability,
-        previousMonthsAvail,
-        ...rangeArgs,
-        config: schedConfig,
-        centerConfig,   // per-center hours, fixed staff, guaranteed names
-        priorShifts: shifts,  // seed fairness from already-saved shifts this month
-      });
+      // Coverage mode runs the second engine: a demand curve becomes
+      // shift shapes, then people are matched to those shapes. Classic
+      // mode is the original headcount engine, untouched. Both return the
+      // same draft shape, so everything downstream is shared.
+      const result = schedMode === 'coverage'
+        ? (() => {
+            const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+            const first = rangeArgs.startDate
+              ? new Date(rangeArgs.startDate + 'T12:00:00')
+              : startOfMonth(new Date(`${schedMonth} 1, ${schedYear}`));
+            const last = rangeArgs.endDate
+              ? new Date(rangeArgs.endDate + 'T12:00:00')
+              : endOfMonth(first);
+
+            const dayList = [];
+            for (let d = new Date(first); d <= last; d = addDays(d, 1)) {
+              const dayName = DOW[d.getDay()];
+              if (dayName === 'Sunday') continue;             // centre is shut
+              if (!isOperatingDay(d, centerConfig)) continue; // holidays / closures
+              dayList.push({
+                dateStr: format(d, 'yyyy-MM-dd'),
+                dayName,
+                dayNumber: d.getDate(),
+                slotKeys: slotKeysForDay(centerConfig, dayName),
+              });
+            }
+
+            const availabilityByDate = {};
+            for (const a of filteredAvailability) {
+              (availabilityByDate[a.date] ||= []).push(a);
+            }
+
+            const cov = generateCoverageSchedule({
+              days: dayList,
+              curvesByWeekday,
+              instructors: schedulableUsers.map(u => ({
+                uid: u.uid,
+                displayName: u.displayName,
+                subRoles: u.subRoles,
+                priority: u.priority,
+                maxDaysPerWeek: u.maxDaysPerWeek ?? schedConfig.maxDaysPerWeek,
+              })),
+              availabilityByDate,
+            });
+            return {
+              month: schedMonth, year: schedYear,
+              days: cov.days,
+              warnings: cov.warnings,
+              coverage: { fairness: cov.fairness, minutesByPerson: cov.minutesByPerson },
+            };
+          })()
+        : generateSchedule({
+            instructors: schedulableUsers,
+            availability: filteredAvailability,
+            previousMonthsAvail,
+            ...rangeArgs,
+            config: schedConfig,
+            centerConfig,   // per-center hours, fixed staff, guaranteed names
+            priorShifts: shifts,  // seed fairness from already-saved shifts this month
+          });
       setDraftSchedule(result);
       setSelectedDayIndex(0);
     } catch (err) {
@@ -5858,6 +5918,56 @@ export default function Admin() {
             <p className="text-sm text-gray-500 mb-5">
               Reads the availability your instructors have submitted and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
             </p>
+            {/* How the schedule gets built. Classic is the engine that has
+                always run; Coverage is the demand-curve one. Presented as a
+                real choice rather than a hidden flag, because the two
+                answer different questions and an owner should be able to
+                run both on the same month and compare. */}
+            <div className="mb-4 rounded-xl border border-gray-200 overflow-hidden">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-gray-200">
+                {[
+                  {
+                    key: 'classic',
+                    title: 'By headcount',
+                    blurb: 'Pick how many people per day. Shift times come from what each person offered.',
+                  },
+                  {
+                    key: 'coverage',
+                    title: 'By coverage curve',
+                    blurb: 'Say how many you need each half-hour. Shifts are built to match, then filled.',
+                  },
+                ].map(opt => {
+                  const active = schedMode === opt.key;
+                  return (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setSchedMode(opt.key)}
+                      className={`text-left px-4 py-3 transition-colors ${active
+                        ? 'bg-purple-50 ring-1 ring-inset ring-purple-400'
+                        : 'bg-white hover:bg-gray-50'}`}
+                    >
+                      <span className="flex items-center gap-2">
+                        <span className={`h-3 w-3 rounded-full border-2 ${active
+                          ? 'border-purple-600 bg-purple-600' : 'border-gray-300'}`} />
+                        <span className={`text-sm font-bold ${active ? 'text-purple-900' : 'text-gray-700'}`}>
+                          {opt.title}
+                        </span>
+                        {opt.key === 'coverage' && (
+                          <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
+                            NEW
+                          </span>
+                        )}
+                      </span>
+                      <span className={`mt-1 block text-xs ${active ? 'text-purple-700' : 'text-gray-500'}`}>
+                        {opt.blurb}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Range type toggle — Day / Week / Month. Picker below
                 switches based on selection. */}
             <div className="mb-3">
@@ -5936,24 +6046,28 @@ export default function Admin() {
                   />
                 </div>
               )}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Default min/day
-                </label>
-                <input type="number" value={schedConfig.minPerDay} min={1} max={20}
-                  onChange={e => setSchedConfig(c => ({ ...c, minPerDay: Number(e.target.value) }))}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
-                <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-gray-700">
-                  Default max/day
-                </label>
-                <input type="number" value={schedConfig.maxPerDay} min={1} max={30}
-                  onChange={e => setSchedConfig(c => ({ ...c, maxPerDay: Number(e.target.value) }))}
-                  className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
-                <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
-              </div>
+              {schedMode === 'classic' && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Default min/day
+                    </label>
+                    <input type="number" value={schedConfig.minPerDay} min={1} max={20}
+                      onChange={e => setSchedConfig(c => ({ ...c, minPerDay: Number(e.target.value) }))}
+                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
+                    <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-gray-700">
+                      Default max/day
+                    </label>
+                    <input type="number" value={schedConfig.maxPerDay} min={1} max={30}
+                      onChange={e => setSchedConfig(c => ({ ...c, maxPerDay: Number(e.target.value) }))}
+                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
+                    <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* ── Per-day operating + staffing matrix ──────────────────────
@@ -5962,12 +6076,21 @@ export default function Admin() {
                 days closed (writes operatingDays back to centerConfig).
                 Empty cells fall back to the global defaults above so the
                 owner only has to fill the days that differ from the norm. */}
-            <PerDayStaffingMatrix
-              activeCenterId={activeCenterId}
-              centerConfig={centerConfig}
-              schedConfig={schedConfig}
-              setSchedConfig={setSchedConfig}
-            />
+            {schedMode === 'coverage' ? (
+              <CoverageCurveEditor
+                centerConfig={centerConfig}
+                curvesByWeekday={curvesByWeekday}
+                onChange={setCurvesByWeekday}
+                targetRatio={centerConfig?.targetRatio || 3.5}
+              />
+            ) : (
+              <PerDayStaffingMatrix
+                activeCenterId={activeCenterId}
+                centerConfig={centerConfig}
+                schedConfig={schedConfig}
+                setSchedConfig={setSchedConfig}
+              />
+            )}
             <div className="flex flex-wrap items-center gap-4 mb-5">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max days/instructor/week</label>

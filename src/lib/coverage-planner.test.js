@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { planCoverage, planDay, smoothTroughs, toHHMM, toMinutes, requiredFromDemand } from './coverage-planner';
+import { planCoverage, planDay, smoothTroughs, toHHMM, toMinutes, requiredFromDemand, slotKeysForDay } from './coverage-planner';
 
 // A 3:00–7:00 afternoon in 30-minute slots.
 const SLOTS = ['15:00', '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30'];
@@ -205,5 +205,29 @@ describe('demand → roster, end to end', () => {
     expect(shifts).toHaveLength(7);
     expect(shifts.every(s => s.minutes >= 120)).toBe(true);
     expect(totalMinutes).toBe((2 * 4 + 5 * 3) * 60); // 2 open at 3:00, 5 join at 4:00
+  });
+});
+
+describe('slotKeysForDay', () => {
+  const cfg = { instructionalHours: {
+    Monday:   { start: '15:00', end: '19:00' },
+    Saturday: { start: '09:00', end: '15:00' },
+  } };
+
+  it('spans the day\'s own instructional hours', () => {
+    expect(slotKeysForDay(cfg, 'Monday')).toEqual(SLOTS);
+    expect(slotKeysForDay(cfg, 'Saturday')).toHaveLength(12); // 09:00–15:00
+    expect(slotKeysForDay(cfg, 'Saturday')[0]).toBe('09:00');
+  });
+
+  it('falls back rather than throwing on an unconfigured day', () => {
+    expect(slotKeysForDay(cfg, 'Wednesday').length).toBeGreaterThan(0);
+    expect(slotKeysForDay(undefined, 'Monday').length).toBeGreaterThan(0);
+  });
+
+  it('returns nothing for a day that ends before it starts', () => {
+    expect(slotKeysForDay(
+      { instructionalHours: { Monday: { start: '19:00', end: '15:00' } } }, 'Monday',
+    )).toEqual([]);
   });
 });

@@ -36,6 +36,8 @@
  *   this can be reasoned about, and tested, on its own.
  */
 
+import { resolveInstructionalHours } from './centerConfig';
+
 /** 'HH:MM' → minutes since midnight. */
 export function toMinutes(hhmm) {
   const [h, m] = String(hhmm || '').split(':').map(Number);
@@ -47,6 +49,21 @@ export function toMinutes(hhmm) {
 export function toHHMM(mins) {
   const m = Math.max(0, Math.round(mins));
   return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+}
+
+/**
+ * The half-hour slot keys covering a weekday's instructional hours.
+ * Lives here rather than in a component so the editor, the scheduler and
+ * the tests all derive the day window the same way.
+ */
+export function slotKeysForDay(centerConfig, dayName, slotMinutes = 30) {
+  const hours = resolveInstructionalHours(centerConfig, new Date())?.[dayName];
+  const start = toMinutes(hours?.start || '15:00');
+  const end   = toMinutes(hours?.end || '20:00');
+  if (start == null || end == null || end <= start) return [];
+  const out = [];
+  for (let t = start; t < end; t += slotMinutes) out.push(toHHMM(t));
+  return out;
 }
 
 /**

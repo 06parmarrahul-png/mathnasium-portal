@@ -37,6 +37,11 @@ const colRef = (centerId) => collection(db, 'centers', centerId, 'schedulerTempl
  */
 export const TEMPLATE_CONFIG_FIELDS = [
   'minPerDay', 'maxPerDay', 'maxDaysPerWeek', 'fairDistribution', 'perDay',
+  // Coverage mode: per-weekday required-headcount curves, one number per
+  // half-hour slot. A template saved in Classic mode simply has none, and
+  // a template saved in Coverage mode carries both — so switching modes
+  // after loading one doesn't lose the other side's settings.
+  'curvesByWeekday',
 ];
 
 /** Strip a live schedConfig down to just the templatable fields. */
@@ -109,6 +114,10 @@ export async function deleteTemplate(centerId, templateId) {
  */
 export function describeTemplate(template) {
   const c = template?.config || {};
+  const curveDays = Object.keys(c.curvesByWeekday || {}).length;
+  if (curveDays > 0) {
+    return `coverage curve · ${curveDays} day${curveDays === 1 ? '' : 's'}`;
+  }
   const days = Object.keys(c.perDay || {}).length;
   const base = `${c.minPerDay ?? '?'}–${c.maxPerDay ?? '?'} per day`;
   return days > 0 ? `${base} · ${days} day${days === 1 ? '' : 's'} customised` : base;
