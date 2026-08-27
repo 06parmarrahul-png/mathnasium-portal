@@ -39,6 +39,8 @@ export function generateCoverageSchedule({
   instructors = [],
   availabilityByDate = {},
   minShiftMinutes = 120,
+  requireHost = true,
+  hostNames = [],
 } = {}) {
   const warnings = [];
   const minutesSoFar = {};
@@ -48,6 +50,19 @@ export function generateCoverageSchedule({
   const draftDays = [];
 
   for (const day of days) {
+    // Centre closed — a stat holiday or a day the centre doesn't run.
+    // Emit the day anyway, flagged, rather than dropping it: a date that
+    // silently disappears from a draft looks like a bug, and the owner
+    // needs to see that the 7th is Labour Day, not wonder where it went.
+    if (day.closed) {
+      draftDays.push({
+        ...toDraftDay({ ...day, assignments: [], unfilled: [] }),
+        closed: true,
+        closureReason: day.closed,
+      });
+      continue;
+    }
+
     // Real bookings for THIS date beat a weekday pattern. The pattern is
     // the fallback for dates far enough out that nothing is booked yet.
     const requirements = curvesByDate[day.dateStr]?.length
@@ -61,8 +76,22 @@ export function generateCoverageSchedule({
       continue;
     }
 
+    // A host covers the front of house for the whole open day, every day
+    // the centre runs — it isn't driven by how many students are booked,
+    // so it's added as its own flat requirement rather than coming out of
+    // the demand curve. preferredNames carries the centre's designated
+    // host: they take it whenever they're available, and it falls to
+    // anyone else host-capable when they aren't.
+    const withHost = requireHost && day.slotKeys.length > 0
+      ? [...requirements, {
+          capability: 'Host',
+          required: day.slotKeys.map(() => 1),
+          preferredNames: hostNames,
+        }]
+      : requirements;
+
     const { shifts, warnings: planWarnings } = planDay({
-      requirements,
+      requirements: withHost,
       slotStarts: day.slotKeys,
       minShiftMinutes,
     });

@@ -209,5 +209,73 @@ describe('generateCoverageSchedule', () => {
     });
     expect(days[0].assignedEmployees).toHaveLength(2);
   });
+
+  it('rosters a host every open day, preferring the designated one', () => {
+    const people = [
+      ...staff(4),
+      { uid: 'h1', displayName: 'Rahul Parmar', subRoles: ['Host'], priority: 2 },
+      { uid: 'h2', displayName: 'Backup Host',  subRoles: ['Host'], priority: 2 },
+    ];
+    const { days } = generateCoverageSchedule({
+      days: MONDAYS,
+      curvesByWeekday: curves,
+      instructors: people,
+      availabilityByDate: availableAll(MONDAYS, people),
+      requireHost: true,
+      hostNames: ['Rahul Parmar'],
+    });
+    for (const d of days) {
+      expect(d.roles['Rahul Parmar']).toBe('Host');
+    }
+  });
+
+  it('does not add a host block when the centre does not want one', () => {
+    const people = staff(6);
+    const { days } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByWeekday: curves,
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+      requireHost: false,
+    });
+    expect(Object.values(days[0].roles).some(r => r === 'Host')).toBe(false);
+  });
+
+  it('rosters nobody on a closed day, but still shows the day', () => {
+    // Labour Day. Dropping the date entirely makes a draft look like it
+    // lost a day; the owner needs to see WHY it's empty.
+    const people = staff(6);
+    const closedDay = { ...day('2026-09-07', 'Monday', 7), closed: 'Labour Day' };
+    const { days } = generateCoverageSchedule({
+      days: [closedDay],
+      curvesByWeekday: curves,
+      instructors: people,
+      availabilityByDate: availableAll([closedDay], people),
+      requireHost: true,
+      hostNames: ['Rahul Parmar'],
+    });
+    expect(days).toHaveLength(1);
+    expect(days[0].closed).toBe(true);
+    expect(days[0].closureReason).toBe('Labour Day');
+    expect(days[0].assignedEmployees).toHaveLength(0);
+    // Not flagged as understaffed — it isn't short, it's shut.
+    expect(days[0].openSlotsNeeded).toBe(0);
+  });
+
+  it('still schedules the open days either side of a closure', () => {
+    const people = staff(6);
+    const list = [
+      { ...day('2026-09-07', 'Monday', 7), closed: 'Labour Day' },
+      day('2026-09-14', 'Monday', 14),
+    ];
+    const { days } = generateCoverageSchedule({
+      days: list,
+      curvesByWeekday: curves,
+      instructors: people,
+      availabilityByDate: availableAll(list, people),
+    });
+    expect(days[0].assignedEmployees).toHaveLength(0);
+    expect(days[1].assignedEmployees.length).toBeGreaterThan(0);
+  });
 });
 

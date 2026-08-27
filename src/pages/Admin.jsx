@@ -28,7 +28,7 @@ import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay, isSameWeek,
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
-import { generateSchedule, FIXED_SCHEDULES } from '../lib/scheduler';
+import { generateSchedule, FIXED_SCHEDULES, DEFAULT_AUTO_HOST_NAMES } from '../lib/scheduler';
 import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, subRoleShort, expandSubRoles, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
@@ -36,7 +36,7 @@ import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
   stateColorHex, staffTypeColorHex,
-  isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
+  isOperatingDay, holidayFor, closureReason, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
@@ -2951,12 +2951,16 @@ export default function Admin() {
             const dayList = [];
             for (let d = new Date(first); d <= last; d = addDays(d, 1)) {
               const dayName = DOW[d.getDay()];
-              if (dayName === 'Sunday') continue;             // centre is shut
-              if (!isOperatingDay(d, centerConfig)) continue; // holidays / closures
+              if (dayName === 'Sunday') continue;   // never a working day
+              // closureReason covers BOTH a weekday the centre doesn't run
+              // AND a stat holiday. isOperatingDay alone only checks the
+              // weekday list, so on its own it would have cheerfully
+              // scheduled a full floor on Labour Day.
               dayList.push({
                 dateStr: format(d, 'yyyy-MM-dd'),
                 dayName,
                 dayNumber: d.getDate(),
+                closed: closureReason(new Date(d), centerConfig),
                 slotKeys: slotKeysForDay(centerConfig, dayName, new Date(d)),
               });
             }
@@ -2972,6 +2976,16 @@ export default function Admin() {
             // "typical Monday" is only a fallback for dates nobody has
             // booked into yet.
             const ratio = Number(centerConfig?.targetRatio) || 3.5;
+            // Names with a standing weekly schedule in centre config. An
+            // entry that's "Off" every day isn't really fixed staff, so
+            // it doesn't count — matching how the classic engine reads it.
+            const fixedStaffMapNow = centerConfig?.fixedStaff || {};
+            const fixedStaffNames = new Set(
+              Object.entries(fixedStaffMapNow)
+                .filter(([, sched]) => MATRIX_DAYS.some(
+                  dn => sched?.[dn] && String(sched[dn]).toLowerCase() !== 'off'))
+                .map(([name]) => name),
+            );
             const booked = await fetchBookedDemand(
               activeCenterId, dayList.map(d => d.dateStr),
             );
@@ -3012,14 +3026,38 @@ export default function Admin() {
               days: dayList,
               curvesByWeekday,
               curvesByDate,
-              instructors: schedulableUsers.map(u => ({
-                uid: u.uid,
-                displayName: u.displayName,
-                subRoles: u.subRoles,
-                priority: u.priority,
-                maxDaysPerWeek: u.maxDaysPerWeek ?? schedConfig.maxDaysPerWeek,
-              })),
+              // Fixed staff — the Centre Director, Dir. of Education,
+              // Manager, Admin Assistant — are NOT floor instructors and
+              // are not this engine's job. They already have standing
+              // weekly schedules in centerConfig.fixedStaff, seeded onto
+              // the calendar by seedFixedShiftsForDates when the draft is
+              // saved. Leaving them in the pool would have rostered them a
+              // second time, on the floor, against their own hours. The
+              // classic engine excludes them the same way.
+              instructors: schedulableUsers.filter(u => !fixedStaffNames.has(u.displayName)).map(u => {
+                const forCentre = resolveUserForCenter(u, activeCenterId) || u;
+                return {
+                  uid: u.uid,
+                  displayName: u.displayName,
+                  subRoles: forCentre.subRoles ?? u.subRoles,
+                  priority: forCentre.priority ?? u.priority,
+                  // Leads run the floor, so they lead for a block — as a
+                  // head start, not an absolute rule, or they'd take every
+                  // shift and starve everyone else.
+                  isLead: forCentre.instructorType === 'Lead',
+                  maxDaysPerWeek: forCentre.maxDaysPerWeek ?? u.maxDaysPerWeek ?? schedConfig.maxDaysPerWeek,
+                };
+              }),
               availabilityByDate,
+              // A host covers front-of-house every open day, regardless of
+              // how many students are booked. The centre's designated host
+              // takes it when available; anyone host-capable fills in when
+              // they're not. Reuses the existing autoHostNames setting
+              // rather than adding a second place to name the host.
+              requireHost: true,
+              hostNames: Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
+                ? centerConfig.autoHostNames
+                : DEFAULT_AUTO_HOST_NAMES,
             });
             // Say plainly when there was nothing to schedule from, rather
             // than handing back an empty draft that looks like a bug.
@@ -6295,13 +6333,21 @@ export default function Admin() {
                     coverage. Click a day to focus it below. */}
                 <div className="border-b bg-white px-4 py-3 flex flex-wrap gap-1.5">
                   {draftSchedule.days.map((day, i) => {
-                    const low = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
+                    // A closed day is neither staffed nor understaffed —
+                    // showing it as 0/0 in red reads as a failure when it's
+                    // simply Labour Day.
+                    const closed = !!day.closed;
+                    const low = !closed
+                      && day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
                     const sel = i === selectedDayIndex;
                     return (
                       <button key={day.date} onClick={() => setSelectedDayIndex(i)}
-                        className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                        <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
-                        <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>
+                        title={closed ? `Closed — ${day.closureReason || 'centre closed'}` : undefined}
+                        className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : closed ? 'border-gray-200 bg-gray-100 hover:border-gray-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                        <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : closed ? 'text-gray-500' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
+                        {closed
+                          ? <span className="text-[10px] font-semibold text-gray-500">Closed</span>
+                          : <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>}
                       </button>
                     );
                   })}
