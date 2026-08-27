@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isEligible, matchDay, toDraftDay, PRIORITY_WEIGHT_MINUTES } from './coverage-matcher';
+import { isEligible, matchDay, toDraftDay, PRIORITY_WEIGHT_MINUTES, LEAD_HEAD_START_MINUTES } from './coverage-matcher';
 
 const person = (uid, over = {}) => ({
   uid,
@@ -187,6 +187,105 @@ describe('toDraftDay', () => {
     // 2 filled + 1 nobody could work = the day genuinely wanted 3.
     expect(day.countingStaffCount).toBe(2);
     expect(day.targetStaffCount).toBe(3);
+  });
+
+  it('gives a block to its preferred person when they can work it', () => {
+    // The centre's designated host takes the host shift even though a
+    // colleague has fewer hours — that's the point of naming them.
+    const { assignments } = matchDay({
+      skeletons: [{ ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] }],
+      candidates: [
+        person('Rahul Parmar', { subRoles: ['Host'] }),
+        person('Someone Else', { subRoles: ['Host'] }),
+      ],
+      minutesSoFar: { 'Rahul Parmar': 20 * 60, 'Someone Else': 0 },
+    });
+    expect(assignments[0].displayName).toBe('Rahul Parmar');
+  });
+
+  it('falls back to anyone host-capable when the preferred host cannot work', () => {
+    const { assignments, unfilled } = matchDay({
+      skeletons: [{ ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] }],
+      candidates: [
+        // Rahul is only free from 17:00, so he can't cover the block.
+        person('Rahul Parmar', { subRoles: ['Host'], availStart: '17:00' }),
+        person('Someone Else', { subRoles: ['Host'] }),
+      ],
+    });
+    expect(unfilled).toHaveLength(0);
+    expect(assignments[0].displayName).toBe('Someone Else');
+  });
+
+  it('never gives a host block to someone who cannot host', () => {
+    const { assignments, unfilled } = matchDay({
+      skeletons: [{ ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] }],
+      candidates: [person('Teacher Only', { subRoles: ['Elementary'] })],
+    });
+    expect(assignments).toHaveLength(0);
+    expect(unfilled).toHaveLength(1);
+  });
+
+  it('puts Leads ahead of instructors, without starving them', () => {
+    const lead = matchDay({
+      skeletons: [block('15:00', '19:00')],
+      candidates: [person('lead', { isLead: true }), person('plain')],
+    });
+    expect(lead.assignments[0].displayName).toBe('lead');
+
+    // ...but a Lead who is already well ahead on hours steps aside.
+    const evened = matchDay({
+      skeletons: [block('15:00', '19:00')],
+      candidates: [person('lead', { isLead: true }), person('plain')],
+      minutesSoFar: { lead: 10 * LEAD_HEAD_START_MINUTES },
+    });
+    expect(evened.assignments[0].displayName).toBe('plain');
+  });
+
+});
+
+describe('why the designated host missed out', () => {
+  const hostBlock = { ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] };
+
+  it('says so when they are not ticked as able to host', () => {
+    const { notes } = matchDay({
+      skeletons: [hostBlock],
+      candidates: [
+        person('Rahul Parmar', { subRoles: ['Elementary'] }),   // no Host capability
+        person('Bri MacDonald', { subRoles: ['Host'] }),
+      ],
+    });
+    expect(notes.join(' ')).toMatch(/Rahul Parmar isn't ticked as able to Host/);
+  });
+
+  it('says so when their availability does not cover the block', () => {
+    const { notes } = matchDay({
+      skeletons: [hostBlock],
+      candidates: [
+        person('Rahul Parmar', { subRoles: ['Host'], availEnd: '17:00' }),
+        person('Bri MacDonald', { subRoles: ['Host'] }),
+      ],
+    });
+    expect(notes.join(' ')).toMatch(/only free 15:00–17:00/);
+  });
+
+  it('says so when they submitted no availability at all', () => {
+    const { notes } = matchDay({
+      skeletons: [hostBlock],
+      candidates: [person('Bri MacDonald', { subRoles: ['Host'] })],
+    });
+    expect(notes.join(' ')).toMatch(/didn't submit availability/);
+  });
+
+  it('stays quiet when the designated host does get it', () => {
+    const { assignments, notes } = matchDay({
+      skeletons: [hostBlock],
+      candidates: [
+        person('Rahul Parmar', { subRoles: ['Host'] }),
+        person('Bri MacDonald', { subRoles: ['Host'] }),
+      ],
+    });
+    expect(assignments[0].displayName).toBe('Rahul Parmar');
+    expect(notes).toHaveLength(0);
   });
 });
 

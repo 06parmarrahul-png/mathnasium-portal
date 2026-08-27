@@ -35,6 +35,28 @@ import { hasCapability } from './subRoles';
 export const PRIORITY_WEIGHT_MINUTES = 180;
 
 /**
+ * Head start a Lead gets over a plain instructor for the same block.
+ *
+ * Deliberately a head start rather than a hard rule. Sorting Leads
+ * strictly above instructors would hand them every shift and starve
+ * everyone else, which is the failure the blended-priority design exists
+ * to avoid. At roughly one shift's worth of minutes, a Lead goes first
+ * while the two are close, and an instructor who's been passed over
+ * enough still overtakes them.
+ */
+export const LEAD_HEAD_START_MINUTES = 180;
+
+/**
+ * How far a named preferred person outranks everyone else for a block.
+ *
+ * Large enough that the centre's designated host takes the host shift
+ * whenever they're available, small enough that it's still a preference:
+ * if they're not available, or already booked that day, the block falls
+ * to anyone else who can host rather than going unfilled.
+ */
+export const PREFERRED_HEAD_START_MINUTES = 100000;
+
+/**
  * Can this person work this skeleton?
  *
  * Availability must COVER the whole block — a partial overlap would
@@ -80,6 +102,37 @@ export function matchDay({
   const takenToday = new Set();
   const assignments = [];
   const unfilled = [];
+  // Why a named person (the designated host, usually) didn't get the
+  // block meant for them. "Rahul should be host and isn't" has four very
+  // different causes and they're indistinguishable from the roster alone,
+  // so the engine says which one it hit.
+  const notes = [];
+
+  const nameKey = (n) => String(n || '').trim().toLowerCase();
+
+  const explainPreferredMiss = (skeleton, chosenName) => {
+    const wanted = skeleton.preferredNames || [];
+    if (wanted.length === 0) return;
+    if (wanted.some(n => nameKey(n) === nameKey(chosenName))) return;
+    for (const name of wanted) {
+      const who = candidates.find(c => nameKey(c.displayName) === nameKey(name));
+      const block = `${skeleton.capability || 'shift'} ${skeleton.startTime}–${skeleton.endTime}`;
+      if (!who) {
+        notes.push(`${name} didn't submit availability, so ${block} went to ${chosenName || 'nobody'}.`);
+      } else if (skeleton.capability && skeleton.capability !== 'Instructor'
+                 && !hasCapability(who.subRoles, skeleton.capability)) {
+        notes.push(
+          `${name} isn't ticked as able to ${skeleton.capability} in Manage Staff, `
+          + `so ${block} went to ${chosenName || 'nobody'}.`);
+      } else if (takenToday.has(who.uid) && oneShiftPerPerson) {
+        notes.push(`${name} was already on another shift, so ${block} went to ${chosenName || 'nobody'}.`);
+      } else if (!isEligible(who, skeleton)) {
+        notes.push(
+          `${name} is only free ${who.availStart}–${who.availEnd}, which doesn't cover `
+          + `${block} — it went to ${chosenName || 'nobody'}.`);
+      }
+    }
+  };
 
   // Order by scarcity: how many people could work each block at all.
   // Ties broken by length, so the long awkward blocks get first refusal
@@ -100,13 +153,32 @@ export function matchDay({
       isEligible(c, skeleton)
       && !(oneShiftPerPerson && takenToday.has(c.uid)));
 
-    if (pool.length === 0) { unfilled.push(skeleton); continue; }
+    if (pool.length === 0) {
+      explainPreferredMiss(skeleton, null);
+      unfilled.push(skeleton);
+      continue;
+    }
+
+    // Who this block is meant for, if anyone — e.g. the centre's
+    // designated host. Compared on name because that's how the existing
+    // centerConfig.autoHostNames setting identifies people.
+    const preferred = new Set(
+      (skeleton.preferredNames || []).map(n => String(n).trim().toLowerCase()));
+    const isPreferred = (c) =>
+      preferred.size > 0 && preferred.has(String(c.displayName || '').trim().toLowerCase());
 
     // Lower score wins: priority head start, then whoever has the least
     // time on the books so far. This is the rule in plain terms — if one
     // person is on 12 hours and another on 3, the person on 3 gets it.
+    //
+    // Two head starts sit on top of that, both subtractive so they lead
+    // without ever becoming absolute: the block's preferred person, and
+    // Leads over plain instructors.
     const score = (c) =>
-      (c.priority ?? 2) * PRIORITY_WEIGHT_MINUTES + (running[c.uid] || 0);
+      (c.priority ?? 2) * PRIORITY_WEIGHT_MINUTES
+      + (running[c.uid] || 0)
+      - (isPreferred(c) ? PREFERRED_HEAD_START_MINUTES : 0)
+      - (c.isLead ? LEAD_HEAD_START_MINUTES : 0);
 
     pool.sort((a, b) =>
       score(a) - score(b)
@@ -117,6 +189,7 @@ export function matchDay({
       || String(a.displayName || '').localeCompare(String(b.displayName || '')));
 
     const chosen = pool[0];
+    explainPreferredMiss(skeleton, chosen.displayName);
     takenToday.add(chosen.uid);
     running[chosen.uid] = (running[chosen.uid] || 0) + (skeleton.minutes || 0);
     assignments.push({
@@ -129,7 +202,7 @@ export function matchDay({
     });
   }
 
-  return { assignments, unfilled, minutesSoFar: running };
+  return { assignments, unfilled, minutesSoFar: running, notes };
 }
 
 /**

@@ -3005,13 +3005,15 @@ export default function Admin() {
                   .map(([t]) => t)
                   .sort();
                 if (bookedTimes.length > 0) {
-                  outsideHours.push(
-                    `⚠ ${d.dayName} ${d.dayNumber}: ${bookedTimes.length} booked slot`
-                    + `${bookedTimes.length > 1 ? 's' : ''} between ${bookedTimes[0]} and `
-                    + `${bookedTimes[bookedTimes.length - 1]}, but this day's instructional hours `
-                    + `only cover ${d.slotKeys[0] || '—'}–${d.slotKeys[d.slotKeys.length - 1] || '—'}. `
-                    + `Check the day's hours in Centre Settings.`,
-                  );
+                  d.demandNote =
+                    `${bookedTimes.length} booked slot${bookedTimes.length > 1 ? 's' : ''} `
+                    + `between ${bookedTimes[0]} and ${bookedTimes[bookedTimes.length - 1]}, but `
+                    + `${d.dayName}'s instructional hours only cover `
+                    + `${d.slotKeys[0] || '—'}–${d.slotKeys[d.slotKeys.length - 1] || '—'}. `
+                    + `Fix the hours for ${d.dayName} in Centre Settings.`;
+                  outsideHours.push(`⚠ ${d.dayName} ${d.dayNumber}: ${d.demandNote}`);
+                } else {
+                  d.demandNote = `No students are booked on this date.`;
                 }
                 continue;
               }
@@ -6544,9 +6546,24 @@ export default function Admin() {
                           </div>
                         ) : (
                           <>
+                            {day.notes?.length > 0 && (
+                              <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                                {day.notes.map((n, ni) => (
+                                  <p key={ni} className="text-xs text-amber-800">{n}</p>
+                                ))}
+                              </div>
+                            )}
                             {day.assignedEmployees.length === 0 ? (
                               <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
-                                <p className="text-sm text-gray-400 italic">No staff assigned for this day</p>
+                                <p className="text-sm text-gray-400 italic">
+                                  {day.closed ? `Centre closed — ${day.closureReason || 'closed'}` : 'No staff assigned for this day'}
+                                </p>
+                                {/* WHY it's empty, in the place the question
+                                    gets asked. Without this an empty day is
+                                    indistinguishable from a broken one. */}
+                                {!day.closed && day.emptyReason && (
+                                  <p className="mt-1.5 text-xs text-amber-700 max-w-lg mx-auto">{day.emptyReason}</p>
+                                )}
                               </div>
                             ) : (
                               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">

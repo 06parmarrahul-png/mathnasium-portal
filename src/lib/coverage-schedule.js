@@ -69,10 +69,18 @@ export function generateCoverageSchedule({
       ? curvesByDate[day.dateStr]
       : curvesByWeekday[day.dayName];
     if (!requirements || requirements.length === 0) {
-      // No shape for this weekday is a deliberate "we're shut / nothing
-      // planned", not an error — but say so once rather than silently
-      // producing an empty day the owner has to puzzle over.
-      draftDays.push(toDraftDay({ ...day, assignments: [], unfilled: [] }));
+      // Nothing to schedule from. This is the state that reads as "0/0"
+      // and looks broken, so the day carries the reason the caller worked
+      // out (no bookings / bookings outside this day's hours) rather than
+      // leaving the owner to guess.
+      const reason = day.demandNote
+        || `No students booked on this date, and no fallback coverage set for ${day.dayName}.`;
+      draftDays.push({
+        ...toDraftDay({ ...day, assignments: [], unfilled: [] }),
+        emptyReason: reason,
+        notes: [],
+      });
+      warnings.push(`${day.dayName} ${day.dayNumber}: ${reason}`);
       continue;
     }
 
@@ -116,7 +124,7 @@ export function generateCoverageSchedule({
       })
       .filter(Boolean);
 
-    const { assignments, unfilled, minutesSoFar: next } = matchDay({
+    const { assignments, unfilled, minutesSoFar: next, notes } = matchDay({
       skeletons: shifts,
       candidates,
       minutesSoFar,
@@ -134,7 +142,18 @@ export function generateCoverageSchedule({
       );
     }
 
-    draftDays.push(toDraftDay({ ...day, assignments, unfilled }));
+    draftDays.push({
+      ...toDraftDay({ ...day, assignments, unfilled }),
+      // Per-day explanation of anything surprising — most often why the
+      // designated host didn't get the host block. Surfaced on the day
+      // itself rather than pooled into the run-wide warning list, because
+      // the question is always asked while looking at one day.
+      notes,
+      emptyReason: assignments.length === 0
+        ? (day.demandNote || 'No coverage was required for this day.')
+        : null,
+    });
+    for (const n of notes) warnings.push(`${day.dayName} ${day.dayNumber}: ${n}`);
   }
 
   return {
