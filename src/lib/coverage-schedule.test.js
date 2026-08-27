@@ -150,4 +150,37 @@ describe('generateCoverageSchedule', () => {
     expect(days[0].subRoles['HS Only']).toBe('Highschool');
     expect(days[0].subRoles['Elem Only']).toBe('Elementary');
   });
+
+  // Regression: the draft review screen does Object.entries() on this.
+  // Returning a draft without it took the whole admin page down with
+  // "Cannot convert undefined or null to object" the first time the
+  // coverage engine ran for real.
+  it('returns an employeeSummary the draft screen can render', () => {
+    const people = staff(6);
+    const result = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByWeekday: curves,
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+    });
+    expect(result.employeeSummary).toBeDefined();
+    expect(() => Object.entries(result.employeeSummary)).not.toThrow();
+    // Keyed by display name, and counting SHIFTS — the same shape the
+    // classic engine emits, so one screen can render either.
+    expect(result.employeeSummary['Person 1']).toBeTypeOf('number');
+  });
+
+  it('includes people who got nothing, so a zero is visible', () => {
+    const people = staff(6);
+    const result = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByWeekday: curves,          // needs 4, so 2 miss out
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+    });
+    expect(Object.keys(result.employeeSummary)).toHaveLength(6);
+    expect(Object.values(result.employeeSummary).filter(n => n === 0).length)
+      .toBeGreaterThan(0);
+  });
 });
+

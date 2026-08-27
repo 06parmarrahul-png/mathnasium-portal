@@ -38,6 +38,7 @@ export function generateCoverageSchedule({
   const warnings = [];
   const minutesSoFar = {};
   const daysWorked = {};          // uid → count of days assigned this run
+  const shiftsByName = {};        // displayName → shift count (draft UI reads this)
   const byUid = new Map(instructors.map(i => [i.uid, i]));
   const draftDays = [];
 
@@ -83,7 +84,10 @@ export function generateCoverageSchedule({
       minutesSoFar,
     });
     Object.assign(minutesSoFar, next);
-    for (const a of assignments) daysWorked[a.uid] = (daysWorked[a.uid] || 0) + 1;
+    for (const a of assignments) {
+      daysWorked[a.uid] = (daysWorked[a.uid] || 0) + 1;
+      shiftsByName[a.displayName] = (shiftsByName[a.displayName] || 0) + 1;
+    }
 
     if (unfilled.length > 0) {
       warnings.push(
@@ -98,11 +102,29 @@ export function generateCoverageSchedule({
   return {
     days: draftDays,
     warnings,
+    // Shape the draft review screen expects from EITHER engine:
+    // displayName → number of shifts. Keyed by name, not uid, because
+    // that's what the summary table renders. Omitting it is what crashed
+    // the page the first time this engine ran — Object.entries(undefined).
+    employeeSummary: everyoneInSummary(shiftsByName, instructors),
     minutesByPerson: minutesSoFar,
     // Spread of hours across everyone who got work — the number that
     // tells you at a glance whether the rotation came out even.
     fairness: summariseFairness(minutesSoFar, instructors),
   };
+}
+
+/**
+ * Everyone who was in the running, including the people who ended up with
+ * nothing. A summary that silently omits the instructor who got zero
+ * shifts hides exactly the case an owner most needs to notice.
+ */
+function everyoneInSummary(shiftsByName, instructors) {
+  const out = {};
+  for (const inst of instructors) {
+    if (inst?.displayName) out[inst.displayName] = 0;
+  }
+  return { ...out, ...shiftsByName };
 }
 
 function summariseFairness(minutesSoFar, instructors) {

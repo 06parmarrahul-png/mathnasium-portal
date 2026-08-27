@@ -6483,7 +6483,11 @@ export default function Admin() {
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <h4 className="font-semibold text-gray-900 mb-3">Shift Distribution</h4>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {Object.entries(draftSchedule.employeeSummary).sort(([,a],[,b]) => b-a).map(([name, count]) => (
+                  {/* `|| {}` on purpose: a draft is produced by one of two
+                      engines, and an engine that forgets this key should
+                      not be able to take the whole admin page down with
+                      Object.entries(undefined). It has happened once. */}
+                  {Object.entries(draftSchedule.employeeSummary || {}).sort(([,a],[,b]) => b-a).map(([name, count]) => (
                     <div key={name} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
                       <span className="text-sm text-gray-800">{name}</span>
                       <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>{count} shifts</span>
