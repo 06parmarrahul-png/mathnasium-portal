@@ -2110,6 +2110,16 @@ export default function Admin() {
   //              from their availability.
   // 'coverage' — demand curve → shift shapes → people. Opt-in, so the
   //              live path is unchanged until an owner chooses it.
+  // The centre's designated host, as the scheduler resolves it. Derived
+  // here (not just inside the generate handler) so the panel can SHOW it
+  // — this setting had no UI at all, which is how it ended up silently
+  // matching nobody.
+  const designatedHostNames = useMemo(() => (
+    Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
+      ? centerConfig.autoHostNames.filter(n => String(n || '').trim())
+      : DEFAULT_AUTO_HOST_NAMES
+  ), [centerConfig?.autoHostNames]);
+
   const [schedMode, setSchedMode] = useState('classic');
   // Coverage mode has no Month option, so a user who picked Month in
   // classic mode and switched over would otherwise be left on a range
@@ -6257,6 +6267,37 @@ export default function Admin() {
                   match — no shift under 2 hours, a host on every open day, and the schedule spread
                   evenly by hours worked. Days with no bookings, or with the centre closed, say so.
                 </p>
+                {/* Who the engine thinks the host is. This was invisible —
+                    autoHostNames lived in centre config with no UI, so
+                    when it didn't match anybody the host block quietly
+                    rotated on fairness and there was no way to see why. */}
+                <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
+                  <span className="font-semibold text-indigo-900">Designated host:</span>
+                  {designatedHostNames.length === 0 ? (
+                    <span className="text-amber-700">
+                      none set — the host shift will go to whoever can host
+                    </span>
+                  ) : designatedHostNames.map(n => {
+                    const known = approvedUsers.some(
+                      u => (u.displayName || '').trim().toLowerCase() === n.trim().toLowerCase());
+                    return (
+                      <span key={n}
+                        title={known ? undefined : 'No staff account matches this name, so it has no effect'}
+                        className={`rounded-full px-2 py-0.5 font-semibold ${known
+                          ? 'bg-white text-indigo-800 border border-indigo-200'
+                          : 'bg-amber-100 text-amber-800 border border-amber-300'}`}>
+                        {n}{known ? '' : ' — no matching staff account'}
+                      </span>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => selectTab('holidays')}
+                    className="underline text-indigo-600 hover:text-indigo-800"
+                  >
+                    Change
+                  </button>
+                </div>
               </div>
             ) : (
               <PerDayStaffingMatrix

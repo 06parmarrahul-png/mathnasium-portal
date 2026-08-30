@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DAY_NAMES, isSummerOverrideActive } from '../lib/centerConfig';
-import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Users, Sun } from 'lucide-react';
+import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Users, Sun, UserCheck } from 'lucide-react';
 
 /**
  * Edit per-center settings: identity, instructional + operating hours,
@@ -162,6 +162,34 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
           baseHours={form?.instructionalHours}
           onChange={(next) => setField('summerHours2026', next)}
         />
+      </Section>
+
+      {/* Designated host. Previously config-only with no UI at all: when
+          autoHostNames matched nobody, the auto-scheduler's host block
+          quietly rotated on fairness and there was no way to see or fix
+          it. */}
+      <Section
+        title="Designated Host"
+        icon={UserCheck}
+        hint="Who covers front of house. The auto-scheduler gives them the host shift on every open day they're available, ahead of fairness; it only falls to another host-capable person when they're not."
+      >
+        <Field label="Host name (must match their staff account exactly)">
+          <input
+            type="text"
+            value={(form?.autoHostNames || []).join(', ')}
+            onChange={(e) => setField(
+              'autoHostNames',
+              e.target.value.split(',').map(v => v.trim()).filter(Boolean),
+            )}
+            placeholder="Rahul Parmar"
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
+          />
+        </Field>
+        <p className="mt-1 text-xs text-gray-500">
+          Comma-separate to name more than one. Leave blank and the host shift goes to whoever
+          can host. The name is matched against the staff member&rsquo;s display name, so it has to
+          match what shows in Manage Staff.
+        </p>
       </Section>
 
       {/* Operating hours */}
