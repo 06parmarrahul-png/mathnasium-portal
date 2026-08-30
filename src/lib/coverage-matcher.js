@@ -118,7 +118,12 @@ export function matchDay({
       const who = candidates.find(c => nameKey(c.displayName) === nameKey(name));
       const block = `${skeleton.capability || 'shift'} ${skeleton.startTime}–${skeleton.endTime}`;
       if (!who) {
-        notes.push(`${name} didn't submit availability, so ${block} went to ${chosenName || 'nobody'}.`);
+        // Careful with this one: by the time the matcher sees a day, the
+        // caller has already dropped anyone over their max-days-per-week.
+        // "Didn't submit availability" would be a confident wrong answer.
+        notes.push(
+          `${name} wasn't in the pool for this day — no availability submitted, or already at `
+          + `their maximum days for the week. ${block} went to ${chosenName || 'nobody'}.`);
       } else if (skeleton.capability && skeleton.capability !== 'Instructor'
                  && !hasCapability(who.subRoles, skeleton.capability)) {
         notes.push(
@@ -134,17 +139,29 @@ export function matchDay({
     }
   };
 
-  // Order by scarcity: how many people could work each block at all.
-  // Ties broken by length, so the long awkward blocks get first refusal
-  // on whoever can actually do them.
+  // Blocks with a NAMED person go first, then the scarcest.
+  //
+  // Scarcity alone was wrong, and wrong in a way that looked random. A
+  // person can only hold one shift a day, so whichever block is filled
+  // first keeps them. When several staff can host, the host block has a
+  // HIGH eligible count and sorts late — by which time an ordinary
+  // instructor block has already taken the designated host, and the host
+  // shift falls to whoever else is left. Across a week that produced the
+  // designated host covering host on one day and instructing on the rest,
+  // with no obvious pattern.
+  //
+  // Naming someone is a stronger statement than scarcity: it says this
+  // block is theirs. So those blocks get first refusal.
   const ordered = skeletons
     .map((s, i) => ({
       skeleton: s,
       i,
+      hasPreferred: (s.preferredNames || []).length > 0 ? 0 : 1,
       eligibleCount: candidates.filter(c => isEligible(c, s)).length,
     }))
     .sort((a, b) =>
-      a.eligibleCount - b.eligibleCount
+      a.hasPreferred - b.hasPreferred
+      || a.eligibleCount - b.eligibleCount
       || b.skeleton.minutes - a.skeleton.minutes
       || a.i - b.i);
 

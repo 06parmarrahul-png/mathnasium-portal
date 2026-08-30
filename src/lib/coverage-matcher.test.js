@@ -268,12 +268,16 @@ describe('why the designated host missed out', () => {
     expect(notes.join(' ')).toMatch(/only free 15:00–17:00/);
   });
 
-  it('says so when they submitted no availability at all', () => {
+  it('does not claim "no availability" when a day cap may be the cause', () => {
     const { notes } = matchDay({
       skeletons: [hostBlock],
       candidates: [person('Bri MacDonald', { subRoles: ['Host'] })],
     });
-    expect(notes.join(' ')).toMatch(/didn't submit availability/);
+    // The caller drops people over their max-days-per-week before the
+    // matcher runs, so the matcher cannot tell the two apart — and must
+    // not guess confidently between them.
+    expect(notes.join(' ')).toMatch(/wasn't in the pool for this day/);
+    expect(notes.join(' ')).toMatch(/maximum days for the week/);
   });
 
   it('stays quiet when the designated host does get it', () => {
@@ -286,6 +290,49 @@ describe('why the designated host missed out', () => {
     });
     expect(assignments[0].displayName).toBe('Rahul Parmar');
     expect(notes).toHaveLength(0);
+  });
+
+  it('gives the named person their block before a scarcer one takes them', () => {
+    // The bug this exists to stop: a person holds one shift a day, so
+    // whichever block is filled first keeps them. When plenty of staff
+    // can host, the host block looks EASY (high eligible count) and
+    // sorted last — an instructor block grabbed the designated host
+    // first, and host fell to whoever was left.
+    const hostBlock = { ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] };
+    // A deliberately scarce instructor block: only Rahul can work it.
+    const scarceBlock = block('15:00', '19:00', 'Instructor');
+
+    const everyoneHosts = { subRoles: ['Host', 'Elementary'] };
+    const { assignments } = matchDay({
+      skeletons: [scarceBlock, hostBlock],
+      candidates: [
+        person('Rahul Parmar', everyoneHosts),
+        person('Bri MacDonald', everyoneHosts),
+        person('Ainsley MacDonald', everyoneHosts),
+        person('Dev Prasad', everyoneHosts),
+      ],
+    });
+    const host = assignments.find(a => a.capability === 'Host');
+    expect(host.displayName).toBe('Rahul Parmar');
+  });
+
+  it('keeps giving the named person their block day after day', () => {
+    // Hours accrue, and the preferred head start has to stay decisive
+    // across a week or the host rotates for no reason.
+    const hostBlock = { ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] };
+    let minutes = {};
+    for (let d = 0; d < 5; d++) {
+      const { assignments, minutesSoFar } = matchDay({
+        skeletons: [hostBlock],
+        candidates: [
+          person('Rahul Parmar', { subRoles: ['Host'] }),
+          person('Bri MacDonald', { subRoles: ['Host'] }),
+        ],
+        minutesSoFar: minutes,
+      });
+      expect(assignments[0].displayName).toBe('Rahul Parmar');
+      minutes = minutesSoFar;
+    }
   });
 });
 
