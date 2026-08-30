@@ -246,15 +246,28 @@ describe('toDraftDay', () => {
 describe('why the designated host missed out', () => {
   const hostBlock = { ...block('15:00', '19:00', 'Host'), preferredNames: ['Rahul Parmar'] };
 
-  it('says so when they are not ticked as able to host', () => {
-    const { notes } = matchDay({
+  it('hosts anyway when named, even without the Host box ticked', () => {
+    // Being named as THE host is the capability. Requiring the tick as
+    // well put the same fact in two places, and when they disagreed the
+    // host block silently went to someone else.
+    const { assignments, notes } = matchDay({
       skeletons: [hostBlock],
       candidates: [
-        person('Rahul Parmar', { subRoles: ['Elementary'] }),   // no Host capability
+        person('Rahul Parmar', { subRoles: ['Elementary'] }),   // no Host tick
         person('Bri MacDonald', { subRoles: ['Host'] }),
       ],
     });
-    expect(notes.join(' ')).toMatch(/Rahul Parmar isn't ticked as able to Host/);
+    expect(assignments[0].displayName).toBe('Rahul Parmar');
+    expect(notes).toHaveLength(0);
+  });
+
+  it('still keeps a host block away from someone neither named nor capable', () => {
+    const { assignments, unfilled } = matchDay({
+      skeletons: [hostBlock],
+      candidates: [person('Somebody Else', { subRoles: ['Elementary'] })],
+    });
+    expect(assignments).toHaveLength(0);
+    expect(unfilled).toHaveLength(1);
   });
 
   it('says so when their availability does not cover the block', () => {

@@ -19,19 +19,6 @@
 import { planDay } from './coverage-planner';
 import { matchDay, toDraftDay } from './coverage-matcher';
 
-/**
- * @param {Object} params
- * @param {Array}  params.days              - [{ dateStr, dayName, dayNumber, slotKeys }]
- * @param {Object} params.curvesByWeekday   - { Monday: [{ capability, required:number[] }] }
- * @param {Object} [params.curvesByDate]    - { 'YYYY-MM-DD': [{ capability, required }] }
- *                                            Real bookings for a specific date. Wins over
- *                                            the weekday curve, which is only a fallback
- *                                            for dates with nothing booked yet.
- * @param {Array}  params.instructors       - [{ uid, displayName, subRoles, priority }]
- * @param {Object} params.availabilityByDate- { 'YYYY-MM-DD': [{ userId, startTime, endTime }] }
- * @param {number} [params.minShiftMinutes=120]
- * @param {number} [params.maxDaysPerWeek]  - falls back to each instructor's own setting
- */
 export function generateCoverageSchedule({
   days = [],
   curvesByWeekday = {},
@@ -173,9 +160,6 @@ export function generateCoverageSchedule({
     // the page the first time this engine ran — Object.entries(undefined).
     employeeSummary: everyoneInSummary(shiftsByName, instructors),
     minutesByPerson: minutesSoFar,
-    // Hours keyed by NAME, because that's what the review screen lists
-    // people by. This is the number the engine actually balanced on, so
-    // it belongs next to the shift counts rather than only in internals.
     // Per-person detail so a zero can be explained rather than just
     // displayed. "0 shifts" is the same pixel whether someone never
     // submitted availability, offered time and wasn't needed, or is a
@@ -186,6 +170,8 @@ export function generateCoverageSchedule({
       daysAvailable: daysAvailable[i.uid] || 0,
       reason: i.excludeReason || null,
     }])),
+    // Hours keyed by NAME, because that's what the review screen lists
+    // people by — the number the engine actually balanced on.
     hoursByName: Object.fromEntries(
       instructors
         .filter(i => (minutesSoFar[i.uid] || 0) > 0)

@@ -2966,6 +2966,13 @@ export default function Admin() {
                   dn => sched?.[dn] && String(sched[dn]).toLowerCase() !== 'off'))
                 .map(([name]) => name),
             );
+
+            // The centre's designated host. Hoisted above the pool filter
+            // because they must be EXEMPT from it — see below.
+            const hostNamesNow = Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
+              ? centerConfig.autoHostNames
+              : DEFAULT_AUTO_HOST_NAMES;
+            const hostNameKeys = new Set(hostNamesNow.map(n => String(n).trim().toLowerCase()));
             const booked = await fetchBookedDemand(
               activeCenterId, dayList.map(d => d.dateStr),
             );
@@ -3028,9 +3035,19 @@ export default function Admin() {
                 // list: those keys are display names ("Vinod Bandla") and
                 // drift the moment an account is renamed ("Vin B"), which
                 // silently put a director back in the instructor pool.
-                if (fixedStaffNames.has(u.displayName)
-                    || NON_FLOOR_ROLES.has(u.role)
-                    || NON_FLOOR_TITLES.has(title)) {
+                // The designated host is ALWAYS in the pool, whatever
+                // their role or title. They are usually the owner or a
+                // manager, so the management filter below would remove
+                // them — and then the host block they exist to cover
+                // silently falls to whoever else can host, every day.
+                // Hosting is their job, not a fairness question.
+                const isDesignatedHost = hostNameKeys.has(
+                  String(u.displayName || '').trim().toLowerCase());
+
+                if (!isDesignatedHost
+                    && (fixedStaffNames.has(u.displayName)
+                        || NON_FLOOR_ROLES.has(u.role)
+                        || NON_FLOOR_TITLES.has(title))) {
                   return acc;
                 }
 
@@ -3062,9 +3079,7 @@ export default function Admin() {
               // they're not. Reuses the existing autoHostNames setting
               // rather than adding a second place to name the host.
               requireHost: true,
-              hostNames: Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
-                ? centerConfig.autoHostNames
-                : DEFAULT_AUTO_HOST_NAMES,
+              hostNames: hostNamesNow,
             });
             // Say plainly when there was nothing to schedule from, rather
             // than handing back an empty draft that looks like a bug.

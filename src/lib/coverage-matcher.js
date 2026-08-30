@@ -68,8 +68,16 @@ export function isEligible(candidate, skeleton) {
   if (candidate.unavailable) return false;
 
   // Capability. A skeleton with no capability is open to anyone.
+  //
+  // Being NAMED for a block implies the capability for it. The centre's
+  // designated host is the host by definition; requiring the Host box to
+  // also be ticked in Manage Staff makes the same fact true in two
+  // places, and the day it isn't, the host block quietly goes to someone
+  // else with no way to see why.
   if (skeleton.capability && skeleton.capability !== 'Instructor') {
-    if (!hasCapability(candidate.subRoles, skeleton.capability)) return false;
+    const named = (skeleton.preferredNames || []).some(
+      n => String(n).trim().toLowerCase() === String(candidate.displayName || '').trim().toLowerCase());
+    if (!named && !hasCapability(candidate.subRoles, skeleton.capability)) return false;
   }
 
   const availStart = toMinutes(candidate.availStart);
