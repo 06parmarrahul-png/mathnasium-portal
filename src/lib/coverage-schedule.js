@@ -73,8 +73,7 @@ export function generateCoverageSchedule({
       // and looks broken, so the day carries the reason the caller worked
       // out (no bookings / bookings outside this day's hours) rather than
       // leaving the owner to guess.
-      const reason = day.demandNote
-        || `No students booked on this date, and no fallback coverage set for ${day.dayName}.`;
+      const reason = day.demandNote || 'No students are booked on this date.';
       draftDays.push({
         ...toDraftDay({ ...day, assignments: [], unfilled: [] }),
         emptyReason: reason,
@@ -165,6 +164,14 @@ export function generateCoverageSchedule({
     // the page the first time this engine ran — Object.entries(undefined).
     employeeSummary: everyoneInSummary(shiftsByName, instructors),
     minutesByPerson: minutesSoFar,
+    // Hours keyed by NAME, because that's what the review screen lists
+    // people by. This is the number the engine actually balanced on, so
+    // it belongs next to the shift counts rather than only in internals.
+    hoursByName: Object.fromEntries(
+      instructors
+        .filter(i => (minutesSoFar[i.uid] || 0) > 0)
+        .map(i => [i.displayName, Math.round((minutesSoFar[i.uid] / 60) * 10) / 10]),
+    ),
     // Spread of hours across everyone who got work — the number that
     // tells you at a glance whether the rotation came out even.
     fairness: summariseFairness(minutesSoFar, instructors),

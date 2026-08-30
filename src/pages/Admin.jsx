@@ -14,8 +14,6 @@ import {
 import { generateCoverageSchedule } from '../lib/coverage-schedule';
 import { slotKeysForDay, requiredFromDemand } from '../lib/coverage-planner';
 import { fetchBookedDemand, demandForSlots } from '../lib/booked-demand';
-import { computeTypicalDemand, typicalDemandByTime } from '../lib/demand-snapshots';
-import CoverageCurveEditor from '../components/CoverageCurveEditor';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
@@ -2104,40 +2102,6 @@ export default function Admin() {
     if (schedMode === 'coverage' && schedRangeType === 'month') setSchedRangeType('week');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schedMode]);
-  const [curvesByWeekday, setCurvesByWeekday] = useState({});
-  // Typical students-per-slot by weekday, from the last ~8 weeks of saved
-  // Supply & Demand snapshots. Keyed by clock time so a day that doesn't
-  // start at 3pm still lines up.
-  const [typicalDemand, setTypicalDemand] = useState({});
-  const [demandLoading, setDemandLoading] = useState(false);
-  const [demandLoaded, setDemandLoaded] = useState(false);
-
-  // Coverage mode is useless starting from a blank curve — an owner would
-  // have to click every half-hour of every weekday before it did anything.
-  // So the moment the mode is chosen we fetch real demand history and
-  // pre-fill the curves from it. The owner adjusts rather than authors.
-  useEffect(() => {
-    if (schedMode !== 'coverage' || !activeCenterId || demandLoaded) return;
-    let cancelled = false;
-    setDemandLoading(true);
-    computeTypicalDemand(activeCenterId)
-      .then((typical) => {
-        if (cancelled) return;
-        setTypicalDemand(typicalDemandByTime(typical));
-        setDemandLoaded(true);
-      })
-      .catch(() => { if (!cancelled) setDemandLoaded(true); })
-      .finally(() => { if (!cancelled) setDemandLoading(false); });
-    return () => { cancelled = true; };
-  }, [schedMode, activeCenterId, demandLoaded]);
-
-  // Re-fetch when the centre changes — one centre's history must never
-  // seed another's schedule.
-  useEffect(() => {
-    setTypicalDemand({});
-    setDemandLoaded(false);
-    setCurvesByWeekday({});
-  }, [activeCenterId]);
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
   // Day-centric draft review — which day index is focused in the week strip.
@@ -3026,7 +2990,6 @@ export default function Admin() {
 
             const cov = generateCoverageSchedule({
               days: dayList,
-              curvesByWeekday,
               curvesByDate,
               // Fixed staff — the Centre Director, Dir. of Education,
               // Manager, Admin Assistant — are NOT floor instructors and
@@ -3079,6 +3042,7 @@ export default function Admin() {
               coverage: {
                 fairness: cov.fairness,
                 minutesByPerson: cov.minutesByPerson,
+                hoursByName: cov.hoursByName,
                 datesWithBookings,
               },
             };
@@ -6221,14 +6185,21 @@ export default function Admin() {
                 Empty cells fall back to the global defaults above so the
                 owner only has to fill the days that differ from the norm. */}
             {schedMode === 'coverage' ? (
-              <CoverageCurveEditor
-                centerConfig={centerConfig}
-                curvesByWeekday={curvesByWeekday}
-                onChange={setCurvesByWeekday}
-                typicalDemand={typicalDemand}
-                loading={demandLoading}
-                targetRatio={centerConfig?.targetRatio || 3.5}
-              />
+              /* Coverage mode has nothing to configure: the students booked
+                 on the chosen dates ARE the input. A panel of numbers to
+                 fill in was worse than no panel — it looked like required
+                 setup and sat there empty. */
+              <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50/40 px-4 py-3">
+                <p className="text-sm font-semibold text-indigo-900">
+                  Built from the students actually booked
+                </p>
+                <p className="mt-0.5 text-xs text-indigo-700/80">
+                  For each date you pick, Ratio reads the bookings, works out how many instructors
+                  that needs at your {centerConfig?.targetRatio || 3.5}:1 ratio, and builds shifts to
+                  match — no shift under 2 hours, a host on every open day, and the schedule spread
+                  evenly by hours worked. Days with no bookings, or with the centre closed, say so.
+                </p>
+              </div>
             ) : (
               <PerDayStaffingMatrix
                 activeCenterId={activeCenterId}
@@ -6650,7 +6621,20 @@ export default function Admin() {
               </div>
 
               <div className="rounded-xl border bg-white p-5 shadow-sm">
-                <h4 className="font-semibold text-gray-900 mb-3">Shift Distribution</h4>
+                <h4 className="font-semibold text-gray-900 mb-1">Shift Distribution</h4>
+                {/* Coverage mode balances by HOURS, not shift count — shifts
+                    are deliberately different lengths there, so "3 shifts"
+                    alone can't tell you whether the split was fair. Show the
+                    hours it actually balanced on, and the spread. */}
+                {draftSchedule.coverage?.fairness && (
+                  <p className="mb-3 text-xs text-gray-500">
+                    Balanced by hours worked — {draftSchedule.coverage.fairness.staffed} staff
+                    scheduled, {draftSchedule.coverage.fairness.min}h to{' '}
+                    {draftSchedule.coverage.fairness.max}h each
+                    {draftSchedule.coverage.fairness.spread > 0
+                      && ` (a ${draftSchedule.coverage.fairness.spread}h spread)`}.
+                  </p>
+                )}
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {/* `|| {}` on purpose: a draft is produced by one of two
                       engines, and an engine that forgets this key should
@@ -6659,7 +6643,16 @@ export default function Admin() {
                   {Object.entries(draftSchedule.employeeSummary || {}).sort(([,a],[,b]) => b-a).map(([name, count]) => (
                     <div key={name} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
                       <span className="text-sm text-gray-800">{name}</span>
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>{count} shifts</span>
+                      <span className="flex items-center gap-1.5">
+                        {/* Hours are what coverage mode actually balances on,
+                            so lead with them when they're available. */}
+                        {draftSchedule.coverage?.hoursByName?.[name] > 0 && (
+                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
+                            {draftSchedule.coverage.hoursByName[name]}h
+                          </span>
+                        )}
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>{count} {count === 1 ? 'shift' : 'shifts'}</span>
+                      </span>
                     </div>
                   ))}
                 </div>

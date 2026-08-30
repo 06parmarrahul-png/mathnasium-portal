@@ -277,5 +277,22 @@ describe('generateCoverageSchedule', () => {
     expect(days[0].assignedEmployees).toHaveLength(0);
     expect(days[1].assignedEmployees.length).toBeGreaterThan(0);
   });
+
+  it('reports hours by name, the figure it actually balances on', () => {
+    const people = staff(6);
+    const { hoursByName, employeeSummary } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByDate: { '2026-09-07': [{ capability: 'Instructor', required: [2, 2, 4, 4, 4, 4, 4, 4] }] },
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+      requireHost: false,
+    });
+    // Only people who actually worked appear in hours...
+    const worked = Object.keys(hoursByName);
+    expect(worked.length).toBeGreaterThan(0);
+    for (const name of worked) expect(hoursByName[name]).toBeGreaterThan(0);
+    // ...while the shift summary still lists everyone, zeros included.
+    expect(Object.keys(employeeSummary)).toHaveLength(6);
+  });
 });
 
