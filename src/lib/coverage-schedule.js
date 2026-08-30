@@ -46,6 +46,7 @@ export function generateCoverageSchedule({
   const minutesSoFar = {};
   const daysWorked = {};          // uid → count of days assigned this run
   const shiftsByName = {};        // displayName → shift count (draft UI reads this)
+  const daysAvailable = {};       // uid → dates they submitted availability for
   const byUid = new Map(instructors.map(i => [i.uid, i]));
   const draftDays = [];
 
@@ -110,6 +111,14 @@ export function generateCoverageSchedule({
       .map(a => {
         const inst = byUid.get(a.userId);
         if (!inst) return null;
+        // Counted before any filtering, so "did they offer time?" stays
+        // answerable even for people the engine won't roster.
+        daysAvailable[inst.uid] = (daysAvailable[inst.uid] || 0) + 1;
+        // Trainees shadow a real instructor rather than covering a slot,
+        // so they must not be used to satisfy demand — counting them
+        // would make the floor look staffed when one of the two is
+        // watching. They stay in the summary, labelled.
+        if (inst.excludeFromMatching) return null;
         const cap = inst.maxDaysPerWeek;
         if (Number.isFinite(cap) && (daysWorked[inst.uid] || 0) >= cap) return null;
         return {
@@ -167,6 +176,16 @@ export function generateCoverageSchedule({
     // Hours keyed by NAME, because that's what the review screen lists
     // people by. This is the number the engine actually balanced on, so
     // it belongs next to the shift counts rather than only in internals.
+    // Per-person detail so a zero can be explained rather than just
+    // displayed. "0 shifts" is the same pixel whether someone never
+    // submitted availability, offered time and wasn't needed, or is a
+    // trainee the engine deliberately skips.
+    summaryDetail: Object.fromEntries(instructors.map(i => [i.displayName, {
+      shifts: shiftsByName[i.displayName] || 0,
+      hours: Math.round(((minutesSoFar[i.uid] || 0) / 60) * 10) / 10,
+      daysAvailable: daysAvailable[i.uid] || 0,
+      reason: i.excludeReason || null,
+    }])),
     hoursByName: Object.fromEntries(
       instructors
         .filter(i => (minutesSoFar[i.uid] || 0) > 0)

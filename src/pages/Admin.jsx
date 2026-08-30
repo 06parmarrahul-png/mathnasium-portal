@@ -98,6 +98,22 @@ function shiftTimeProblem(startTime, endTime) {
 // list the select had no matching option on an owner's own record and
 // rendered blank, so editing anything else about them could commit the
 // wrong title.
+// Who the coverage auto-scheduler does NOT put on the floor.
+//
+// These people run the centre rather than teaching a slot, and they
+// already have standing weekly schedules in centerConfig.fixedStaff that
+// seedFixedShiftsForDates writes when a draft is saved. Rostering them
+// here would book them a second time, against their own hours.
+//
+// Checked by role AND title. The fixedStaff map is keyed by display name,
+// which drifts as soon as someone renames their account, so it can't be
+// the only guard.
+const NON_FLOOR_ROLES = new Set(['owner', 'super_admin', 'director', 'admin_assistant', 'admin']);
+const NON_FLOOR_TITLES = new Set([
+  'Manager', 'Admin', 'Center Director', 'Centre Director',
+  'Dir. of Education', 'Director of Education', 'Owner',
+]);
+
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
@@ -2999,9 +3015,26 @@ export default function Admin() {
               // saved. Leaving them in the pool would have rostered them a
               // second time, on the floor, against their own hours. The
               // classic engine excludes them the same way.
-              instructors: schedulableUsers.filter(u => !fixedStaffNames.has(u.displayName)).map(u => {
+              instructors: schedulableUsers.reduce((acc, u) => {
                 const forCentre = resolveUserForCenter(u, activeCenterId) || u;
-                return {
+                const title = forCentre.instructorType || u.instructorType;
+
+                // Management is not floor staff and not this engine's job.
+                // They already have standing weekly schedules in
+                // centerConfig.fixedStaff, seeded by seedFixedShiftsForDates
+                // when the draft is saved.
+                //
+                // Matched on ROLE and TITLE, not just the fixedStaff name
+                // list: those keys are display names ("Vinod Bandla") and
+                // drift the moment an account is renamed ("Vin B"), which
+                // silently put a director back in the instructor pool.
+                if (fixedStaffNames.has(u.displayName)
+                    || NON_FLOOR_ROLES.has(u.role)
+                    || NON_FLOOR_TITLES.has(title)) {
+                  return acc;
+                }
+
+                acc.push({
                   uid: u.uid,
                   displayName: u.displayName,
                   subRoles: forCentre.subRoles ?? u.subRoles,
@@ -3009,10 +3042,19 @@ export default function Admin() {
                   // Leads run the floor, so they lead for a block — as a
                   // head start, not an absolute rule, or they'd take every
                   // shift and starve everyone else.
-                  isLead: forCentre.instructorType === 'Lead',
+                  isLead: title === 'Lead',
+                  // Trainees shadow rather than cover a slot (see
+                  // staffTypes.js). Using one to satisfy demand would make
+                  // the floor look staffed while one of the two is
+                  // watching. Listed in the summary, just not rostered.
+                  excludeFromMatching: title === 'Training',
+                  excludeReason: title === 'Training'
+                    ? 'In training — shadows a shift rather than covering one'
+                    : null,
                   maxDaysPerWeek: forCentre.maxDaysPerWeek ?? u.maxDaysPerWeek ?? schedConfig.maxDaysPerWeek,
-                };
-              }),
+                });
+                return acc;
+              }, []),
               availabilityByDate,
               // A host covers front-of-house every open day, regardless of
               // how many students are booked. The centre's designated host
@@ -3043,6 +3085,7 @@ export default function Admin() {
                 fairness: cov.fairness,
                 minutesByPerson: cov.minutesByPerson,
                 hoursByName: cov.hoursByName,
+                summaryDetail: cov.summaryDetail,
                 datesWithBookings,
               },
             };
@@ -6641,8 +6684,28 @@ export default function Admin() {
                       not be able to take the whole admin page down with
                       Object.entries(undefined). It has happened once. */}
                   {Object.entries(draftSchedule.employeeSummary || {}).sort(([,a],[,b]) => b-a).map(([name, count]) => (
-                    <div key={name} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
-                      <span className="text-sm text-gray-800">{name}</span>
+                    <div key={name} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2">
+                      <span className="min-w-0">
+                        <span className="block text-sm text-gray-800 truncate">{name}</span>
+                        {/* A zero is the same pixel whether someone never
+                            offered time, offered it and wasn't needed, or
+                            is a trainee the engine skips on purpose. Say
+                            which — it's the difference between "chase them
+                            for availability" and "nothing to do". */}
+                        {count === 0 && draftSchedule.coverage?.summaryDetail?.[name] && (() => {
+                          const d = draftSchedule.coverage.summaryDetail[name];
+                          const label = d.reason
+                            ? d.reason
+                            : d.daysAvailable === 0
+                              ? 'No availability submitted for this range'
+                              : `Available ${d.daysAvailable} day${d.daysAvailable === 1 ? '' : 's'} — not needed`;
+                          return (
+                            <span className={`block text-[11px] truncate ${d.daysAvailable === 0 && !d.reason ? 'text-amber-700' : 'text-gray-400'}`}>
+                              {label}
+                            </span>
+                          );
+                        })()}
+                      </span>
                       <span className="flex items-center gap-1.5">
                         {/* Hours are what coverage mode actually balances on,
                             so lead with them when they're available. */}

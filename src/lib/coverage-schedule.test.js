@@ -294,5 +294,48 @@ describe('generateCoverageSchedule', () => {
     // ...while the shift summary still lists everyone, zeros included.
     expect(Object.keys(employeeSummary)).toHaveLength(6);
   });
+
+  it('distinguishes "never offered time" from "offered and not needed"', () => {
+    const people = staff(4);
+    const { summaryDetail } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByDate: { '2026-09-07': [{ capability: 'Instructor', required: [1, 1, 1, 1, 1, 1, 1, 1] }] },
+      instructors: people,
+      // Only two of the four submitted anything.
+      availabilityByDate: { '2026-09-07': [
+        { userId: 'u1', startTime: '15:00', endTime: '19:00' },
+        { userId: 'u2', startTime: '15:00', endTime: '19:00' },
+      ] },
+      requireHost: false,
+    });
+    // One of the two available got the single shift; the other did not,
+    // but still shows as having offered time.
+    expect(summaryDetail['Person 1'].daysAvailable + summaryDetail['Person 2'].daysAvailable).toBe(2);
+    // The two who never submitted are distinguishable.
+    expect(summaryDetail['Person 3'].daysAvailable).toBe(0);
+    expect(summaryDetail['Person 3'].shifts).toBe(0);
+  });
+
+  it('lists a trainee with a reason instead of rostering them', () => {
+    // A trainee shadows rather than covers, so using one to satisfy
+    // demand would make the floor look staffed when it isn't.
+    const people = [
+      { uid: 't', displayName: 'Trainee', subRoles: ['Elementary'], priority: 2,
+        excludeFromMatching: true, excludeReason: 'In training' },
+      ...staff(2),
+    ];
+    const { summaryDetail, days } = generateCoverageSchedule({
+      days: [MONDAYS[0]],
+      curvesByDate: { '2026-09-07': [{ capability: 'Instructor', required: [1, 1, 1, 1, 1, 1, 1, 1] }] },
+      instructors: people,
+      availabilityByDate: availableAll([MONDAYS[0]], people),
+      requireHost: false,
+    });
+    expect(days[0].assignedEmployees).not.toContain('Trainee');
+    expect(summaryDetail['Trainee'].shifts).toBe(0);
+    expect(summaryDetail['Trainee'].reason).toBe('In training');
+    // Still credited with having offered availability.
+    expect(summaryDetail['Trainee'].daysAvailable).toBe(1);
+  });
 });
 
