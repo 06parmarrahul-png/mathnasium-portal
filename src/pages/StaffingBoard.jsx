@@ -30,12 +30,14 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from '../lib/notify';
 import { format, startOfWeek, addDays } from 'date-fns';
 import {
-  CalendarDays, Wand2, Save, X, Users, AlertTriangle, Loader2, RotateCcw,
+  CalendarDays, Wand2, Save, X, Users, AlertTriangle, Loader2, RotateCcw, Plus,
 } from 'lucide-react';
 import { inCentreDemandBySlot, requiredForSlot } from '../lib/demand-staffing';
 import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
-import { DEFAULT_TARGET_RATIO } from '../lib/subRoles';
+import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
+import { boardBudget } from '../lib/board-budget';
+import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -46,11 +48,28 @@ const MANAGEMENT_ROLES = new Set(['owner', 'super_admin', 'director']);
 /** Lower sorts first: Leads outrank Instructors. Nothing else ranks. */
 const rankOf = (u) => (u?.instructorType || '').trim().toLowerCase() === 'lead' ? 0 : 1;
 
+/**
+ * Can this person run the host desk?
+ *
+ * Host is a CAPABILITY held in `subRoles` (STAFF_CAPABILITIES = the three
+ * teaching levels plus 'Host'), not a teaching level and not the same thing as
+ * `instructorType`. Someone whose job title is Host but who never got the
+ * capability still can't be placed, and an instructor who HAS the capability
+ * can cover the desk — which is exactly how swaps and open-shift claims
+ * already gate it (`requiredCapabilityForShift`).
+ */
+const canHost = (u) => hasCapability(u?.subRoles, 'Host');
+
 /** Trainees and volunteers are on the floor but never fill a ratio slot. */
 function coversSlots(u) {
   if (u?.isVolunteer === true) return false;
   const t = (u?.instructorType || '').trim().toLowerCase();
   return t !== 'training' && t !== 'volunteer';
+}
+
+/** Hours to at most one decimal: 4 → "4", 4.5 → "4.5". */
+function round1(n) {
+  return String(Math.round((Number(n) || 0) * 10) / 10);
 }
 
 function fmt12(hhmm) {
@@ -174,6 +193,10 @@ export default function StaffingBoard() {
       );
 
       const minSlots = Math.max(1, Math.round((minShiftHours * 60) / 30));
+      // Resolved per DATE, not per weekday — a seasonal override (August
+      // mornings) means today's rules are the wrong ones for a future date.
+      const instrHoursFor = (dateStr, dayName) =>
+        resolveInstructionalHours(centerConfig, new Date(dateStr + 'T12:00:00'))?.[dayName] || null;
 
       const days = (payload.days || []).map(grouped => {
         const date = grouped.day;
@@ -220,6 +243,7 @@ export default function StaffingBoard() {
 
         return {
           date, dayName, closed: false, empty: false,
+          instrWindow: instrHoursFor(date, dayName),
           window: { start: slotKeys[0], end: toHHMM(dayEnd) },
           peakStudents: Math.max(...demand.map(d => d.students)),
           peakRequired: Math.max(...required),
@@ -240,8 +264,16 @@ export default function StaffingBoard() {
   };
 
   // ── Assignment ───────────────────────────────────────────────────────────
-  const canCover = (person, slot) =>
-    person.availStart <= toMinutes(slot.start) && person.availEnd >= toMinutes(slot.end);
+  /**
+   * Eligibility is availability AND capability. The host desk requires the
+   * Host capability; a coverage shift doesn't, so anyone free can take one.
+   */
+  const canCover = (person, slot) => {
+    if (person.availStart > toMinutes(slot.start)) return false;
+    if (person.availEnd < toMinutes(slot.end)) return false;
+    if (slot.kind === 'host' && !canHost(person.user)) return false;
+    return true;
+  };
 
   const assignedElsewhere = (day, uid, slotId) =>
     day.slots.some(s => s.id !== slotId && s.assigned?.uid === uid);
@@ -264,6 +296,10 @@ export default function StaffingBoard() {
     if (!picked) return;
     const person = availableOn(day.date).find(p => p.uid === picked);
     if (!person) return;
+    if (slot.kind === 'host' && !canHost(person.user)) {
+      toast.error(`${person.name} doesn't have the Host capability — add it in Manage Staff first.`);
+      return;
+    }
     if (!canCover(person, slot)) {
       toast.error(`${person.name} isn't available ${fmt12(slot.start)}–${fmt12(slot.end)}.`);
       return;
@@ -308,14 +344,13 @@ export default function StaffingBoard() {
           !taken.has(p.uid) && canCover(p, slot));
 
         if (slot.kind === 'host') {
-          // The designated host whenever they're free; otherwise anyone
-          // host-capable. Never a plain instructor.
-          const designated = candidates.filter(p => autoHostNames.includes(p.name.toLowerCase()));
-          const hostCapable = candidates.filter(p =>
-            (p.user?.instructorType || '').toLowerCase() === 'host');
+          // The designated host whenever they're free; otherwise anyone who
+          // actually holds the Host capability. Never a plain instructor.
+          const hostCapable = candidates.filter(p => canHost(p.user));
+          const designated = hostCapable.filter(p => autoHostNames.includes(p.name.toLowerCase()));
           candidates = designated.length ? designated : hostCapable;
         } else {
-          // The host doesn't take coverage shifts — they're out of rotation.
+          // Whoever's job title is Host stays on the desk, out of rotation.
           candidates = candidates.filter(p =>
             (p.user?.instructorType || '').toLowerCase() !== 'host');
         }
@@ -353,6 +388,47 @@ export default function StaffingBoard() {
       days: b.days.map(d => ({ ...d, slots: d.slots.map(s => ({ ...s, assigned: null })) })),
     }));
     setPicked(null);
+  };
+
+  /**
+   * Add a floating body to a day.
+   *
+   * Demand sizes the shifts, but a quiet day can leave real budget unspent —
+   * and an extra pair of hands on the floor is worth having when you've
+   * already paid for the hours. This adds a slot the demand curve didn't ask
+   * for, spanning the instructional window, marked so it reads as deliberate
+   * rather than as something the maths produced.
+   */
+  const addExtraBody = (dateStr) => {
+    setBoard(b => ({
+      ...b,
+      days: b.days.map(d => {
+        if (d.date !== dateStr) return d;
+        const start = d.instrWindow?.start && toMinutes(d.instrWindow.start) >= toMinutes(d.window.start)
+          ? d.instrWindow.start : d.window.start;
+        const end = d.instrWindow?.end && toMinutes(d.instrWindow.end) <= toMinutes(d.window.end)
+          ? d.instrWindow.end : d.window.end;
+        const n = d.slots.filter(x => x.extra).length + 1;
+        return {
+          ...d,
+          slots: [...d.slots, {
+            id: `${dateStr}-extra${n}`,
+            kind: 'coverage',
+            extra: true,
+            start, end,
+            assigned: null,
+          }],
+        };
+      }),
+    }));
+  };
+
+  const removeSlot = (dateStr, slotId) => {
+    setBoard(b => ({
+      ...b,
+      days: b.days.map(d => d.date !== dateStr ? d
+        : { ...d, slots: d.slots.filter(s => s.id !== slotId) }),
+    }));
   };
 
   // ── Save ─────────────────────────────────────────────────────────────────
@@ -547,6 +623,9 @@ export default function StaffingBoard() {
           setPicked={setPicked}
           onSlotClick={onSlotClick}
           canCover={canCover}
+          budget={boardBudget(day)}
+          onAddExtra={() => addExtraBody(day.date)}
+          onRemoveSlot={(slotId) => removeSlot(day.date, slotId)}
         />
       ))}
 
@@ -575,7 +654,7 @@ export default function StaffingBoard() {
  * times. The demand sparkline sits directly above on the same axis, which is
  * what makes the bars legible as a response to something.
  */
-function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover }) {
+function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot }) {
   if (day.closed || day.empty) {
     return (
       <div className="mb-2 flex items-center gap-3 rounded-xl border border-gray-200/80 bg-gray-50/70 px-4 py-2.5">
@@ -628,6 +707,18 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover }) {
             <span className="mx-1 text-blue-300">·</span>
             needs {day.peakRequired}
           </span>
+          {budget?.boardAllotted > 0 && (
+            <span
+              title={`This board schedules floor and host hours. The other ${round1(budget.elsewhere)}h of the ${round1(budget.fullDay)}h day budget is Online, STEAM and Administrative Assistant time, scheduled elsewhere.`}
+              className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${
+                budget.boardUsed > budget.boardAllotted
+                  ? 'bg-red-50 text-red-700 ring-red-200'
+                  : 'bg-gray-50 text-gray-600 ring-gray-200'
+              }`}
+            >
+              {round1(budget.boardUsed)} / {round1(budget.boardAllotted)}h budget
+            </span>
+          )}
           {unfilled > 0 ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-bold text-amber-700 ring-1 ring-inset ring-amber-200">
               <AlertTriangle size={11} /> {unfilled} to fill
@@ -700,15 +791,80 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover }) {
                   width={pct(toMinutes(slot.end)) - pct(toMinutes(slot.start))}
                   eligible={eligible}
                   onClick={() => onSlotClick(day, slot)}
+                  onRemove={slot.extra ? () => onRemoveSlot(slot.id) : null}
                 />
               );
             })}
           </div>
 
+          {budget?.boardAllotted > 0 && (
+            <div className="mt-3 rounded-xl border border-gray-200 bg-gray-50/60 px-3 py-2.5">
+              <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-400">
+                  Staffing budget
+                </span>
+                <span className="text-[11px] tabular-nums text-gray-600">
+                  <b className={budget.boardUsed > budget.boardAllotted ? 'text-red-600' : 'text-gray-900'}>
+                    {round1(budget.boardUsed)}h
+                  </b>
+                  {' '}of {round1(budget.boardAllotted)}h for floor + host
+                </span>
+                <span className="text-[10px] text-gray-400">
+                  ({round1(budget.fullDay)}h day total · {round1(budget.elsewhere)}h Online/STEAM/Admin scheduled elsewhere)
+                </span>
+              </div>
+
+              {/* Stacked bar, one segment per bucket, over the allotment. */}
+              <div className="mb-1.5 flex h-2 overflow-hidden rounded-full bg-gray-200">
+                {budget.buckets.map(b => (
+                  <div
+                    key={b.key}
+                    title={`${b.label}: ${round1(b.used)}h of ${round1(b.allotted)}h`}
+                    style={{
+                      width: `${budget.boardAllotted ? (b.used / budget.boardAllotted) * 100 : 0}%`,
+                      background: b.color,
+                    }}
+                  />
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                {budget.buckets.map(b => (
+                  <span key={b.key} className="inline-flex items-center gap-1 text-[10px] text-gray-500">
+                    <span className="h-2 w-2 rounded-sm" style={{ background: b.color }} />
+                    {b.label} <b className="tabular-nums text-gray-700">{round1(b.used)}</b>
+                    <span className="text-gray-400">/ {round1(b.allotted)}h</span>
+                  </span>
+                ))}
+
+                <span className="ml-auto flex items-center gap-2">
+                  {budget.remaining >= 2 && (
+                    <span className="text-[10px] font-semibold text-emerald-700">
+                      {round1(budget.remaining)}h spare
+                    </span>
+                  )}
+                  <button
+                    onClick={onAddExtra}
+                    title="Add a floating body — someone extra on the floor to take pressure off, paid out of the hours you've already budgeted"
+                    className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2 py-1 text-[10px] font-semibold text-gray-600 transition-colors hover:border-emerald-400 hover:text-emerald-700"
+                  >
+                    <Plus size={11} /> Extra body
+                  </button>
+                </span>
+              </div>
+
+              {budget.boardUsed > budget.boardAllotted && (
+                <p className="mt-1.5 text-[10px] font-semibold text-red-600">
+                  {round1(budget.boardUsed - budget.boardAllotted)}h over budget for this day.
+                </p>
+              )}
+            </div>
+          )}
+
           {pickedPerson && (
             <p className="mt-3 rounded-lg bg-purple-50 px-3 py-2 text-xs text-purple-800 ring-1 ring-inset ring-purple-200">
               <b>{pickedPerson.name}</b> is selected — click a highlighted shift to place them.
-              Faded shifts fall outside their availability.
+              Faded shifts fall outside their availability, or need a capability they don&rsquo;t have.
             </p>
           )}
         </div>
@@ -783,11 +939,12 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover }) {
  * unfilled 5pm shift is the most important thing on the page, so it should
  * read as a hole, not as absence.
  */
-function ShiftBar({ slot, left, width, eligible, onClick }) {
+function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
   const filled = !!slot.assigned;
   const dim = eligible === false && !filled;
   const target = eligible === true && !filled;
   const isHost = slot.kind === 'host';
+  const isExtra = !!slot.extra;
 
   return (
     <div className="relative h-9">
@@ -801,7 +958,9 @@ function ShiftBar({ slot, left, width, eligible, onClick }) {
           filled
             ? isHost
               ? 'bg-violet-600 text-white shadow-sm hover:bg-violet-700'
-              : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+              : isExtra
+                ? 'bg-teal-50 text-teal-900 ring-2 ring-inset ring-teal-500 hover:bg-teal-100'
+                : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
             : target
               ? 'bg-purple-100 text-purple-900 ring-2 ring-purple-500'
               : dim
@@ -815,17 +974,38 @@ function ShiftBar({ slot, left, width, eligible, onClick }) {
             Host
           </span>
         )}
+        {isExtra && (
+          <span className="shrink-0 rounded bg-teal-600 px-1 text-[9px] font-bold uppercase tracking-wide text-white">
+            Extra
+          </span>
+        )}
         <span className="min-w-0 flex-1 truncate text-xs font-semibold">
           {filled ? slot.assigned.name : 'Unassigned'}
         </span>
         <span className={`hidden shrink-0 text-[10px] tabular-nums sm:inline ${
-          filled ? 'text-white/70' : 'text-gray-400'}`}>
+          filled ? (isExtra ? 'text-teal-700' : 'text-white/70') : 'text-gray-400'}`}>
           {fmt12(slot.start)}–{fmt12(slot.end)}
         </span>
-        {filled && (
+        {filled && !isExtra && (
           <X size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
         )}
+        {onRemove && <span className="w-4 shrink-0" aria-hidden="true" />}
       </button>
+
+      {/* Sits INSIDE the bar's right edge rather than beside it — a bar
+          spanning the full day would push an outside control off the
+          timeline. Sibling, not nested, because a button inside a button is
+          invalid and swallows the click. */}
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          title="Remove this extra body"
+          style={{ left: `calc(${left}% + ${Math.max(width, 6)}% - 22px)` }}
+          className="absolute top-1/2 z-10 -translate-y-1/2 rounded p-0.5 text-teal-600/60 transition-colors hover:bg-red-100 hover:text-red-600"
+        >
+          <X size={13} />
+        </button>
+      )}
     </div>
   );
 }

@@ -53,11 +53,6 @@ import {
   buildInitialMembership,
 } from '../lib/centerMembership';
 
-const MONTHS = [
-  'January','February','March','April','May','June',
-  'July','August','September','October','November','December',
-];
-
 /**
  * Why a shift must end after it starts.
  *
@@ -2044,40 +2039,28 @@ export default function Admin() {
   const [userSearch, setUserSearch]         = useState('');
 
   // Auto-scheduler state
-  const [schedMonth, setSchedMonth]   = useState(MONTHS[new Date().getMonth()]);
-  const [schedYear, setSchedYear]     = useState(new Date().getFullYear());
-  // Range type: 'month' (current behaviour), 'week' (Mon–Sat of picked
-  // date), or 'day' (single picked date). When week/day, the scheduler
-  // takes startDate/endDate instead of month/year.
-  const [schedRangeType, setSchedRangeType] = useState('month');
+  // Range type: 'week' (Mon–Sat of the picked date) or 'day'. Month-at-a-time
+  // was removed — the centre doesn't plan that far out any more, and a month
+  // of demand-driven staffing is stale long before it's worked. The engine
+  // still accepts month+year for back-compat; nothing here passes it.
+  const [schedRangeType, setSchedRangeType] = useState('week');
   const [schedDayDate,   setSchedDayDate]   = useState(format(new Date(), 'yyyy-MM-dd'));
   // Default week-anchor is the current week's Monday.
   const [schedWeekDate,  setSchedWeekDate]  = useState(
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
   );
-  // The picked range as concrete dates, for all three range types. The
-  // generator itself still passes month/year through for 'month' (the engine
-  // has its own month expansion), but anything that needs to talk about
-  // ACTUAL DATES — pulling real bookings to size the day — needs this.
+  // The picked range as concrete dates. Everything downstream — the generator,
+  // and pulling real bookings to size each day — works in actual dates.
   const schedRangeDates = useMemo(() => {
     if (schedRangeType === 'day') {
       return { start: schedDayDate, end: schedDayDate };
     }
-    if (schedRangeType === 'week') {
-      const wkStart = new Date(schedWeekDate + 'T00:00:00');
-      return {
-        start: format(wkStart, 'yyyy-MM-dd'),
-        end:   format(addDays(wkStart, 6), 'yyyy-MM-dd'),
-      };
-    }
-    const monthIdx = MONTHS.indexOf(schedMonth);
-    if (monthIdx < 0) return null;
-    const anchor = new Date(Number(schedYear), monthIdx, 1);
+    const wkStart = new Date(schedWeekDate + 'T00:00:00');
     return {
-      start: format(startOfMonth(anchor), 'yyyy-MM-dd'),
-      end:   format(endOfMonth(anchor),   'yyyy-MM-dd'),
+      start: format(wkStart, 'yyyy-MM-dd'),
+      end:   format(addDays(wkStart, 6), 'yyyy-MM-dd'),
     };
-  }, [schedRangeType, schedDayDate, schedWeekDate, schedMonth, schedYear]);
+  }, [schedRangeType, schedDayDate, schedWeekDate]);
   // Per-date demand curves from the last "Staff from bookings" run. Held here
   // (rather than only inside the staffing matrix) because generateSchedule's
   // post-pass needs them to stagger shifts around the rush.
@@ -2848,14 +2831,15 @@ export default function Admin() {
         // actually cover.
         .filter(a => !trainingUserIds.has(a.userId));
 
-      // Build previous months availability fallback (up to 6 months back)
+      // Build previous months availability fallback (up to 6 months back).
+      // Anchored on the month the RANGE starts in, since there's no longer a
+      // month picker to read.
       const previousMonthsAvail = [];
-      const MONTH_NAMES = ['january','february','march','april','may','june',
-        'july','august','september','october','november','december'];
-      const monthNum = MONTH_NAMES.indexOf(schedMonth.toLowerCase()) + 1;
+      const anchorDate = new Date((schedRangeDates?.start || schedDayDate) + 'T12:00:00');
+      const monthNum = anchorDate.getMonth() + 1;
       for (let i = 1; i <= 6; i++) {
         let prevMonth = monthNum - i;
-        let prevYear = Number(schedYear);
+        let prevYear = anchorDate.getFullYear();
         if (prevMonth <= 0) { prevMonth += 12; prevYear -= 1; }
         const startStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-01`;
         const endStr = `${prevYear}-${String(prevMonth).padStart(2,'0')}-31`;
@@ -2872,22 +2856,12 @@ export default function Admin() {
       // the auto-scheduler ignores them.
       const schedulableUsers = approvedUsers.filter(u => u.isVolunteer !== true);
 
-      // Range routing — day/week passes explicit startDate/endDate so the
-      // engine doesn't generate anything outside the picked window.
-      const rangeArgs = (() => {
-        if (schedRangeType === 'day') {
-          return { startDate: schedDayDate, endDate: schedDayDate };
-        }
-        if (schedRangeType === 'week') {
-          const wkStart = new Date(schedWeekDate + 'T00:00:00');
-          const wkEnd   = addDays(wkStart, 6);
-          return {
-            startDate: format(wkStart, 'yyyy-MM-dd'),
-            endDate:   format(wkEnd,   'yyyy-MM-dd'),
-          };
-        }
-        return { month: schedMonth, year: schedYear };
-      })();
+      // Always an explicit date range now, so the engine never generates
+      // outside the picked window. It derives its own display label.
+      const rangeArgs = {
+        startDate: schedRangeDates.start,
+        endDate:   schedRangeDates.end,
+      };
 
       const result = generateSchedule({
         instructors: schedulableUsers,
@@ -2981,6 +2955,21 @@ export default function Admin() {
       setGenerating(false);
     }
   };
+
+  // Human label for the generated range. The engine's `month` field is a
+  // summary that can already BE a range ("Aug 31 – Sep 6"), so build this from
+  // the real start/end dates instead of stitching strings together.
+  const draftRangeLabel = useMemo(() => {
+    if (!draftSchedule?.startDate) return '';
+    const a = new Date(draftSchedule.startDate + 'T12:00:00');
+    const b = new Date((draftSchedule.endDate || draftSchedule.startDate) + 'T12:00:00');
+    const sameDay = draftSchedule.startDate === draftSchedule.endDate;
+    if (sameDay) return format(a, 'EEE, MMM d yyyy');
+    const sameMonth = a.getMonth() === b.getMonth() && a.getFullYear() === b.getFullYear();
+    return sameMonth
+      ? `${format(a, 'MMM d')} – ${format(b, 'd, yyyy')}`
+      : `${format(a, 'MMM d')} – ${format(b, 'MMM d, yyyy')}`;
+  }, [draftSchedule]);
 
   const handleEditDay = (i) => setEditingDay({ index: i, ...draftSchedule.days[i] });
   const handleSaveEditDay = () => {
@@ -5936,17 +5925,16 @@ export default function Admin() {
               <h3 className="font-semibold text-gray-900">Generate Schedule</h3>
             </div>
             <p className="text-sm text-gray-500 mb-5">
-              Reads the availability your instructors have submitted and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
+              Reads the availability your instructors have submitted and builds a draft schedule — Leads first, then whoever has the fewest shifts, within each person's max days per week.
             </p>
-            {/* Range type toggle — Day / Week / Month. Picker below
-                switches based on selection. */}
+            {/* Range type toggle — Day / Week. Month was removed: the centre
+                staffs a week at a time now. */}
             <div className="mb-3">
               <label className="mb-1 block text-sm font-medium text-gray-700">Schedule for</label>
               <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm">
                 {[
                   { key: 'day',   label: 'Day'   },
                   { key: 'week',  label: 'Week'  },
-                  { key: 'month', label: 'Month' },
                 ].map(opt => {
                   const active = schedRangeType === opt.key;
                   return (
@@ -5966,23 +5954,6 @@ export default function Admin() {
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-4">
-              {schedRangeType === 'month' && (
-                <>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Month</label>
-                    <select value={schedMonth} onChange={e => setSchedMonth(e.target.value)}
-                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none">
-                      {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-gray-700">Year</label>
-                    <input type="number" value={schedYear} min={2025} max={2030}
-                      onChange={e => setSchedYear(Number(e.target.value))}
-                      className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
-                  </div>
-                </>
-              )}
               {schedRangeType === 'week' && (
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-gray-700">
@@ -6090,7 +6061,7 @@ export default function Admin() {
               <div className="rounded-xl border bg-white p-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                   <div>
-                    <h3 className="font-bold text-gray-900 text-lg">Draft: {draftSchedule.month} {draftSchedule.year}</h3>
+                    <h3 className="font-bold text-gray-900 text-lg">Draft: {draftRangeLabel}</h3>
                     <p className="text-sm text-gray-500">Review and edit, then save. Shifts land as drafts in the weekly grid — instructors won&apos;t see them until you click Publish.</p>
                   </div>
                   <button onClick={handlePostSchedule} disabled={posting}
@@ -6202,7 +6173,7 @@ export default function Admin() {
                         <div className="mb-3 flex items-center justify-between gap-3 flex-wrap">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className={`text-sm font-bold ${isLow ? 'text-red-800' : 'text-gray-900'}`}>
-                              {day.dayOfWeek}, {draftSchedule.month} {day.dayNumber}
+                              {format(new Date(day.date + 'T12:00:00'), 'EEEE, MMM d')}
                             </span>
                             {isLow ? (
                               <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
@@ -6478,7 +6449,7 @@ export default function Admin() {
                 <button onClick={handlePostSchedule} disabled={posting}
                   className="flex items-center gap-2 rounded-lg bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-lg hover:bg-green-700 disabled:opacity-50">
                   <CheckCircle size={18} />
-                  {posting ? 'Saving…' : `Save ${draftSchedule.month} ${draftSchedule.year} as drafts`}
+                  {posting ? 'Saving…' : `Save ${draftRangeLabel} as drafts`}
                 </button>
               </div>
             </>
