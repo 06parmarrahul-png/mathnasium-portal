@@ -37,7 +37,8 @@ import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
 import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
 import { resolveUserForCenter } from '../lib/centerMembership';
-import { boardBudget } from '../lib/board-budget';
+import { boardBudget, SLOT_ROLE } from '../lib/board-budget';
+import { WEEKDAY_DEFAULTS } from '../lib/budgetBuckets';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
 
@@ -61,7 +62,35 @@ const rankOf = (u) => (u?.instructorType || '').trim().toLowerCase() === 'lead' 
  */
 const canHost = (u) => hasCapability(u?.subRoles, 'Host');
 
-/** Trainees and volunteers are on the floor but never fill a ratio slot. */
+/**
+ * Can this person work the admin-assistant desk?
+ *
+ * Unlike Host, there is no 'Admin' capability — it isn't a teaching level and
+ * isn't in STAFF_CAPABILITIES. The admin assistant is identified by their
+ * per-centre `instructorType`, and there is exactly one at Langley. Their
+ * shift is deliberately non-instructional: they open up and leave before the
+ * floor fills, which is why it sits outside the ratio like the host desk.
+ */
+const canAdmin = (u) => (u?.instructorType || '').trim().toLowerCase() === 'admin';
+
+/**
+ * The admin assistant's standing shift.
+ *
+ * 10:00–14:00 is what they actually work — it's the dominant pattern across
+ * their shift history and exactly the 4h the `adminAssistant` budget allows,
+ * Monday to Friday. Saturday has no admin-assistant budget, so no slot is
+ * offered; the board reads that straight off WEEKDAY_DEFAULTS rather than
+ * hard-coding which days are which.
+ */
+const ADMIN_SHIFT = { start: '10:00', end: '14:00' };
+
+/**
+ * Is this person placeable by the board at all?
+ *
+ * Trainees and volunteers are on the floor but never fill a ratio slot, so
+ * they're excluded outright. The admin assistant IS placeable — just only into
+ * their own desk, which `canFill` enforces.
+ */
 function coversSlots(u) {
   if (u?.isVolunteer === true) return false;
   const t = (u?.instructorType || '').trim().toLowerCase();
@@ -234,7 +263,18 @@ export default function StaffingBoard() {
         const dayStart = toMinutes(slotKeys[0]);
         const dayEnd = toMinutes(slotKeys[slotKeys.length - 1]) + 30;
 
+        // Only on days the admin assistant is actually budgeted for — which is
+        // Mon–Fri; Saturday has no adminAssistant allotment at all.
+        const hasAdminBudget = Number(WEEKDAY_DEFAULTS[dayName]?.adminAssistant) > 0;
+
         const slots = [
+          ...(hasAdminBudget ? [{
+            id: `${date}-admin`,
+            kind: 'admin',
+            start: ADMIN_SHIFT.start,
+            end: ADMIN_SHIFT.end,
+            assigned: null,
+          }] : []),
           {
             id: `${date}-host`,
             kind: 'host',
@@ -282,8 +322,10 @@ export default function StaffingBoard() {
   const canCover = (person, slot) => {
     if (person.availStart > toMinutes(slot.start)) return false;
     if (person.availEnd < toMinutes(slot.end)) return false;
-    if (slot.kind === 'host' && !canHost(person.user)) return false;
-    return true;
+    if (slot.kind === 'host') return canHost(person.user);
+    if (slot.kind === 'admin') return canAdmin(person.user);
+    // Coverage: the admin assistant doesn't teach, so they never fill one.
+    return !canAdmin(person.user);
   };
 
   const assignedElsewhere = (day, uid, slotId) =>
@@ -309,6 +351,14 @@ export default function StaffingBoard() {
     if (!person) return;
     if (slot.kind === 'host' && !canHost(person.user)) {
       toast.error(`${person.name} doesn't have the Host capability — add it in Manage Staff first.`);
+      return;
+    }
+    if (slot.kind === 'admin' && !canAdmin(person.user)) {
+      toast.error(`${person.name} isn't the admin assistant.`);
+      return;
+    }
+    if (slot.kind === 'coverage' && canAdmin(person.user)) {
+      toast.error(`${person.name} works the admin desk, not the floor.`);
       return;
     }
     if (!canCover(person, slot)) {
@@ -360,10 +410,13 @@ export default function StaffingBoard() {
           const hostCapable = candidates.filter(p => canHost(p.user));
           const designated = hostCapable.filter(p => autoHostNames.includes(p.name.toLowerCase()));
           candidates = designated.length ? designated : hostCapable;
+        } else if (slot.kind === 'admin') {
+          candidates = candidates.filter(p => canAdmin(p.user));
         } else {
-          // Whoever's job title is Host stays on the desk, out of rotation.
+          // Whoever's job title is Host stays on the desk, out of rotation,
+          // and the admin assistant never takes a teaching shift.
           candidates = candidates.filter(p =>
-            (p.user?.instructorType || '').toLowerCase() !== 'host');
+            (p.user?.instructorType || '').toLowerCase() !== 'host' && !canAdmin(p.user));
         }
 
         if (!candidates.length) return slot;
@@ -461,8 +514,12 @@ export default function StaffingBoard() {
           date: day.date,
           startTime: slot.start,
           endTime: slot.end,
-          role: slot.kind === 'host' ? 'Host' : (slot.assigned.role || 'Instructor'),
-          subRole: 'Elementary',
+          role: slot.kind === 'coverage'
+            ? (slot.assigned.role || 'Instructor')
+            : SLOT_ROLE[slot.kind],
+          // Host and Admin shifts carry no teaching level — that's what the
+          // rest of the app expects, and what keeps them out of the ratio.
+          subRole: slot.kind === 'coverage' ? 'Elementary' : null,
           status: 'draft',
           autoScheduled: false,
           fromStaffingBoard: true,
@@ -677,14 +734,20 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
     );
   }
 
-  const dayStart = toMinutes(day.window.start);
-  const dayEnd = toMinutes(day.window.end);
-  const span = Math.max(1, dayEnd - dayStart);
-  const pct = (mins) => ((mins - dayStart) / span) * 100;
+  // The axis spans the whole STAFFED day, not just the booking window. The
+  // admin assistant opens up at 10am on a day whose first student arrives at
+  // 3pm; anchoring on bookings alone would push their bar off the timeline.
+  const bookStart = toMinutes(day.window.start);
+  const bookEnd = toMinutes(day.window.end);
+  const axisStart = Math.min(bookStart, ...day.slots.map(x => toMinutes(x.start)));
+  const axisEnd = Math.max(bookEnd, ...day.slots.map(x => toMinutes(x.end)));
+  const span = Math.max(1, axisEnd - axisStart);
+  const pct = (mins) => ((mins - axisStart) / span) * 100;
 
+  const admin = day.slots.find(s => s.kind === 'admin');
   const host = day.slots.find(s => s.kind === 'host');
   const coverage = day.slots.filter(s => s.kind === 'coverage');
-  const ordered = [...(host ? [host] : []), ...coverage];
+  const ordered = [...(admin ? [admin] : []), ...(host ? [host] : []), ...coverage];
 
   const unfilled = day.slots.filter(s => !s.assigned).length;
   const pickedPerson = bench.find(p => p.uid === picked);
@@ -692,7 +755,8 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
 
   // Hour ticks across the open window.
   const ticks = [];
-  for (let t = Math.ceil(dayStart / 60) * 60; t <= dayEnd; t += 60) ticks.push(t);
+  const tickStep = span > 6 * 60 ? 120 : 60; // every 2h once the day gets long
+  for (let t = Math.ceil(axisStart / 60) * 60; t <= axisEnd; t += tickStep) ticks.push(t);
 
   const d = new Date(day.date + 'T12:00:00');
 
@@ -720,7 +784,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
           </span>
           {budget?.boardAllotted > 0 && (
             <span
-              title={`This board schedules floor and host hours. The other ${round1(budget.elsewhere)}h of the ${round1(budget.fullDay)}h day budget is Online, STEAM and Administrative Assistant time, scheduled elsewhere.`}
+              title={`This board schedules floor, host and admin-assistant hours. The other ${round1(budget.elsewhere)}h of the ${round1(budget.fullDay)}h day budget is Online and STEAM time, scheduled elsewhere.`}
               className={`rounded-full px-2.5 py-1 text-[11px] font-bold ring-1 ring-inset ${
                 budget.boardUsed > budget.boardAllotted
                   ? 'bg-red-50 text-red-700 ring-red-200'
@@ -756,15 +820,28 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
               peak {day.peakStudents}
             </span>
           </div>
-          <div className="relative mb-0 flex items-end gap-px rounded-t-md bg-blue-50/60 px-px pt-px" style={{ height: 46 }}>
-            {day.curve.map((c) => (
-              <div
-                key={c.slot}
-                title={`${fmt12(c.slot)} · ${c.students} students · needs ${c.required}`}
-                className="flex-1 rounded-t-[2px] bg-blue-400/80 transition-colors hover:bg-blue-500"
-                style={{ height: `${Math.max(8, (c.students / peakStudents) * 100)}%` }}
-              />
-            ))}
+          <div className="relative mb-0 rounded-t-md" style={{ height: 46 }}>
+            {/* Tinted only under the open hours, so the pre-open stretch reads
+                as closed rather than as zero demand. */}
+            <div
+              className="absolute inset-y-0 rounded-t-md bg-blue-50/60"
+              style={{ left: `${pct(bookStart)}%`, width: `${pct(bookEnd) - pct(bookStart)}%` }}
+            />
+            {day.curve.map((c) => {
+              const s0 = toMinutes(c.slot);
+              return (
+                <div
+                  key={c.slot}
+                  title={`${fmt12(c.slot)} · ${c.students} students · needs ${c.required}`}
+                  className="absolute bottom-0 rounded-t-[2px] bg-blue-400/80 transition-colors hover:bg-blue-500"
+                  style={{
+                    left: `${pct(s0)}%`,
+                    width: `calc(${pct(s0 + 30) - pct(s0)}% - 1px)`,
+                    height: `${Math.max(8, (c.students / peakStudents) * 100)}%`,
+                  }}
+                />
+              );
+            })}
           </div>
 
           {/* Axis */}
@@ -818,10 +895,10 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
                   <b className={budget.boardUsed > budget.boardAllotted ? 'text-red-600' : 'text-gray-900'}>
                     {round1(budget.boardUsed)}h
                   </b>
-                  {' '}of {round1(budget.boardAllotted)}h for floor + host
+                  {' '}of {round1(budget.boardAllotted)}h for floor, host &amp; admin
                 </span>
                 <span className="text-[10px] text-gray-400">
-                  ({round1(budget.fullDay)}h day total · {round1(budget.elsewhere)}h Online/STEAM/Admin scheduled elsewhere)
+                  ({round1(budget.fullDay)}h day total · {round1(budget.elsewhere)}h Online/STEAM scheduled elsewhere)
                 </span>
               </div>
 
@@ -955,6 +1032,7 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
   const dim = eligible === false && !filled;
   const target = eligible === true && !filled;
   const isHost = slot.kind === 'host';
+  const isAdmin = slot.kind === 'admin';
   const isExtra = !!slot.extra;
 
   return (
@@ -969,6 +1047,8 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
           filled
             ? isHost
               ? 'bg-violet-600 text-white shadow-sm hover:bg-violet-700'
+              : isAdmin
+                ? 'bg-cyan-700 text-white shadow-sm hover:bg-cyan-800'
               : isExtra
                 ? 'bg-teal-50 text-teal-900 ring-2 ring-inset ring-teal-500 hover:bg-teal-100'
                 : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
@@ -983,6 +1063,12 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
           <span className={`shrink-0 rounded px-1 text-[9px] font-bold uppercase tracking-wide ${
             filled ? 'bg-white/25' : 'bg-violet-100 text-violet-700'}`}>
             Host
+          </span>
+        )}
+        {isAdmin && (
+          <span className={`shrink-0 rounded px-1 text-[9px] font-bold uppercase tracking-wide ${
+            filled ? 'bg-white/25' : 'bg-cyan-100 text-cyan-700'}`}>
+            Admin
           </span>
         )}
         {isExtra && (

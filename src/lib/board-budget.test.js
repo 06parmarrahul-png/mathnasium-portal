@@ -32,11 +32,31 @@ describe('slotHours', () => {
 });
 
 describe('boardBudget — the day allotment', () => {
-  it('reads the real Wednesday budget: 52h total, 40h the board can spend', () => {
+  it('reads the real Wednesday budget: 52h total, 44h the board can spend', () => {
     const b = boardBudget({ dayName: 'Wednesday', instrWindow: WED_WINDOW, slots: [] });
     expect(b.fullDay).toBe(52);            // 31 + 4 + 4 + 4 + 4 + 5
-    expect(b.boardAllotted).toBe(40);      // instructional 31 + host 4 + adminHours 5
-    expect(b.elsewhere).toBe(12);          // online 4 + steam 4 + adminAssistant 4
+    expect(b.boardAllotted).toBe(44);      // instructional 31 + host 4 + adminAssistant 4 + adminHours 5
+    expect(b.elsewhere).toBe(8);           // online 4 + steam 4
+  });
+
+  it('has no admin-assistant allotment on Saturday, matching the real budget', () => {
+    // Rachel is the only admin assistant and doesn't work weekends; the
+    // budget reflects that, so the board must not offer the slot.
+    expect(WEEKDAY_DEFAULTS.Saturday.adminAssistant).toBeUndefined();
+    const b = boardBudget({ dayName: 'Saturday', slots: [] });
+    expect(b.buckets.find(x => x.key === 'adminAssistant')).toBeUndefined();
+  });
+
+  it('puts an admin shift in the adminAssistant bucket, whatever the clock says', () => {
+    // 10:00-14:00 is entirely outside the 15:00-19:00 instructional window.
+    // Without a whole-shift rule it would land in Admin Hours instead.
+    const b = boardBudget({
+      dayName: 'Wednesday', instrWindow: WED_WINDOW,
+      slots: [slot('10:00', '14:00', { kind: 'admin' })],
+    });
+    expect(b.used.adminAssistant).toBe(4);
+    expect(b.used.adminHours).toBeUndefined();
+    expect(b.used.instructional).toBeUndefined();
   });
 
   it('matches weekdayBudgetTotal for every open day', () => {
@@ -68,7 +88,7 @@ describe('boardBudget — what placements cost', () => {
       slots: [slot('15:00', '19:00'), slot('15:00', '19:00', { empty: true })],
     });
     expect(b.boardUsed).toBe(4);
-    expect(b.remaining).toBe(36);
+    expect(b.remaining).toBe(40);
   });
 
   it('puts a host shift in the host bucket, not instructional', () => {
@@ -115,7 +135,7 @@ describe('boardBudget — what placements cost', () => {
     expect(b.used.host).toBe(4);
     expect(b.used.instructional).toBeCloseTo(16.5, 5); // 4+4+4+2.5+2
     expect(b.boardUsed).toBeCloseTo(20.5, 5);
-    expect(b.remaining).toBeCloseTo(19.5, 5);
+    expect(b.remaining).toBeCloseTo(23.5, 5);
     expect(b.over).toBe(false);
   });
 
@@ -123,6 +143,7 @@ describe('boardBudget — what placements cost', () => {
     const many = Array.from({ length: 12 }, () => slot('15:00', '19:00'));
     const b = boardBudget({ dayName: 'Wednesday', instrWindow: WED_WINDOW, slots: many });
     expect(b.boardUsed).toBe(48);
+    expect(b.boardAllotted).toBe(44);
     expect(b.over).toBe(true);
     expect(b.remaining).toBeLessThan(0);
   });
