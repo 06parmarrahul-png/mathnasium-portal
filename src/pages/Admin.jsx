@@ -2082,6 +2082,9 @@ export default function Admin() {
   // (rather than only inside the staffing matrix) because generateSchedule's
   // post-pass needs them to stagger shifts around the rush.
   const [bookingDemand, setBookingDemand] = useState(null);
+  // Peak students booked on a date, or null when that date wasn't sized from
+  // bookings. Used to label the draft roster with the demand behind it.
+  const bookingDemandPeak = (date) => bookingDemand?.[date]?.peakStudents ?? null;
   const [draftSchedule, setDraftSchedule] = useState(null);
   const [generating, setGenerating]   = useState(false);
   const [posting, setPosting]         = useState(false);
@@ -6160,7 +6163,15 @@ export default function Admin() {
                 <div className="divide-y divide-gray-100">
                   {draftSchedule.days.map((day, i) => {
                     if (i !== selectedDayIndex) return null;
-                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
+                    // Compare against the rule the engine ACTUALLY used for this
+                    // date, not the global default. With booking-derived
+                    // staffing every date can have its own floor, and reading
+                    // schedConfig.minPerDay here reported the wrong shortfall
+                    // (or flagged a fully-staffed day as low).
+                    const dayMin = Number.isFinite(day.effectiveRule?.min)
+                      ? day.effectiveRule.min
+                      : schedConfig.minPerDay;
+                    const isLow = day.countingStaffCount < dayMin;
                     const isEditing = editingDay?.index === i;
 
                     // Sort assigned names by role priority: Instructor/Lead first,
@@ -6196,7 +6207,7 @@ export default function Admin() {
                             {isLow ? (
                               <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
                                 <AlertTriangle size={11} />
-                                Low staff — need {schedConfig.minPerDay - day.countingStaffCount} more
+                                Low staff — need {dayMin - day.countingStaffCount} more
                               </span>
                             ) : (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
@@ -6206,6 +6217,17 @@ export default function Admin() {
                             <span className="text-xs text-gray-500">
                               {day.countingStaffCount} instructor{day.countingStaffCount === 1 ? '' : 's'} · {day.assignedEmployees.length} total
                             </span>
+                            {/* Where this day's target came from, and what the
+                                bookings were — so the roster below can be read
+                                against the demand that produced it. */}
+                            {day.effectiveRule?.source === 'bookings' && (
+                              <span className="rounded-full bg-blue-50 border border-blue-200 px-2 py-0.5 text-xs text-blue-800">
+                                from bookings · wants {day.effectiveRule.min}–{day.effectiveRule.max}
+                                {bookingDemandPeak(day.date) != null && (
+                                  <> · peak {bookingDemandPeak(day.date)} students</>
+                                )}
+                              </span>
+                            )}
                           </div>
                           {!isEditing && (
                             <button onClick={() => handleEditDay(i)}
@@ -7894,7 +7916,7 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
     }
     setLoadingBookings(true);
     try {
-      const [{ buildPerDateStaffing }, { DEFAULT_TARGET_RATIO }] = await Promise.all([
+      const [{ buildPerDateStaffing, explainStaffing }, { DEFAULT_TARGET_RATIO }] = await Promise.all([
         import('../lib/demand-staffing'),
         import('../lib/subRoles'),
       ]);
@@ -7921,12 +7943,19 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
         ? Number(schedConfig.demandRatioMax)
         : 4;
 
-      const { perDate, details, warnings } = buildPerDateStaffing(payload.days || [], {
+      const { perDate, details: rawDetails, warnings } = buildPerDateStaffing(payload.days || [], {
         targetRatio,
         acceptableRatio,
         minShiftHours: 2,
         cushion: Number.isFinite(schedConfig.demandCushion) ? schedConfig.demandCushion : 1,
       });
+
+      // Stamp the reasoning onto each date here, where the module is in scope,
+      // so the panel can show it on hover without re-importing at render time.
+      const details = rawDetails.map(d => ({
+        ...d,
+        explain: explainStaffing(d, targetRatio, acceptableRatio),
+      }));
 
       const staffedDates = Object.keys(perDate);
       if (staffedDates.length === 0) {
@@ -7957,6 +7986,7 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
           .map(d => [d.date, {
             slotKeys: d.slots.map(s => s.slot),
             required: d.slots.map(s => s.required),
+            peakStudents: d.peakStudents,
           }])
       ));
 
@@ -8129,97 +8159,137 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
           meta.builtFor?.end === rangeDates.end;
         const ageHours = (Date.now() - new Date(meta.builtAt).getTime()) / 36e5;
         const stale = ageHours > 12;
+        const ok = rangeMatches && !stale;
+
+        const staffed = (bookingPreview?.details || []).filter(d => d.hasBookings);
+        const empty   = (bookingPreview?.details || []).filter(d => !d.hasBookings);
+
+        // Roll the per-date "N students couldn't be categorized" lines into one
+        // sentence. Twenty near-identical warnings is not twenty pieces of
+        // information, and it buries the days that genuinely need attention.
+        const uncategorized = staffed.filter(d => d.unknownStudents > 0);
+        const uncategorizedTotal = uncategorized.reduce((a, d) => a + d.unknownStudents, 0);
+
+        const dow = (d) => new Date(d + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' });
+        const dayNum = (d) => new Date(d + 'T12:00:00').getDate();
+
         return (
-          <div className={`px-4 py-2.5 border-b ${rangeMatches && !stale
-            ? 'border-emerald-200 bg-emerald-50/60'
-            : 'border-amber-300 bg-amber-50'}`}>
-            <div className="flex items-start justify-between gap-3 flex-wrap">
-              <div className="min-w-0">
-                <p className={`text-xs font-bold ${rangeMatches && !stale ? 'text-emerald-900' : 'text-amber-900'}`}>
-                  {dates.length} day{dates.length === 1 ? '' : 's'} sized from real bookings
-                  {' '}— aiming 1:{meta.targetRatio}, floor 1:{meta.acceptableRatio ?? 4}
-                </p>
-                <p className={`text-[11px] ${rangeMatches && !stale ? 'text-emerald-800/80' : 'text-amber-800'}`}>
-                  {!rangeMatches
-                    ? `These numbers were built for ${meta.builtFor?.start} → ${meta.builtFor?.end}, but you now have a different range picked. Re-run “Staff from bookings”.`
-                    : stale
-                      ? `Built ${Math.round(ageHours)} hours ago — bookings may have changed since. Re-run to refresh.`
-                      : `Covers ${meta.builtFor?.start} → ${meta.builtFor?.end}. These beat the weekday rules below.`}
-                </p>
+          <div className={`border-b ${ok ? 'border-emerald-200 bg-emerald-50/60' : 'border-amber-300 bg-amber-50'}`}>
+            <div className="px-4 py-2.5">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <p className={`text-xs font-bold ${ok ? 'text-emerald-900' : 'text-amber-900'}`}>
+                    {dates.length} day{dates.length === 1 ? '' : 's'} sized from real bookings
+                    {' '}— aiming 1:{meta.targetRatio}, floor 1:{meta.acceptableRatio ?? 4}
+                  </p>
+                  <p className={`text-[11px] ${ok ? 'text-emerald-800/80' : 'text-amber-800'}`}>
+                    {!rangeMatches
+                      ? `Built for ${meta.builtFor?.start} → ${meta.builtFor?.end}, but a different range is picked now. Re-run “Staff from bookings”.`
+                      : stale
+                        ? `Built ${Math.round(ageHours)} hours ago — bookings may have moved since. Re-run to refresh.`
+                        : `${meta.builtFor?.start} → ${meta.builtFor?.end}. These beat the weekday rules below.`}
+                  </p>
+                </div>
+                <button
+                  onClick={clearBookingStaffing}
+                  className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+                >
+                  Clear
+                </button>
               </div>
-              <button
-                onClick={clearBookingStaffing}
-                className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
-              >
-                Clear
-              </button>
+
+              <label className="mt-2 flex items-start gap-2 text-[11px] text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={schedConfig.shapeShiftsToDemand !== false}
+                  onChange={e => setSchedConfig(c => ({ ...c, shapeShiftsToDemand: e.target.checked }))}
+                  className="mt-0.5"
+                />
+                <span>
+                  <span className="font-semibold">Stagger shifts around the rush.</span>{' '}
+                  People come in for the busy stretch and leave when it clears, instead of
+                  everyone working the full window. Nobody under 2 hours, nobody sent home
+                  for a short dip, nobody already scheduled dropped.
+                </span>
+              </label>
             </div>
 
-            <label className="mt-2 flex items-start gap-2 text-[11px] text-gray-700 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={schedConfig.shapeShiftsToDemand !== false}
-                onChange={e => setSchedConfig(c => ({ ...c, shapeShiftsToDemand: e.target.checked }))}
-                className="mt-0.5"
-              />
-              <span>
-                <span className="font-semibold">Stagger shifts around the rush.</span>{' '}
-                Shift times follow the booking curve instead of everyone working the
-                full window — people come in for the busy stretch and leave when it
-                clears. Nobody is rostered under {Number(schedConfig.minShiftHours) > 0
-                  ? Number(schedConfig.minShiftHours) : 2} hours, nobody is sent home
-                for a short dip, and nobody already scheduled is dropped.
-              </span>
-            </label>
-
-            {bookingPreview?.details?.length > 0 && (
-              <div className="mt-2 overflow-x-auto">
-                <table className="text-[11px] border-collapse">
-                  <thead>
-                    <tr className="text-purple-700/70">
-                      <th className="px-2 py-0.5 text-left font-semibold">Date</th>
-                      <th className="px-2 py-0.5 text-right font-semibold">Peak students</th>
-                      <th className="px-2 py-0.5 text-right font-semibold" title={`Instructors at the 1:${bookingPreview.acceptableRatio ?? 4} floor`}>Floor</th>
-                      <th className="px-2 py-0.5 text-right font-semibold" title={`Instructors at the 1:${bookingPreview.targetRatio} aim`}>Aim</th>
-                      <th className="px-2 py-0.5 text-right font-semibold">Min</th>
-                      <th className="px-2 py-0.5 text-right font-semibold">Max</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {bookingPreview.details.map(d => (
-                      <tr key={d.date} className={d.hasBookings ? '' : 'text-gray-400 italic'}>
-                        <td className="px-2 py-0.5 whitespace-nowrap font-medium">
-                          {d.date}
-                          {' '}
-                          <span className="text-gray-400">
-                            {new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
-                          </span>
-                        </td>
-                        {d.hasBookings ? (
-                          <>
-                            <td className="px-2 py-0.5 text-right">{d.peakStudents}</td>
-                            <td className="px-2 py-0.5 text-right text-gray-500">{d.floorRequired}</td>
-                            <td className="px-2 py-0.5 text-right">{d.peakRequired}</td>
-                            <td className="px-2 py-0.5 text-right font-bold">{d.min}</td>
-                            <td className="px-2 py-0.5 text-right font-bold">{d.max}</td>
-                          </>
-                        ) : (
-                          <td className="px-2 py-0.5" colSpan={5}>no bookings — default rule applies</td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* The answer, not the arithmetic: how many people each day wants.
+                One compact chip per day beats a five-column table of
+                intermediate ratio maths nobody reads. */}
+            {staffed.length > 0 && (
+              <div className="px-4 pb-2 flex flex-wrap gap-1">
+                {staffed.map(d => (
+                  <span
+                    key={d.date}
+                    title={`${d.date} — ${d.explain || ''}`}
+                    className="inline-flex items-baseline gap-1 rounded-md border border-emerald-300/70 bg-white px-1.5 py-0.5 text-[11px] leading-none"
+                  >
+                    <span className="text-gray-400">{dow(d.date)}</span>
+                    <span className="font-semibold text-gray-700">{dayNum(d.date)}</span>
+                    <span className="text-gray-300">·</span>
+                    <span className="font-bold text-emerald-800">{d.min}–{d.max}</span>
+                    <span className="text-gray-400">staff</span>
+                  </span>
+                ))}
               </div>
             )}
 
-            {bookingPreview?.warnings?.length > 0 && (
-              <ul className="mt-2 space-y-0.5">
-                {bookingPreview.warnings.slice(0, 6).map((w, i) => (
-                  <li key={i} className="text-[10px] text-amber-800">⚠ {w}</li>
-                ))}
-              </ul>
-            )}
+            <div className="px-4 pb-2.5 space-y-1">
+              {empty.length > 0 && (
+                <p className="text-[10px] text-gray-500">
+                  Closed or unbooked, left on the default rule:{' '}
+                  {empty.map(d => `${dow(d.date)} ${dayNum(d.date)}`).join(', ')}
+                </p>
+              )}
+
+              {uncategorizedTotal > 0 && (
+                <p className="text-[10px] text-amber-800">
+                  ⚠ {uncategorizedTotal} student{uncategorizedTotal === 1 ? '' : 's'} across{' '}
+                  {uncategorized.length} day{uncategorized.length === 1 ? '' : 's'} couldn&rsquo;t be
+                  categorised and were counted in demand. Fix them on the Student Scheduler so the
+                  ratio is exact.
+                </p>
+              )}
+
+              {staffed.length > 0 && (
+                <details className="text-[10px]">
+                  <summary className="cursor-pointer text-gray-500 hover:text-gray-700 select-none">
+                    Show the numbers
+                  </summary>
+                  <div className="mt-1.5 overflow-x-auto">
+                    <table className="text-[10px] border-collapse">
+                      <thead>
+                        <tr className="text-gray-500">
+                          <th className="px-2 py-0.5 text-left font-semibold">Date</th>
+                          <th className="px-2 py-0.5 text-right font-semibold">Busiest slot</th>
+                          <th className="px-2 py-0.5 text-right font-semibold" title={`At the 1:${meta.acceptableRatio ?? 4} floor`}>Floor</th>
+                          <th className="px-2 py-0.5 text-right font-semibold" title={`At the 1:${meta.targetRatio} aim`}>Aim</th>
+                          <th className="px-2 py-0.5 text-right font-semibold">Staff</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {staffed.map(d => (
+                          <tr key={d.date}>
+                            <td className="px-2 py-0.5 whitespace-nowrap">
+                              {d.date} <span className="text-gray-400">{dow(d.date)}</span>
+                            </td>
+                            <td className="px-2 py-0.5 text-right">{d.peakStudents} students</td>
+                            <td className="px-2 py-0.5 text-right text-gray-500">{d.floorRequired}</td>
+                            <td className="px-2 py-0.5 text-right text-gray-500">{d.peakRequired}</td>
+                            <td className="px-2 py-0.5 text-right font-bold">{d.min}–{d.max}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+
+              <p className={`text-[11px] font-semibold ${ok ? 'text-emerald-900' : 'text-amber-900'}`}>
+                Next: hit Generate below — that picks who works each day and shows their shift times.
+              </p>
+            </div>
           </div>
         );
       })()}

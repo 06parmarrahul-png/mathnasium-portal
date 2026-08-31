@@ -29,6 +29,7 @@ const PlatformRevenue           = lazy(() => import('./pages/PlatformRevenue'));
 const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
 const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
 const SupplyDemand              = lazy(() => import('./pages/SupplyDemand'));
+const StaffingBoard             = lazy(() => import('./pages/StaffingBoard'));
 const StaffingBudget            = lazy(() => import('./pages/StaffingBudget'));
 const CenterSettings            = lazy(() => import('./pages/CenterSettings'));
 const AuditLogs                 = lazy(() => import('./pages/AuditLogs'));
@@ -129,6 +130,9 @@ function AppRoutes() {
             carries the admin-panel gate. Previously any signed-in user
             who knew the URL could open it. */}
         <Route path="/supply-demand" element={<ProtectedRoute requireOwner><Layout><SupplyDemand /></Layout></ProtectedRoute>} />
+        {/* Builds the shifts real bookings call for, then the owner assigns
+            instructors to them. allowOps so Managers/Hosts can staff a day. */}
+        <Route path="/staffing-board" element={<ProtectedRoute requireOwner allowOps><Layout><StaffingBoard /></Layout></ProtectedRoute>} />
         <Route path="/staffing-budget" element={<ProtectedRoute><Layout><StaffingBudget /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />

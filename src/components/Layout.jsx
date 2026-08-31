@@ -11,7 +11,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
-  UserPlus, FileBarChart, Activity, Package, History,
+  UserPlus, FileBarChart, Activity, Package, History, LayoutGrid,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -183,6 +183,7 @@ export default function Layout({ children }) {
   const demand = [];
   if (useOwnerLayout) {
     demand.push({ to: '/scheduler-creation', label: 'Student Scheduler', icon: ClipboardList });
+    demand.push({ to: '/staffing-board', label: 'Staffing Board', icon: LayoutGrid });
   }
 
   // SUPPLY — staff. Schedule + roster + pay = supply being allocated,
