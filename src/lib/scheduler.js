@@ -267,7 +267,10 @@ export function parseAMPMtoHHMM(timeStr) {
 // docs that opted Sabrina out can still do so deliberately.
 const COUNTS_TOWARD_RATIO_BY_ROLE = new Set(['Manager', 'Lead', 'Instructor']);
 
-function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
+// Exported so the Staffing Board can lay the same fixed staff onto its
+// timeline without re-deriving the Saturday-week rules or the
+// countsTowardRatio inference and drifting from the generator.
+export function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
   const map = fixedStaffMap && Object.keys(fixedStaffMap).length > 0
     ? fixedStaffMap
     : FIXED_SCHEDULES;

@@ -60,14 +60,30 @@ export function slotHours(slot) {
 
 /**
  * @param {Object} day  { dayName, instrWindow, slots: [{ start, end, kind, assigned }] }
+ * @param {Object} [opts]
+ * @param {Set<string>|Array<string>} [opts.excludeNames] people whose hours don't
+ *        touch the hourly budget — salaried staff, volunteers, trainees. Same
+ *        exclusions the Staffing Budget page applies, so the two agree.
  * @returns {Object} budget summary — see the fields below.
  */
-export function boardBudget(day) {
+export function boardBudget(day, opts = {}) {
   const allotted = WEEKDAY_DEFAULTS[day?.dayName] || {};
   const used = {};
+  const exclude = opts.excludeNames instanceof Set
+    ? opts.excludeNames
+    : new Set(opts.excludeNames || []);
+  const excluded = [];
 
   for (const slot of day?.slots || []) {
     if (!slot?.assigned) continue;
+    // Salaried staff are on the floor and on the board, but their hours are
+    // not drawn from the hourly budget — counting them would make every day
+    // look over. Reported separately so they aren't invisible.
+    if (exclude.has(slot.assigned.name)) {
+      const h = slotHours(slot);
+      if (h > 0) excluded.push({ name: slot.assigned.name, hours: h });
+      continue;
+    }
     const hrs = slotHours(slot);
     if (hrs <= 0) continue;
     const buckets = bucketHoursForShift(
@@ -92,6 +108,8 @@ export function boardBudget(day) {
     boardUsed,
     boardAllotted,
     fullDay,
+    excluded,
+    excludedHours: excluded.reduce((n, e) => n + e.hours, 0),
     // Budgeted for this day but spent by work the board doesn't schedule.
     elsewhere: fullDay - boardAllotted,
     remaining: boardAllotted - boardUsed,

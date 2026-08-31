@@ -30,7 +30,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast } from '../lib/notify';
 import { format, startOfWeek, addDays } from 'date-fns';
 import {
-  CalendarDays, Wand2, Save, X, Users, AlertTriangle, Loader2, RotateCcw, Plus,
+  CalendarDays, Wand2, Save, X, Users, AlertTriangle, Loader2, RotateCcw, Plus, Clock,
 } from 'lucide-react';
 import { inCentreDemandBySlot, requiredForSlot } from '../lib/demand-staffing';
 import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
@@ -39,6 +39,8 @@ import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { boardBudget, SLOT_ROLE } from '../lib/board-budget';
 import { WEEKDAY_DEFAULTS } from '../lib/budgetBuckets';
+import { getFixedStaffForDay, getWeekOfMonth, FIXED_SCHEDULES } from '../lib/scheduler';
+import { isTrainingType } from '../lib/staffTypes';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
 
@@ -122,6 +124,9 @@ export default function StaffingBoard() {
   const [users, setUsers] = useState([]);
   const [availability, setAvailability] = useState([]);
   const [timeOff, setTimeOff] = useState([]);
+  // Shifts already saved for the range — needed so saving management's
+  // standing shifts replaces them instead of stacking duplicates.
+  const [existingShifts, setExistingShifts] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -164,10 +169,50 @@ export default function StaffingBoard() {
       snap => setTimeOff(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setTimeOff([]),
     );
-    return () => { u1(); u2(); u3(); };
+    const u4 = onSnapshot(
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('date', '>=', range.start),
+        orderBy('date'),
+      ),
+      snap => setExistingShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setExistingShifts([]),
+    );
+    return () => { u1(); u2(); u3(); u4(); };
   }, [activeCenterId, range.start]);
 
   const timeOffIndex = useMemo(() => buildTimeOffIndex(timeOff), [timeOff]);
+
+  /**
+   * People whose hours don't come out of the hourly budget: salaried staff,
+   * volunteers, trainees, and hidden accounts. Exactly the set the Staffing
+   * Budget page excludes — if the board counted them, every day would read as
+   * over budget the moment the directors were placed.
+   */
+  const budgetExcluded = useMemo(() => {
+    const set = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
+    for (const u of users) {
+      const r = resolveUserForCenter(u, activeCenterId);
+      if (!r?.displayName) continue;
+      if (r.isVolunteer === true) set.add(r.displayName);
+      if (isTrainingType(r.instructorType)) set.add(r.displayName);
+      if (u.role === 'owner' || u.role === 'super_admin' || u.role === 'director'
+          || u.internal === true || u.displayName === 'Admin Team') set.add(u.displayName);
+    }
+    return set;
+  }, [centerConfig, users, activeCenterId]);
+
+  const fixedStaffMap = useMemo(() => (
+    centerConfig?.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0
+      ? centerConfig.fixedStaff
+      : FIXED_SCHEDULES
+  ), [centerConfig]);
+
+  const fixedNames = useMemo(
+    () => new Set(Object.keys(fixedStaffMap).map(n => n.toLowerCase())),
+    [fixedStaffMap],
+  );
 
   // Everyone the board may place: approved centre floor staff, no management.
   //
@@ -267,7 +312,25 @@ export default function StaffingBoard() {
         // Mon–Fri; Saturday has no adminAssistant allotment at all.
         const hasAdminBudget = Number(WEEKDAY_DEFAULTS[dayName]?.adminAssistant) > 0;
 
+        // Management works a standing shift every open day. They're on the
+        // board so the day reads true, pre-filled because there's nothing to
+        // decide, and editable because reality varies.
+        const fixed = getFixedStaffForDay(
+          dayName,
+          getWeekOfMonth(new Date(date + 'T12:00:00')),
+          fixedStaffMap,
+        ).filter(f => f.startTime && f.endTime);
+
         const slots = [
+          ...fixed.map(f => ({
+            id: `${date}-fixed-${f.name.replace(/\s+/g, '_')}`,
+            kind: 'fixed',
+            start: f.startTime,
+            end: f.endTime,
+            fixedRole: f.role,
+            countsTowardRatio: f.countsTowardRatio,
+            assigned: { uid: null, name: f.name, role: f.role },
+          })),
           ...(hasAdminBudget ? [{
             id: `${date}-admin`,
             kind: 'admin',
@@ -487,6 +550,22 @@ export default function StaffingBoard() {
     }));
   };
 
+  /** Move a slot's start/end. The budget re-splits itself at the window. */
+  const retimeSlot = (dateStr, slotId, field, value) => {
+    if (!/^\d{2}:\d{2}$/.test(value || '')) return;
+    setBoard(b => ({
+      ...b,
+      days: b.days.map(d => d.date !== dateStr ? d : {
+        ...d,
+        slots: d.slots.map(sl => {
+          if (sl.id !== slotId) return sl;
+          const next = { ...sl, [field]: value, retimed: true };
+          return toMinutes(next.end) > toMinutes(next.start) ? next : sl;
+        }),
+      }),
+    }));
+  };
+
   const removeSlot = (dateStr, slotId) => {
     setBoard(b => ({
       ...b,
@@ -504,6 +583,18 @@ export default function StaffingBoard() {
 
     setSaving(true);
     try {
+      // Management shifts are regenerated, not appended. Admin.jsx's
+      // seedFixedShiftsForDates does the same delete-then-write, and without
+      // it every save would stack another copy of Neeru's Tuesday.
+      const dates = board.days.filter(d => !d.closed && !d.empty).map(d => d.date);
+      const stale = existingShifts.filter(sh =>
+        dates.includes(sh.date) && fixedNames.has((sh.userName || '').toLowerCase()));
+      if (stale.length) {
+        const del = writeBatch(db);
+        for (const sh of stale) del.delete(doc(db, 'shifts', sh.id));
+        await del.commit();
+      }
+
       const batch = writeBatch(db);
       for (const { day, slot } of filled) {
         const ref = doc(collection(db, 'shifts'));
@@ -514,12 +605,15 @@ export default function StaffingBoard() {
           date: day.date,
           startTime: slot.start,
           endTime: slot.end,
-          role: slot.kind === 'coverage'
-            ? (slot.assigned.role || 'Instructor')
-            : SLOT_ROLE[slot.kind],
+          role: slot.kind === 'fixed'
+            ? (slot.fixedRole || 'Manager')
+            : slot.kind === 'coverage'
+              ? (slot.assigned.role || 'Instructor')
+              : SLOT_ROLE[slot.kind],
           // Host and Admin shifts carry no teaching level — that's what the
           // rest of the app expects, and what keeps them out of the ratio.
           subRole: slot.kind === 'coverage' ? 'Elementary' : null,
+          isFixedStaff: slot.kind === 'fixed' || undefined,
           status: 'draft',
           autoScheduled: false,
           fromStaffingBoard: true,
@@ -691,9 +785,10 @@ export default function StaffingBoard() {
           setPicked={setPicked}
           onSlotClick={onSlotClick}
           canCover={canCover}
-          budget={boardBudget(day)}
+          budget={boardBudget(day, { excludeNames: budgetExcluded })}
           onAddExtra={() => addExtraBody(day.date)}
           onRemoveSlot={(slotId) => removeSlot(day.date, slotId)}
+          onRetime={(slotId, field, value) => retimeSlot(day.date, slotId, field, value)}
         />
       ))}
 
@@ -722,7 +817,7 @@ export default function StaffingBoard() {
  * times. The demand sparkline sits directly above on the same axis, which is
  * what makes the bars legible as a response to something.
  */
-function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot }) {
+function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot, onRetime }) {
   if (day.closed || day.empty) {
     return (
       <div className="mb-2 flex items-center gap-3 rounded-xl border border-gray-200/80 bg-gray-50/70 px-4 py-2.5">
@@ -744,10 +839,11 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
   const span = Math.max(1, axisEnd - axisStart);
   const pct = (mins) => ((mins - axisStart) / span) * 100;
 
-  const admin = day.slots.find(s => s.kind === 'admin');
-  const host = day.slots.find(s => s.kind === 'host');
+  // Two lanes. Fixed staff are decided already — management's standing
+  // shifts, the admin desk, the host desk — so they're pre-filled and just
+  // need checking. Coverage is the part you actually staff.
+  const fixedLane = day.slots.filter(s => s.kind === 'fixed' || s.kind === 'admin' || s.kind === 'host');
   const coverage = day.slots.filter(s => s.kind === 'coverage');
-  const ordered = [...(admin ? [admin] : []), ...(host ? [host] : []), ...coverage];
 
   const unfilled = day.slots.filter(s => !s.assigned).length;
   const pickedPerson = bench.find(p => p.uid === picked);
@@ -859,7 +955,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
 
           {/* Shift bars, over hour gridlines so a bar's start and end read
               against the clock instead of floating. */}
-          <div className="relative space-y-1.5">
+          <div className="relative">
             <div className="pointer-events-none absolute inset-0" aria-hidden="true">
               {ticks.map(t => (
                 <span
@@ -869,20 +965,46 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
                 />
               ))}
             </div>
-            {ordered.map(slot => {
-              const eligible = pickedPerson ? canCover(pickedPerson, slot) : null;
-              return (
+
+            {fixedLane.length > 0 && (
+              <>
+                <p className="relative mb-1 text-[9px] font-bold uppercase tracking-wider text-gray-400">
+                  Fixed &amp; front of house
+                </p>
+                <div className="relative space-y-1.5">
+                  {fixedLane.map(slot => (
+                    <ShiftBar
+                      key={slot.id}
+                      slot={slot}
+                      left={pct(toMinutes(slot.start))}
+                      width={pct(toMinutes(slot.end)) - pct(toMinutes(slot.start))}
+                      eligible={pickedPerson ? canCover(pickedPerson, slot) : null}
+                      onClick={() => onSlotClick(day, slot)}
+                      onRetime={(f, v) => onRetime(slot.id, f, v)}
+                    />
+                  ))}
+                </div>
+                <div className="relative my-2 border-t border-dashed border-gray-200" />
+              </>
+            )}
+
+            <p className="relative mb-1 text-[9px] font-bold uppercase tracking-wider text-gray-400">
+              Coverage · {coverage.filter(s => s.assigned).length}/{coverage.length} filled
+            </p>
+            <div className="relative space-y-1.5">
+              {coverage.map(slot => (
                 <ShiftBar
                   key={slot.id}
                   slot={slot}
                   left={pct(toMinutes(slot.start))}
                   width={pct(toMinutes(slot.end)) - pct(toMinutes(slot.start))}
-                  eligible={eligible}
+                  eligible={pickedPerson ? canCover(pickedPerson, slot) : null}
                   onClick={() => onSlotClick(day, slot)}
                   onRemove={slot.extra ? () => onRemoveSlot(slot.id) : null}
+                  onRetime={(f, v) => onRetime(slot.id, f, v)}
                 />
-              );
-            })}
+              ))}
+            </div>
           </div>
 
           {budget?.boardAllotted > 0 && (
@@ -1027,18 +1149,20 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
  * unfilled 5pm shift is the most important thing on the page, so it should
  * read as a hole, not as absence.
  */
-function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
+function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) {
+  const [editing, setEditing] = useState(false);
   const filled = !!slot.assigned;
   const dim = eligible === false && !filled;
   const target = eligible === true && !filled;
   const isHost = slot.kind === 'host';
   const isAdmin = slot.kind === 'admin';
+  const isFixed = slot.kind === 'fixed';
   const isExtra = !!slot.extra;
 
   return (
     <div className="relative h-9">
       <button
-        onClick={onClick}
+        onClick={isFixed ? undefined : onClick}
         style={{ left: `${left}%`, width: `${Math.max(width, 6)}%` }}
         title={filled
           ? `${slot.assigned.name} · ${fmt12(slot.start)}–${fmt12(slot.end)} — click to unassign`
@@ -1049,6 +1173,8 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
               ? 'bg-violet-600 text-white shadow-sm hover:bg-violet-700'
               : isAdmin
                 ? 'bg-cyan-700 text-white shadow-sm hover:bg-cyan-800'
+              : isFixed
+                ? 'bg-slate-600 text-white shadow-sm hover:bg-slate-700'
               : isExtra
                 ? 'bg-teal-50 text-teal-900 ring-2 ring-inset ring-teal-500 hover:bg-teal-100'
                 : 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
@@ -1071,6 +1197,13 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
             Admin
           </span>
         )}
+        {isFixed && (
+          <span className="shrink-0 rounded bg-white/25 px-1 text-[9px] font-bold uppercase tracking-wide">
+            {slot.fixedRole === 'Dir. of Education' ? 'Dir. Ed'
+              : slot.fixedRole === 'Center Director' ? 'Director'
+              : slot.fixedRole || 'Fixed'}
+          </span>
+        )}
         {isExtra && (
           <span className="shrink-0 rounded bg-teal-600 px-1 text-[9px] font-bold uppercase tracking-wide text-white">
             Extra
@@ -1087,7 +1220,47 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove }) {
           <X size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
         )}
         {onRemove && <span className="w-4 shrink-0" aria-hidden="true" />}
+        {onRetime && filled && <span className="w-4 shrink-0" aria-hidden="true" />}
       </button>
+
+      {/* Retime. A Lead doing an hour of admin before open is a 2–7pm shift,
+          which the demand curve can never produce on its own — so any placed
+          shift can be nudged, and the budget re-splits at the instructional
+          window automatically. */}
+      {onRetime && filled && !onRemove && (
+        <button
+          onClick={() => setEditing(v => !v)}
+          title={`Change ${fmt12(slot.start)}–${fmt12(slot.end)}`}
+          style={{ left: `calc(${left}% + ${Math.max(width, 6)}% - 20px)` }}
+          className={`absolute top-1/2 z-10 -translate-y-1/2 rounded p-0.5 transition-colors ${
+            isFixed || isHost || isAdmin ? 'text-white/60 hover:bg-white/20 hover:text-white'
+              : 'text-white/60 hover:bg-white/20 hover:text-white'}`}
+        >
+          <Clock size={12} />
+        </button>
+      )}
+
+      {editing && (
+        <div className="absolute inset-y-0 left-0 z-20 flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-2 shadow-lg">
+          <input
+            type="time" value={slot.start}
+            onChange={e => onRetime('start', e.target.value)}
+            className="w-[86px] rounded border border-gray-200 px-1 py-0.5 text-[11px] tabular-nums focus:border-purple-400 focus:outline-none"
+          />
+          <span className="text-[11px] text-gray-400">–</span>
+          <input
+            type="time" value={slot.end}
+            onChange={e => onRetime('end', e.target.value)}
+            className="w-[86px] rounded border border-gray-200 px-1 py-0.5 text-[11px] tabular-nums focus:border-purple-400 focus:outline-none"
+          />
+          <button
+            onClick={() => setEditing(false)}
+            className="rounded px-1.5 py-0.5 text-[11px] font-semibold text-purple-700 hover:bg-purple-50"
+          >
+            Done
+          </button>
+        </div>
+      )}
 
       {/* Sits INSIDE the bar's right edge rather than beside it — a bar
           spanning the full day would push an outside control off the

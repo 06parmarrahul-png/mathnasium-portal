@@ -167,3 +167,39 @@ describe('boardBudget — what placements cost', () => {
     expect(host.label).toBe('Host');
   });
 });
+
+describe('boardBudget — salaried staff', () => {
+  it('keeps salaried hours off the hourly budget but still reports them', () => {
+    // Neeru and Vinod are on centerConfig.salaryStaff. The Staffing Budget
+    // page drops them from the hourly total; the board must agree or every
+    // day reads as over budget.
+    const day = {
+      dayName: 'Wednesday', instrWindow: WED_WINDOW,
+      slots: [
+        { start: '15:00', end: '19:00', kind: 'coverage', assigned: { name: 'Neeru Gill' } },
+        { start: '15:00', end: '19:00', kind: 'coverage', assigned: { name: 'Someone Hourly' } },
+      ],
+    };
+    const b = boardBudget(day, { excludeNames: ['Neeru Gill'] });
+    expect(b.boardUsed).toBe(4);                 // only the hourly person
+    expect(b.excludedHours).toBe(4);
+    expect(b.excluded[0].name).toBe('Neeru Gill');
+  });
+
+  it('counts everyone when no exclusions are passed', () => {
+    const day = {
+      dayName: 'Wednesday', instrWindow: WED_WINDOW,
+      slots: [{ start: '15:00', end: '19:00', kind: 'coverage', assigned: { name: 'Neeru Gill' } }],
+    };
+    expect(boardBudget(day).boardUsed).toBe(4);
+    expect(boardBudget(day).excludedHours).toBe(0);
+  });
+
+  it('accepts a Set as well as an array', () => {
+    const day = {
+      dayName: 'Wednesday', instrWindow: WED_WINDOW,
+      slots: [{ start: '15:00', end: '19:00', kind: 'coverage', assigned: { name: 'Vinod Bandla' } }],
+    };
+    expect(boardBudget(day, { excludeNames: new Set(['Vinod Bandla']) }).boardUsed).toBe(0);
+  });
+});
