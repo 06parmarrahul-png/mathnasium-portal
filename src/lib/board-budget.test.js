@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { boardBudget, slotHours, BOARD_BUCKETS } from './board-budget.js';
+import { boardBudget, slotHours, slotBuckets, roleForSlot, BOARD_BUCKETS } from './board-budget.js';
 import { WEEKDAY_DEFAULTS } from './budgetBuckets.js';
 
 const WED_WINDOW = { start: '15:00', end: '19:00' };
@@ -201,5 +201,50 @@ describe('boardBudget — salaried staff', () => {
       slots: [{ start: '15:00', end: '19:00', kind: 'coverage', assigned: { name: 'Vinod Bandla' } }],
     };
     expect(boardBudget(day, { excludeNames: new Set(['Vinod Bandla']) }).boardUsed).toBe(0);
+  });
+});
+
+describe('slotBuckets — what one fixed shift costs', () => {
+  it("splits Sabrina's 11-7 into 4h instructional and 4h admin", () => {
+    // The Manager is on the floor for the whole instructional window and doing
+    // admin either side of it. Showing eight undifferentiated hours would hide
+    // exactly the thing the owner wants to see.
+    const b = slotBuckets(
+      { start: '11:00', end: '19:00', kind: 'fixed', fixedRole: 'Manager' },
+      WED_WINDOW,
+    );
+    expect(b.instructional).toBeCloseTo(4, 5);
+    expect(b.adminHours).toBeCloseTo(4, 5);
+  });
+
+  it("puts Rachel's 10-2 entirely in Administrative Assistant", () => {
+    const b = slotBuckets({ start: '10:00', end: '14:00', kind: 'admin' }, WED_WINDOW);
+    expect(b.adminAssistant).toBe(4);
+    expect(b.adminHours).toBeUndefined();
+  });
+
+  it("splits a Lead's 2-7 into 1h admin and 4h instructional", () => {
+    // A Lead doing prep before open — the case the demand curve can't produce.
+    const b = slotBuckets({ start: '14:00', end: '19:00', kind: 'coverage' }, WED_WINDOW);
+    expect(b.adminHours).toBeCloseTo(1, 5);
+    expect(b.instructional).toBeCloseTo(4, 5);
+  });
+
+  it('returns nothing for a zero-length or inverted shift', () => {
+    expect(slotBuckets({ start: '15:00', end: '15:00', kind: 'coverage' }, WED_WINDOW)).toEqual({});
+  });
+});
+
+describe('roleForSlot', () => {
+  it('prices a fixed shift with the person real title', () => {
+    expect(roleForSlot({ kind: 'fixed', fixedRole: 'Dir. of Education' })).toBe('Dir. of Education');
+    expect(roleForSlot({ kind: 'fixed' })).toBe('Manager');
+  });
+
+  it('maps the desks to the roles the rest of the app stores', () => {
+    expect(roleForSlot({ kind: 'host' })).toBe('Host');
+    expect(roleForSlot({ kind: 'admin' })).toBe('Admin');
+    expect(roleForSlot({ kind: 'coverage' })).toBe('Instructor');
+    expect(roleForSlot(null)).toBe('Instructor');
   });
 });

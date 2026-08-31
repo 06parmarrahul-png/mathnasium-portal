@@ -44,6 +44,17 @@ export const SLOT_ROLE = {
   coverage: 'Instructor',
 };
 
+/**
+ * The role string to price a slot with. A fixed shift carries the person's
+ * actual title (Manager, Dir. of Education, Center Director) — all of which
+ * `wholeShiftBucket` time-splits, same as an instructor, which is what makes
+ * Sabrina's 11–7 come out as 4h instructional + 4h admin.
+ */
+export function roleForSlot(slot) {
+  if (slot?.kind === 'fixed') return slot.fixedRole || 'Manager';
+  return SLOT_ROLE[slot?.kind] || 'Instructor';
+}
+
 function toMin(hhmm) {
   const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || '').trim());
   if (!m) return null;
@@ -56,6 +67,25 @@ export function slotHours(slot) {
   const e = toMin(slot?.end);
   if (s == null || e == null || e <= s) return 0;
   return (e - s) / 60;
+}
+
+/**
+ * How ONE slot's hours split across budget buckets. Used to show, on a fixed
+ * shift, that Sabrina's 11–7 is 4h instructional plus 4h admin rather than
+ * eight undifferentiated hours.
+ */
+export function slotBuckets(slot, instrWindow) {
+  const hrs = slotHours(slot);
+  if (hrs <= 0) return {};
+  return bucketHoursForShift(
+    {
+      startTime: slot.start,
+      endTime: slot.end,
+      role: roleForSlot(slot),
+    },
+    hrs,
+    instrWindow || null,
+  );
 }
 
 /**
@@ -90,7 +120,7 @@ export function boardBudget(day, opts = {}) {
       {
         startTime: slot.start,
         endTime: slot.end,
-        role: SLOT_ROLE[slot.kind] || 'Instructor',
+        role: roleForSlot(slot),
       },
       hrs,
       day?.instrWindow || null,

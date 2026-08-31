@@ -37,8 +37,8 @@ import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
 import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
 import { resolveUserForCenter } from '../lib/centerMembership';
-import { boardBudget, SLOT_ROLE } from '../lib/board-budget';
-import { WEEKDAY_DEFAULTS } from '../lib/budgetBuckets';
+import { boardBudget, SLOT_ROLE, slotBuckets } from '../lib/board-budget';
+import { WEEKDAY_DEFAULTS, BUDGET_BUCKETS } from '../lib/budgetBuckets';
 import { getFixedStaffForDay, getWeekOfMonth, FIXED_SCHEDULES } from '../lib/scheduler';
 import { isTrainingType } from '../lib/staffTypes';
 import { resolveInstructionalHours } from '../lib/centerConfig';
@@ -85,6 +85,11 @@ const canAdmin = (u) => (u?.instructorType || '').trim().toLowerCase() === 'admi
  * hard-coding which days are which.
  */
 const ADMIN_SHIFT = { start: '10:00', end: '14:00' };
+
+// Bucket display, keyed the same way budgetBuckets keys them, so a fixed
+// shift's split is labelled and coloured identically to the budget bar.
+const BUCKET_LABEL = Object.fromEntries(BUDGET_BUCKETS.map(b => [b.key, b.label]));
+const BUCKET_COLOR = Object.fromEntries(BUDGET_BUCKETS.map(b => [b.key, b.color]));
 
 /**
  * Is this person placeable by the board at all?
@@ -786,6 +791,7 @@ export default function StaffingBoard() {
           onSlotClick={onSlotClick}
           canCover={canCover}
           budget={boardBudget(day, { excludeNames: budgetExcluded })}
+          salariedNames={budgetExcluded}
           onAddExtra={() => addExtraBody(day.date)}
           onRemoveSlot={(slotId) => removeSlot(day.date, slotId)}
           onRetime={(slotId, field, value) => retimeSlot(day.date, slotId, field, value)}
@@ -817,7 +823,7 @@ export default function StaffingBoard() {
  * times. The demand sparkline sits directly above on the same axis, which is
  * what makes the bars legible as a response to something.
  */
-function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot, onRetime }) {
+function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot, onRetime, salariedNames }) {
   if (day.closed || day.empty) {
     return (
       <div className="mb-2 flex items-center gap-3 rounded-xl border border-gray-200/80 bg-gray-50/70 px-4 py-2.5">
@@ -829,21 +835,26 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
     );
   }
 
-  // The axis spans the whole STAFFED day, not just the booking window. The
-  // admin assistant opens up at 10am on a day whose first student arrives at
-  // 3pm; anchoring on bookings alone would push their bar off the timeline.
+  // Fixed staff came off this timeline and into their own column, so the axis
+  // is back to instructional hours. Stretching it to 10am to fit the admin
+  // desk squeezed every coverage bar into the right third of the width for no
+  // gain — the fixed shifts weren't being compared against demand anyway.
   const bookStart = toMinutes(day.window.start);
   const bookEnd = toMinutes(day.window.end);
-  const axisStart = Math.min(bookStart, ...day.slots.map(x => toMinutes(x.start)));
-  const axisEnd = Math.max(bookEnd, ...day.slots.map(x => toMinutes(x.end)));
+  // The host works the floor, so it stays on the timeline; a lead retimed to
+  // start early still needs to fit.
+  const timelineSlots = day.slots.filter(s => s.kind === 'coverage' || s.kind === 'host');
+  const axisStart = Math.min(bookStart, ...timelineSlots.map(x => toMinutes(x.start)));
+  const axisEnd = Math.max(bookEnd, ...timelineSlots.map(x => toMinutes(x.end)));
   const span = Math.max(1, axisEnd - axisStart);
   const pct = (mins) => ((mins - axisStart) / span) * 100;
 
-  // Two lanes. Fixed staff are decided already — management's standing
-  // shifts, the admin desk, the host desk — so they're pre-filled and just
-  // need checking. Coverage is the part you actually staff.
-  const fixedLane = day.slots.filter(s => s.kind === 'fixed' || s.kind === 'admin' || s.kind === 'host');
+  // Fixed staff are decided already — management's standing shifts and the
+  // admin desk. They sit in their own column, off the demand timeline.
+  const fixedLane = day.slots.filter(s => s.kind === 'fixed' || s.kind === 'admin');
+  const host = day.slots.find(s => s.kind === 'host');
   const coverage = day.slots.filter(s => s.kind === 'coverage');
+  const onTimeline = [...(host ? [host] : []), ...coverage];
 
   const unfilled = day.slots.filter(s => !s.assigned).length;
   const pickedPerson = bench.find(p => p.uid === picked);
@@ -902,7 +913,34 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
         </span>
       </header>
 
-      <div className="grid gap-0 lg:grid-cols-[1fr_248px]">
+      <div className="grid gap-0 lg:grid-cols-[210px_1fr_240px]">
+        {/* Fixed staff — off the timeline because their hours aren't a
+            response to demand. Shown with what each one costs the budget, so
+            the split between instructional and admin time is visible rather
+            than buried in the totals. */}
+        <aside className="border-b border-gray-100 px-4 py-4 lg:border-b-0 lg:border-r">
+          <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-gray-400">
+            Fixed staff
+          </p>
+          {fixedLane.length === 0 ? (
+            <p className="text-xs italic text-gray-400">None scheduled today.</p>
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              {fixedLane.map(slot => (
+                <FixedCard
+                  key={slot.id}
+                  slot={slot}
+                  instrWindow={day.instrWindow}
+                  salaried={salariedNames?.has(slot.assigned?.name)}
+                  eligible={pickedPerson ? canCover(pickedPerson, slot) : null}
+                  onClick={() => onSlotClick(day, slot)}
+                  onRetime={(f, v) => onRetime(slot.id, f, v)}
+                />
+              ))}
+            </div>
+          )}
+        </aside>
+
         {/* Timeline */}
         <div className="min-w-0 px-5 py-4">
           {/* Students booked, on the same axis as the shifts below. Labelled,
@@ -966,33 +1004,11 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
               ))}
             </div>
 
-            {fixedLane.length > 0 && (
-              <>
-                <p className="relative mb-1 text-[9px] font-bold uppercase tracking-wider text-gray-400">
-                  Fixed &amp; front of house
-                </p>
-                <div className="relative space-y-1.5">
-                  {fixedLane.map(slot => (
-                    <ShiftBar
-                      key={slot.id}
-                      slot={slot}
-                      left={pct(toMinutes(slot.start))}
-                      width={pct(toMinutes(slot.end)) - pct(toMinutes(slot.start))}
-                      eligible={pickedPerson ? canCover(pickedPerson, slot) : null}
-                      onClick={() => onSlotClick(day, slot)}
-                      onRetime={(f, v) => onRetime(slot.id, f, v)}
-                    />
-                  ))}
-                </div>
-                <div className="relative my-2 border-t border-dashed border-gray-200" />
-              </>
-            )}
-
             <p className="relative mb-1 text-[9px] font-bold uppercase tracking-wider text-gray-400">
               Coverage · {coverage.filter(s => s.assigned).length}/{coverage.length} filled
             </p>
             <div className="relative space-y-1.5">
-              {coverage.map(slot => (
+              {onTimeline.map(slot => (
                 <ShiftBar
                   key={slot.id}
                   slot={slot}
@@ -1275,6 +1291,102 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
         >
           <X size={13} />
         </button>
+      )}
+    </div>
+  );
+}
+
+
+/**
+ * One fixed shift, as a card rather than a timeline bar.
+ *
+ * These aren't a response to demand, so comparing them against the booking
+ * curve was never telling anyone anything — what matters is who's in, when,
+ * and which budget their hours come out of. The bucket split is spelled out
+ * because a Manager's 11–7 is two different kinds of hour, and that's exactly
+ * the thing a totals row hides.
+ */
+function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime }) {
+  const [editing, setEditing] = useState(false);
+  const filled = !!slot.assigned;
+  const buckets = filled ? slotBuckets(slot, instrWindow) : {};
+  const parts = Object.entries(buckets)
+    .filter(([, h]) => h > 0.01)
+    .map(([k, h]) => ({
+      label: BUCKET_LABEL[k] || k,
+      color: BUCKET_COLOR[k] || '#666',
+      hours: Math.round(h * 10) / 10,
+    }));
+  const target = eligible === true && !filled;
+
+  return (
+    <div
+      className={`rounded-lg border px-2 py-1.5 transition-colors ${
+        filled
+          ? 'border-gray-200 bg-gray-50/70'
+          : target
+            ? 'cursor-pointer border-purple-500 bg-purple-50 ring-1 ring-purple-300'
+            : 'border-dashed border-gray-300 bg-white'
+      }`}
+      onClick={!filled ? onClick : undefined}
+    >
+      <div className="flex items-baseline gap-1.5">
+        <span className={`truncate text-xs font-bold ${filled ? 'text-gray-900' : 'text-gray-400'}`}>
+          {filled ? slot.assigned.name : 'Unassigned'}
+        </span>
+        {salaried && filled && (
+          <span className="shrink-0 rounded bg-gray-200 px-1 text-[8px] font-bold uppercase text-gray-600">
+            Salaried
+          </span>
+        )}
+      </div>
+
+      <div className="mt-0.5 flex items-center gap-1">
+        <span className="text-[10px] tabular-nums text-gray-500">
+          {fmt12(slot.start)}–{fmt12(slot.end)}
+        </span>
+        <span className="text-[9px] uppercase tracking-wide text-gray-400">
+          {slot.kind === 'admin' ? 'Admin desk' : slot.fixedRole}
+        </span>
+        {onRetime && filled && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setEditing(v => !v); }}
+            title="Change these hours"
+            className="ml-auto shrink-0 rounded p-0.5 text-gray-300 hover:bg-gray-200 hover:text-gray-600"
+          >
+            <Clock size={11} />
+          </button>
+        )}
+      </div>
+
+      {parts.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
+          {parts.map(p => (
+            <span key={p.label} className="inline-flex items-center gap-1 text-[9.5px] text-gray-500">
+              <span className="h-1.5 w-1.5 rounded-sm" style={{ background: p.color }} />
+              {p.hours}h {p.label}
+            </span>
+          ))}
+        </div>
+      )}
+      {salaried && filled && (
+        <p className="mt-0.5 text-[9px] italic text-gray-400">Not drawn from the hourly budget</p>
+      )}
+
+      {editing && (
+        <div className="mt-1 flex items-center gap-1" onClick={e => e.stopPropagation()}>
+          <input
+            type="time" value={slot.start}
+            onChange={e => onRetime('start', e.target.value)}
+            className="w-[74px] rounded border border-gray-200 px-1 py-0.5 text-[10px] tabular-nums focus:border-purple-400 focus:outline-none"
+          />
+          <span className="text-[10px] text-gray-400">–</span>
+          <input
+            type="time" value={slot.end}
+            onChange={e => onRetime('end', e.target.value)}
+            className="w-[74px] rounded border border-gray-200 px-1 py-0.5 text-[10px] tabular-nums focus:border-purple-400 focus:outline-none"
+          />
+        </div>
       )}
     </div>
   );
