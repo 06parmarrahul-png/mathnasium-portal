@@ -36,6 +36,7 @@ import { inCentreDemandBySlot, requiredForSlot } from '../lib/demand-staffing';
 import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
 import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
+import { resolveUserForCenter } from '../lib/centerMembership';
 import { boardBudget } from '../lib/board-budget';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
@@ -140,9 +141,19 @@ export default function StaffingBoard() {
   const timeOffIndex = useMemo(() => buildTimeOffIndex(timeOff), [timeOff]);
 
   // Everyone the board may place: approved centre floor staff, no management.
-  const floorStaff = useMemo(() => users.filter(u =>
-    u.approved && !MANAGEMENT_ROLES.has(u.role) && coversSlots(u)
-  ), [users]);
+  //
+  // RESOLVE PER CENTRE FIRST. `instructorType`, `subRoles`, `approved` and
+  // `isVolunteer` are all per-centre fields living under
+  // `centerMemberships[centerId]`, with the top-level value as a fallback.
+  // Reading them raw is wrong and fails silently: Rahul's Host capability is
+  // in his Langley membership while his top-level subRoles are just
+  // ['Elementary'], so the raw read locked the designated host out of the host
+  // desk. Eighteen users have no top-level subRoles at all and would have been
+  // locked out of everything. Admin.jsx builds `usersForCentre` the same way.
+  const floorStaff = useMemo(() => users
+    .map(u => resolveUserForCenter(u, activeCenterId))
+    .filter(u => u.approved && !MANAGEMENT_ROLES.has(u.role) && coversSlots(u)),
+  [users, activeCenterId]);
 
   /**
    * Who is free on a date, and for what window.
