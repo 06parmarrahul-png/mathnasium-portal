@@ -21,7 +21,7 @@ import {
  *
  * Distinct from the existing Admin Panel → Manage Users screen, which
  * edits per-centre operational fields (instructorType, subRoles,
- * priority, approval). This screen only touches `role`.
+ * approval). This screen only touches `role`.
  *
  * The 4-digit owner-promotion code is stored as a SHA-256 hash in the
  * `platform/meta` Firestore doc. Plain text is never persisted. On first

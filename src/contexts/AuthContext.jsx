@@ -319,14 +319,13 @@ export function AuthProvider({ children }) {
 
     const role     = isFirstOwner ? 'owner'    : 'instructor';
     const approved = isFirstOwner;
-    // Operational fields (instructorType, priority, approved, etc.) are
+    // Operational fields (instructorType, approved, etc.) are
     // now scoped per-centre via `centerMemberships`. The top-level copies
     // are kept as the legacy fallback so reads in any code path that
     // hasn't been migrated yet still produce a sensible value. See
     // src/lib/centerMembership.js for the full rationale.
     const initialMembership = buildInitialMembership({
       instructorType: isFirstOwner ? 'Owner' : 'Instructor',
-      priority:       2,
       maxDaysPerWeek: 5,
       subRoles:       [],
       guaranteed:     false,
@@ -340,14 +339,13 @@ export function AuthProvider({ children }) {
       approved,
       // Scheduling fields (set defaults; admin can edit)
       instructorType: isFirstOwner ? 'Owner' : 'Instructor',
-      priority: 2,           // Admin sets this (1=high, 2=medium, 3=low)
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',
       // Multi-center fields — primary + array (for staff who work at multiple)
       centerId,
       centerIds: [centerId],
       // Per-centre operational state. Editing in Centre A no longer
-      // changes role / priority / approval in Centre B.
+      // changes role / approval in Centre B.
       centerMemberships: {
         [centerId]: initialMembership,
       },

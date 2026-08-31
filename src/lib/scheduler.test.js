@@ -200,7 +200,7 @@ describe('getSubRoleScore', () => {
 });
 
 describe('isGuaranteed (removed feature — stub always false)', () => {
-  // Guaranteed-shift pinning was removed in favour of pure priority-
+  // Guaranteed-shift pinning was removed in favour of rank-
   // based scheduling. The exported function remains as a stub so
   // anything importing the symbol still resolves, but it always
   // returns false — confirms the old hardcoded name list, per-user
@@ -233,7 +233,6 @@ function makeInstructor(overrides = {}) {
     instructorType: 'Instructor',
     subRoles:       ['Elementary'],
     approved:       true,
-    priority:       2,
     maxDaysPerWeek: 5,
     ...overrides,
   };
@@ -320,5 +319,80 @@ describe('generateSchedule (smoke)', () => {
     // The day should be filtered out of working days entirely.
     const monday = result.days.find(d => d.date === '2026-05-04');
     expect(monday).toBeUndefined();
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Scheduling order. The per-person "priority" tier was removed; order is now
+// two rules only — Leads outrank Instructors, then fewest shifts so far.
+// These pin that down, because getting it wrong is invisible in the UI and
+// shows up weeks later as one person having worked twice as much as another.
+// ──────────────────────────────────────────────────────────────────────────
+
+describe('scheduling order: rank, then fairness', () => {
+  // Full availability on the first four Mondays of May 2026.
+  const MAY_MONDAYS = ['2026-05-04', '2026-05-11', '2026-05-18', '2026-05-25'];
+  const availFor = (uid, dates = MAY_MONDAYS) =>
+    dates.map(date => ({ userId: uid, date, startTime: '10:00', endTime: '20:00' }));
+
+  it('gives a Lead the slot before an Instructor when only one fits', () => {
+    const lead = makeInstructor({
+      uid: 'lead1', displayName: 'Lena Lead', instructorType: 'Lead',
+    });
+    const inst = makeInstructor({
+      uid: 'inst1', displayName: 'Ira Instructor', instructorType: 'Instructor',
+    });
+    const result = generateSchedule({
+      instructors: [lead, inst],
+      availability: [
+        { userId: 'lead1', date: '2026-05-04', startTime: '10:00', endTime: '20:00' },
+        { userId: 'inst1', date: '2026-05-04', startTime: '10:00', endTime: '20:00' },
+      ],
+      startDate: '2026-05-04', endDate: '2026-05-04',
+      // Sabrina is default fixed staff on Monday and counts toward the ratio,
+      // so a max of 2 leaves exactly one open in-centre slot.
+      config: { minPerDay: 1, maxPerDay: 2 },
+    });
+    const day = result.days[0];
+    expect(day.assignedEmployees).toContain('Lena Lead');
+    expect(day.assignedEmployees).not.toContain('Ira Instructor');
+  });
+
+  it('spreads shifts evenly between equals rather than favouring one', () => {
+    const a = makeInstructor({ uid: 'a', displayName: 'Ana Instructor' });
+    const b = makeInstructor({ uid: 'b', displayName: 'Bo Instructor' });
+    const result = generateSchedule({
+      instructors: [a, b],
+      availability: [...availFor('a'), ...availFor('b')],
+      startDate: '2026-05-04', endDate: '2026-05-25',
+      // One in-centre slot per Monday, on top of fixed staff.
+      config: { minPerDay: 1, maxPerDay: 2, maxDaysPerWeek: 5 },
+    });
+    const mondays = result.days.filter(d => MAY_MONDAYS.includes(d.date));
+    const counts = { 'Ana Instructor': 0, 'Bo Instructor': 0 };
+    for (const d of mondays) {
+      for (const n of d.assignedEmployees) if (n in counts) counts[n]++;
+    }
+    // Four Mondays, one slot each — fairness must alternate, not stack.
+    expect(Math.abs(counts['Ana Instructor'] - counts['Bo Instructor'])).toBeLessThanOrEqual(1);
+  });
+
+  it('ignores a leftover priority field on the user record', () => {
+    // Old Firestore docs still carry `priority`. It must have no effect —
+    // otherwise the removal is cosmetic and the old behaviour lingers.
+    const hi = makeInstructor({ uid: 'hi', displayName: 'Aaa Highpri', priority: 1 });
+    const lo = makeInstructor({ uid: 'lo', displayName: 'Bbb Lowpri', priority: 3 });
+    const result = generateSchedule({
+      instructors: [hi, lo],
+      availability: [...availFor('hi'), ...availFor('lo')],
+      startDate: '2026-05-04', endDate: '2026-05-25',
+      config: { minPerDay: 1, maxPerDay: 2, maxDaysPerWeek: 5 },
+    });
+    const counts = { 'Aaa Highpri': 0, 'Bbb Lowpri': 0 };
+    for (const d of result.days) {
+      for (const n of d.assignedEmployees) if (n in counts) counts[n]++;
+    }
+    // If priority still mattered, Highpri would take every slot.
+    expect(Math.abs(counts['Aaa Highpri'] - counts['Bbb Lowpri'])).toBeLessThanOrEqual(1);
   });
 });

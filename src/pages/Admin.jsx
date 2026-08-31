@@ -11,9 +11,6 @@ import {
   subscribeTemplates, saveTemplate, deleteTemplate,
   applyTemplateConfig, describeTemplate,
 } from '../lib/schedulerTemplates';
-import { generateCoverageSchedule } from '../lib/coverage-schedule';
-import { slotKeysForDay, requiredFromDemand } from '../lib/coverage-planner';
-import { fetchBookedDemand, demandForSlots } from '../lib/booked-demand';
 import {
   Settings, UserCheck, UserX, Trash2, Clock, Tag,
   ChevronLeft, ChevronRight, ChevronDown, Table, Wand2, CheckCircle, Check,
@@ -34,7 +31,7 @@ import {
   LANGLEY_DEFAULT_CONFIG, SHIFT_ASSIGNMENTS, DEFAULT_CENTER_CONFIG,
   assignmentFor, assignmentColorHex, assignmentShort, contrastText,
   stateColorHex, staffTypeColorHex,
-  isOperatingDay, holidayFor, closureReason, ALL_WEEKDAYS, resolveInstructionalHours,
+  isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
@@ -98,22 +95,6 @@ function shiftTimeProblem(startTime, endTime) {
 // list the select had no matching option on an owner's own record and
 // rendered blank, so editing anything else about them could commit the
 // wrong title.
-// Who the coverage auto-scheduler does NOT put on the floor.
-//
-// These people run the centre rather than teaching a slot, and they
-// already have standing weekly schedules in centerConfig.fixedStaff that
-// seedFixedShiftsForDates writes when a draft is saved. Rostering them
-// here would book them a second time, against their own hours.
-//
-// Checked by role AND title. The fixedStaff map is keyed by display name,
-// which drifts as soon as someone renames their account, so it can't be
-// the only guard.
-const NON_FLOOR_ROLES = new Set(['owner', 'super_admin', 'director', 'admin_assistant', 'admin']);
-const NON_FLOOR_TITLES = new Set([
-  'Manager', 'Admin', 'Center Director', 'Centre Director',
-  'Dir. of Education', 'Director of Education', 'Owner',
-]);
-
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
@@ -858,7 +839,6 @@ function AddStaffModal({ onClose, onSubmit }) {
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [instructorType, setInstructorType] = useState('Instructor');
-  const [priority, setPriority] = useState(2);
   const [subRoles, setSubRoles] = useState(['Elementary']);
   const [sendResetEmail, setSendResetEmail] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -885,7 +865,6 @@ function AddStaffModal({ onClose, onSubmit }) {
         displayName: displayName.trim(),
         phone: phone.trim(),
         instructorType,
-        priority,
         subRoles,
         sendResetEmail,
       });
@@ -939,18 +918,6 @@ function AddStaffModal({ onClose, onSubmit }) {
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
             >
               {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-gray-600 mb-1">Priority</label>
-            <select
-              value={priority}
-              onChange={e => setPriority(Number(e.target.value))}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
-            >
-              <option value={1}>1 — High</option>
-              <option value={2}>2 — Medium</option>
-              <option value={3}>3 — Low</option>
             </select>
           </div>
         </div>
@@ -1022,7 +989,7 @@ function AddStaffModal({ onClose, onSubmit }) {
 }
 
 // ── Edit Staff Modal ─────────────────────────────────────────────────────
-// Owner / AA / admin tweaks role / priority / sub-roles / toggles on an
+// Owner / AA / admin tweaks role / sub-roles / toggles on an
 // existing staff member. All writes go through onUpdateField so per-centre
 // membership semantics + Firestore rules apply automatically.
 function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset }) {
@@ -1047,18 +1014,6 @@ function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset })
               className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
             >
               {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-gray-500">Priority</label>
-            <select
-              value={user.priority || 2}
-              onChange={e => onUpdateField(user.uid, 'priority', Number(e.target.value))}
-              className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
-            >
-              <option value={1}>1 — High</option>
-              <option value={2}>2 — Medium</option>
-              <option value={3}>3 — Low</option>
             </select>
           </div>
           <div>
@@ -2100,6 +2055,33 @@ export default function Admin() {
   const [schedWeekDate,  setSchedWeekDate]  = useState(
     format(startOfWeek(new Date(), { weekStartsOn: 1 }), 'yyyy-MM-dd')
   );
+  // The picked range as concrete dates, for all three range types. The
+  // generator itself still passes month/year through for 'month' (the engine
+  // has its own month expansion), but anything that needs to talk about
+  // ACTUAL DATES — pulling real bookings to size the day — needs this.
+  const schedRangeDates = useMemo(() => {
+    if (schedRangeType === 'day') {
+      return { start: schedDayDate, end: schedDayDate };
+    }
+    if (schedRangeType === 'week') {
+      const wkStart = new Date(schedWeekDate + 'T00:00:00');
+      return {
+        start: format(wkStart, 'yyyy-MM-dd'),
+        end:   format(addDays(wkStart, 6), 'yyyy-MM-dd'),
+      };
+    }
+    const monthIdx = MONTHS.indexOf(schedMonth);
+    if (monthIdx < 0) return null;
+    const anchor = new Date(Number(schedYear), monthIdx, 1);
+    return {
+      start: format(startOfMonth(anchor), 'yyyy-MM-dd'),
+      end:   format(endOfMonth(anchor),   'yyyy-MM-dd'),
+    };
+  }, [schedRangeType, schedDayDate, schedWeekDate, schedMonth, schedYear]);
+  // Per-date demand curves from the last "Staff from bookings" run. Held here
+  // (rather than only inside the staffing matrix) because generateSchedule's
+  // post-pass needs them to stagger shifts around the rush.
+  const [bookingDemand, setBookingDemand] = useState(null);
   const [draftSchedule, setDraftSchedule] = useState(null);
   const [generating, setGenerating]   = useState(false);
   const [posting, setPosting]         = useState(false);
@@ -2110,24 +2092,6 @@ export default function Admin() {
   //              from their availability.
   // 'coverage' — demand curve → shift shapes → people. Opt-in, so the
   //              live path is unchanged until an owner chooses it.
-  // The centre's designated host, as the scheduler resolves it. Derived
-  // here (not just inside the generate handler) so the panel can SHOW it
-  // — this setting had no UI at all, which is how it ended up silently
-  // matching nobody.
-  const designatedHostNames = useMemo(() => (
-    Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
-      ? centerConfig.autoHostNames.filter(n => String(n || '').trim())
-      : DEFAULT_AUTO_HOST_NAMES
-  ), [centerConfig?.autoHostNames]);
-
-  const [schedMode, setSchedMode] = useState('classic');
-  // Coverage mode has no Month option, so a user who picked Month in
-  // classic mode and switched over would otherwise be left on a range
-  // the mode can't offer.
-  useEffect(() => {
-    if (schedMode === 'coverage' && schedRangeType === 'month') setSchedRangeType('week');
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [schedMode]);
   const [editingDay, setEditingDay]   = useState(null);
   const [schedError, setSchedError]   = useState('');
   // Day-centric draft review — which day index is focused in the week strip.
@@ -2257,9 +2221,9 @@ export default function Admin() {
   };
 
   // Resolve every user against the active centre so per-centre fields
-  // (instructorType, priority, subRoles, guaranteed, approved, etc.)
+  // (instructorType, subRoles, guaranteed, approved, etc.)
   // hoist to the top level for this centre's view. Reads downstream
-  // (`u.priority`, `u.instructorType`, …) keep working unchanged but
+  // (`u.instructorType`, …) keep working unchanged but
   // now reflect the centre-scoped value instead of a global one.
   const usersForCentre = useMemo(
     () => users.map(u => resolveUserForCenter(u, activeCenterId)),
@@ -2297,7 +2261,6 @@ export default function Admin() {
           [`centerMemberships.${activeCenterId}`]: {
             ...buildInitialMembership({
               instructorType: target?.instructorType,
-              priority:       target?.priority,
               maxDaysPerWeek: target?.maxDaysPerWeek,
               subRoles:       target?.subRoles,
               guaranteed:     target?.guaranteed,
@@ -2470,7 +2433,7 @@ export default function Admin() {
       notifyTimeOffDecision(req, recipient, 'approved');
     }
   };
-  // Per-centre operational fields (instructorType, priority, subRoles,
+  // Per-centre operational fields (instructorType, subRoles,
   // guaranteed, approved, maxDaysPerWeek) write to the active centre's
   // membership entry. Everything else writes to the top-level field as
   // before. See src/lib/centerMembership.js for the full list.
@@ -2565,7 +2528,6 @@ export default function Admin() {
     // overlay the new value for the field being edited.
     const seeded = buildInitialMembership({
       instructorType: target?.instructorType,
-      priority:       target?.priority,
       maxDaysPerWeek: target?.maxDaysPerWeek,
       subRoles:       target?.subRoles,
       guaranteed:     target?.guaranteed,
@@ -2924,206 +2886,90 @@ export default function Admin() {
         return { month: schedMonth, year: schedYear };
       })();
 
-      // Coverage mode runs the second engine: a demand curve becomes
-      // shift shapes, then people are matched to those shapes. Classic
-      // mode is the original headcount engine, untouched. Both return the
-      // same draft shape, so everything downstream is shared.
-      const result = schedMode === 'coverage'
-        ? await (async () => {
-            const DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-            const first = rangeArgs.startDate
-              ? new Date(rangeArgs.startDate + 'T12:00:00')
-              : startOfMonth(new Date(`${schedMonth} 1, ${schedYear}`));
-            const last = rangeArgs.endDate
-              ? new Date(rangeArgs.endDate + 'T12:00:00')
-              : endOfMonth(first);
+      const result = generateSchedule({
+        instructors: schedulableUsers,
+        availability: filteredAvailability,
+        previousMonthsAvail,
+        ...rangeArgs,
+        config: schedConfig,
+        centerConfig,   // per-center hours, fixed staff, guaranteed names
+        priorShifts: shifts,  // seed fairness from already-saved shifts this month
+      });
+      // Stagger shifts around the demand curve.
+      //
+      // generateSchedule gives everyone the same block — their availability
+      // clamped to instructional hours. On a day whose rush is the first
+      // ninety minutes, that puts the whole team on the floor for four hours.
+      // This reshapes those blocks to follow the bookings, without changing
+      // WHO works: the engine already weighed rank, fairness, sub-role
+      // balance and weekly caps, and re-deciding that here would fight it.
+      //
+      // Only runs when real booking demand has been loaded, and never drops
+      // anyone — someone the curve doesn't need keeps the longest block they
+      // can cover, because over-staffing is cheap and un-scheduling a person
+      // who was told they're working is not.
+      if (bookingDemand && schedConfig.shapeShiftsToDemand !== false) {
+        try {
+          const { shapeShifts, toMinutes } = await import('../lib/shift-shaping');
+          const hoursSoFar = {};
 
-            const dayList = [];
-            for (let d = new Date(first); d <= last; d = addDays(d, 1)) {
-              const dayName = DOW[d.getDay()];
-              if (dayName === 'Sunday') continue;   // never a working day
-              // closureReason covers BOTH a weekday the centre doesn't run
-              // AND a stat holiday. isOperatingDay alone only checks the
-              // weekday list, so on its own it would have cheerfully
-              // scheduled a full floor on Labour Day.
-              dayList.push({
-                dateStr: format(d, 'yyyy-MM-dd'),
-                dayName,
-                dayNumber: d.getDate(),
-                closed: closureReason(new Date(d), centerConfig),
-                slotKeys: slotKeysForDay(centerConfig, dayName, new Date(d)),
-              });
-            }
+          for (const day of result.days) {
+            const curve = bookingDemand[day.date];
+            if (!curve?.slotKeys?.length) continue;
 
-            const availabilityByDate = {};
-            for (const a of filteredAvailability) {
-              (availabilityByDate[a.date] ||= []).push(a);
-            }
+            const people = day.assignedEmployees.map(name => {
+              const shift = day.shiftTimes?.[name] || '';
+              const [rawStart, rawEnd] = shift.split(' - ');
+              const availStart = toMinutes(rawStart);
+              const availEnd = toMinutes(rawEnd);
+              if (availStart == null || availEnd == null) return null;
+              const role = day.roles?.[name] || 'Instructor';
+              return {
+                name,
+                role,
+                isHost: role === 'Host',
+                // Leads outrank instructors; everyone else sorts after them.
+                rank: role === 'Lead' ? 0 : 1,
+                hoursSoFar: hoursSoFar[name] || 0,
+                availStart,
+                availEnd,
+              };
+            }).filter(Boolean);
 
-            // Pull the students ACTUALLY booked on these dates, straight
-            // from the same Acuity feed the Student Scheduler reads. This
-            // is the number that should drive the schedule — a saved
-            // "typical Monday" is only a fallback for dates nobody has
-            // booked into yet.
-            const ratio = Number(centerConfig?.targetRatio) || 3.5;
-            // Names with a standing weekly schedule in centre config. An
-            // entry that's "Off" every day isn't really fixed staff, so
-            // it doesn't count — matching how the classic engine reads it.
-            const fixedStaffMapNow = centerConfig?.fixedStaff || {};
-            const fixedStaffNames = new Set(
-              Object.entries(fixedStaffMapNow)
-                .filter(([, sched]) => MATRIX_DAYS.some(
-                  dn => sched?.[dn] && String(sched[dn]).toLowerCase() !== 'off'))
-                .map(([name]) => name),
-            );
+            if (people.length === 0) continue;
 
-            // The centre's designated host. Hoisted above the pool filter
-            // because they must be EXEMPT from it — see below.
-            const hostNamesNow = Array.isArray(centerConfig?.autoHostNames) && centerConfig.autoHostNames.length
-              ? centerConfig.autoHostNames
-              : DEFAULT_AUTO_HOST_NAMES;
-            const hostNameKeys = new Set(hostNamesNow.map(n => String(n).trim().toLowerCase()));
-            const booked = await fetchBookedDemand(
-              activeCenterId, dayList.map(d => d.dateStr),
-            );
-            const curvesByDate = {};
-            const outsideHours = [];
-            let datesWithBookings = 0;
-            for (const d of dayList) {
-              const byTime = booked[d.dateStr] || {};
-              const students = demandForSlots(byTime, d.slotKeys);
-              if (!students.some(n => n > 0)) {
-                // Distinguish "nobody booked" from "people ARE booked, but
-                // at times this day's configured hours don't cover" — the
-                // second looks identical on screen and is a settings
-                // problem, not a quiet day.
-                const bookedTimes = Object.entries(byTime)
-                  .filter(([, n]) => Number(n) > 0)
-                  .map(([t]) => t)
-                  .sort();
-                if (bookedTimes.length > 0) {
-                  d.demandNote =
-                    `${bookedTimes.length} booked slot${bookedTimes.length > 1 ? 's' : ''} `
-                    + `between ${bookedTimes[0]} and ${bookedTimes[bookedTimes.length - 1]}, but `
-                    + `${d.dayName}'s instructional hours only cover `
-                    + `${d.slotKeys[0] || '—'}–${d.slotKeys[d.slotKeys.length - 1] || '—'}. `
-                    + `Fix the hours for ${d.dayName} in Centre Settings.`;
-                  outsideHours.push(`⚠ ${d.dayName} ${d.dayNumber}: ${d.demandNote}`);
-                } else {
-                  d.demandNote = `No students are booked on this date.`;
-                }
-                continue;
-              }
-              datesWithBookings++;
-              curvesByDate[d.dateStr] = [{
-                capability: 'Instructor',
-                required: requiredFromDemand(students, ratio),
-              }];
-            }
-
-            const cov = generateCoverageSchedule({
-              days: dayList,
-              curvesByDate,
-              // Fixed staff — the Centre Director, Dir. of Education,
-              // Manager, Admin Assistant — are NOT floor instructors and
-              // are not this engine's job. They already have standing
-              // weekly schedules in centerConfig.fixedStaff, seeded onto
-              // the calendar by seedFixedShiftsForDates when the draft is
-              // saved. Leaving them in the pool would have rostered them a
-              // second time, on the floor, against their own hours. The
-              // classic engine excludes them the same way.
-              instructors: schedulableUsers.reduce((acc, u) => {
-                const forCentre = resolveUserForCenter(u, activeCenterId) || u;
-                const title = forCentre.instructorType || u.instructorType;
-
-                // Management is not floor staff and not this engine's job.
-                // They already have standing weekly schedules in
-                // centerConfig.fixedStaff, seeded by seedFixedShiftsForDates
-                // when the draft is saved.
-                //
-                // Matched on ROLE and TITLE, not just the fixedStaff name
-                // list: those keys are display names ("Vinod Bandla") and
-                // drift the moment an account is renamed ("Vin B"), which
-                // silently put a director back in the instructor pool.
-                // The designated host is ALWAYS in the pool, whatever
-                // their role or title. They are usually the owner or a
-                // manager, so the management filter below would remove
-                // them — and then the host block they exist to cover
-                // silently falls to whoever else can host, every day.
-                // Hosting is their job, not a fairness question.
-                const isDesignatedHost = hostNameKeys.has(
-                  String(u.displayName || '').trim().toLowerCase());
-
-                if (!isDesignatedHost
-                    && (fixedStaffNames.has(u.displayName)
-                        || NON_FLOOR_ROLES.has(u.role)
-                        || NON_FLOOR_TITLES.has(title))) {
-                  return acc;
-                }
-
-                acc.push({
-                  uid: u.uid,
-                  displayName: u.displayName,
-                  subRoles: forCentre.subRoles ?? u.subRoles,
-                  priority: forCentre.priority ?? u.priority,
-                  // Leads run the floor, so they lead for a block — as a
-                  // head start, not an absolute rule, or they'd take every
-                  // shift and starve everyone else.
-                  isLead: title === 'Lead',
-                  // Trainees shadow rather than cover a slot (see
-                  // staffTypes.js). Using one to satisfy demand would make
-                  // the floor look staffed while one of the two is
-                  // watching. Listed in the summary, just not rostered.
-                  excludeFromMatching: title === 'Training',
-                  excludeReason: title === 'Training'
-                    ? 'In training — shadows a shift rather than covering one'
-                    : null,
-                  maxDaysPerWeek: forCentre.maxDaysPerWeek ?? u.maxDaysPerWeek ?? schedConfig.maxDaysPerWeek,
-                });
-                return acc;
-              }, []),
-              availabilityByDate,
-              // A host covers front-of-house every open day, regardless of
-              // how many students are booked. The centre's designated host
-              // takes it when available; anyone host-capable fills in when
-              // they're not. Reuses the existing autoHostNames setting
-              // rather than adding a second place to name the host.
-              requireHost: true,
-              hostNames: hostNamesNow,
+            const { shifts, uncovered, notes } = shapeShifts({
+              required: curve.required,
+              slotKeys: curve.slotKeys,
+              people,
+              minShiftHours: Number(schedConfig.minShiftHours) > 0
+                ? Number(schedConfig.minShiftHours)
+                : 2,
             });
-            // Say plainly when there was nothing to schedule from, rather
-            // than handing back an empty draft that looks like a bug.
-            const warnings = [...outsideHours, ...cov.warnings];
-            if (datesWithBookings === 0) {
-              warnings.unshift(
-                '⚠ No students are booked on these dates yet, and no coverage curve is set. '
-                + 'Nothing to build a schedule from — pick a week with bookings, or set the '
-                + 'coverage numbers by hand above.',
+
+            for (const [name, s] of Object.entries(shifts)) {
+              day.shiftTimes[name] = `${s.start} - ${s.end}`;
+              hoursSoFar[name] =
+                (hoursSoFar[name] || 0) + (toMinutes(s.end) - toMinutes(s.start)) / 60;
+            }
+
+            day.shiftShaping = { uncovered, notes };
+            for (const u of uncovered) {
+              result.warnings.push(
+                `⚠ ${day.dayOfWeek} ${day.dayNumber}: nobody free for the ${u.start}–${u.end} block (${u.reason}).`
               );
             }
-            return {
-              month: schedMonth, year: schedYear,
-              days: cov.days,
-              warnings,
-              employeeSummary: cov.employeeSummary,
-              coverage: {
-                fairness: cov.fairness,
-                minutesByPerson: cov.minutesByPerson,
-                hoursByName: cov.hoursByName,
-                summaryDetail: cov.summaryDetail,
-                datesWithBookings,
-              },
-            };
-          })()
-        : generateSchedule({
-            instructors: schedulableUsers,
-            availability: filteredAvailability,
-            previousMonthsAvail,
-            ...rangeArgs,
-            config: schedConfig,
-            centerConfig,   // per-center hours, fixed staff, guaranteed names
-            priorShifts: shifts,  // seed fairness from already-saved shifts this month
-          });
+          }
+        } catch (err) {
+          // Shaping is an enhancement — a failure here must not cost the
+          // owner a schedule they otherwise have.
+          console.error('[shapeShiftsToDemand] failed:', err);
+          result.warnings.push(
+            '⚠ Could not stagger shifts around demand; times are the full instructional window.'
+          );
+        }
+      }
+
       setDraftSchedule(result);
       setSelectedDayIndex(0);
     } catch (err) {
@@ -5177,7 +5023,7 @@ export default function Admin() {
   // as the page title when they navigate via the redesigned sidebar.
   const pageTitleByTab = {
     spreadsheet: { title: 'Manage Schedule', subtitle: 'Weekly grid + auto-scheduler + time-off requests', icon: CalendarRange,    bg: 'bg-blue-100 text-blue-600' },
-    users:       { title: 'Manage Staff',    subtitle: 'Approve, roles, sub-roles, priority',           icon: Users,            bg: 'bg-emerald-100 text-emerald-600' },
+    users:       { title: 'Manage Staff',    subtitle: 'Approve, roles, sub-roles',                     icon: Users,            bg: 'bg-emerald-100 text-emerald-600' },
     scheduler:   { title: 'Auto-Scheduler',  subtitle: 'Generate a draft schedule from availability',   icon: Wand2,            bg: 'bg-purple-100 text-purple-600' },
     payroll:     { title: 'Manage Payroll',  subtitle: 'Hourly summary + Radius timesheet compare',     icon: DollarSign,       bg: 'bg-amber-100 text-amber-600' },
     requests:    { title: 'Time Off Requests', subtitle: 'Approve or deny time off',                    icon: CalendarRange,    bg: 'bg-orange-100 text-orange-600' },
@@ -5920,7 +5766,7 @@ export default function Admin() {
 
           {/* Approved staff — compact list mirroring Manage Roles' layout.
               Click anywhere on the row to open the Edit modal for that
-              person; all the per-user toggles (role, priority, sub-roles,
+              person; all the per-user toggles (role, sub-roles,
               guaranteed, volunteer) live in there. Keeps this list
               scannable when the centre has 30+ staff. */}
           {(() => {
@@ -6014,7 +5860,6 @@ export default function Admin() {
                                   })}
                                 </span>
                               )}
-                              <span className="text-gray-400">· P{u.priority || 2}</span>
                             </div>
                           </div>
                           <button
@@ -6090,56 +5935,6 @@ export default function Admin() {
             <p className="text-sm text-gray-500 mb-5">
               Reads the availability your instructors have submitted and builds an optimized schedule respecting priorities, max days/week, and fair distribution.
             </p>
-            {/* How the schedule gets built. Classic is the engine that has
-                always run; Coverage is the demand-curve one. Presented as a
-                real choice rather than a hidden flag, because the two
-                answer different questions and an owner should be able to
-                run both on the same month and compare. */}
-            <div className="mb-4 rounded-xl border border-gray-200 overflow-hidden">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-px bg-gray-200">
-                {[
-                  {
-                    key: 'classic',
-                    title: 'By headcount',
-                    blurb: 'Pick how many people per day. Shift times come from what each person offered.',
-                  },
-                  {
-                    key: 'coverage',
-                    title: 'By coverage curve',
-                    blurb: 'Say how many you need each half-hour. Shifts are built to match, then filled.',
-                  },
-                ].map(opt => {
-                  const active = schedMode === opt.key;
-                  return (
-                    <button
-                      key={opt.key}
-                      type="button"
-                      onClick={() => setSchedMode(opt.key)}
-                      className={`text-left px-4 py-3 transition-colors ${active
-                        ? 'bg-purple-50 ring-1 ring-inset ring-purple-400'
-                        : 'bg-white hover:bg-gray-50'}`}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span className={`h-3 w-3 rounded-full border-2 ${active
-                          ? 'border-purple-600 bg-purple-600' : 'border-gray-300'}`} />
-                        <span className={`text-sm font-bold ${active ? 'text-purple-900' : 'text-gray-700'}`}>
-                          {opt.title}
-                        </span>
-                        {opt.key === 'coverage' && (
-                          <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700">
-                            NEW
-                          </span>
-                        )}
-                      </span>
-                      <span className={`mt-1 block text-xs ${active ? 'text-purple-700' : 'text-gray-500'}`}>
-                        {opt.blurb}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Range type toggle — Day / Week / Month. Picker below
                 switches based on selection. */}
             <div className="mb-3">
@@ -6148,11 +5943,7 @@ export default function Admin() {
                 {[
                   { key: 'day',   label: 'Day'   },
                   { key: 'week',  label: 'Week'  },
-                  // Coverage mode reads real bookings per date, and a whole
-                  // month that far out generally has none — so it schedules
-                  // a day or a week at a time, which is how the bookings
-                  // actually firm up.
-                  ...(schedMode === 'coverage' ? [] : [{ key: 'month', label: 'Month' }]),
+                  { key: 'month', label: 'Month' },
                 ].map(opt => {
                   const active = schedRangeType === opt.key;
                   return (
@@ -6222,9 +6013,7 @@ export default function Admin() {
                   />
                 </div>
               )}
-              {schedMode === 'classic' && (
-                <>
-                  <div>
+              <div>
                     <label className="mb-1 block text-sm font-medium text-gray-700">
                       Default min/day
                     </label>
@@ -6242,8 +6031,6 @@ export default function Admin() {
                       className="w-full rounded-lg border px-3 py-2.5 text-sm focus:border-red-500 focus:outline-none" />
                     <p className="mt-1 text-[10px] text-gray-500">Used for any day without its own override below.</p>
                   </div>
-                </>
-              )}
             </div>
 
             {/* ── Per-day operating + staffing matrix ──────────────────────
@@ -6252,61 +6039,14 @@ export default function Admin() {
                 days closed (writes operatingDays back to centerConfig).
                 Empty cells fall back to the global defaults above so the
                 owner only has to fill the days that differ from the norm. */}
-            {schedMode === 'coverage' ? (
-              /* Coverage mode has nothing to configure: the students booked
-                 on the chosen dates ARE the input. A panel of numbers to
-                 fill in was worse than no panel — it looked like required
-                 setup and sat there empty. */
-              <div className="mb-5 rounded-xl border border-indigo-200 bg-indigo-50/40 px-4 py-3">
-                <p className="text-sm font-semibold text-indigo-900">
-                  Built from the students actually booked
-                </p>
-                <p className="mt-0.5 text-xs text-indigo-700/80">
-                  For each date you pick, Ratio reads the bookings, works out how many instructors
-                  that needs at your {centerConfig?.targetRatio || 3.5}:1 ratio, and builds shifts to
-                  match — no shift under 2 hours, a host on every open day, and the schedule spread
-                  evenly by hours worked. Days with no bookings, or with the centre closed, say so.
-                </p>
-                {/* Who the engine thinks the host is. This was invisible —
-                    autoHostNames lived in centre config with no UI, so
-                    when it didn't match anybody the host block quietly
-                    rotated on fairness and there was no way to see why. */}
-                <div className="mt-2 flex items-center gap-2 flex-wrap text-xs">
-                  <span className="font-semibold text-indigo-900">Designated host:</span>
-                  {designatedHostNames.length === 0 ? (
-                    <span className="text-amber-700">
-                      none set — the host shift will go to whoever can host
-                    </span>
-                  ) : designatedHostNames.map(n => {
-                    const known = approvedUsers.some(
-                      u => (u.displayName || '').trim().toLowerCase() === n.trim().toLowerCase());
-                    return (
-                      <span key={n}
-                        title={known ? undefined : 'No staff account matches this name, so it has no effect'}
-                        className={`rounded-full px-2 py-0.5 font-semibold ${known
-                          ? 'bg-white text-indigo-800 border border-indigo-200'
-                          : 'bg-amber-100 text-amber-800 border border-amber-300'}`}>
-                        {n}{known ? '' : ' — no matching staff account'}
-                      </span>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    onClick={() => selectTab('holidays')}
-                    className="underline text-indigo-600 hover:text-indigo-800"
-                  >
-                    Change
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <PerDayStaffingMatrix
-                activeCenterId={activeCenterId}
-                centerConfig={centerConfig}
-                schedConfig={schedConfig}
-                setSchedConfig={setSchedConfig}
-              />
-            )}
+            <PerDayStaffingMatrix
+              activeCenterId={activeCenterId}
+              centerConfig={centerConfig}
+              schedConfig={schedConfig}
+              setSchedConfig={setSchedConfig}
+              rangeDates={schedRangeDates}
+              onDemandLoaded={setBookingDemand}
+            />
             <div className="flex flex-wrap items-center gap-4 mb-5">
               <div>
                 <label className="mb-1 block text-sm font-medium text-gray-700">Max days/instructor/week</label>
@@ -6405,21 +6145,13 @@ export default function Admin() {
                     coverage. Click a day to focus it below. */}
                 <div className="border-b bg-white px-4 py-3 flex flex-wrap gap-1.5">
                   {draftSchedule.days.map((day, i) => {
-                    // A closed day is neither staffed nor understaffed —
-                    // showing it as 0/0 in red reads as a failure when it's
-                    // simply Labour Day.
-                    const closed = !!day.closed;
-                    const low = !closed
-                      && day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
+                    const low = day.countingStaffCount < schedConfig.minPerDay;
                     const sel = i === selectedDayIndex;
                     return (
                       <button key={day.date} onClick={() => setSelectedDayIndex(i)}
-                        title={closed ? `Closed — ${day.closureReason || 'centre closed'}` : undefined}
-                        className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : closed ? 'border-gray-200 bg-gray-100 hover:border-gray-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
-                        <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : closed ? 'text-gray-500' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
-                        {closed
-                          ? <span className="text-[10px] font-semibold text-gray-500">Closed</span>
-                          : <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>}
+                        className={`flex flex-col items-start rounded-lg border px-2.5 py-1.5 transition-colors ${sel ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300' : low ? 'border-red-200 bg-red-50 hover:border-red-300' : 'border-gray-200 bg-white hover:border-gray-300'}`}>
+                        <span className={`text-[11px] font-semibold ${sel ? 'text-purple-700' : low ? 'text-red-700' : 'text-gray-700'}`}>{day.dayOfWeek.slice(0, 3)} {day.dayNumber}</span>
+                        <span className={`text-[10px] ${low ? 'text-red-600 font-bold' : 'text-gray-400'}`}>{day.countingStaffCount}/{schedConfig.minPerDay}{low ? ' ⚠' : ''}</span>
                       </button>
                     );
                   })}
@@ -6428,7 +6160,7 @@ export default function Admin() {
                 <div className="divide-y divide-gray-100">
                   {draftSchedule.days.map((day, i) => {
                     if (i !== selectedDayIndex) return null;
-                    const isLow = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
+                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
                     const isEditing = editingDay?.index === i;
 
                     // Sort assigned names by role priority: Instructor/Lead first,
@@ -6464,7 +6196,7 @@ export default function Admin() {
                             {isLow ? (
                               <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">
                                 <AlertTriangle size={11} />
-                                Low staff — need {(day.targetStaffCount ?? schedConfig.minPerDay) - day.countingStaffCount} more
+                                Low staff — need {schedConfig.minPerDay - day.countingStaffCount} more
                               </span>
                             ) : (
                               <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">
@@ -6616,24 +6348,9 @@ export default function Admin() {
                           </div>
                         ) : (
                           <>
-                            {day.notes?.length > 0 && (
-                              <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-                                {day.notes.map((n, ni) => (
-                                  <p key={ni} className="text-xs text-amber-800">{n}</p>
-                                ))}
-                              </div>
-                            )}
                             {day.assignedEmployees.length === 0 ? (
                               <div className="rounded-xl border-2 border-dashed border-gray-200 bg-gray-50/50 px-4 py-6 text-center">
-                                <p className="text-sm text-gray-400 italic">
-                                  {day.closed ? `Centre closed — ${day.closureReason || 'closed'}` : 'No staff assigned for this day'}
-                                </p>
-                                {/* WHY it's empty, in the place the question
-                                    gets asked. Without this an empty day is
-                                    indistinguishable from a broken one. */}
-                                {!day.closed && day.emptyReason && (
-                                  <p className="mt-1.5 text-xs text-amber-700 max-w-lg mx-auto">{day.emptyReason}</p>
-                                )}
+                                <p className="text-sm text-gray-400 italic">No staff assigned for this day</p>
                               </div>
                             ) : (
                               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
@@ -6720,58 +6437,16 @@ export default function Admin() {
               </div>
 
               <div className="rounded-xl border bg-white p-5 shadow-sm">
-                <h4 className="font-semibold text-gray-900 mb-1">Shift Distribution</h4>
-                {/* Coverage mode balances by HOURS, not shift count — shifts
-                    are deliberately different lengths there, so "3 shifts"
-                    alone can't tell you whether the split was fair. Show the
-                    hours it actually balanced on, and the spread. */}
-                {draftSchedule.coverage?.fairness && (
-                  <p className="mb-3 text-xs text-gray-500">
-                    Balanced by hours worked — {draftSchedule.coverage.fairness.staffed} staff
-                    scheduled, {draftSchedule.coverage.fairness.min}h to{' '}
-                    {draftSchedule.coverage.fairness.max}h each
-                    {draftSchedule.coverage.fairness.spread > 0
-                      && ` (a ${draftSchedule.coverage.fairness.spread}h spread)`}.
-                  </p>
-                )}
+                <h4 className="font-semibold text-gray-900 mb-3">Shift Distribution</h4>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {/* `|| {}` on purpose: a draft is produced by one of two
                       engines, and an engine that forgets this key should
                       not be able to take the whole admin page down with
                       Object.entries(undefined). It has happened once. */}
                   {Object.entries(draftSchedule.employeeSummary || {}).sort(([,a],[,b]) => b-a).map(([name, count]) => (
-                    <div key={name} className="flex items-center justify-between gap-2 rounded-lg bg-gray-50 px-3 py-2">
-                      <span className="min-w-0">
-                        <span className="block text-sm text-gray-800 truncate">{name}</span>
-                        {/* A zero is the same pixel whether someone never
-                            offered time, offered it and wasn't needed, or
-                            is a trainee the engine skips on purpose. Say
-                            which — it's the difference between "chase them
-                            for availability" and "nothing to do". */}
-                        {count === 0 && draftSchedule.coverage?.summaryDetail?.[name] && (() => {
-                          const d = draftSchedule.coverage.summaryDetail[name];
-                          const label = d.reason
-                            ? d.reason
-                            : d.daysAvailable === 0
-                              ? 'No availability submitted for this range'
-                              : `Available ${d.daysAvailable} day${d.daysAvailable === 1 ? '' : 's'} — not needed`;
-                          return (
-                            <span className={`block text-[11px] truncate ${d.daysAvailable === 0 && !d.reason ? 'text-amber-700' : 'text-gray-400'}`}>
-                              {label}
-                            </span>
-                          );
-                        })()}
-                      </span>
-                      <span className="flex items-center gap-1.5">
-                        {/* Hours are what coverage mode actually balances on,
-                            so lead with them when they're available. */}
-                        {draftSchedule.coverage?.hoursByName?.[name] > 0 && (
-                          <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-xs font-semibold text-indigo-700">
-                            {draftSchedule.coverage.hoursByName[name]}h
-                          </span>
-                        )}
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>{count} {count === 1 ? 'shift' : 'shifts'}</span>
-                      </span>
+                    <div key={name} className="flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
+                      <span className="text-sm text-gray-800">{name}</span>
+                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-400'}`}>{count} {count === 1 ? 'shift' : 'shifts'}</span>
                     </div>
                   ))}
                 </div>
@@ -8092,7 +7767,7 @@ export default function Admin() {
 // Owners can edit either without touching the other.
 const MATRIX_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSchedConfig }) {
+function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSchedConfig, rangeDates, onDemandLoaded }) {
   const operatingDays = useMemo(() => {
     return Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length > 0
       ? centerConfig.operatingDays
@@ -8100,6 +7775,10 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
   }, [centerConfig?.operatingDays]);
   const [savingDays, setSavingDays] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [loadingBookings, setLoadingBookings] = useState(false);
+  // Result of the last "Staff from bookings" run, so the owner can audit the
+  // numbers instead of trusting a headcount that appeared from nowhere.
+  const [bookingPreview, setBookingPreview] = useState(null);
 
   // ─── Saved staffing shapes ────────────────────────────────────────────
   // A template is this whole panel's settings under a name. Applying one
@@ -8195,6 +7874,115 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
     }
   };
 
+  // Size each DATE in the picked range from the bookings actually on the
+  // calendar for that date.
+  //
+  // This is the difference between "Thursdays need 8" and "this Thursday has
+  // 21 students booked, staff 7." `loadFromHistory` above averages saved
+  // snapshots by weekday, which can't tell two Thursdays apart and needs
+  // someone to have saved snapshots first. This reads Acuity directly.
+  //
+  // Writes schedConfig.perDate, which generateSchedule prefers over the
+  // weekday rules below. Deliberately NOT part of a saved template — a
+  // template is a reusable staffing shape, and demand for a specific date
+  // is the opposite of reusable.
+  const staffFromBookings = async () => {
+    if (!activeCenterId) return;
+    if (!rangeDates?.start || !rangeDates?.end) {
+      toast.error('Pick a date range first.');
+      return;
+    }
+    setLoadingBookings(true);
+    try {
+      const [{ buildPerDateStaffing }, { DEFAULT_TARGET_RATIO }] = await Promise.all([
+        import('../lib/demand-staffing'),
+        import('../lib/subRoles'),
+      ]);
+
+      const token = await auth.currentUser?.getIdToken();
+      if (!token) throw new Error('Not signed in.');
+
+      const res = await fetch(
+        `/api/scheduler/appointments?centerId=${encodeURIComponent(activeCenterId)}` +
+        `&start=${rangeDates.start}&end=${rangeDates.end}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || 'Could not read bookings.');
+      if (payload?.warning) toast.error(payload.warning);
+
+      // Two ratios: what the centre aims for, and the worst it will accept.
+      // 1:3.5 is the aim; 1:4 is the floor, because you can't staff half a
+      // person and rounding up every time would overstaff the quiet days.
+      const targetRatio = Number(schedConfig.demandRatio) > 0
+        ? Number(schedConfig.demandRatio)
+        : DEFAULT_TARGET_RATIO;
+      const acceptableRatio = Number(schedConfig.demandRatioMax) > 0
+        ? Number(schedConfig.demandRatioMax)
+        : 4;
+
+      const { perDate, details, warnings } = buildPerDateStaffing(payload.days || [], {
+        targetRatio,
+        acceptableRatio,
+        minShiftHours: 2,
+        cushion: Number.isFinite(schedConfig.demandCushion) ? schedConfig.demandCushion : 1,
+      });
+
+      const staffedDates = Object.keys(perDate);
+      if (staffedDates.length === 0) {
+        toast.error('No bookings found in that range — nothing to size the days from.');
+        setBookingPreview({ details, warnings, targetRatio, acceptableRatio, range: rangeDates });
+        return;
+      }
+
+      setSchedConfig(c => ({
+        ...c,
+        perDate,
+        // Stamped so the panel can warn when these numbers describe a
+        // different range than the one now picked, or have gone stale.
+        perDateMeta: {
+          builtFor: { start: rangeDates.start, end: rangeDates.end },
+          builtAt: new Date().toISOString(),
+          targetRatio,
+          acceptableRatio,
+        },
+      }));
+      setBookingPreview({ details, warnings, targetRatio, acceptableRatio, range: rangeDates });
+
+      // Hand the per-date curves up so the generator can stagger shifts around
+      // the rush instead of putting everyone on the full instructional window.
+      onDemandLoaded?.(Object.fromEntries(
+        details
+          .filter(d => d.hasBookings)
+          .map(d => [d.date, {
+            slotKeys: d.slots.map(s => s.slot),
+            required: d.slots.map(s => s.required),
+          }])
+      ));
+
+      toast.success(
+        `Sized ${staffedDates.length} day${staffedDates.length === 1 ? '' : 's'} from real bookings — aiming 1:${targetRatio}, floor 1:${acceptableRatio}.`
+      );
+    } catch (err) {
+      console.error('[staffFromBookings] failed:', err);
+      toast.error(err?.message || 'Could not size days from bookings.');
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  const clearBookingStaffing = () => {
+    setSchedConfig(c => {
+      const next = { ...c };
+      delete next.perDate;
+      delete next.perDateMeta;
+      return next;
+    });
+    setBookingPreview(null);
+    onDemandLoaded?.(null);
+    toast.success('Cleared booking-derived staffing. Weekday rules apply again.');
+  };
+
   // Toggle a weekday open/closed in centerConfig.operatingDays.
   // Persists immediately — there's no separate Save button — because
   // it's a small list and instant feedback is more useful than batching.
@@ -8269,6 +8057,16 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
             </select>
           )}
           <button
+            onClick={staffFromBookings}
+            disabled={loadingBookings || !rangeDates}
+            title={rangeDates
+              ? `Size each date from the students actually booked in Acuity for ${rangeDates.start} → ${rangeDates.end}`
+              : 'Pick a date range first'}
+            className="inline-flex items-center gap-1 rounded-md border border-emerald-400 bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {loadingBookings ? '…' : '◎'} Staff from bookings
+          </button>
+          <button
             onClick={loadFromHistory}
             disabled={loadingHistory}
             title="Fill Centre Min/Max from the average demand of your saved Supply & Demand snapshots"
@@ -8317,6 +8115,114 @@ function PerDayStaffingMatrix({ activeCenterId, centerConfig, schedConfig, setSc
           </span>
         </div>
       )}
+
+      {/* Booking-derived staffing. Shown whenever perDate rules are active so
+          the owner can audit where each day's headcount came from, and can
+          see immediately if those numbers describe a different date range
+          than the one now picked. */}
+      {schedConfig.perDateMeta && (() => {
+        const meta = schedConfig.perDateMeta;
+        const dates = Object.keys(schedConfig.perDate || {}).sort();
+        const rangeMatches =
+          rangeDates &&
+          meta.builtFor?.start === rangeDates.start &&
+          meta.builtFor?.end === rangeDates.end;
+        const ageHours = (Date.now() - new Date(meta.builtAt).getTime()) / 36e5;
+        const stale = ageHours > 12;
+        return (
+          <div className={`px-4 py-2.5 border-b ${rangeMatches && !stale
+            ? 'border-emerald-200 bg-emerald-50/60'
+            : 'border-amber-300 bg-amber-50'}`}>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className={`text-xs font-bold ${rangeMatches && !stale ? 'text-emerald-900' : 'text-amber-900'}`}>
+                  {dates.length} day{dates.length === 1 ? '' : 's'} sized from real bookings
+                  {' '}— aiming 1:{meta.targetRatio}, floor 1:{meta.acceptableRatio ?? 4}
+                </p>
+                <p className={`text-[11px] ${rangeMatches && !stale ? 'text-emerald-800/80' : 'text-amber-800'}`}>
+                  {!rangeMatches
+                    ? `These numbers were built for ${meta.builtFor?.start} → ${meta.builtFor?.end}, but you now have a different range picked. Re-run “Staff from bookings”.`
+                    : stale
+                      ? `Built ${Math.round(ageHours)} hours ago — bookings may have changed since. Re-run to refresh.`
+                      : `Covers ${meta.builtFor?.start} → ${meta.builtFor?.end}. These beat the weekday rules below.`}
+                </p>
+              </div>
+              <button
+                onClick={clearBookingStaffing}
+                className="shrink-0 rounded-md border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+              >
+                Clear
+              </button>
+            </div>
+
+            <label className="mt-2 flex items-start gap-2 text-[11px] text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={schedConfig.shapeShiftsToDemand !== false}
+                onChange={e => setSchedConfig(c => ({ ...c, shapeShiftsToDemand: e.target.checked }))}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="font-semibold">Stagger shifts around the rush.</span>{' '}
+                Shift times follow the booking curve instead of everyone working the
+                full window — people come in for the busy stretch and leave when it
+                clears. Nobody is rostered under {Number(schedConfig.minShiftHours) > 0
+                  ? Number(schedConfig.minShiftHours) : 2} hours, nobody is sent home
+                for a short dip, and nobody already scheduled is dropped.
+              </span>
+            </label>
+
+            {bookingPreview?.details?.length > 0 && (
+              <div className="mt-2 overflow-x-auto">
+                <table className="text-[11px] border-collapse">
+                  <thead>
+                    <tr className="text-purple-700/70">
+                      <th className="px-2 py-0.5 text-left font-semibold">Date</th>
+                      <th className="px-2 py-0.5 text-right font-semibold">Peak students</th>
+                      <th className="px-2 py-0.5 text-right font-semibold" title={`Instructors at the 1:${bookingPreview.acceptableRatio ?? 4} floor`}>Floor</th>
+                      <th className="px-2 py-0.5 text-right font-semibold" title={`Instructors at the 1:${bookingPreview.targetRatio} aim`}>Aim</th>
+                      <th className="px-2 py-0.5 text-right font-semibold">Min</th>
+                      <th className="px-2 py-0.5 text-right font-semibold">Max</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bookingPreview.details.map(d => (
+                      <tr key={d.date} className={d.hasBookings ? '' : 'text-gray-400 italic'}>
+                        <td className="px-2 py-0.5 whitespace-nowrap font-medium">
+                          {d.date}
+                          {' '}
+                          <span className="text-gray-400">
+                            {new Date(d.date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                          </span>
+                        </td>
+                        {d.hasBookings ? (
+                          <>
+                            <td className="px-2 py-0.5 text-right">{d.peakStudents}</td>
+                            <td className="px-2 py-0.5 text-right text-gray-500">{d.floorRequired}</td>
+                            <td className="px-2 py-0.5 text-right">{d.peakRequired}</td>
+                            <td className="px-2 py-0.5 text-right font-bold">{d.min}</td>
+                            <td className="px-2 py-0.5 text-right font-bold">{d.max}</td>
+                          </>
+                        ) : (
+                          <td className="px-2 py-0.5" colSpan={5}>no bookings — default rule applies</td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {bookingPreview?.warnings?.length > 0 && (
+              <ul className="mt-2 space-y-0.5">
+                {bookingPreview.warnings.slice(0, 6).map((w, i) => (
+                  <li key={i} className="text-[10px] text-amber-800">⚠ {w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })()}
 
       {templates.length > 0 && (
         <div className="px-4 py-2 border-b border-purple-200 bg-white/40 flex items-center gap-1.5 flex-wrap">
@@ -8488,7 +8394,7 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
                 <tr className="bg-gray-50">
                   <th className="text-left px-3 py-2 font-semibold text-gray-600 w-32">INSTRUCTOR</th>
                   {week.map(day => {
-                    const isLow = day.countingStaffCount < (day.targetStaffCount ?? schedConfig.minPerDay);
+                    const isLow = day.countingStaffCount < schedConfig.minPerDay;
                     const dl = fmtDate(day.date);
                     return (
                       <th key={day.date}
@@ -8496,7 +8402,7 @@ function DraftWeeklyGrid({ draftSchedule, centerConfig, schedConfig }) {
                         <div className={`text-[10px] uppercase tracking-wide ${isLow ? 'text-red-700' : 'text-gray-500'}`}>{dl.dow}</div>
                         <div className={`${isLow ? 'text-red-800' : 'text-gray-800'} text-xs`}>{dl.dn}</div>
                         <div className={`text-[10px] ${isLow ? 'text-red-700 font-bold' : 'text-gray-500'} mt-0.5`}>
-                          {day.countingStaffCount}/{day.targetStaffCount ?? schedConfig.minPerDay}{isLow ? ' ⚠' : ''}
+                          {day.countingStaffCount}/{schedConfig.minPerDay}{isLow ? ' ⚠' : ''}
                         </div>
                       </th>
                     );

@@ -99,9 +99,6 @@ export const DEFAULT_CENTER_CONFIG = {
   fixedStaff: {},
 
   // ─── Appearance ────────────────────────────────────────────────────────
-  // Per-center role colors (hex). Legacy — kept so older configs still
-  // merge cleanly. Superseded by `assignmentColors` below.
-  roleColors: {},
   // Per-center shift-assignment colors (hex), shown on the admin weekly
   // grid. Editable from Super Admin → Appearance. Any assignment not listed
   // falls back to the built-in DEFAULT_ASSIGNMENT_COLORS.
@@ -113,30 +110,12 @@ export const DEFAULT_CENTER_CONFIG = {
   stateColors: {},
 };
 
-// Built-in role colors — used as the fallback when a center hasn't
-// customized them. Hex values; text is always white on these.
-export const DEFAULT_ROLE_COLORS = {
-  'Instructor':        '#16a34a', // green
-  'Lead':              '#ea580c', // orange
-  'Host':              '#2563eb', // blue
-  'Admin':             '#dc2626', // red
-  'Manager':           '#ca8a04', // yellow
-  'Dir. of Education': '#db2777', // pink
-  'Center Director':   '#92400e', // brown
-};
-
-// All editable role names (the keys shown in the Super Admin color editor).
-export const ROLE_COLOR_KEYS = Object.keys(DEFAULT_ROLE_COLORS);
-
-/**
- * Resolve a role's color: center override first, then the built-in default,
- * then a neutral green fallback for unknown roles.
- */
-export function roleColorHex(role, centerConfig) {
-  const custom = centerConfig?.roleColors?.[role];
-  if (custom) return custom;
-  return DEFAULT_ROLE_COLORS[role] || '#16a34a';
-}
+// NOTE: DEFAULT_ROLE_COLORS / ROLE_COLOR_KEYS / roleColorHex() used to
+// live here. They were superseded by the assignment colours below, and
+// staffTypeColorHex() orphaned the last caller, so they've been removed
+// rather than left as a second palette for someone to wire up by
+// mistake. Any `roleColors` still stored on a centre doc is inert and
+// passes through mergeCenterConfig untouched.
 
 // ─── Shift assignments ───────────────────────────────────────────────────
 // The single "what is this person doing on this shift" label shown on the
@@ -335,8 +314,8 @@ export const LANGLEY_DEFAULT_CONFIG = {
   city:     'Langley',
   province: 'BC',
   // Guaranteed-shift list removed. Auto-scheduler now ranks purely on
-  // priority + sub-role + fairness — no name-based override. If you
-  // want someone scheduled first, set their priority to 1 in Manage
+  // rank + sub-role + fairness — no name-based override. If you
+  // want someone scheduled first, make them a Lead in Manage
   // Staff (per-user, transferable across centres).
   // Salaried staff — excluded from hourly payroll summaries. Sabrina
   // is hourly (NOT in this list); Vinod is the new Center Director,

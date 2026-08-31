@@ -4,16 +4,16 @@
  * Rules:
  * - Purely availability-driven. No availability = no shift (their responsibility).
  * - If no availability this month, look back month by month until found.
- * - Priority 1 > 2 > 3 (lower number = higher priority). Priority is BLENDED
- *   with fairness, not an absolute gate: a lower-priority instructor who's
- *   been under-scheduled will out-rank a higher-priority one who already has
- *   plenty of shifts. See schedulingScore() / PRIORITY_WEIGHT below. This
- *   keeps priority-3 staff from being benched for a whole month.
- * - Priority 0 (e.g. Luke, Ainsley, Kaitlyn): near-guaranteed — the lowest
- *   base score, so they schedule first while still counting toward fairness.
+ * - Scheduling order is two rules, in order: Leads outrank Instructors, then
+ *   fewest shifts so far wins. Nothing else. The old per-person "priority"
+ *   tier was removed — it was unpredictable and impossible to explain to
+ *   whoever it benched.
+ * - How MANY people a day needs comes from config, most specific first:
+ *   perDate['YYYY-MM-DD'] (sized from real bookings) > perDay['Monday'] >
+ *   minPerDay/maxPerDay.
  * - Sub-roles: Elementary, Highschool, Online.
  *   - Online instructors are NOT counted in the in-centre min/max ratio.
- *   - Prefer Highschool-capable instructors (can float) but respect priority.
+ *   - Prefer Highschool-capable instructors — they can float between tracks.
  *   - Balance elementary vs highschool count across the day.
  * - Min/max counts only Leads + Instructors (in-centre).
  * - Dev Prasad and Bri MacDonald (Leads) DO count toward min/max.
@@ -102,11 +102,10 @@ const DEFAULT_INSTRUCTIONAL_HOURS = {
   Saturday:  { start: '10:00', end: '14:00' },
 };
 
-// (Removed) DEFAULT_GUARANTEED_NAMES — guaranteed-shift feature was
-// removed in favour of pure priority-based scheduling. The
-// auto-scheduler now ranks instructors by priority + sub-role + fairness
-// only; no name-based pin. Owners use Manage Staff → priority to
-// promote/demote individuals instead.
+// (Removed) DEFAULT_GUARANTEED_NAMES — the guaranteed-shift feature, and
+// later the per-person priority tier, were both removed. Scheduling order is
+// now Lead-before-Instructor, then fewest shifts. There is no per-user knob
+// to promote someone: make them a Lead, or let fairness do its job.
 
 /**
  * Intersect a user's availability window with the day's instructional
@@ -365,8 +364,8 @@ export function shiftSubRoleFor(instructor, track) {
 // Kept as a no-op stub for backwards compatibility with any external
 // caller still importing the symbol; always returns false now so old
 // per-user `guaranteed: true` flags don't accidentally re-enable the
-// pinning behaviour. Schedule order is now purely priority + sub-role
-// + fairness, set per-user via Manage Staff.
+// pinning behaviour. Schedule order is now Lead-before-Instructor, then
+// fewest shifts.
 // eslint-disable-next-line no-unused-vars
 export function isGuaranteed(_instructor, _guaranteedNames) {
   return false;
@@ -466,6 +465,17 @@ export function generateSchedule({
     // want 10 in-centre + 2 online" without splitting into separate
     // scheduler runs.
     perDay = {},
+    // Per-DATE overrides, keyed 'YYYY-MM-DD'. Same field shape as perDay,
+    // and takes precedence over it.
+    //
+    // This is what makes the schedule demand-driven. A weekday key can only
+    // say "Thursdays need 8"; a date key says "THIS Thursday has 21 students
+    // booked, staff 7." Built from real bookings by
+    // buildPerDateStaffing() in demand-staffing.js.
+    //
+    // Precedence, most specific wins:
+    //   perDate['2026-09-17']  >  perDay['Thursday']  >  minPerDay/maxPerDay
+    perDate = {},
   } = config;
 
   // Center-specific tunables (with defaults that match legacy Langley behavior)
@@ -481,8 +491,8 @@ export function generateSchedule({
   const fixedStaffMap      = (centerConfig.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
                                 ? centerConfig.fixedStaff
                                 : FIXED_SCHEDULES;
-  // Guaranteed-name list removed. Scheduling order is now pure
-  // priority + sub-role + fairness — see the sort below.
+  // Guaranteed-name list removed, and so is the priority tier. Scheduling
+  // order is Lead-before-Instructor, then fewest shifts — see the sort below.
   // Days this center is open. Defaults to the full Mon–Sat week so any
   // caller that doesn't pass a centerConfig keeps its old behavior.
   const operatingDays      = (Array.isArray(centerConfig.operatingDays) && centerConfig.operatingDays.length > 0)
@@ -554,25 +564,31 @@ export function generateSchedule({
     weeklyAssignments[inst.uid] = {};
   }
 
-  // ── Blended priority + fairness score ──────────────────────────────────
-  // LOWER score = scheduled first. Priority is a strong but NON-absolute
-  // factor: each level is worth PRIORITY_WEIGHT shifts of "head start". A
-  // higher-priority instructor leads early, but an underserved lower-priority
-  // instructor overtakes them once the gap in shifts-so-far grows past the
-  // head start. This is what stops priority-3 staff from being benched all
-  // month (the old sort gated strictly by priority, so tier 3 only ever got
-  // leftover slots — often zero) while still letting priority 1/2 average
-  // more shifts overall.
+  // ── Scheduling order: rank, then fairness ──────────────────────────────
+  // LOWER sorts first.
   //
-  // TUNING: raise PRIORITY_WEIGHT to make priority dominate more (closer to
-  // the old strict tiers); lower it to even everyone out faster. At the
-  // default 3, a priority-1 instructor gets ~3 shifts of lead over a
-  // priority-2, ~6 over a priority-3, before fairness pulls the others in.
-  // Fairness accrues across every day in this run, so generating a whole
-  // month at once (rather than week-by-week) gives the fairest rotation.
-  const PRIORITY_WEIGHT = 3;
-  const schedulingScore = (inst) =>
-    (inst.priority ?? 2) * PRIORITY_WEIGHT + (totalAssignments[inst.uid] || 0);
+  // Two rules, in order:
+  //   1. Leads outrank instructors. A Lead available for a day is offered it
+  //      before an instructor is.
+  //   2. Among equals, fewest shifts so far. That's the whole of fairness.
+  //
+  // The old per-person "priority" tier (1/2/3, blended with fairness by a
+  // PRIORITY_WEIGHT constant) was removed: it never behaved predictably, and
+  // the number it produced was impossible to explain to the person it
+  // benched. Rank is a fact about the job; fairness is a count of shifts.
+  // Neither needs tuning.
+  //
+  // Fairness accrues across every day in a run, so generating a whole month
+  // at once gives a fairer rotation than seven separate week runs.
+  const rankOf = (inst) =>
+    (inst.instructorType || '').trim().toLowerCase() === 'lead' ? 0 : 1;
+
+  const schedulingScore = (inst) => totalAssignments[inst.uid] || 0;
+
+  // Leads first, then fewest shifts. Used everywhere staff compete for a slot.
+  const byRankThenFairness = (a, b) =>
+    (rankOf(a.inst) - rankOf(b.inst)) ||
+    (schedulingScore(a.inst) - schedulingScore(b.inst));
 
   // ── Seed fairness from prior dates ─────────────────────────────────────
   // Makes day-by-day / week-by-week generation fair ACROSS separate runs.
@@ -623,7 +639,10 @@ export function generateSchedule({
     // min/max and add an explicit online cap. Anything not set in the
     // override falls through to the global config (and online stays
     // unlimited unless the owner sets a cap).
-    const dayRule = perDay[dayName] || {};
+    // A date-specific rule (from real bookings) beats the weekday rule, which
+    // beats the global default. Merged field-by-field so a perDate entry that
+    // only sets min/max still inherits that weekday's online caps.
+    const dayRule = { ...(perDay[dayName] || {}), ...(perDate[dateStr] || {}) };
     const effectiveMin       = Number.isFinite(dayRule.min)       ? dayRule.min       : minPerDay;
     const effectiveMax       = Number.isFinite(dayRule.max)       ? dayRule.max       : maxPerDay;
     const effectiveOnlineMin = Number.isFinite(dayRule.onlineMin) ? dayRule.onlineMin : 0;
@@ -669,7 +688,7 @@ export function generateSchedule({
 
     // ── 3. Split into online-only / hosts / in-centre instructors ────────────
     // Hosts are scheduled in their own pass below — they don't go through the
-    // priority/fairness ranking and they don't compete for Instructor slots.
+    // rank/fairness ranking and they don't compete for Instructor slots.
     //
     // effectiveTrack() honours the per-day preferredAssignment from the
     // availability doc, so an instructor whose profile is Centre-only can
@@ -689,22 +708,19 @@ export function generateSchedule({
       );
     }
 
-    // ── 4. Sort in-centre instructors by blended priority + fairness ─────────
-    // Blended score (priority + shifts-so-far) is the primary key, so a
-    // lower-priority instructor who's been under-scheduled rises above a
-    // higher-priority one who already has plenty. Ties break on sub-role
-    // (Highschool-capable first), then raw shift count for stability.
+    // ── 4. Sort in-centre instructors: leads first, then fewest shifts ───────
+    // Ties break on sub-role (Highschool-capable can float between tracks, so
+    // they're the more useful body when everything else is equal), then on
+    // name so a run is reproducible.
     inCentre.sort((a, b) => {
-      const score = schedulingScore(a.inst) - schedulingScore(b.inst);
-      if (score !== 0) return score;
+      const ranked = byRankThenFairness(a, b);
+      if (ranked !== 0) return ranked;
 
-      // Tie-break: prefer Highschool-capable (sub-role score 0 beats 1)
       const sa = getSubRoleScore(a.inst);
       const sb = getSubRoleScore(b.inst);
       if (sa !== sb) return sa - sb;
 
-      // Final stable tie-break — fewest total assignments first
-      return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
+      return String(a.inst.displayName || '').localeCompare(String(b.inst.displayName || ''));
     });
 
     // ── 5. Assign in-centre instructors up to maxPerDay ──────────────────────
@@ -722,10 +738,12 @@ export function generateSchedule({
       const isHS = subScore === 0;
       const isEL = subScore === 1;
 
-      // Soft balance: don't let elementary outnumber highschool by more
-      // than 2 unless we have no choice. Priority-1 instructors bypass
-      // this throttle so they still get scheduled when imbalance hits.
-      if (isEL && (candidate.inst.priority ?? 2) > 1) {
+      // Soft balance: don't let elementary outnumber highschool by more than
+      // 2 unless we have no choice. Leads bypass the throttle — they outrank
+      // instructors, and a balance heuristic shouldn't bench one. Anyone
+      // skipped here is picked back up by the second pass below if the day
+      // still has room, so nobody is lost to this.
+      if (isEL && rankOf(candidate.inst) !== 0) {
         if (elCount - hsCount >= 2) continue; // Skip for now, may add later
       }
 
@@ -776,12 +794,8 @@ export function generateSchedule({
     // fill the gap and count toward the staffing ratio.
     let promotedFromHost = 0;
     if (hosts.length > 0) {
-      // Sort hosts by the same blended priority + fairness score.
-      hosts.sort((a, b) => {
-        const score = schedulingScore(a.inst) - schedulingScore(b.inst);
-        if (score !== 0) return score;
-        return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
-      });
+      // Same order as everyone else: rank, then fewest shifts.
+      hosts.sort(byRankThenFairness);
 
       const stillNeeded = () => Math.max(0, effectiveMin - (fixedRatioCount + assigned + promotedFromHost));
 
@@ -827,12 +841,8 @@ export function generateSchedule({
     }
 
     // ── 6b. Assign online-only instructors (don't count toward ratio) ────────
-    // Sort by the same blended priority + fairness score.
-    onlineOnly.sort((a, b) => {
-      const score = schedulingScore(a.inst) - schedulingScore(b.inst);
-      if (score !== 0) return score;
-      return (totalAssignments[a.inst.uid] || 0) - (totalAssignments[b.inst.uid] || 0);
-    });
+    // Same order as everyone else: rank, then fewest shifts.
+    onlineOnly.sort(byRankThenFairness);
 
     let onlineAssigned = 0;
     for (const candidate of onlineOnly) {
@@ -903,6 +913,10 @@ export function generateSchedule({
         max: effectiveMax,
         onlineMin: effectiveOnlineMin,
         onlineMax: Number.isFinite(effectiveOnlineMax) ? effectiveOnlineMax : null,
+        // Where the headcount came from, so the UI can say "staffed from
+        // 21 real bookings" rather than showing a bare number the owner
+        // has no way to audit.
+        source: perDate[dateStr] ? 'bookings' : (perDay[dayName] ? 'weekday' : 'default'),
       },
     });
   }

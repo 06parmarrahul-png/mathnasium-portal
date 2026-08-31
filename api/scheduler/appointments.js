@@ -611,12 +611,43 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: e.message });
     }
 
-    const { centerId, date } = req.query;
+    const { centerId, date, start, end } = req.query;
     if (!centerId) return res.status(400).json({ error: 'centerId required' });
     const day = date || (() => {
       const d = new Date();
       return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
     })();
+
+    // RANGE MODE — ?start=YYYY-MM-DD&end=YYYY-MM-DD returns one grouped
+    // payload per date instead of a single day. Added for the auto-scheduler,
+    // which needs real demand for every date it's staffing.
+    //
+    // This costs nothing extra: the iCal feeds below are fetched and parsed
+    // in full regardless, and groupSchedule() is what filters to a day. We
+    // just call it once per date rather than once. Kept on this handler
+    // rather than a new file because Vercel Hobby caps us at 12 functions.
+    let rangeDates = null;
+    if (start || end) {
+      const isYmd = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s || '');
+      if (!isYmd(start) || !isYmd(end)) {
+        return res.status(400).json({ error: 'start and end must both be YYYY-MM-DD' });
+      }
+      if (end < start) {
+        return res.status(400).json({ error: 'end must be on or after start' });
+      }
+      rangeDates = [];
+      const cur = new Date(`${start}T12:00:00Z`);
+      const last = new Date(`${end}T12:00:00Z`);
+      while (cur <= last) {
+        rangeDates.push(cur.toISOString().slice(0, 10));
+        cur.setUTCDate(cur.getUTCDate() + 1);
+        // A schedule is built a week or a month at a time; anything past
+        // this is a runaway caller, and each extra date is real CPU.
+        if (rangeDates.length > 45) {
+          return res.status(400).json({ error: 'range is capped at 45 days' });
+        }
+      }
+    }
 
     const fs = getFirestore();
 
@@ -638,10 +669,15 @@ export default async function handler(req, res) {
 
     const icalUrls = (settings.icalUrls || []).filter(Boolean);
     if (icalUrls.length === 0) {
-      return res.status(200).json({
-        day, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [],
-        warning: 'No iCal URLs configured. Add one in the Setup tab.',
+      const empty = (d) => ({
+        day: d, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [],
       });
+      const warning = 'No iCal URLs configured. Add one in the Setup tab.';
+      return res.status(200).json(
+        rangeDates
+          ? { start, end, days: rangeDates.map(empty), warning }
+          : { ...empty(day), warning }
+      );
     }
 
     // Fetch every feed in parallel. Per-feed errors surface their URL
@@ -676,6 +712,14 @@ export default async function handler(req, res) {
     }
 
     const categorized = categorizeAll(allAppts, students, aliases);
+
+    if (rangeDates) {
+      return res.status(200).json({
+        start, end,
+        days: rangeDates.map(d => groupSchedule(categorized, d)),
+      });
+    }
+
     const grouped = groupSchedule(categorized, day);
 
     return res.status(200).json(grouped);

@@ -3,10 +3,10 @@
  *
  * Background:
  *   A user can belong to multiple centres (their `centerIds` array). For
- *   a long time, operational fields like `instructorType`, `priority`,
+ *   a long time, operational fields like `instructorType`,
  *   `subRoles`, `guaranteed`, `approved`, and `maxDaysPerWeek` lived on
  *   the top-level user doc. That meant editing a user in Centre A would
- *   ALSO change their role/priority in Centre B — they were truly the
+ *   ALSO change their role in Centre B — they were truly the
  *   same record. For single-centre staff this was fine. For multi-centre
  *   staff (e.g. an instructor at Centre A who works as a host at Centre
  *   B) it was a real bug — changes leaked across centres.
@@ -16,14 +16,14 @@
  *   the user doc:
  *
  *     centerMemberships: {
- *       [centerId]: { instructorType, priority, subRoles, guaranteed,
+ *       [centerId]: { instructorType, subRoles, guaranteed,
  *                     approved, maxDaysPerWeek }
  *     }
  *
  *   Reads go through `getMembership(user, centerId)`, which merges the
  *   per-centre values OVER the top-level legacy fields. Writes go via
  *   `membershipFieldPath()` which produces the dotted Firestore path
- *   (e.g. 'centerMemberships.cA.priority') so an updateDoc only touches
+ *   (e.g. 'centerMemberships.cA.instructorType') so an updateDoc only touches
  *   that one centre's record.
  *
  * Backwards-compat:
@@ -43,7 +43,6 @@
 // the top-level field.
 export const PER_CENTRE_FIELDS = [
   'instructorType',
-  'priority',
   'subRoles',
   'guaranteed',
   'approved',
@@ -66,7 +65,6 @@ export function getMembership(user, centerId) {
   if (!user) return {};
   const top = {
     instructorType:  user.instructorType,
-    priority:        user.priority,
     subRoles:        user.subRoles,
     guaranteed:      user.guaranteed,
     approved:        user.approved,
@@ -78,7 +76,6 @@ export function getMembership(user, centerId) {
   if (!m) return top;
   return {
     instructorType:  m.instructorType  ?? top.instructorType,
-    priority:        m.priority        ?? top.priority,
     subRoles:        m.subRoles        ?? top.subRoles,
     guaranteed:      m.guaranteed      ?? top.guaranteed,
     approved:        m.approved        ?? top.approved,
@@ -90,7 +87,7 @@ export function getMembership(user, centerId) {
 /**
  * Returns a flat user-like object where per-centre fields are hoisted
  * to the top level for the given centre. Lets existing code that reads
- * `u.priority`, `u.instructorType`, etc. keep working unchanged — the
+ * `u.instructorType`, etc. keep working unchanged — the
  * caller just maps users through this once at the top of the component.
  */
 export function resolveUserForCenter(user, centerId) {
@@ -101,10 +98,10 @@ export function resolveUserForCenter(user, centerId) {
 
 /**
  * Returns the dotted Firestore field path for a per-centre field, e.g.
- *   membershipFieldPath('cA', 'priority') === 'centerMemberships.cA.priority'
+ *   membershipFieldPath('cA', 'subRoles') === 'centerMemberships.cA.subRoles'
  *
  * Use with updateDoc:
- *   updateDoc(ref, { [membershipFieldPath(centerId, 'priority')]: 3 })
+ *   updateDoc(ref, { [membershipFieldPath(centerId, 'maxDaysPerWeek')]: 4 })
  *
  * For fields not in PER_CENTRE_FIELDS, callers should write to the
  * top-level field directly instead of calling this.
@@ -131,7 +128,6 @@ export function isPerCentreField(field) {
 export function buildInitialMembership(defaults = {}) {
   return {
     instructorType: defaults.instructorType ?? 'Instructor',
-    priority:       defaults.priority       ?? 2,
     maxDaysPerWeek: defaults.maxDaysPerWeek ?? 5,
     subRoles:       defaults.subRoles       ?? [],
     guaranteed:     defaults.guaranteed     ?? false,
