@@ -37,7 +37,7 @@ import { blocksFromCurve, toMinutes, toHHMM } from '../lib/shift-shaping';
 import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
 import { resolveUserForCenter } from '../lib/centerMembership';
-import { boardBudget, SLOT_ROLE, slotBuckets } from '../lib/board-budget';
+import { boardBudget, SLOT_ROLE, slotBuckets, slotHours } from '../lib/board-budget';
 import { WEEKDAY_DEFAULTS, BUDGET_BUCKETS } from '../lib/budgetBuckets';
 import { getFixedStaffForDay, getWeekOfMonth, FIXED_SCHEDULES } from '../lib/scheduler';
 import { isTrainingType } from '../lib/staffTypes';
@@ -1309,7 +1309,12 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
 function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime }) {
   const [editing, setEditing] = useState(false);
   const filled = !!slot.assigned;
-  const buckets = filled ? slotBuckets(slot, instrWindow) : {};
+
+  // Salaried staff are paid a salary, not by the hour, and their time isn't
+  // drawn from the hourly budget at all. Splitting them into Instructional and
+  // Admin Hours implied those buckets were being spent on them — they aren't.
+  // They just work their hours, so that's all we show.
+  const buckets = filled && !salaried ? slotBuckets(slot, instrWindow) : {};
   const parts = Object.entries(buckets)
     .filter(([, h]) => h > 0.01)
     .map(([k, h]) => ({
@@ -1317,6 +1322,7 @@ function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime })
       color: BUCKET_COLOR[k] || '#666',
       hours: Math.round(h * 10) / 10,
     }));
+  const workedHours = Math.round(slotHours(slot) * 10) / 10;
   const target = eligible === true && !filled;
 
   return (
@@ -1359,7 +1365,12 @@ function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime })
         )}
       </div>
 
-      {parts.length > 0 && (
+      {salaried && filled ? (
+        <p className="mt-1 text-[10px] text-gray-600">
+          <b className="tabular-nums text-gray-800">{workedHours}h</b> working hours
+          <span className="ml-1 italic text-gray-400">· salaried, off the hourly budget</span>
+        </p>
+      ) : parts.length > 0 && (
         <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5">
           {parts.map(p => (
             <span key={p.label} className="inline-flex items-center gap-1 text-[9.5px] text-gray-500">
@@ -1368,9 +1379,6 @@ function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime })
             </span>
           ))}
         </div>
-      )}
-      {salaried && filled && (
-        <p className="mt-0.5 text-[9px] italic text-gray-400">Not drawn from the hourly budget</p>
       )}
 
       {editing && (
