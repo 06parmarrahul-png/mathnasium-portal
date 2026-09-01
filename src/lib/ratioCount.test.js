@@ -181,11 +181,19 @@ describe('every role in the shift dropdown has a settled default', () => {
     'Dir. of Education': false,
     Training: false,
     Volunteer: false,
-    Owner: false,
   };
 
   it.each(Object.entries(EXPECTED))('%s → %s', (role, expected) => {
     expect(defaultIncludedInRatio({ role })).toBe(expected);
+  });
+
+  // 'Owner' is no longer offered anywhere — it isn't a job title, it's what
+  // signup stamps on the first account at a new centre. It can still turn
+  // up on a real record, so it must keep resolving to a definite answer
+  // rather than throwing or reading as counted.
+  it('a stray Owner title still resolves, and is out of ratio', () => {
+    expect(defaultIncludedInRatio({ role: 'Owner' })).toBe(false);
+    expect(countsInRatio({ role: 'Owner' })).toBe(false);
   });
 });
 

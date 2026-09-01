@@ -87,15 +87,19 @@ function shiftTimeProblem(startTime, endTime) {
 
 // instructorType values. This is a JOB TITLE, not a permission — access
 // comes from `role` (owner / admin_assistant / director / admin / …) plus
-// the title-based tiers in AuthContext. 'Owner' is included because
-// signup stamps it on the first account at a centre: without it in the
-// list the select had no matching option on an owner's own record and
-// rendered blank, so editing anything else about them could commit the
-// wrong title.
+// the permission set resolved in AuthContext.
+//
+// Only the fallback now: the live list comes from the centre's own role
+// registry via useRoleOptions() below. 'Owner' used to be pinned here
+// because signup stamps it on the first account at a centre, and without
+// a matching option the select rendered blank — so editing anything else
+// about that person committed the wrong title. useRoleOptions() fixes
+// that at the root by always including the value the record actually
+// holds, which also covers a custom role someone has since deleted.
 const ROLE_OPTIONS = [
   'Instructor', 'Lead', 'Host', 'Admin',
   'Manager', 'Center Director', 'Dir. of Education',
-  'Training', 'Volunteer', 'Owner',
+  'Training', 'Volunteer',
 ];
 
 // Roles that don't teach a specific level — the "Teaching Level" field is
@@ -351,12 +355,18 @@ function FlexRolePicker({ value, onChange }) {
  * loaded yet, and it is what the registry seeds itself from, so the two
  * agree out of the box.
  */
-function useRoleOptions() {
+function useRoleOptions(current) {
   const { centreRoles } = useAuth();
-  return useMemo(
-    () => (centreRoles?.length ? centreRoles.map(r => r.name) : ROLE_OPTIONS),
-    [centreRoles],
-  );
+  return useMemo(() => {
+    const names = centreRoles?.length ? centreRoles.map(r => r.name) : ROLE_OPTIONS;
+    // A record can carry a title the registry doesn't list: 'Owner' from
+    // signup, or a custom role that has since been deleted. Without its
+    // own option the select renders BLANK, and saving anything else about
+    // that person then commits the wrong title. Append it instead, so the
+    // dropdown always shows the truth and only changes what you change.
+    if (current && !names.includes(current)) return [...names, current];
+    return names;
+  }, [centreRoles, current]);
 }
 
 /**
@@ -463,7 +473,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle({
     role: user?.instructorType || '',
   });
-  const roleOptions = useRoleOptions();
+  const roleOptions = useRoleOptions(role);
   const handleRoleChange = (next) => { setRole(next); reseedRatio(next, flexRole); };
   const handleFlexChange = (next) => { setFlexRole(next); reseedRatio(role, next); };
 
@@ -689,7 +699,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   // Included in Ratio. An existing shift opens on whatever it was saved
   // with; a legacy shift with no stored value opens on the role default.
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle(shift);
-  const roleOptions = useRoleOptions();
+  const roleOptions = useRoleOptions(role);
   const handleRoleChange = (next) => { setRole(next); reseedRatio(next, flexRole); };
   const handleFlexChange = (next) => { setFlexRole(next); reseedRatio(role, next); };
 
@@ -955,11 +965,11 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIn
 // profile, and emails a "set your password" link. Owner never sees or
 // touches a password.
 function AddStaffModal({ onClose, onSubmit }) {
-  const roleOptions = useRoleOptions();
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [phone, setPhone] = useState('');
   const [instructorType, setInstructorType] = useState('Instructor');
+  const roleOptions = useRoleOptions(instructorType);
   const [subRoles, setSubRoles] = useState(['Elementary']);
   const [sendResetEmail, setSendResetEmail] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -1116,7 +1126,7 @@ function AddStaffModal({ onClose, onSubmit }) {
 function EditStaffModal({ user, onClose, onUpdateField, onDelete, onSendReset }) {
   // Above the early return on purpose: a hook after a conditional return
   // changes hook order between renders and React throws.
-  const roleOptions = useRoleOptions();
+  const roleOptions = useRoleOptions(user?.instructorType);
   if (!user) return null;
   // Expanded, so a legacy 'Both' shows as Elementary + Highschool ticked.
   // Toggling anything here then writes the expanded list back, which
@@ -1252,7 +1262,7 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   // The claimer inherits this, so the decision is made when the shift is
   // posted rather than left to whoever happens to pick it up.
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle({ role: '' });
-  const roleOptions = useRoleOptions();
+  const roleOptions = useRoleOptions(role);
   const handleRoleChange = (next) => { setRole(next); reseedRatio(next, ''); };
 
   const handleSubmit = async () => {

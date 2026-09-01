@@ -222,7 +222,14 @@ const BUILTIN_ROLE_SEEDS = [
   { name: 'Instructor',        permissions: [] },
   { name: 'Training',          permissions: [] },
   { name: 'Volunteer',         permissions: [] },
-  { name: 'Owner',             permissions: [] },
+  // 'Owner' is deliberately NOT here. Signup stamps it as the
+  // instructorType of the first account at a new centre
+  // (AuthContext.jsx), so it exists on real records — but it is a
+  // signup artifact, not a job title anyone assigns, and listing it in
+  // the role editor just invited someone to give "Owner" permissions
+  // that the platform role already grants. An account still carrying it
+  // keeps its title: useRoleOptions() in Admin.jsx appends whatever
+  // value a record actually holds, so its dropdown never renders blank.
 ];
 
 /**

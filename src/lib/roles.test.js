@@ -638,3 +638,23 @@ describe('permissionLookup — the shape the security rules read', () => {
     }
   });
 });
+
+describe('Owner is not a centre role', () => {
+  // It is what signup stamps on the first account at a new centre, not a
+  // job title anyone assigns. Listing it in the editor invited someone to
+  // give "Owner" permissions the platform role already grants.
+  it('is absent from the registry', () => {
+    expect(ROLES.map(r => r.name)).not.toContain('Owner');
+    expect(resolveRoles(null, () => '#fff').map(r => r.name)).not.toContain('Owner');
+  });
+
+  // An account still carrying the title must be unaffected: it simply has
+  // no centre role, so its access comes from its platform role alone.
+  it('an account still holding the title keeps exactly its platform access', () => {
+    for (const platformRole of PLATFORM_ROLES) {
+      const withTitle = resolvePermissions({ platformRole, instructorType: 'Owner', roles: ROLES });
+      const without   = resolvePermissions({ platformRole, roles: ROLES });
+      expect([...withTitle].sort()).toEqual([...without].sort());
+    }
+  });
+});

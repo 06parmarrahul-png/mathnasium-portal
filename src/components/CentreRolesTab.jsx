@@ -357,6 +357,14 @@ export default function CentreRolesTab({ users, centers }) {
             </button>
           </div>
         </div>
+
+        <p className="mt-3 border-t pt-3 text-xs text-gray-500">
+          <b>In ratio</b> means a shift worked under this role counts as teaching cover — it goes into the
+          instructor:student count the centre staffs to (aim 1:3.5, floor 1:4). <b>Out of ratio</b> means the
+          person is there and paid, but isn&rsquo;t counted as cover: hosts, the admin desk, directors, trainees,
+          volunteers, STEAM and Summer Camp. This only sets the <i>starting point</i> — every shift has its own
+          Included in Ratio toggle.
+        </p>
       </div>
 
       {editing && (
@@ -392,11 +400,16 @@ export default function CentreRolesTab({ users, centers }) {
                   <Users size={12} /> {holders}
                 </span>
 
-                <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
-                  role.countsInRatio
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                    : 'border-gray-200 bg-gray-50 text-gray-500'
-                }`}>
+                <span
+                  title={role.countsInRatio
+                    ? `New ${role.name} shifts default to counting toward the instructor:student ratio.`
+                    : `New ${role.name} shifts default to NOT counting toward the instructor:student ratio — present and paid, but not teaching cover.`}
+                  className={`cursor-help rounded-full border px-2 py-0.5 text-[11px] font-medium ${
+                    role.countsInRatio
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : 'border-gray-200 bg-gray-50 text-gray-500'
+                  }`}
+                >
                   {role.countsInRatio ? 'In ratio' : 'Out of ratio'}
                 </span>
 
