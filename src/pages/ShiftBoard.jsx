@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { toast, confirmDialog } from '../lib/notify';
 import { SUB_ROLES } from '../lib/subRoles';
+import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -390,6 +391,12 @@ export default function ShiftBoard() {
           endTime: openShift.endTime,
           role: openShift.role || profile.instructorType || 'Instructor',
           subRole: openShift.subRole || 'Elementary',
+          // Inherit the ratio decision made when the shift was posted, so
+          // claiming can't quietly change whether the day is covered.
+          [RATIO_FIELD]: countsInRatio({
+            ...openShift,
+            role: openShift.role || profile.instructorType || 'Instructor',
+          }),
           status: 'live',
           autoScheduled: false,
           fromOpenShiftId: openShift.id,

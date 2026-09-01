@@ -85,20 +85,33 @@ function NotForShiftTakers({ isTraining }) {
 /**
  * Route guard.
  *
- * Props:
- *   requireOwner — page is for the Admin Panel. Allowed roles: admin,
- *                  owner, super_admin. (Name kept for backwards-compat;
- *                  it really means "requires admin-panel access".)
- *   requireSuperAdmin — page is super-admin only.
- *   allowOps — ALSO let a Manager- or Host-titled user through a
- *              `requireOwner` gate ("operational admin" tier — full
- *              admin panel, Inventory, Availability Log). Only set this
- *              on those three routes. The PII/analytics routes (Leads,
- *              Case Study, Apptoto, Supply & Demand) and Centre Settings
- *              must NOT set this — Manager/Host stay locked out of those.
+ * Every gate here resolves to a PERMISSION from src/lib/roles.js, the same
+ * set AuthContext uses for the nav. That matters: this file used to make
+ * its own judgement from `profile.role` alone, so it disagreed with
+ * AuthContext about director-titled accounts — the sidebar linked them to
+ * the Admin Panel and this guard then showed them "Not authorized".
+ * One source, one answer.
+ *
+ * Props (names kept for backwards-compat with the existing routes):
+ *   requireOwner      → requires `admin.panel`; really means "requires
+ *                       admin-panel access", not literally the owner.
+ *   allowOps          → softens requireOwner to `admin.operations`, the
+ *                       "operational admin" tier that Managers and Hosts
+ *                       hold. Set on the admin panel, Staffing Board,
+ *                       Inventory and Availability Log only — the
+ *                       PII/analytics routes (Leads, Case Study, Apptoto,
+ *                       Supply & Demand) and Centre Settings must NOT set
+ *                       it, so Manager/Host stay out of those.
+ *   requireSuperAdmin → requires `roles.manage` (Enterprise only).
+ *   blockVolunteers   → requires `chat.access`.
+ *   requireShiftTaking→ requires `shifts.take`.
+ *   permission        → requires that permission id outright. Prefer this
+ *                       for new routes; the props above are the old names
+ *                       kept so the existing route table didn't have to be
+ *                       rewritten in the same change.
  */
-export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, requireShiftTaking = false, allowOps = false }) {
-  const { user, profile, loading, logout, isVolunteer, isTraining, canTakeShifts, canManageOperations } = useAuth();
+export default function ProtectedRoute({ children, requireOwner = false, requireSuperAdmin = false, blockVolunteers = false, requireShiftTaking = false, allowOps = false, permission = null }) {
+  const { user, profile, loading, logout, isTraining, can } = useAuth();
 
   if (loading) return <LoadingScreen />;
 
@@ -111,34 +124,31 @@ export default function ProtectedRoute({ children, requireOwner = false, require
     return <PendingScreen logout={logout} />;
   }
 
-  const role = profile.role;
-  // admin_assistant + director are both owner-equivalent for centre-
-  // level access. Director keeps a distinct label but has the same
-  // read/write reach as an owner across every gated route.
-  const canSeeAdminPanel = role === 'admin'
-    || role === 'admin_assistant'
-    || role === 'director'
-    || role === 'owner'
-    || role === 'super_admin';
-
   // Volunteers are hidden from these surfaces in the sidebar too, but the
   // nav only hides links — this is what actually stops a typed URL.
-  if (blockVolunteers && isVolunteer) {
+  if (blockVolunteers && !can('chat.access')) {
     return <NotForVolunteers />;
   }
 
   // Shift Board is entirely about claiming and swapping, so anyone who
   // can't do either has no reason to be here. Covers volunteers AND
-  // trainees — see canTakeShifts in AuthContext.
-  if (requireShiftTaking && !canTakeShifts) {
+  // trainees — see the employment-state rules in src/lib/roles.js.
+  if (requireShiftTaking && !can('shifts.take')) {
     return <NotForShiftTakers isTraining={isTraining} />;
   }
 
-  if (requireSuperAdmin && role !== 'super_admin') {
+  if (requireSuperAdmin && !can('roles.manage')) {
     return <NotAuthorized />;
   }
 
-  if (requireOwner && !canSeeAdminPanel && !(allowOps && canManageOperations)) {
+  // allowOps drops the bar from admin.panel to admin.operations. Everyone
+  // with admin.panel also has admin.operations (resolvePermissions implies
+  // it), so the softened check is a strict superset — never a narrowing.
+  if (requireOwner && !can(allowOps ? 'admin.operations' : 'admin.panel')) {
+    return <NotAuthorized />;
+  }
+
+  if (permission && !can(permission)) {
     return <NotAuthorized />;
   }
 

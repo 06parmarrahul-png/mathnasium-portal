@@ -108,6 +108,25 @@ export const DEFAULT_CENTER_CONFIG = {
   // Volunteer, Sick Pay, No-Show. Editable from the same Appearance panel.
   // Anything not listed falls back to DEFAULT_STATE_COLORS.
   stateColors: {},
+
+  // ─── Centre roles ──────────────────────────────────────────────────────
+  // The centre's job titles and what each one can do, edited from
+  // Manage Roles → Centre Roles. Empty means "use the built-ins", which
+  // reproduce the app's existing behaviour exactly — see
+  // src/lib/roles.js. A user holds a role through their per-centre
+  // `instructorType`, so nothing here needs migrating.
+  //
+  // Stored in two shapes on purpose:
+  //   staffRoles            the rich array the editor reads (name,
+  //                         colour, countsInRatio, permissions, order).
+  //   staffRolePermissions  a flat { roleName: [permission] } map that
+  //                         the Firestore rules read — the rules language
+  //                         cannot search a list of maps, only look up a
+  //                         key. permissionLookup() derives it on save,
+  //                         and roles.test.js pins the two in sync.
+  // Never write one without the other.
+  staffRoles: [],
+  staffRolePermissions: {},
 };
 
 // NOTE: DEFAULT_ROLE_COLORS / ROLE_COLOR_KEYS / roleColorHex() used to
@@ -397,6 +416,12 @@ export function mergeCenterConfig(serverConfig) {
     holidays: Array.isArray(serverConfig.holidays)
       ? serverConfig.holidays
       : DEFAULT_CENTER_CONFIG.holidays,
+    // Same array guard: a malformed staffRoles must read as "no custom
+    // roles" (so resolveRoles falls back to the built-ins) rather than
+    // reaching the resolver as a string and dropping every permission.
+    staffRoles: Array.isArray(serverConfig.staffRoles)
+      ? serverConfig.staffRoles
+      : DEFAULT_CENTER_CONFIG.staffRoles,
   };
 }
 

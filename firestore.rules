@@ -180,13 +180,67 @@ service cloud.firestore {
       );
     }
 
+    // ─── Custom centre roles ────────────────────────────────────────
+    // A centre can define its own roles in Manage Roles -> Centre Roles,
+    // stored on centers/{id}/config/main as `staffRoles`:
+    //
+    //   [{ name: 'Assistant Lead', permissions: ['scheduler.run'], ... }]
+    //
+    // A user's role at a centre is their instructorType there, so these
+    // helpers resolve that title and ask whether the matching role grants
+    // a permission. See src/lib/roles.js for the client-side twin.
+    //
+    // ADDITIVE ONLY. Every use below is appended to an existing OR-chain
+    // with `||`, never replacing a check. A custom role can therefore
+    // only ever widen access — a bad edit, a deleted role or a renamed
+    // one can never lock somebody out of something they already had.
+    //
+    // Cost: one exists() + one get(). Both sit LAST in their OR-chain, so
+    // short-circuit evaluation means they only run when the cheap title
+    // checks have already failed. Well inside the 10-access limit.
+    //
+    // Note: matching is EXACT on the stored name, where the client folds
+    // case and punctuation. That asymmetry is deliberately one-directional
+    // — the rules are the stricter of the two, so they can only ever deny
+    // something the UI allowed, never grant something it didn't.
+    function titleAt(centerId) {
+      return ('centerMemberships' in profile() && centerId in profile().centerMemberships)
+        ? profile().centerMemberships[centerId].get('instructorType', profile().get('instructorType', ''))
+        : profile().get('instructorType', '');
+    }
+
+    // The registry is stored twice on the config doc, on purpose:
+    //
+    //   staffRoles            the rich array the editor UI reads —
+    //                         names, colours, ratio defaults, order.
+    //   staffRolePermissions  a flat { roleName: [permission, ...] } map,
+    //                         written from the same save.
+    //
+    // Only the flat map is read here. The rules language has no way to
+    // iterate a list of maps looking for a matching name — List.exists()
+    // is not a function it provides — so a direct map lookup is the only
+    // shape that works, and it is also the cheapest. permissionLookup()
+    // in src/lib/roles.js derives it, and a test pins the two in sync.
+    function centrePermsAt(centerId) {
+      return exists(/databases/$(database)/documents/centers/$(centerId)/config/main)
+        ? get(/databases/$(database)/documents/centers/$(centerId)/config/main).data.get('staffRolePermissions', {})
+        : {};
+    }
+
+    /** Does this user's centre role grant `perm` at this centre? */
+    function hasPermAt(centerId, perm) {
+      return profileExists()
+        && centrePermsAt(centerId).get(titleAt(centerId), []).hasAny([perm]);
+    }
+
     // Who may build and edit the schedule at this centre. Mirrors the
     // app's "operational admin" tier (see canManageOperations in
     // AuthContext). Leads are deliberately NOT here: they run the floor
     // day-of, they don't author the schedule.
     function canManageShiftsAt(centerId) {
       return isOwnerLike() || isSuperAdmin() || isAdmin()
-          || isManagerAt(centerId) || isHostAt(centerId);
+          || isManagerAt(centerId) || isHostAt(centerId)
+          || hasPermAt(centerId, 'admin.operations');
     }
 
     // Staff who are on the schedule but never pick work up themselves.
@@ -234,7 +288,9 @@ service cloud.firestore {
     // Scheduler working data (student names, check-ins, walk-ins) — the
     // people who need it to do their job, and nobody else.
     function canRunFloor(centerId) {
-      return isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId) || isHostAt(centerId);
+      return isOwnerLike() || isSuperAdmin() || isAdmin()
+          || isLeadAt(centerId) || isManagerAt(centerId) || isHostAt(centerId)
+          || hasPermAt(centerId, 'scheduler.run');
     }
 
     // ─── Centers (top-level identity docs) ─────────────────────────────
@@ -283,7 +339,14 @@ service cloud.firestore {
       // read must stay open to all staff. Writes are admin-and-above.
       match /config/{docId} {
         allow read:  if isSignedIn();
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        // `centre.settings` is what the Centre Roles editor itself writes
+        // through, so a role granting it can edit this doc — including the
+        // staffRoles array. That is the intended reach of the permission,
+        // and it cannot escalate to platform power: `roles.manage` is on
+        // the PLATFORM_ONLY list in src/lib/roles.js and is stripped on
+        // read, on write and again at resolution.
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin()
+                     || hasPermAt(centerId, 'centre.settings');
       }
 
       // ─── Student Scheduler working data ─────────────────────────────

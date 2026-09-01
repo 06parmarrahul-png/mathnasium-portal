@@ -30,8 +30,9 @@
  *
  *   Because a shift's `role` is stamped from the person's instructorType
  *   at creation (see Admin.jsx), a trainee's shifts carry role:'Training'
- *   automatically — which is what keeps them out of STAFFING_COUNT_ROLES
- *   ('Instructor' | 'Lead') without touching the scheduler's internals.
+ *   automatically — which seeds their "Included in Ratio" toggle OFF, so
+ *   they stay out of every coverage count without anyone remembering to
+ *   do it by hand. See NEVER_IN_RATIO_ROLES in src/lib/ratioCount.js.
  *
  * REVERSIBLE
  *   Training is a phase, not a person. Switch the dropdown back to
@@ -83,13 +84,9 @@ export function trainingIds(users, centerId) {
   return set;
 }
 
-/**
- * True when this shift should count toward coverage / ratios. Training
- * and Volunteer are present and (for Training) paid, but neither one
- * covers a slot.
- */
-export function countsTowardCoverage(shift, isVolunteer = false) {
-  if (isVolunteer) return false;
-  if (isTrainingShift(shift)) return false;
-  return true;
-}
+// (Removed) countsTowardCoverage(shift, isVolunteer). It was written to be
+// the single answer to "does this count toward coverage / ratios" and then
+// never called from anywhere, while five other places each answered the
+// question differently. Use countsInRatio() from src/lib/ratioCount.js —
+// it reads the shift's explicit `includedInRatio` field and still treats
+// Training and Volunteer as never counted when that field is absent.

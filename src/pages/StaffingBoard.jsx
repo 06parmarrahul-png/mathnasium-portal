@@ -41,6 +41,7 @@ import { boardBudget, SLOT_ROLE, slotBuckets, slotHours } from '../lib/board-bud
 import { WEEKDAY_DEFAULTS, BUDGET_BUCKETS } from '../lib/budgetBuckets';
 import { getFixedStaffForDay, getWeekOfMonth, FIXED_SCHEDULES } from '../lib/scheduler';
 import { isTrainingType } from '../lib/staffTypes';
+import { RATIO_FIELD } from '../lib/ratioCount';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
 
@@ -618,6 +619,16 @@ export default function StaffingBoard() {
           // Host and Admin shifts carry no teaching level — that's what the
           // rest of the app expects, and what keeps them out of the ratio.
           subRole: slot.kind === 'coverage' ? 'Elementary' : null,
+          // The board already knows which slots are ratio slots: coverage
+          // blocks are sized from the demand curve, the host and admin
+          // desks deliberately sit outside it, and a fixed-staff slot
+          // carries the decision from the centre's config. Write that
+          // down explicitly instead of leaving it to be re-derived.
+          [RATIO_FIELD]: slot.kind === 'coverage'
+            ? true
+            : slot.kind === 'fixed'
+              ? !!slot.countsTowardRatio
+              : false,
           isFixedStaff: slot.kind === 'fixed' || undefined,
           status: 'draft',
           autoScheduled: false,

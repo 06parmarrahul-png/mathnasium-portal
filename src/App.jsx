@@ -121,7 +121,11 @@ function AppRoutes() {
             /inventory and /availability-log below. */}
         <Route path="/admin" element={<ProtectedRoute requireOwner allowOps><Layout><Admin /></Layout></ProtectedRoute>} />
         <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
-        <Route path="/manage-roles" element={<ProtectedRoute requireSuperAdmin><Layout><ManageRoles /></Layout></ProtectedRoute>} />
+        {/* Manage Roles has two halves with different bars. The route
+            asks only for `centre.settings`, so a Centre Director reaches
+            the Centre Roles editor; the People tab inside it stays gated
+            on `roles.manage`, which no centre role can grant. */}
+        <Route path="/manage-roles" element={<ProtectedRoute permission="centre.settings"><Layout><ManageRoles /></Layout></ProtectedRoute>} />
         <Route path="/platform-revenue" element={<ProtectedRoute><Layout><PlatformRevenue /></Layout></ProtectedRoute>} />
         <Route path="/platform-chat" element={<ProtectedRoute blockVolunteers><Layout><PlatformChat /></Layout></ProtectedRoute>} />
         <Route path="/center-analytics" element={<ProtectedRoute><Layout><CenterAnalytics /></Layout></ProtectedRoute>} />

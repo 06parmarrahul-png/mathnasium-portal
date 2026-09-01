@@ -10,6 +10,7 @@ import {
   UserCog, ShieldAlert, Shield, Building2, KeyRound, AlertTriangle, Lock, X, MapPin,
   Mail,
 } from 'lucide-react';
+import CentreRolesTab from '../components/CentreRolesTab';
 
 /**
  * Manage Roles — Enterprise-only cross-centre role editor.
@@ -65,7 +66,15 @@ async function sha256Hex(text) {
 }
 
 export default function ManageRoles() {
-  const { profile, isSuperAdmin } = useAuth();
+  // The page has two halves. The People tab edits PLATFORM roles and stays
+  // Enterprise-only. Centre Roles edits job titles and their permissions,
+  // and is open to anyone who can already change centre settings — which
+  // is what lets a Centre Director run it without handing them the ability
+  // to promote owners. `roles.manage` is on the platform-only list in
+  // src/lib/roles.js, so no centre role can grant its way in here.
+  const { profile, isSuperAdmin, can } = useAuth();
+  const canEditCentreRoles = can('centre.settings');
+  const [tab, setTab] = useState(isSuperAdmin ? 'people' : 'roles');
   const [users, setUsers] = useState([]);
   const [centers, setCenters] = useState([]);
   const [centerFilter, setCenterFilter] = useState('__all__');
@@ -77,19 +86,21 @@ export default function ManageRoles() {
 
   // Subscribe to centres (for the filter dropdown).
   useEffect(() => {
-    if (!isSuperAdmin) return undefined;
+    // Also for centre-role editors: the roles tab needs the centre list
+    // (Enterprise picks a centre) and the user list (holder counts).
+    if (!isSuperAdmin && !canEditCentreRoles) return undefined;
     return onSnapshot(
       collection(db, 'centers'),
       snap => setCenters(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setCenters([]),
     );
-  }, [isSuperAdmin]);
+  }, [isSuperAdmin, canEditCentreRoles]);
 
   // Subscribe to users. Firestore rules allow any signed-in user to read
   // /users, and Enterprise-only writes are still enforced by the existing
   // rule clause requiring isOwner() || isSuperAdmin() for `role` changes.
   useEffect(() => {
-    if (!isSuperAdmin) return undefined;
+    if (!isSuperAdmin && !canEditCentreRoles) return undefined;
     return onSnapshot(
       collection(db, 'users'),
       snap => {
@@ -98,7 +109,7 @@ export default function ManageRoles() {
       },
       () => setLoading(false),
     );
-  }, [isSuperAdmin]);
+  }, [isSuperAdmin, canEditCentreRoles]);
 
   // Subscribe to the platform meta doc so we know whether a promote code
   // has been set yet (controls the "set code first" UX).
@@ -327,12 +338,14 @@ export default function ManageRoles() {
   // ─── Render ─────────────────────────────────────────────────────────
 
   if (!profile) return null;
-  if (!isSuperAdmin) {
+  if (!isSuperAdmin && !canEditCentreRoles) {
     return (
       <div className="mx-auto max-w-md text-center py-16">
         <ShieldAlert size={36} className="mx-auto text-gray-300 mb-3" />
         <h2 className="text-lg font-bold text-gray-800 mb-1">Not authorized</h2>
-        <p className="text-sm text-gray-500">Manage Roles is for Enterprise users only.</p>
+        <p className="text-sm text-gray-500">
+          Manage Roles needs centre-settings access. Platform roles are Enterprise-only.
+        </p>
       </div>
     );
   }
@@ -346,11 +359,40 @@ export default function ManageRoles() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Manage Roles</h1>
           <p className="text-sm text-gray-500">
-            Change platform roles across every centre. Owner promotion requires the 4-digit code.
+            {tab === 'people'
+              ? 'Change platform roles across every centre. Owner promotion requires the 4-digit code.'
+              : 'Create and edit the job titles at your centre, and what each one can do.'}
           </p>
         </div>
       </div>
 
+      {/* Tabs. The People half is Enterprise-only, so it's only offered
+          to Enterprise — a director lands straight on Centre Roles. */}
+      <div className="flex gap-1 rounded-xl bg-gray-100 p-1">
+        {isSuperAdmin && (
+          <button
+            onClick={() => setTab('people')}
+            className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+              tab === 'people' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            People &amp; platform roles
+          </button>
+        )}
+        <button
+          onClick={() => setTab('roles')}
+          disabled={!canEditCentreRoles}
+          className={`flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-40 ${
+            tab === 'roles' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          Centre roles
+        </button>
+      </div>
+
+      {tab === 'roles' && <CentreRolesTab users={users} centers={centers} />}
+
+      {tab === 'people' && (<>
       {/* Filter row */}
       <div className="rounded-2xl border bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center gap-3">
@@ -533,6 +575,7 @@ export default function ManageRoles() {
         )}
       </div>
 
+      </>)}
       {modal && modal.mode === 'centres' && (
         <CentreAssignmentModal
           user={modal.user}

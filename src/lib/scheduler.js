@@ -37,6 +37,10 @@ const MONTH_NAME_TO_NUMBER = {
 // itself pure (no Firebase, no React), so this keeps the module unit-
 // testable while avoiding a second copy of the legacy-tag mapping.
 import { expandSubRoles } from './subRoles';
+// The single source of truth for ratio membership. Also pure — keeps this
+// engine unit-testable and stops the generator drifting from the shift
+// documents it produces.
+import { defaultIncludedInRatio } from './ratioCount';
 
 export const ROLE_DISPLAY_ORDER = {
   'Center Director': 0, 'Dir. of Education': 1, 'Manager': 2,
@@ -44,7 +48,10 @@ export const ROLE_DISPLAY_ORDER = {
 };
 
 export const ROLE_ASSIGNMENTS = {};
-export const STAFFING_COUNT_ROLES = new Set(['Instructor', 'Lead']);
+// (Removed) STAFFING_COUNT_ROLES = {Instructor, Lead}. It was exported for
+// years with ZERO callers while five other places each answered "does this
+// count toward the ratio" their own way and disagreed. The real answer now
+// lives on the shift as `includedInRatio` — see src/lib/ratioCount.js.
 
 // LEGACY default hours / fixed staff — kept for back-compat with code that
 // imports `FIXED_SCHEDULES` directly (Admin.jsx still references it for the
@@ -257,15 +264,16 @@ export function parseAMPMtoHHMM(timeStr) {
  * Falls back to the legacy FIXED_SCHEDULES export when no map is provided
  * (lets older callers keep working).
  */
-// Default whether a fixed-staff role counts toward the in-centre
-// instructor ratio when the config doesn't say otherwise. Manager,
-// Lead, and Instructor are floor staff who actively run sessions —
-// they count. Director and Admin are off-floor support — they don't.
+// Whether a fixed-staff role counts toward the in-centre instructor ratio
+// when the config doesn't say otherwise now comes from ONE place —
+// defaultIncludedInRatio() in ratioCount.js, the same function that seeds
+// the "Included in Ratio" toggle on the Add Shift modal. Manager, Lead and
+// Instructor are floor staff who actively run sessions, so they count;
+// Director and Admin are off-floor support, so they don't.
 //
 // An EXPLICIT `countsTowardRatio: false` on the fixed-staff entry still
 // wins (e.g. a Manager who genuinely doesn't teach), so existing config
 // docs that opted Sabrina out can still do so deliberately.
-const COUNTS_TOWARD_RATIO_BY_ROLE = new Set(['Manager', 'Lead', 'Instructor']);
 
 // Exported so the Staffing Board can lay the same fixed staff onto its
 // timeline without re-deriving the Saturday-week rules or the
@@ -287,7 +295,7 @@ export function getFixedStaffForDay(dayName, weekOfMonth, fixedStaffMap) {
     // counted even though she's on the floor every day.
     const ctr = (typeof sched.countsTowardRatio === 'boolean')
       ? sched.countsTowardRatio
-      : COUNTS_TOWARD_RATIO_BY_ROLE.has(sched.role);
+      : defaultIncludedInRatio({ role: sched.role });
     result.push({
       name,
       role: sched.role,

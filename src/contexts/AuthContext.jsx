@@ -13,6 +13,8 @@ import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { buildInitialMembership, resolveUserForCenter } from '../lib/centerMembership';
 import { expandSubRoles } from '../lib/subRoles';
+import { resolveRoles, resolvePermissions, can as hasPermission } from '../lib/roles';
+import { staffTypeColorHex } from '../lib/centerConfig';
 
 const AuthContext = createContext(null);
 
@@ -198,8 +200,6 @@ export function AuthProvider({ children }) {
   // level (owner + AA + super-admin + directors). DON'T use this for
   // platformChat — that one is strictly owner+super_admin.
   const isOwnerLike        = isOwner || isAdminAssistant || isSuperAdmin || isDirector;
-  const canSeeAdminPanel    = isSuperAdmin || isOwner || isAdminAssistant || isAdmin || isDirector;
-  const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
   // Lead is an instructorType, not a top-level role. Check per-centre
   // first (centerMemberships[activeCenterId].instructorType) and fall
   // back to the legacy top-level instructorType field for accounts
@@ -223,21 +223,66 @@ export function AuthProvider({ children }) {
     profile?.centerMemberships?.[activeCenterId]?.instructorType === 'Training'
     || profile?.instructorType === 'Training'
   );
-  // Roles allowed to drive the Student Scheduler day-of-day —
-  // owners, admin-assistants, plain admins, super-admins, lead
-  // instructors (per Rahul's request: Leads often run the floor and
-  // need to assign instructors / print / check students in), AND
-  // managers + hosts (same operational-tier rationale — see below).
-  const canRunScheduler = canSeeAdminPanel || isLead || isManager || isHost;
-  // Managers and Hosts are "operational admin" tier: the full admin
-  // panel (weekly grid, auto-scheduler, time off, Manage Staff, Payroll,
-  // Holidays), Inventory, and Availability Log — everything a plain
-  // Admin gets INSIDE those pages. Deliberately NOT the PII/analytics
-  // routes (Leads, Case Study, Apptoto, Supply & Demand) or Centre
-  // Settings — those stay owner/director/admin_assistant/super_admin
-  // (and plain Admin, via canSeeAdminPanel) only. Don't reuse this flag
-  // to gate anything beyond admin-panel / inventory / availability-log.
-  const canManageOperations = canSeeAdminPanel || isManager || isHost;
+  // canRunScheduler and canManageOperations used to be defined here as
+  // role comparisons. They're derived from the permission set below now,
+  // but the reasoning behind who holds them is unchanged and still worth
+  // having written down:
+  //
+  //   scheduler.run    — owners, admin-assistants, plain admins,
+  //     super-admins, and Leads (per Rahul: Leads often run the floor and
+  //     need to assign instructors / print / check students in), plus
+  //     Managers and Hosts on the same operational-tier rationale.
+  //
+  //   admin.operations — Managers and Hosts are "operational admin" tier:
+  //     the full admin panel (weekly grid, auto-scheduler, time off,
+  //     Manage Staff, Payroll, Holidays), Inventory and the Availability
+  //     Log — everything a plain Admin gets inside those pages.
+  //     Deliberately NOT the PII/analytics routes (Leads, Case Study,
+  //     Apptoto, Supply & Demand) or Centre Settings, which stay on
+  //     admin.panel / centre.settings.
+
+  // ─── Permissions ──────────────────────────────────────────────────────
+  //
+  // Every capability flag below used to be its own hand-rolled comparison
+  // against `role` and `instructorType`, spread across this file and
+  // ProtectedRoute.jsx, which had drifted apart from each other. They now
+  // come from ONE resolved permission set, so the nav, the route guard and
+  // the pages themselves can no longer disagree about who may do what.
+  //
+  // src/lib/roles.js carries an equivalence suite that checks every
+  // combination of platform role x centre title x volunteer flag against
+  // the original formulas, so this refactor grants and removes nothing.
+  //
+  // `staffRoles` on the centre config is what makes the set extensible:
+  // a role invented in Manage Roles adds its permissions here with no code
+  // change. Absent that field — every centre today — resolveRoles()
+  // returns the built-ins, which ARE the current behaviour.
+  const isVolunteerAtCentre = resolveUserForCenter(profile, activeCenterId)?.isVolunteer === true;
+
+  const centreRoles = useMemo(
+    () => resolveRoles(centerConfig, (name) => staffTypeColorHex(name, centerConfig)),
+    [centerConfig],
+  );
+
+  const permissions = useMemo(() => resolvePermissions({
+    platformRole:   role,
+    instructorType: resolveUserForCenter(profile, activeCenterId)?.instructorType,
+    isVolunteer:    isVolunteerAtCentre,
+    roles:          centreRoles,
+    // The third historical route to director access: a title recorded in
+    // centerConfig.fixedStaff rather than on the user. Empty at every
+    // centre today, but isDirector() honoured it, so this does too.
+    extraRoleNames: [fixedStaffTitle].filter(Boolean),
+  }), [role, profile, activeCenterId, isVolunteerAtCentre, centreRoles, fixedStaffTitle]);
+
+  /** Does the signed-in user hold this permission at the active centre? */
+  const can = useMemo(() => (id) => hasPermission(permissions, id), [permissions]);
+
+  const canSeeAdminPanel     = permissions.has('admin.panel');
+  const canSeeCenterSettings = permissions.has('centre.settings');
+  const canRunScheduler      = permissions.has('scheduler.run');
+  const canManageOperations  = permissions.has('admin.operations');
+
   const userCenters = useMemo(() => getUserCenters(profile), [profile]);
 
   // Subscribe to the active center's config doc. Falls back to defaults if
@@ -384,10 +429,9 @@ export function AuthProvider({ children }) {
   //
   // Volunteers get a deliberately bare-bones portal: their shifts, and
   // not much else. Chat surfaces are gated on this.
-  const isVolunteer = useMemo(
-    () => resolveUserForCenter(profile, activeCenterId)?.isVolunteer === true,
-    [profile, activeCenterId],
-  );
+  // Computed above as isVolunteerAtCentre, because the permission set
+  // needs it. Re-exported under the name the rest of the app already uses.
+  const isVolunteer = isVolunteerAtCentre;
 
   // Expanded so a legacy 'Both' tag resolves to Elementary + Highschool
   // for every downstream eligibility check and pill.
@@ -402,7 +446,7 @@ export function AuthProvider({ children }) {
   // neither picks up or trades shifts, whatever their sub-roles say.
   // Sub-role capability checks are a SEPARATE, narrower gate on top of
   // this one; this flag overrides them entirely.
-  const canTakeShifts = !isVolunteer && !isTraining;
+  const canTakeShifts = permissions.has('shifts.take');
 
   return (
     <AuthContext.Provider value={{
@@ -442,6 +486,13 @@ export function AuthProvider({ children }) {
       canSeeCenterSettings,
       canRunScheduler,
       canManageOperations,
+      // The resolved permission set and its lookup. Prefer `can('x')` in
+      // new code over the named booleans above — a permission invented in
+      // Manage Roles is reachable through it without touching this file.
+      permissions,
+      can,
+      // The active centre's role registry, for pickers and colour chips.
+      centreRoles,
     }}>
       {children}
     </AuthContext.Provider>

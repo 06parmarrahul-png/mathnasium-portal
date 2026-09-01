@@ -47,6 +47,7 @@ range, and also handles a student-sync POST. Files prefixed `_` (`api/_lib/`,
 npx eslint src/ api/        # must be clean
 npx vitest run src/lib/     # must all pass
 npx vite build              # must succeed
+npm run test:rules          # firestore.rules, in the emulator (needs Java)
 ```
 
 `eslint` here **exempts unused vars matching `/^[A-Z_]/`**, so dead
@@ -61,7 +62,8 @@ Top-level: `users`, `shifts`, `availability`, `openShifts`, `timeOffRequests`,
 `centers`, `announcements`, `chat`, `auditLog`, `leads`-adjacent collections.
 
 Per centre: `centers/{centerId}/config/main` (operatingDays, holidays,
-instructionalHours, fixedStaff, salaryStaff, staffingBudget, autoHostNames),
+instructionalHours, fixedStaff, salaryStaff, staffingBudget, autoHostNames,
+staffRoles + staffRolePermissions),
 plus `schedulerStudents`, `schedulerAliases`, `schedulerSettings/main`,
 `schedulerTemplates`, `demandSnapshots`, `walkIns`, `inventory`.
 
@@ -94,6 +96,15 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 ### Rules that are settled — do not re-litigate
 
 - **Ratio: aim 1:3.5, floor 1:4.** `min = ceil(peak/4)`, `max = ceil(peak/3.5) + cushion`.
+- **Who COUNTS toward the ratio is a per-shift field, not a role guess.**
+  `includedInRatio` on the shift doc, read only through `countsInRatio()` in
+  `src/lib/ratioCount.js`. Set from the "Included in Ratio" toggle on
+  Add/Edit/Open Shift, seeded from the role (Instructor/Lead/Manager on,
+  everything else off) and then owned by whoever moves it. Every creation
+  path stamps it; the role-derived default is the fallback for pre-existing
+  docs only. **Do not add a seventh place that decides this from the role** —
+  that was the bug. `STAFFING_COUNT_ROLES`, `countsTowardCoverage()`,
+  `ON_FLOOR_ROLES`, `countsAsFloorSupply()` and `TEACHING_ROLES` are all gone.
 - **Order: Leads outrank Instructors, then fewest shifts.** Nothing else.
 - **The per-person priority tier (1/2/3) was DELETED** — "broken and doesn't work
   properly". Gone from the engine, Manage Staff, membership fields and auth
@@ -121,6 +132,44 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 - **Salaried staff** (`centerConfig.salaryStaff` = Neeru, Vinod) are shown as
   plain working hours and **excluded from the hourly budget**, same as the
   Staffing Budget page. Counting them makes every day read as over budget.
+
+### Roles and permissions
+
+Three different things are called "role". Confusing them breaks access:
+
+1. **`user.role`** — the PLATFORM role (`super_admin` / `owner` / `director` /
+   `admin_assistant` / `admin` / `instructor`). Six fixed values, the security
+   boundary, read by `firestore.rules`. Edited on Manage Roles → People,
+   Enterprise-only. Not extensible.
+2. **`centerMemberships[id].instructorType`** — the CENTRE role / job title.
+   This is what Manage Roles → Centre Roles creates and edits, stored as
+   `staffRoles` on the centre config. Every user already has one.
+3. **`subRoles`** — teaching capabilities. Unrelated to permissions.
+
+`src/lib/roles.js` resolves a permission set from (1) + (2). Rules:
+
+- **Permissions are ADDITIVE.** A centre role can only grant, never revoke —
+  otherwise a bad edit locks an owner out of their own centre with no way
+  back. To give someone less, lower their platform role.
+- **Employment state is applied LAST.** Volunteer (no shifts, no chat) and
+  Training (no shifts) beat every grant. Ordering is load-bearing; the
+  equivalence suite caught it.
+- **`roles.manage` can never be granted by a centre role** (`PLATFORM_ONLY_PERMISSIONS`).
+  The editor is open to Centre Directors, so without that they could mint
+  themselves Enterprise. Stripped on read, on write, and at resolution.
+- **Built-in roles can't be deleted** — user records and past shifts name them.
+- The registry is stored **twice**: `staffRoles` (rich array, for the UI) and
+  `staffRolePermissions` (flat `{name: [perm]}` map, for the rules — the rules
+  language cannot search a list of maps). `permissionLookup()` derives the
+  second. **Never write one without the other.**
+- `AuthContext` derives `canSeeAdminPanel` / `canRunScheduler` /
+  `canManageOperations` / `canSeeCenterSettings` / `canTakeShifts` from the
+  permission set, and `ProtectedRoute` uses the same set. Prefer `can('x')`
+  in new code. `roles.test.js` pins every
+  (platform role x title x volunteer) combination against the original
+  formulas, so that refactor granted and removed nothing.
+
+Rules tests run against the emulator: `npm run test:rules` (needs Java).
 
 ### Budget
 

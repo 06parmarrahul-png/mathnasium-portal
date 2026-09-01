@@ -1,5 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { assignmentFor, assignmentShort, assignmentColorHex, contrastText, stateColorHex } from '../lib/centerConfig';
+import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -7,12 +8,13 @@ import { assignmentFor, assignmentShort, assignmentColorHex, contrastText, state
  * Rows: every assigned person, with a sub-role-colored bar where their
  *       shift covers each half-hour slot.
  * Columns: half-hour slots from opening to closing (varies by day-of-week).
- * Totals row: count of TEACHING staff (Instructor / Lead / promoted Host)
- *             at each slot — tells you student capacity at a glance.
+ * Totals row: count of staff whose shift is marked Included in Ratio at
+ *             each slot — tells you student capacity at a glance.
  *
- * Hosts (regular, non-promoted) and Online instructors render as bars but
- * are NOT counted in the teaching total. Their presence still bumps the
- * "Total staff" sub-row.
+ * Anyone toggled OUT of the ratio (hosts on admin time, online
+ * instructors, trainees, volunteers, STEAM / Summer Camp, directors)
+ * renders as a bar but is NOT counted in the teaching total. Their
+ * presence still bumps the "Total staff" sub-row.
  */
 
 // Operating hours per day-of-week — the half-hour grid spans these.
@@ -28,7 +30,10 @@ const SLOTS_BY_DAY = {
   Sunday:    { startHour: 10, endHour: 18 }, // closed but show something if a shift slips through
 };
 
-const TEACHING_ROLES = new Set(['Instructor', 'Lead']);
+// (Removed) TEACHING_ROLES = {Instructor, Lead}. It disagreed with
+// Supply & Demand, which also counted Manager — so Sabrina filled a
+// ratio slot on one screen and not on this one. Ratio membership now
+// comes off the shift itself via countsInRatio().
 
 function toMinutes(timeStr) {
   if (!timeStr) return 0;
@@ -176,6 +181,7 @@ export default function CoverageGrid({ day, centerConfig }) {
         noShow:      !!e.noShow,
         isVolunteer: !!e.isVolunteer,
         flexRole:    e.flexRole || null,
+        [RATIO_FIELD]: e[RATIO_FIELD],
       }));
     }
     return (day.assignedEmployees || []).map((name, i) => ({
@@ -188,8 +194,13 @@ export default function CoverageGrid({ day, centerConfig }) {
       noShow:      !!day.noShow?.[name],
       isVolunteer: false,
       flexRole:    day.flexRoles?.[name] || null,
+      // The auto-scheduler draft editor is the legacy caller. Its day
+      // object carries a name-keyed map when it knows the answer; when it
+      // doesn't, countsInRatio falls back to the role default, which is
+      // exactly what this grid used to do anyway.
+      [RATIO_FIELD]: day.includedInRatio?.[name],
     }));
-  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay, day.noShow, day.flexRoles]);
+  }, [day.shiftEntries, day.assignedEmployees, day.roles, day.subRoles, day.shiftTimes, day.sickPay, day.noShow, day.flexRoles, day.includedInRatio]);
 
   // Sort by tier → sub-priority within tier → alphabetical by name.
   // Two entries for the same person stay adjacent when they share tier
@@ -244,7 +255,7 @@ export default function CoverageGrid({ day, centerConfig }) {
         if (!shift) continue;
         if (shift.startMins < sEnd && shift.endMins > sStart) {
           namesPresent.add(e.name);
-          if (!e.flexRole && TEACHING_ROLES.has(e.role)) teachingCount++;
+          if (countsInRatio(e, { isVolunteer: e.isVolunteer })) teachingCount++;
         }
       }
       return { ...slot, teachingCount, totalCount: namesPresent.size };
@@ -480,7 +491,7 @@ export default function CoverageGrid({ day, centerConfig }) {
       </div>
 
       <p className="mt-2 text-xs text-gray-400 italic">
-        "Instructors" only counts roles that fill the teaching ratio (Instructor / Lead / promoted Host). Hosts on admin time and Online instructors show as bars but are not counted.
+        "Instructors" counts every shift marked <b>Included in Ratio</b>. Anyone toggled out — hosts on admin time, online instructors, trainees, volunteers, STEAM and Summer Camp — still shows as a bar but is not counted.
       </p>
     </div>
   );

@@ -11,6 +11,7 @@ import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-s
 import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 import { isFlexRole, DEFAULT_TARGET_RATIO } from '../lib/subRoles';
+import { countsInRatio } from '../lib/ratioCount';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -107,48 +108,30 @@ function timeToMin(t) {
 // scheduler stamps as 'Online Instructor' for online shifts and as
 // Instructor/Lead/Manager for centre shifts), NOT s.subRole.
 //
-// Include roles: Instructor / Lead / Manager  (all teach or float the floor)
-// Exclude:
-//   - role 'Online Instructor'  (the SHIFT is online, not in-centre)
-//   - role 'Host'                (front-of-house, doesn't teach unless promoted)
-//   - role 'Center Director', 'Dir. of Education', 'Admin'  (off-floor)
-//   - draft / cancelled shifts, and sickPay=true days
+// isOnFloor answers PRESENCE only — was this person actually in the
+// building working this shift. Whether they COUNT toward the ratio is a
+// separate question, and it is no longer guessed from the role: it's the
+// shift's own `includedInRatio` field, read through countsInRatio().
+// The two are kept apart because flex (STEAM / Summer Camp) staff are
+// deliberately still LISTED in the expanded roster below while never
+// being counted — folding the two checks together would make them vanish.
+//
+// Excluded from presence: draft / cancelled shifts, and sickPay=true days.
 // The matchesSide check in computeSupply further narrows to shifts
 // whose subRole is Elementary or Highschool (the shift's assignment).
-const ON_FLOOR_ROLES = new Set(['Instructor', 'Lead', 'Manager']);
-
 function isOnFloor(s) {
   if (s.status === 'draft' || s.status === 'cancelled') return false;
   if (s.sickPay === true) return false;
-  // If the shift has an explicit role, honour our whitelist. If it
-  // doesn't (legacy shifts pre-migration), default-allow so we don't
-  // silently drop legit instructors.
-  if (s.role && !ON_FLOOR_ROLES.has(s.role)) return false;
   return true;
 }
 
-// Opening / closing coverage carve-out.
-//
-// Leads and Managers run the open — huddle, setup, cash/float, unlocking
-// the door — during the FIRST 30-minute slot, so they aren't on the
-// teaching floor then. Managers run the close — cash-out, lock-up — during
-// the LAST 30-minute slot. Counting them as teaching supply in those
-// windows overstates coverage and makes the ratio look better than it is.
-//
-// Rule (applied per slot, by the shift's role):
-//   - First slot  (slotIdx === 0):            exclude Lead AND Manager
-//   - Last slot   (slotIdx === slotCount-1):  exclude Manager only
-//   - Every slot in between:                  count all on-floor roles
-//
-// Instructors are never carved out. A single-slot day collapses to the
-// first-slot rule (the stricter one), which is the intended behaviour.
-// Returns true when the role should count toward supply for that slot.
-function countsAsFloorSupply(role, slotIdx, slotCount) {
-  const r = role || 'Instructor';
-  if (slotIdx === 0 && (r === 'Lead' || r === 'Manager')) return false;
-  if (slotIdx === slotCount - 1 && r === 'Manager') return false;
-  return true;
-}
+// (Removed) countsAsFloorSupply — the opening/closing carve-out that
+// dropped Leads from the first half-hour and Managers from the first AND
+// the last. It was one of seven places that each decided ratio membership
+// from the role, and the one that made the same person count at 3:30 but
+// not at 3:00. Ratio membership is now a property of the shift, set from
+// the "Included in Ratio" toggle. If a Lead genuinely isn't on the floor
+// for the open, that's a shift to mark out of ratio, not a rule to infer.
 
 function computeSupply(shifts, subRoleMatchers, dayWindow) {
   const { startMin: winStart, slotCount } = dayWindow;
@@ -160,9 +143,11 @@ function computeSupply(shifts, subRoleMatchers, dayWindow) {
   };
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
-    // STEAM / Summer Camp are present + paid but NOT floor supply — keep
-    // them out of the bars and every headline supply number.
-    if (isFlexRole(s)) continue;
+    // One question, one answer, every screen: the shift's own
+    // includedInRatio field. This already covers STEAM / Summer Camp,
+    // trainees, volunteers, hosts and directors, so there is no separate
+    // flex check here any more.
+    if (!countsInRatio(s)) continue;
     if (!matchesSide(s)) continue;
     const startMin = timeToMin(s.startTime);
     const endMin   = timeToMin(s.endTime);
@@ -173,9 +158,6 @@ function computeSupply(shifts, subRoleMatchers, dayWindow) {
       const slotEnd   = slotStart + SLOT_MIN;
       const overlap = Math.max(0, Math.min(endMin, slotEnd) - Math.max(startMin, slotStart));
       if (overlap < SLOT_MIN / 2) continue;
-      // Leads/Managers don't count as floor supply during the open;
-      // Managers don't count during the close. See countsAsFloorSupply.
-      if (!countsAsFloorSupply(s.role, i, slotCount)) continue;
       counts[i]++; touchedAnySlot = true;
     }
     if (touchedAnySlot) uniqueNames.add(s.userName || s.userId || 'unknown');
@@ -191,7 +173,7 @@ function computeUniqueOnFloor(shifts, dayWindow) {
   const names = new Set();
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
-    if (isFlexRole(s)) continue; // flex staff aren't floor instructors
+    if (!countsInRatio(s)) continue;
     const sub = (s.subRole || '').toLowerCase();
     if (sub !== 'elementary' && sub !== 'highschool' && sub !== 'high school') continue;
     if (s.userName || s.userId) names.add(s.userName || s.userId);
@@ -774,6 +756,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
       const supply = [];
       for (const s of shifts) {
         if (!isOnFloor(s)) continue;
+        if (!countsInRatio(s)) continue;
         const sub = (s.subRole || '').toLowerCase();
         if (sub !== 'elementary' && sub !== 'highschool' && sub !== 'high school') continue;
         const sStart = timeToMin(s.startTime);
@@ -781,10 +764,6 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
         if (sStart == null || sEnd == null) continue;
         const overlap = Math.max(0, Math.min(sEnd, slotEnd) - Math.max(sStart, slotStart));
         if (overlap < 15) continue;
-        // Mirror the headline supply count: no Leads/Managers in the
-        // opening slot, no Managers in the closing slot, so the expanded
-        // roster always matches the number above it.
-        if (!countsAsFloorSupply(s.role, i, dayWindow.slotCount)) continue;
         supply.push({
           name: s.userName || 'Unknown',
           side: sub === 'elementary' ? 'EM' : 'HS',
@@ -1176,12 +1155,11 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
         const overlap = Math.max(0, Math.min(en, sEnd) - Math.max(st, sStart));
         if (overlap < 15) continue;
         const flex = isFlexRole(s);
-        // Non-flex staff follow the open/close carve-out (no Leads/Managers
-        // in the opening slot, no Managers in the closing slot) so this
-        // roster's counted names stay in sync with the bars. Flex staff
-        // (STEAM / Summer Camp) are ALWAYS listed but tagged and never
-        // counted, so they skip the carve-out entirely.
-        if (!flex && !countsAsFloorSupply(s.role, i, dayWindow?.slotCount ?? 0)) continue;
+        // Flex staff (STEAM / Summer Camp) are ALWAYS listed here, tagged,
+        // so the owner can see who's in the building — they're just never
+        // counted. Everyone else has to be in ratio to make this roster,
+        // which keeps the names in sync with the bars above them.
+        if (!flex && !countsInRatio(s)) continue;
         (isEm ? supplyEm : supplyHs).push({
           name: s.userName || 'Unknown',
           role: s.role || 'Instructor',

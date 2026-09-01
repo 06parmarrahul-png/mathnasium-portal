@@ -6,6 +6,7 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import CoverageGrid from './CoverageGrid';
+import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
 
 /**
  * "Today's Snapshot" — at-a-glance dashboard for the owner.
@@ -132,6 +133,10 @@ export default function TodaysSnapshot() {
         // Flex (STEAM / Summer Camp): present + paid, but not a floor
         // instructor — kept off every headline instructor count below.
         flexRole:    s.flexRole || null,
+        // The shift's own answer to "does this count toward the ratio".
+        // Passed straight through to CoverageGrid so the tile above and
+        // the grid below can never disagree.
+        [RATIO_FIELD]: s[RATIO_FIELD],
       });
     }
     return {
@@ -155,7 +160,7 @@ export default function TodaysSnapshot() {
   // distinct work. (A teacher pulling both a LEAD and a HOST shift today
   // legitimately fills 1 of each tile's headline number.)
   const teachingCount = useMemo(() => (
-    dayData.shiftEntries.filter(e => !e.flexRole && ['Instructor', 'Lead'].includes(e.role)).length
+    dayData.shiftEntries.filter(e => countsInRatio(e, { isVolunteer: e.isVolunteer })).length
   ), [dayData]);
 
   const hostCount = useMemo(() => (
