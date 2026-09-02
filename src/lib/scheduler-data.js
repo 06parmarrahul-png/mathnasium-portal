@@ -39,6 +39,11 @@ const DEFAULT_SETTINGS = {
   studentsPerInstructor: 4,
   minInstructors: 1,
   instructorPool: [],
+  // What the four highlighter colours mean at this centre. Labels only —
+  // the colours themselves are fixed (see HIGHLIGHTS in scheduler-highlights.js)
+  // so a printed sheet reads the same everywhere. Empty label = unused,
+  // and the legend hides it.
+  highlightLegend: { yellow: '', pink: '', orange: '', blue: '' },
 };
 
 export async function getSettings(centerId) {
@@ -208,6 +213,30 @@ export async function setStudentTag(centerId, dateStr, studentId, tag) {
 
 export async function setStudentDesk(centerId, dateStr, studentId, desk) {
   await patchEntry(centerId, dateStr, studentId, { desk: desk || '' });
+}
+
+/**
+ * A free-text note about one student on one day — "needs fractions review",
+ * "mum picking up at 5", "struggled with the assessment".
+ *
+ * Stored on the same per-day check-in entry as status / tag / desk, so it
+ * lives and dies with the day. That's deliberate: these are notes about a
+ * session, not a permanent record on the child, and a stale note carried
+ * forward for months would be worse than no note.
+ */
+export async function setStudentNote(centerId, dateStr, studentId, note) {
+  await patchEntry(centerId, dateStr, studentId, { note: (note || '').slice(0, 400) });
+}
+
+/**
+ * Highlighter colour for one student on one day. '' clears it.
+ *
+ * What each colour MEANS is up to the centre — the labels are editable in
+ * the legend (schedulerSettings.highlightLegend) because every centre runs
+ * its floor differently. The app only stores which colour was picked.
+ */
+export async function setStudentHighlight(centerId, dateStr, studentId, color) {
+  await patchEntry(centerId, dateStr, studentId, { highlight: color || '' });
 }
 
 // ───── Walk-in / manually-added students per slot (per day) ──────────────

@@ -165,6 +165,26 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
   plain working hours and **excluded from the hourly budget**, same as the
   Staffing Budget page. Counting them makes every day read as over budget.
 
+### Student Scheduler — notes and highlights
+
+Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk
+(`centers/{id}/schedulerCheckIns/{date}` → `{ studentId: { note, highlight } }`).
+Per-day is deliberate: these describe a session, not the child, and a note
+carried forward for months would be worse than none.
+
+- `setStudentNote` / `setStudentHighlight` in `scheduler-data.js`.
+- Four fixed colours in `src/lib/scheduler-highlights.js`. The COLOURS are
+  fixed (the sheet gets printed and carried around — it must mean the same
+  thing every day); the LABELS are the centre's, editable, saved to
+  `schedulerSettings.highlightLegend`.
+- `highlightStyle()` carries `print-color-adjust: exact` **and** the WebKit
+  prefix. Without them browsers strip the background when printing and every
+  highlight silently vanishes on paper — the surface the feature is for.
+- Writes: Leads / Managers / Hosts can set notes and highlights
+  (`schedulerCheckIns` allows them). The LEGEND is a centre setting, so
+  editing it is gated on `canSeeAdminPanel` to match the
+  `schedulerSettings` rule.
+
 ### Roles and permissions
 
 Three different things are called "role". Confusing them breaks access:

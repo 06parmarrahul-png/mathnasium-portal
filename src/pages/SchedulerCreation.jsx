@@ -25,7 +25,7 @@ import {
   getSettings, saveSettings,
   watchStudents, upsertStudent, deleteStudent, bulkImportStudents,
   watchAliases, upsertAlias, deleteAlias,
-  watchCheckIns, setCheckIn, setStudentDesk,
+  watchCheckIns, setCheckIn, setStudentDesk, setStudentNote, setStudentHighlight,
   watchInstructorAssignments, setInstructorAssignment,
   watchWalkIns, addWalkIn, removeWalkIn,
   setSlotOverride, clearSlotOverride,
@@ -67,6 +67,9 @@ const STANDARD_ALIASES = [
 ];
 import { toast } from '../lib/notify';
 import { isFlexRole } from '../lib/subRoles';
+import {
+  HIGHLIGHTS, highlightFor, highlightStyle, legendEntries, serializeLegend, highlightsInUse,
+} from '../lib/scheduler-highlights';
 
 // ───── Helpers ──────────────────────────────────────────────────────────
 function todayStr() {
@@ -165,7 +168,12 @@ function TodayTab({ centerId }) {
   // Pull centerConfig so we can read fixedStaff (auto-populates the
   // pool dropdown with Sabrina, Neeru, etc. — users who don't have
   // a Firebase account but ARE part of daily centre staffing).
-  const { centerConfig: activeCenterConfig, profile } = useAuth();
+  // canSeeAdminPanel mirrors the Firestore rule on schedulerSettings
+  // (isOwnerLike || isSuperAdmin || isAdmin). Leads and Hosts CAN write
+  // notes and highlights — schedulerCheckIns allows them — but the legend
+  // is a centre setting, so they see it without an Edit button rather
+  // than getting a permission error on save.
+  const { centerConfig: activeCenterConfig, profile, canSeeAdminPanel } = useAuth();
   const [date, setDate] = useState(todayStr());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -575,6 +583,16 @@ function TodayTab({ centerId }) {
         //   'BOTH' → both sections render with a page break between them,
         //            so the printer produces two sheets — one per side.
         <div className="flex flex-col gap-3">
+          <HighlightLegend
+            legend={settings?.highlightLegend || {}}
+            inUse={highlightsInUse(checkIns)}
+            canEdit={!printOnly && canSeeAdminPanel}
+            onSave={async (next) => {
+              setSettings(cur => ({ ...(cur || {}), highlightLegend: next }));
+              try { await saveSettings(centerId, { highlightLegend: next }); }
+              catch (e) { toast.error(e.message); }
+            }}
+          />
           {(!printOnly || printOnly === 'EM' || printOnly === 'BOTH') && (
             <div>
               <SideTable side="EM" data={data} centerId={centerId} date={date}
@@ -1361,6 +1379,138 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   );
 }
 
+/**
+ * The highlighter legend — what each colour means at this centre.
+ *
+ * The meanings are the centre's, not ours, so the labels are editable and
+ * saved to schedulerSettings. It prints with the sheet: a highlighted
+ * schedule with no key is just a colourful piece of paper.
+ *
+ * Colours the centre hasn't named are hidden UNLESS they're in use today,
+ * because a mark on the page with nothing explaining it is worse than no
+ * legend at all.
+ */
+function HighlightLegend({ legend, inUse, canEdit, onSave }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(legend);
+  useEffect(() => { setDraft(legend); }, [legend]);
+
+  const entries = legendEntries(legend, inUse);
+  if (entries.length === 0 && !editing) {
+    if (!canEdit) return null;
+    return (
+      <button onClick={() => setEditing(true)}
+        className="text-[11px] text-gray-400 hover:text-gray-700 print:hidden">
+        + Label the highlighter colours
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border bg-white px-3 py-2">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">Highlights</span>
+        {editing ? (
+          HIGHLIGHTS.map(h => (
+            <label key={h.key} className="flex items-center gap-1.5">
+              <span className="h-3.5 w-3.5 shrink-0 rounded-sm border"
+                style={{ backgroundColor: h.bg, borderColor: h.ring }} />
+              <input
+                type="text"
+                value={draft?.[h.key] ?? ''}
+                maxLength={40}
+                placeholder={h.label}
+                onChange={e => setDraft(d => ({ ...d, [h.key]: e.target.value }))}
+                className="w-28 rounded border border-gray-300 px-1.5 py-0.5 text-xs focus:border-blue-400 focus:outline-none"
+              />
+            </label>
+          ))
+        ) : (
+          entries.map(h => (
+            <span key={h.key} className="flex items-center gap-1.5 text-xs text-gray-700">
+              <span className="h-3.5 w-3.5 shrink-0 rounded-sm border"
+                style={{ backgroundColor: h.bg, borderColor: h.ring,
+                         printColorAdjust: 'exact', WebkitPrintColorAdjust: 'exact' }} />
+              {h.meaning || <span className="italic text-gray-400">{h.label} — unlabelled</span>}
+            </span>
+          ))
+        )}
+        {canEdit && (
+          <span className="ml-auto flex items-center gap-2 print:hidden">
+            {editing ? (
+              <>
+                <button onClick={() => { onSave(serializeLegend(draft)); setEditing(false); }}
+                  className="rounded-lg bg-blue-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-blue-700">
+                  Save
+                </button>
+                <button onClick={() => { setDraft(legend); setEditing(false); }}
+                  className="text-xs text-gray-400 hover:text-gray-700">Cancel</button>
+              </>
+            ) : (
+              <button onClick={() => setEditing(true)}
+                className="text-xs text-gray-400 hover:text-gray-700">Edit</button>
+            )}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Highlighter for one student. Closed it's a small swatch; open it's the
+ * four colours plus a clear. print:hidden — paper keeps the colour, not
+ * the control.
+ */
+function HighlightPicker({ value, onPick }) {
+  const [open, setOpen] = useState(false);
+  const current = highlightFor(value);
+  return (
+    <span className="relative shrink-0 print:hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        title={current ? `Highlighted ${current.label} — click to change` : 'Highlight this student'}
+        aria-label="Highlight student"
+        className="flex h-3.5 w-3.5 items-center justify-center rounded-sm border transition-colors"
+        style={current
+          ? { backgroundColor: current.bg, borderColor: current.ring }
+          : { backgroundColor: 'transparent', borderColor: '#d1d5db' }}
+      >
+        {!current && <span className="text-[8px] leading-none text-gray-400">▾</span>}
+      </button>
+      {open && (
+        <>
+          {/* Click-away. Sits under the menu, over everything else. */}
+          <span className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <span className="absolute left-0 top-4 z-30 flex gap-1 rounded-lg border bg-white p-1 shadow-lg">
+            {HIGHLIGHTS.map(h => (
+              <button
+                key={h.key}
+                type="button"
+                title={h.label}
+                onClick={() => { onPick(h.key === value ? '' : h.key); setOpen(false); }}
+                className={`h-4 w-4 rounded-sm border transition-transform hover:scale-110 ${
+                  h.key === value ? 'ring-2 ring-offset-1 ring-gray-700' : ''
+                }`}
+                style={{ backgroundColor: h.bg, borderColor: h.ring }}
+              />
+            ))}
+            <button
+              type="button"
+              title="Clear highlight"
+              onClick={() => { onPick(''); setOpen(false); }}
+              className="h-4 w-4 rounded-sm border border-gray-300 text-[9px] leading-none text-gray-400 hover:bg-gray-50"
+            >
+              ✕
+            </button>
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 function StudentList({ students, checkIns, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded, slotPickerOptions, onMoveStudent, currentSlot }) {
   if (students.length === 0) return <div className="text-[10px] text-gray-300">—</div>;
   return (
@@ -1418,9 +1568,20 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
   // s.isAssessment. Desk number stays — that's an operational detail
   // staff legitimately needs to set per-day.
   const saveDesk = (v) => setStudentDesk(centerId, date, s.id, v).catch(e => toast.error(e.message));
+  const saveNote = (v) => setStudentNote(centerId, date, s.id, v).catch(e => toast.error(e.message));
+  const pickHighlight = (c) => setStudentHighlight(centerId, date, s.id, c).catch(e => toast.error(e.message));
+
+  // A highlighted row takes the colour across the whole <li>, so it reads
+  // like a marker stroke on the printed sheet rather than a small chip.
+  // The status colour classes above still apply to the NAME, so a
+  // highlighted no-show is still struck through.
+  const hl = highlightStyle(entry.highlight);
 
   return (
-    <li className={`flex items-start gap-1 leading-tight ${cls}`}>
+    <li
+      className={`flex flex-wrap items-start gap-1 leading-tight ${cls} ${hl ? 'rounded px-1 -mx-1' : ''}`}
+      style={hl}
+    >
       <span className="cursor-pointer w-3 text-center shrink-0" onClick={() => onStatusClick(s.id)}>
         {status === 'in' ? '✓' : '☐'}
       </span>
@@ -1509,6 +1670,27 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
         onBlur={e => saveDesk(e.target.value)}
         title="Desk number"
         className="ml-auto w-8 shrink-0 border-0 bg-transparent px-0 text-[10px] text-center text-gray-700 rounded hover:bg-gray-100 focus:bg-white focus:outline focus:outline-1 focus:outline-blue-400 focus:w-10"
+      />
+
+      <HighlightPicker value={entry.highlight || ''} onPick={pickHighlight} />
+
+      {/* Note — sits to the RIGHT of the student on the same line so it's
+          obvious whose note it is. basis-[70px] + flex-1 means it takes
+          the leftover width when the column is wide and wraps onto its own
+          line, still inside this student's <li>, when it isn't. Same
+          uncontrolled + save-on-blur pattern as the desk field, and the
+          key remounts it when another device changes the value.
+          On paper it prints as plain text — no box, no placeholder. */}
+      <input
+        key={`note-${entry.note || ''}`}
+        type="text"
+        defaultValue={entry.note || ''}
+        maxLength={400}
+        onBlur={e => saveNote(e.target.value)}
+        onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+        placeholder="note…"
+        title="Note for this student today"
+        className="min-w-0 flex-1 basis-[70px] rounded border border-dashed border-gray-200 bg-transparent px-1 text-[10px] text-gray-700 placeholder:text-gray-300 hover:border-gray-300 focus:border-solid focus:border-blue-400 focus:bg-white focus:outline-none print:border-0 print:placeholder:text-transparent"
       />
     </li>
   );
