@@ -54,6 +54,18 @@ tighter than reject. The UI forces a JSON download of everything first, then
 requires typing the person's full name. A `staff.terminated` audit entry is the
 only trace left.
 
+`mode: 'orphans'` lists names with records but NO user account, and
+`mode: 'orphan-purge'` exports and clears one. Surfaced in Admin → Manage
+Staff → **Orphaned records**. This exists because deleting a user's PROFILE
+used to be all "Remove staff" did — 189 documents across ten people had
+built up with no account attached, invisible to the app. Cleared 2026-09-02;
+`Kaitlyn` (22 availability rows, uid `cSb7xnHq…`, distinct from the live
+Kaitlyn MacDonald) was left deliberately pending a decision.
+
+Purge re-derives the orphan list server-side and only acts on a name that
+scan produced, so a caller can't hand over arbitrary uids. Docs whose uid is
+`system` are excluded — those are the app's own chat messages, not a person.
+
 **What it cannot remove:** chat messages *other people* wrote that mention the
 name (someone else's content), and anything in Resend — Ratio only sends
 through Resend and never creates contacts or audiences, so there is nothing

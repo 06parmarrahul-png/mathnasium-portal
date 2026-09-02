@@ -1197,6 +1197,162 @@ function EditStaffModal({ user, onClose, onUpdateField, onTerminate, onSendReset
 }
 
 /**
+ * Orphaned records — data left behind by an account that was deleted
+ * without clearing it.
+ *
+ * Deleting a user's PROFILE used to be all "Remove staff" did. Their
+ * shifts, availability, notification preferences and log entries stayed in
+ * the database with no account attached — invisible to Manage Staff, so
+ * there was no way to find or clear them from inside the app. Ten people
+ * and 189 documents had built up that way before this existed.
+ *
+ * Terminate doesn't leave orphans any more, so this is a mop for history
+ * rather than something that should keep filling up. It stays because
+ * imports and hand-edits can still create them, and silent build-up is
+ * exactly what caused the problem the first time.
+ */
+function OrphanedRecordsPanel() {
+  const { user: authUser, canSeeCenterSettings } = useAuth();
+  const [open, setOpen]       = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [orphans, setOrphans] = useState(null);
+  const [busy, setBusy]       = useState(null);
+  const [error, setError]     = useState(null);
+
+  const call = async (body) => {
+    const idToken = authUser ? await authUser.getIdToken() : null;
+    if (!idToken) throw new Error('Not signed in.');
+    const r = await fetch('/api/users/reject-user', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${idToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok && r.status !== 207) throw new Error(data?.error || `Failed (${r.status}).`);
+    return data;
+  };
+
+  const scan = async () => {
+    setLoading(true); setError(null);
+    try { setOrphans((await call({ mode: 'orphans' })).orphans || []); }
+    catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const openPanel = () => { setOpen(true); if (!orphans) scan(); };
+
+  // Same contract as Terminate: the record is downloaded before anything
+  // is deleted, so there is always a copy of what went.
+  const purge = async (orphan) => {
+    const ok = await confirmDialog({
+      title: `Clear ${orphan.total} orphaned record${orphan.total === 1 ? '' : 's'} for "${orphan.name}"?`,
+      body: 'Their record downloads first, then the documents are deleted. '
+        + 'There is no account attached to this data — nobody loses access.',
+      confirmLabel: 'Download and clear',
+      destructive: true,
+    });
+    if (!ok) return;
+    setBusy(orphan.name); setError(null);
+    try {
+      const data = await call({ mode: 'orphan-purge', name: orphan.name });
+      const blob = new Blob([JSON.stringify(data.export, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ratio-orphaned-${orphan.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${format(new Date(), 'yyyy-MM-dd')}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      if (data.warning) toast.error(data.warning, 9000);
+      else toast.success(`Cleared ${data.total} record${data.total === 1 ? '' : 's'} for ${orphan.name}.`);
+      setOrphans(cur => (cur || []).filter(o => o.name !== orphan.name));
+    } catch (err) {
+      setError(err.message);
+    } finally { setBusy(null); }
+  };
+
+  if (!canSeeCenterSettings) return null;
+
+  const total = (orphans || []).reduce((n, o) => n + o.total, 0);
+
+  return (
+    <div className="rounded-2xl border bg-white shadow-sm">
+      <button onClick={() => (open ? setOpen(false) : openPanel())}
+        className="flex w-full items-center justify-between px-4 py-3 text-sm font-bold text-gray-900">
+        <span className="flex items-center gap-2">
+          <Search size={15} className="text-gray-400" />
+          Orphaned records
+          {orphans && orphans.length > 0 && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">
+              {orphans.length} {orphans.length === 1 ? 'name' : 'names'} · {total} docs
+            </span>
+          )}
+        </span>
+        <span className="text-xs font-normal text-gray-400">{open ? 'Hide' : 'Check'}</span>
+      </button>
+
+      {open && (
+        <div className="border-t px-4 py-3">
+          <p className="mb-3 text-xs text-gray-500">
+            Shifts, availability and preferences belonging to accounts that were deleted without
+            clearing their data. Nobody has access through these &mdash; there&rsquo;s no account attached.
+            Clearing one downloads its record first.
+          </p>
+
+          {loading && (
+            <div className="flex items-center gap-2 py-3 text-sm text-gray-500">
+              <Loader2 size={15} className="animate-spin" /> Scanning every collection…
+            </div>
+          )}
+          {error && <p className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs font-medium text-red-700">{error}</p>}
+
+          {orphans && orphans.length === 0 && (
+            <p className="flex items-center gap-2 py-2 text-sm text-emerald-700">
+              <Check size={15} /> Nothing orphaned. Every record belongs to a live account.
+            </p>
+          )}
+
+          {orphans && orphans.length > 0 && (
+            <ul className="divide-y">
+              {orphans.map(o => (
+                <li key={o.name} className="flex flex-wrap items-center gap-3 py-2">
+                  <span className="font-semibold text-gray-800">{o.name}</span>
+                  <span className="font-mono text-xs text-gray-500">{o.total} docs</span>
+                  <span className="flex flex-wrap gap-1">
+                    {Object.entries(o.counts).map(([c, n]) => (
+                      <span key={c} className="rounded border border-gray-200 bg-gray-50 px-1.5 py-0.5 text-[10px] text-gray-600">
+                        {c} {n}
+                      </span>
+                    ))}
+                  </span>
+                  {o.lastDate && (
+                    <span className="text-[10px] text-gray-400">last {o.lastDate}</span>
+                  )}
+                  <button
+                    onClick={() => purge(o)}
+                    disabled={!!busy}
+                    className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-red-300 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-40"
+                  >
+                    {busy === o.name ? <Loader2 size={12} className="animate-spin" /> : <Download size={12} />}
+                    {busy === o.name ? 'Clearing…' : 'Download & clear'}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {orphans && (
+            <button onClick={scan} disabled={loading || !!busy}
+              className="mt-2 text-xs text-gray-400 hover:text-gray-700 disabled:opacity-40">
+              Re-scan
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
  * Terminate Staff — the irreversible one.
  *
  * Erases a person from Ratio: their sign-in, their profile, and every
@@ -6319,6 +6475,8 @@ export default function Admin() {
               The numbers show how many docs were updated per collection. Already-migrated docs are skipped.
             </p>
           </div>
+
+          <OrphanedRecordsPanel />
           </>)}
         </div>
       )}

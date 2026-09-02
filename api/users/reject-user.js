@@ -10,6 +10,14 @@
 //                       termination record before committing.
 //   mode: 'terminate' — collect, return, and then erase all of it plus the
 //                       Auth account. Irreversible.
+//   mode: 'orphans'   — list names that have records but NO user account.
+//                       Read-only.
+//   mode: 'orphan-purge' — export and erase one orphan's records.
+//
+// The orphan modes exist because deleting a user's PROFILE used to leave
+// everything else behind: 189 documents across ten people were still in
+// the database with no account attached, invisible to Manage Staff and so
+// impossible to clean up from the app.
 //
 // Why preview is a separate round trip: the export has to be safely in the
 // admin's hands BEFORE anything is deleted. Returning it from the same
@@ -120,6 +128,79 @@ async function deleteOwnedDocs(db, owned) {
   return deleted;
 }
 
+// Names the scan must never offer as orphans. The app posts chat messages
+// as itself with `userId: 'system'` — those aren't a person, and deleting
+// them would gut the chat history.
+const SYSTEM_UIDS = new Set(['system', 'System']);
+
+/**
+ * Every name that has records but no user account.
+ *
+ * A person is an orphan when NEITHER their uid NOR their display name
+ * matches a live account. Both halves matter: matching on uid alone misses
+ * legacy rows that only carry a name, and matching on name alone would
+ * mistake a renamed staffer for a stranger.
+ */
+async function findOrphans(db) {
+  const users = await db.collection('users').get();
+  const liveUids = new Set(users.docs.map(d => d.id));
+  const liveNames = new Set(users.docs.map(d => norm(d.data().displayName)).filter(Boolean));
+
+  const found = new Map();
+  for (const { col, idFields, nameFields } of OWNED_COLLECTIONS) {
+    const snap = await db.collection(col).get();
+    snap.forEach(d => {
+      const x = d.data();
+      const name = x.userName || x.targetName || x.claimedByName || x.displayName || null;
+      const uid = idFields.map(f => x[f]).find(Boolean) || null;
+      if (!name) return;
+      if (uid && SYSTEM_UIDS.has(uid)) return;             // the app itself
+      if (uid && liveUids.has(uid)) return;                // belongs to a live account
+      if (liveNames.has(norm(name))) return;               // ditto, by name
+      const k = norm(name);
+      if (!found.has(k)) found.set(k, { name, uids: new Set(), counts: {}, total: 0, firstDate: '', lastDate: '' });
+      const o = found.get(k);
+      if (uid) o.uids.add(uid);
+      o.counts[col] = (o.counts[col] || 0) + 1;
+      o.total += 1;
+      if (x.date) {
+        if (!o.firstDate || x.date < o.firstDate) o.firstDate = x.date;
+        if (x.date > o.lastDate) o.lastDate = x.date;
+      }
+      void nameFields;
+    });
+  }
+  return [...found.values()]
+    .map(o => ({ ...o, uids: [...o.uids] }))
+    .sort((a, b) => b.total - a.total);
+}
+
+const norm = (v) => String(v ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** Collect an orphan's documents, matched by their uids AND their name. */
+async function collectOrphanDocs(db, orphan) {
+  const out = {};
+  for (const { col, idFields, nameFields } of OWNED_COLLECTIONS) {
+    const seen = new Map();
+    for (const uid of orphan.uids) {
+      for (const f of idFields) {
+        const snap = await db.collection(col).where(f, '==', uid).get();
+        snap.forEach(d => seen.set(d.id, { id: d.id, ...d.data() }));
+      }
+      try {
+        const direct = await db.collection(col).doc(uid).get();
+        if (direct.exists) seen.set(direct.id, { id: direct.id, ...direct.data() });
+      } catch { /* id isn't a valid doc path here */ }
+    }
+    for (const f of nameFields || []) {
+      const snap = await db.collection(col).where(f, '==', orphan.name).get();
+      snap.forEach(d => seen.set(d.id, { id: d.id, ...d.data() }));
+    }
+    if (seen.size > 0) out[col] = [...seen.values()];
+  }
+  return out;
+}
+
 function userIsAtCenter(profile, centerId) {
   if (!profile || !centerId) return false;
   if (Array.isArray(profile.centerIds) && profile.centerIds.includes(centerId)) return true;
@@ -148,7 +229,7 @@ export default async function handler(req, res) {
   catch { return res.status(400).json({ error: 'Invalid JSON body' }); }
 
   const mode = String(body.mode || 'reject').trim();
-  if (!['reject', 'preview', 'terminate'].includes(mode)) {
+  if (!['reject', 'preview', 'terminate', 'orphans', 'orphan-purge'].includes(mode)) {
     return res.status(400).json({ error: 'Unknown mode' });
   }
   // Termination erases payroll history and cannot be undone, so it sits
@@ -161,13 +242,86 @@ export default async function handler(req, res) {
     });
   }
 
+  const db0 = getFirestore();
+
+  // ── ORPHAN MODES ───────────────────────────────────────────────────
+  // These run BEFORE the uid lookup below: an orphan has no user document
+  // by definition, so that lookup's 404 would turn them away.
+  if (mode === 'orphans' || mode === 'orphan-purge') {
+    const orphans = await findOrphans(db0);
+
+    if (mode === 'orphans') {
+      return res.status(200).json({
+        ok: true, mode, orphans,
+        total: orphans.reduce((n, o) => n + o.total, 0),
+      });
+    }
+
+    // Purge takes a NAME and re-derives the orphan list server-side, then
+    // only acts on a name that scan actually produced. A caller cannot
+    // hand over arbitrary uids and have them deleted, and a live account
+    // can never appear in the list to begin with.
+    const wanted = norm(body.name);
+    if (!wanted) return res.status(400).json({ error: 'name required' });
+    const orphan = orphans.find(o => norm(o.name) === wanted);
+    if (!orphan) {
+      return res.status(404).json({
+        error: 'No orphaned records under that name — it may already be cleaned up, '
+          + 'or the name now belongs to a live account.',
+      });
+    }
+
+    const owned = await collectOrphanDocs(db0, orphan);
+    const counts = Object.fromEntries(Object.entries(owned).map(([c, d]) => [c, d.length]));
+    const total = Object.values(counts).reduce((n, v) => n + v, 0);
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: { uid: session.decoded.uid, name: caller?.displayName || null, role: callerRole },
+      reason: 'Orphaned records — account was removed without clearing their data',
+      person: { name: orphan.name, uids: orphan.uids },
+      counts, total, collections: owned,
+    };
+
+    if (body.previewOnly) {
+      return res.status(200).json({ ok: true, mode, counts, total, export: payload });
+    }
+
+    let deleted = 0;
+    try {
+      deleted = await deleteOwnedDocs(db0, owned);
+    } catch (err) {
+      console.error('[orphan-purge] delete failed', { name: orphan.name, message: err?.message });
+      return res.status(207).json({
+        ok: true, mode, counts, total, deleted, export: payload,
+        warning: 'Some records could not be deleted: ' + (err?.message || '') + ' — run it again to finish.',
+      });
+    }
+
+    try {
+      await db0.collection('auditLog').add({
+        action: 'staff.orphans_purged',
+        actorUid: session.decoded.uid,
+        actorName: caller?.displayName || null,
+        actorRole: callerRole,
+        targetUserId: null,
+        centerId: caller?.centerId || null,
+        createdAt: new Date(),
+        details: { orphanName: orphan.name, documentsDeleted: total, byCollection: counts },
+      });
+    } catch (err) {
+      console.error('[orphan-purge] audit write failed', { message: err?.message });
+    }
+
+    return res.status(200).json({ ok: true, mode, counts, total, deleted, export: payload });
+  }
+
   const uid = String(body.uid || '').trim();
   if (!uid) return res.status(400).json({ error: 'uid required' });
   if (uid === session.decoded.uid) {
     return res.status(400).json({ error: 'You cannot reject your own account.' });
   }
 
-  const db = getFirestore();
+  const db = db0;
   const targetSnap = await db.collection('users').doc(uid).get();
   if (!targetSnap.exists) {
     return res.status(404).json({ error: 'User not found' });

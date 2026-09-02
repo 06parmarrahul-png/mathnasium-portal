@@ -81,6 +81,11 @@ export default function AuditLogs() {
         return `Terminated ${name}${c}`
           + (Number.isFinite(n) ? ` — ${n} record${n === 1 ? '' : 's'} erased` : '');
       }
+      case 'staff.orphans_purged': {
+        const n = e.details?.documentsDeleted;
+        return `Cleared orphaned records for ${e.details?.orphanName || 'a former staff member'}${c}`
+          + (Number.isFinite(n) ? ` — ${n} record${n === 1 ? '' : 's'}` : '');
+      }
       default:
         return e.action + c;
     }
