@@ -165,6 +165,28 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
   plain working hours and **excluded from the hourly budget**, same as the
   Staffing Budget page. Counting them makes every day read as over budget.
 
+### Availability failsafe on the weekly grid
+
+`src/lib/availabilityFit.js` answers "did we schedule someone outside the
+hours they said they could work?" — availability 4–7pm, shift 3–7pm. The
+Manage Staff Schedule cell goes amber (`bg-amber-100` + inset ring, stronger
+than the amber-50/40 used for holidays and pending time off) with an
+"Outside availability" strip under the shift and a tooltip saying which shift
+and by how much.
+
+**It never blocks.** Scheduling outside availability is sometimes right.
+
+Two deliberate exclusions:
+- **No availability submitted → not flagged.** Live data: 960 shifts fit
+  inside availability, 49 fall outside, **839 have none on file**. Colouring
+  that third group would turn nearly half the grid amber and bury the 49 that
+  matter. The absence of a green corner already says "they didn't tell us".
+- **Time off wins.** An approved day off already paints the cell and overrides
+  availability, so the clash check is skipped when `cellTimeOff` is set and
+  the two can't argue on one cell.
+
+Impact on real data: 49 of 1837 person-day cells (2.7%), worst week 7 cells.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk

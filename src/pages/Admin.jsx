@@ -38,6 +38,7 @@ import CoverageGrid from '../components/CoverageGrid';
 import CentreRolesTab from '../components/CentreRolesTab';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
 import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/timeOff';
+import { availabilityConflict, describeConflict } from '../lib/availabilityFit';
 import { isTrainingShift, trainingIds as trainingIdsFor } from '../lib/staffTypes';
 import { RATIO_FIELD, defaultIncludedInRatio, countsInRatio, withRatioDefault, ratioHint, isRatioOverridden } from '../lib/ratioCount';
 import { roleRatioDefault } from '../lib/roles';
@@ -5721,6 +5722,19 @@ export default function Admin() {
                           // aren't lost: they move into the time-off tooltip
                           // below, which is where you'd look to decide.
                           const hasAvail = dayAvail.length > 0 && !cellTimeOff;
+                          // FAILSAFE: did we schedule them outside the hours
+                          // they said they could work? Availability 4–7pm,
+                          // shift 3–7pm — nothing objected before, and the
+                          // first anyone knew was a no-show at 3.
+                          //
+                          // Skipped when a time-off request covers the day:
+                          // that already paints the cell and overrides
+                          // availability, so the two can't argue on one cell.
+                          // Never blocks the booking — sometimes scheduling
+                          // outside availability is exactly right.
+                          const availClash = cellTimeOff
+                            ? null
+                            : availabilityConflict(dayShifts, dayAvail);
                           const timeOffColor = cellTimeOff?.status === 'approved'
                             ? 'border-t-red-500'
                             : cellTimeOff?.status === 'pending'
@@ -5735,7 +5749,14 @@ export default function Admin() {
                             <td
                               key={ds}
                               className={`px-1 py-1 align-top relative ${
-                                cellTimeOff && dayShifts.length === 0 ? timeOffBg
+                                // Deliberately stronger than the faint
+                                // amber-50/40 used for pending time off and
+                                // holidays — this is a mistake to catch, not
+                                // a state to note, and the inset ring makes
+                                // it unmistakable at a glance across a full
+                                // week of cells.
+                                availClash ? 'bg-amber-100 ring-1 ring-inset ring-amber-400'
+                                : cellTimeOff && dayShifts.length === 0 ? timeOffBg
                                 : hasAvail && dayShifts.length === 0 ? 'bg-green-50/40'
                                 : ''
                               }`}
@@ -5868,6 +5889,38 @@ export default function Admin() {
                                   </div>
                                 );
                               })}
+                              {/* Availability clash strip.
+                                  In normal flow UNDER the shifts, not floating
+                                  over them — an absolute badge sat on top of
+                                  the block's label and clipped it. It's also
+                                  the hover target for the explanation, which
+                                  is the part that makes the amber actionable:
+                                  "starts 1h early" tells you what to do, a
+                                  bare coloured cell doesn't.
+                                  Prints as a plain line, no hover. */}
+                              {availClash && (
+                                <div className="group/clash relative mt-0.5">
+                                  <div className="flex cursor-help items-center gap-1 rounded bg-amber-400/90 px-1 py-px text-amber-950" style={{ fontSize: '9px' }}>
+                                    <span className="font-bold">!</span>
+                                    <span className="truncate font-semibold uppercase tracking-wide">
+                                      Outside availability
+                                    </span>
+                                  </div>
+                                  <div className="hidden group-hover/clash:block absolute left-0 top-5 z-30 w-64 rounded-lg border border-amber-300 bg-white p-2 text-left shadow-lg print:hidden">
+                                    <p className="mb-1 text-xs font-semibold text-amber-800">
+                                      Scheduled outside availability
+                                    </p>
+                                    {availClash.conflicts.map(({ shift: cs, fit }, i) => (
+                                      <p key={cs.id || i} className="mb-1 text-[11px] leading-snug text-gray-700">
+                                        {describeConflict(fit)}
+                                      </p>
+                                    ))}
+                                    <p className="mt-1 border-t pt-1 text-[10px] text-gray-500">
+                                      A warning, not a block — keep it if you meant it.
+                                    </p>
+                                  </div>
+                                </div>
+                              )}
                               {/* Add shift button */}
                               <button
                                 onClick={() => setAddShiftModal({ date: ds, user: u })}
