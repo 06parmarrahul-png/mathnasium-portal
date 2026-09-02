@@ -145,10 +145,11 @@ Three different things are called "role". Confusing them breaks access:
 
 1. **`user.role`** — the PLATFORM role (`super_admin` / `owner` / `director` /
    `admin_assistant` / `admin` / `instructor`). Six fixed values, the security
-   boundary, read by `firestore.rules`. Edited on Manage Roles → People,
+   boundary, read by `firestore.rules`. Edited at **`/manage-roles`**,
    Enterprise-only. Not extensible.
 2. **`centerMemberships[id].instructorType`** — the CENTRE role / job title.
-   This is what Manage Roles → Centre Roles creates and edits, stored as
+   Created and edited in **Admin → Manage Staff → "Edit Role Permissions &
+   Accessibility"** (the second sub-tab, needs `centre.settings`), stored as
    `staffRoles` on the centre config. Every user already has one.
 3. **`subRoles`** — teaching capabilities. Unrelated to permissions.
 
@@ -164,6 +165,12 @@ Three different things are called "role". Confusing them breaks access:
   The editor is open to Centre Directors, so without that they could mint
   themselves Enterprise. Stripped on read, on write, and at resolution.
 - **Built-in roles can't be deleted** — user records and past shifts name them.
+- **A role's colour is the real one.** `assignmentColorHex()` and
+  `staffTypeColorHex()` check `staffRoles` before the `assignmentColors` /
+  `stateColors` palettes, so recolouring a role repaints the weekly grid.
+  Centre Settings → Appearance keeps only what ISN'T a role: the three
+  teaching levels (a shift's sub-role — one Instructor works all three) and
+  the two shift states (Sick Pay, No-Show).
 - The registry is stored **twice**: `staffRoles` (rich array, for the UI) and
   `staffRolePermissions` (flat `{name: [perm]}` map, for the rules — the rules
   language cannot search a list of maps). `permissionLookup()` derives the

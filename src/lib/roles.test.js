@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
+  assignmentColorHex, staffTypeColorHex, roleColorHex,
+  ASSIGNMENT_COLOR_KEYS, STATE_COLOR_KEYS, DEFAULT_ASSIGNMENT_COLORS,
+} from './centerConfig';
+import {
   PERMISSIONS,
   PERMISSION_IDS,
   PLATFORM_ONLY_PERMISSIONS,
@@ -677,5 +681,97 @@ describe('the retired flex tag still beats a role default', () => {
     const p = resolvePermissions({ platformRole: 'instructor', instructorType: 'STEAM', roles });
     const base = resolvePermissions({ platformRole: 'instructor', roles: [] });
     expect([...p].sort()).toEqual([...base].sort());
+  });
+});
+
+// The role editor's colour picker has to actually repaint the app, or it
+// is just decoration in its own list. It used to be exactly that: the
+// grid read the separate assignmentColors palette and never looked at the
+// role registry, which is why the same colour was editable in two places.
+describe('a role\'s colour drives the grid', () => {
+  const cfg = (roles) => ({ staffRoles: roles });
+
+  it('repaints the matching grid assignment', () => {
+    const c = cfg([{ id: 'lead', name: 'Lead', color: '#ff0000', permissions: [] }]);
+    expect(assignmentColorHex('Lead Instructor', c)).toBe('#ff0000');
+    expect(staffTypeColorHex('Lead', c)).toBe('#ff0000');
+  });
+
+  it.each([
+    ['Lead Instructor', 'Lead'],
+    ['Host', 'Host'],
+    ['Admin', 'Admin'],
+    ['Manager', 'Manager'],
+    ['Centre Director', 'Center Director'],
+    ['Director of Education', 'Dir. of Education'],
+  ])('%s follows the "%s" role', (assignment, roleName) => {
+    const c = cfg([{ id: 'x', name: roleName, color: '#123456', permissions: [] }]);
+    expect(assignmentColorHex(assignment, c)).toBe('#123456');
+  });
+
+  // Teaching levels are a shift's sub-role, not a job title. One
+  // Instructor works all three, so the grid must keep them distinct —
+  // they stay in Centre Settings → Appearance.
+  it.each(['Elementary Instructor', 'Highschool Instructor', 'Online Instructor'])(
+    '%s is NOT overridden by the Instructor role colour',
+    (assignment) => {
+      const c = cfg([{ id: 'i', name: 'Instructor', color: '#ff0000', permissions: [] }]);
+      expect(assignmentColorHex(assignment, c)).toBe(DEFAULT_ASSIGNMENT_COLORS[assignment]);
+    },
+  );
+
+  it('colours a role the centre invented, which no built-in map knows', () => {
+    const c = cfg([{ id: 'al', name: 'Assistant Lead', color: '#00ff00', permissions: [] }]);
+    expect(staffTypeColorHex('Assistant Lead', c)).toBe('#00ff00');
+  });
+
+  it('matches the role name loosely, the way users hold it', () => {
+    const c = cfg([{ id: 'l', name: 'Lead', color: '#abcdef', permissions: [] }]);
+    expect(staffTypeColorHex('  lead ', c)).toBe('#abcdef');
+    expect(roleColorHex('LEAD', c)).toBe('#abcdef');
+  });
+
+  it('falls back to the palette when the centre has no registry', () => {
+    expect(assignmentColorHex('Lead Instructor', null)).toBe(DEFAULT_ASSIGNMENT_COLORS['Lead Instructor']);
+    expect(assignmentColorHex('Lead Instructor', {})).toBe(DEFAULT_ASSIGNMENT_COLORS['Lead Instructor']);
+    expect(roleColorHex('Lead', {})).toBe(null);
+    expect(roleColorHex('', cfg([]))).toBe(null);
+  });
+
+  it('survives junk in the registry', () => {
+    const c = cfg([null, {}, { name: 'Lead' }]);           // no colour on the hit
+    expect(assignmentColorHex('Lead Instructor', c)).toBe(DEFAULT_ASSIGNMENT_COLORS['Lead Instructor']);
+    expect(roleColorHex('Lead', { staffRoles: 'nope' })).toBe(null);
+  });
+});
+
+describe('Centre Settings no longer duplicates role colours', () => {
+  const ROLE_SHAPED = [
+    'Lead Instructor', 'Host', 'Admin', 'Manager', 'Centre Director', 'Director of Education',
+  ];
+
+  it('offers only the teaching levels', () => {
+    expect(ASSIGNMENT_COLOR_KEYS).toEqual([
+      'Elementary Instructor', 'Highschool Instructor', 'Online Instructor',
+    ]);
+    for (const k of ROLE_SHAPED) expect(ASSIGNMENT_COLOR_KEYS).not.toContain(k);
+  });
+
+  it('offers only the shift states', () => {
+    expect(STATE_COLOR_KEYS).toEqual(['Sick Pay', 'No-Show']);
+    expect(STATE_COLOR_KEYS).not.toContain('Volunteer');
+    expect(STATE_COLOR_KEYS).not.toContain('Training');
+    expect(STATE_COLOR_KEYS).not.toContain('STEAM');
+  });
+
+  // Everything dropped from the editor must still RESOLVE — old shifts and
+  // old config docs reference these, and a missing colour would render
+  // them as unexplained slate.
+  it.each([...ROLE_SHAPED, 'Elementary Instructor'])('%s still resolves to a colour', (k) => {
+    expect(assignmentColorHex(k, {})).toMatch(/^#[0-9a-f]{6}$/i);
+  });
+
+  it.each(['Volunteer', 'Training', 'STEAM', 'Summer Camp'])('%s still resolves to a colour', (k) => {
+    expect(staffTypeColorHex(k, {})).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });

@@ -119,16 +119,26 @@ export default function AppearanceEditor({ activeCenterId, centerConfig, activeC
         <strong>{activeCenterName || activeCenterId}</strong> only.
       </p>
 
-      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-2">Roles &amp; Assignments</h4>
+      <p className="mb-4 rounded-lg border border-purple-200 bg-purple-50/60 px-3 py-2 text-xs text-purple-900">
+        <b>Role colours moved.</b> Lead, Host, Admin, Manager, the directors, Training and Volunteer
+        are coloured where the role itself is defined &mdash; Admin &rarr; Manage Staff &rarr;{' '}
+        <b>Edit Role Permissions &amp; Accessibility</b>. They were in both places, and whichever you
+        edited second quietly won. What&rsquo;s left here is the two things that aren&rsquo;t roles.
+      </p>
+
+      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mb-1">Teaching levels</h4>
+      <p className="mb-2 text-xs text-gray-500">
+        A shift&rsquo;s sub-role, not a job title &mdash; one Instructor can work all three, and the grid
+        has to tell them apart.
+      </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {ASSIGNMENT_COLOR_KEYS.map(role => swatchRow(role, colors[role], setOne))}
       </div>
 
-      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mt-6 mb-1">States &amp; Flex Roles</h4>
+      <h4 className="text-xs font-bold uppercase tracking-wide text-gray-500 mt-6 mb-1">Shift states</h4>
       <p className="text-xs text-gray-500 mb-2">
-        STEAM and Summer Camp are paid flex work (not counted as instructors); Volunteer, Sick Pay
-        and No-Show are shift states. These fills override the assignment color on the grid, coverage
-        and staffing views.
+        What happened to a shift rather than who worked it. These fills override the assignment
+        colour on the grid, coverage and staffing views.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {STATE_COLOR_KEYS.map(name => swatchRow(name, stateColorsLocal[name], setOneState))}

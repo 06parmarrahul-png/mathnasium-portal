@@ -190,8 +190,15 @@ export const DEFAULT_ASSIGNMENT_COLORS = {
   'Director of Education': '#db2777', // pink
 };
 
-// Keys shown in the Super Admin color editor (same order as the list).
-export const ASSIGNMENT_COLOR_KEYS = SHIFT_ASSIGNMENTS;
+// Keys shown in the Centre Settings → Appearance editor.
+//
+// Only the TEACHING LEVELS. The role-shaped assignments (Lead, Host,
+// Admin, Manager, the directors) are coloured in the role editor now —
+// Manage Staff → Edit Role Permissions & Accessibility — and having them
+// in two places meant whichever you edited second silently won.
+export const ASSIGNMENT_COLOR_KEYS = [
+  'Elementary Instructor', 'Highschool Instructor', 'Online Instructor',
+];
 
 // ─── State / flex colors ─────────────────────────────────────────────────
 // These are NOT assignments — they're the override fills a shift can take:
@@ -224,7 +231,9 @@ export const DEFAULT_STATE_COLORS = {
 // more: STEAM and Summer Camp keep their entries above so the 58 historical
 // summer-2026 shifts still render in their own colours, but the feature is
 // gone and there is nothing new to paint, so they aren't offered here.
-export const STATE_COLOR_KEYS = ['Volunteer', 'Training', 'Sick Pay', 'No-Show'];
+// Shift STATES only. Volunteer and Training moved out with the other
+// roles — they're job titles, and they're coloured in the role editor.
+export const STATE_COLOR_KEYS = ['Sick Pay', 'No-Show'];
 
 /**
  * Resolve a state/flex color: center override first, then the built-in
@@ -255,11 +264,55 @@ export function assignmentShort(assignment) {
   return ASSIGNMENT_SHORT[assignment] || assignment;
 }
 
+// Which of the nine grid assignments are really a ROLE wearing another
+// name. These now take their colour from the centre's role registry
+// (Manage Staff → Edit Role Permissions & Accessibility), so recolouring
+// "Lead" there repaints every Lead block on the grid.
+//
+// The three teaching levels are deliberately absent: Elementary /
+// Highschool / Online are a shift's SUB-ROLE, not a job title, and the
+// grid needs them distinguishable even though every one of them is worked
+// by an "Instructor". They stay in Centre Settings → Appearance.
+const ASSIGNMENT_TO_ROLE = {
+  'Lead Instructor':       'Lead',
+  'Host':                  'Host',
+  'Admin':                 'Admin',
+  'Manager':               'Manager',
+  'Centre Director':       'Center Director',
+  'Director of Education': 'Dir. of Education',
+};
+
+/** Fold a role name for comparison — mirrors roleKey() in lib/roles.js. */
+const foldRole = (v) => String(v ?? '').trim().toLowerCase().replace(/[^a-z]/g, '');
+
 /**
- * Resolve an assignment's color: center override first, then the built-in
- * default, then a neutral slate for anything unrecognized.
+ * The colour a centre has given a role in its own registry, or null.
+ *
+ * This is the single reason the role editor's colour picker means
+ * anything: without it a role's colour only tinted its own row in the
+ * roles list, while the weekly grid went on reading the separate
+ * assignmentColors palette.
+ */
+export function roleColorHex(roleName, centerConfig) {
+  const want = foldRole(roleName);
+  if (!want) return null;
+  const roles = centerConfig?.staffRoles;
+  if (!Array.isArray(roles)) return null;
+  const hit = roles.find(r => foldRole(r?.name) === want);
+  return hit?.color || null;
+}
+
+/**
+ * Resolve an assignment's color. The centre's role registry wins for the
+ * assignments that are really roles, then the per-centre assignment
+ * palette, then the built-in default, then a neutral slate.
  */
 export function assignmentColorHex(assignment, centerConfig) {
+  const asRole = ASSIGNMENT_TO_ROLE[assignment];
+  if (asRole) {
+    const fromRegistry = roleColorHex(asRole, centerConfig);
+    if (fromRegistry) return fromRegistry;
+  }
   const custom = centerConfig?.assignmentColors?.[assignment];
   if (custom) return custom;
   return DEFAULT_ASSIGNMENT_COLORS[assignment] || '#64748b';
@@ -301,6 +354,10 @@ export const STAFF_TYPE_COLOR_KEYS = Object.keys(STAFF_TYPE_COLOR_SOURCE);
  * stale value reads as "unrecognised" instead of impersonating a real role.
  */
 export function staffTypeColorHex(instructorType, centerConfig) {
+  // A role the centre has coloured itself wins outright — including one
+  // it invented, which has no entry in the map below at all.
+  const fromRegistry = roleColorHex(instructorType, centerConfig);
+  if (fromRegistry) return fromRegistry;
   const src = STAFF_TYPE_COLOR_SOURCE[instructorType];
   if (!src) return '#64748b';
   if (src.from === 'assignment') return assignmentColorHex(src.key, centerConfig);

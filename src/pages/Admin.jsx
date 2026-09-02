@@ -18,6 +18,7 @@ import {
   DollarSign, Download, CalendarRange, BarChart3, Mail, Loader2, UserPlus,
   Users, Activity, Briefcase, Copy, CalendarX, Upload, Search, ArrowUp,
   ArrowLeft, LayoutGrid, Calendar, HelpCircle, TrendingUp, HandHeart, Megaphone,
+  Shield,
 } from 'lucide-react';
 import {
   format, startOfWeek, addWeeks, subWeeks, addDays, isSameDay, isSameWeek,
@@ -34,6 +35,7 @@ import {
   isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
+import CentreRolesTab from '../components/CentreRolesTab';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
 import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/timeOff';
 import { isTrainingShift, trainingIds as trainingIdsFor } from '../lib/staffTypes';
@@ -2102,6 +2104,11 @@ export default function Admin() {
   // Managers and Hosts get in via ProtectedRoute's allowOps with full
   // admin-panel access (same as plain Admin) — no tab restriction needed.
   const [tab, setTab] = useState(searchParams.get('tab') || 'spreadsheet');
+  // Manage Staff has two halves: the per-PERSON editor (who is what) and
+  // the per-ROLE editor (what a role can do). They were on different pages
+  // — the second lived at /manage-roles under Centre — which meant setting
+  // someone up took two screens in two places. Same tab now.
+  const [usersSubtab, setUsersSubtab] = useState('staff');
   useEffect(() => {
     const t = searchParams.get('tab');
     if (t && t !== tab) setTab(t);
@@ -5806,6 +5813,39 @@ export default function Admin() {
       {/* ── MANAGE USERS ────────────────────────────────────────────────────── */}
       {tab === 'users' && (
         <div className="space-y-4">
+          {/* Two halves of the same job. The first is the existing screen:
+              who each person is. The second is the role registry: what a
+              role is allowed to do. Editing roles needs `centre.settings`,
+              so a plain Admin sees only the first. */}
+          <div className="flex flex-wrap gap-1 border-b border-gray-200">
+            <button onClick={() => setUsersSubtab('staff')}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                usersSubtab === 'staff'
+                  ? 'border-b-2 border-red-600 text-red-600 bg-white'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}>
+              <Users size={16} /> Edit Staff Roles, Subroles &amp; Capabilities
+            </button>
+            {canSeeCenterSettings && (
+              <button onClick={() => setUsersSubtab('roles')}
+                className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  usersSubtab === 'roles'
+                    ? 'border-b-2 border-purple-600 text-purple-700 bg-white'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}>
+                <Shield size={16} /> Edit Role Permissions &amp; Accessibility
+              </button>
+            )}
+          </div>
+
+          {usersSubtab === 'roles' && canSeeCenterSettings && (
+            /* No centre picker here: the Admin panel is already scoped to
+               the active centre, so an Enterprise user editing another
+               centre's roles from inside it would be surprising. */
+            <CentreRolesTab users={users} centers={[]} />
+          )}
+
+          {usersSubtab === 'staff' && (<>
           {/* Search + Add Staff row — mirrors Manage Roles' clean header.
               Add Staff opens the create-account modal; search filters both
               the pending and approved lists below. */}
@@ -6028,6 +6068,7 @@ export default function Admin() {
               The numbers show how many docs were updated per collection. Already-migrated docs are skipped.
             </p>
           </div>
+          </>)}
         </div>
       )}
 

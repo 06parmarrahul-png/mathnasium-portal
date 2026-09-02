@@ -44,7 +44,7 @@ const ROLE_LABEL = {
 };
 
 export default function Layout({ children }) {
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations, canSeeCenterSettings } = useAuth();
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = useAuth();
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [openShifts, setOpenShifts] = useState([]);
@@ -226,13 +226,6 @@ export default function Layout({ children }) {
       centre.push({ to: '/inventory', label: 'Inventory', icon: Package });
     }
     centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
-    // Centre Roles — job titles and their permissions. Same bar as Centre
-    // Settings, which is what the route asks for, so a Centre Director
-    // reaches it. Enterprise already has it under ENTERPRISE below, so
-    // it isn't listed twice for them.
-    if (canSeeCenterSettings && !isSuperAdmin) {
-      centre.push({ to: '/manage-roles', label: 'Roles', icon: UserCog });
-    }
   }
 
   // ─── NON-OWNER LAYOUT (original Manage / Insights / Communicate) ──
