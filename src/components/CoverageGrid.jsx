@@ -12,9 +12,9 @@ import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
  *             each slot — tells you student capacity at a glance.
  *
  * Anyone toggled OUT of the ratio (hosts on admin time, online
- * instructors, trainees, volunteers, STEAM / Summer Camp, directors)
- * renders as a bar but is NOT counted in the teaching total. Their
- * presence still bumps the "Total staff" sub-row.
+ * instructors, trainees, volunteers, directors) renders as a bar but is
+ * NOT counted in the teaching total. Their presence still bumps the
+ * "Total staff" sub-row.
  */
 
 // Operating hours per day-of-week — the half-hour grid spans these.
@@ -119,9 +119,10 @@ function parseShift(str) {
 const isTrainingRole = (role) => String(role || '').trim().toLowerCase() === 'training';
 
 const rolePriority = (role, subRole, isVolunteer, flexRole) => {
-  // Flex (STEAM / Summer Camp) sits in its own bottom tier — present and
-  // paid, but not part of the teaching workforce, so it never mixes into
-  // the in-centre instructor block.
+  // LEGACY tier. STEAM / Summer Camp were removed and nothing writes
+  // flexRole any more, but the 58 summer-2026 shifts that carry it still
+  // need their own row group on a historical day rather than being mixed
+  // into the in-centre instructor block.
   if (flexRole) return 4;
   if (isTrainingRole(role)) return 5;
   if (isVolunteer) return 3;
@@ -342,7 +343,7 @@ export default function CoverageGrid({ day, centerConfig }) {
                               : myPriority === 1 ? 'Online Instructors'
                               : myPriority === 2 ? 'In-Centre Instructors'
                               : myPriority === 3 ? 'Volunteers'
-                              : myPriority === 4 ? 'STEAM / Summer Camp'
+                              : myPriority === 4 ? 'STEAM / Summer Camp (retired)'
                               : 'Training';
               const colspan = 1 + slots.length;
               // Colour precedence: Sick > No-Show > Flex > Volunteer >
@@ -491,7 +492,7 @@ export default function CoverageGrid({ day, centerConfig }) {
       </div>
 
       <p className="mt-2 text-xs text-gray-400 italic">
-        "Instructors" counts every shift marked <b>Included in Ratio</b>. Anyone toggled out — hosts on admin time, online instructors, trainees, volunteers, STEAM and Summer Camp — still shows as a bar but is not counted.
+        "Instructors" counts every shift marked <b>Included in Ratio</b>. Anyone toggled out — hosts on admin time, online instructors, trainees and volunteers — still shows as a bar but is not counted.
       </p>
     </div>
   );

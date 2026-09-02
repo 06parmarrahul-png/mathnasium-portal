@@ -258,3 +258,28 @@ describe('reseedRatioValue', () => {
     expect(value).toBe(false);                           // stays where they put it
   });
 });
+
+// STEAM / Summer Camp were removed as a feature: the picker is gone and
+// nothing writes `flexRole` any more. 58 shift documents dated
+// 2026-07-13 to 2026-08-31 still carry it, and they must keep reading
+// exactly as they did — otherwise August payroll and past coverage views
+// change retroactively.
+describe('retired flex shifts still read correctly', () => {
+  it.each(['STEAM', 'Summer Camp'])('a historical %s shift stays out of ratio', (flexRole) => {
+    expect(defaultIncludedInRatio({ role: 'Instructor', flexRole })).toBe(false);
+    expect(countsInRatio({ role: 'Instructor', flexRole })).toBe(false);
+    expect(countsInRatio({ role: 'Lead', flexRole })).toBe(false);
+    expect(countsInRatio({ role: 'Manager', flexRole })).toBe(false);
+  });
+
+  // Editing an old flex shift writes an explicit boolean. If someone
+  // deliberately turns it on, that wins — same as any other shift.
+  it('an explicit toggle still overrides the legacy tag', () => {
+    expect(countsInRatio({ role: 'Instructor', flexRole: 'STEAM', [RATIO_FIELD]: true })).toBe(true);
+  });
+
+  it('a shift with no flexRole is unaffected', () => {
+    expect(countsInRatio({ role: 'Instructor', flexRole: null })).toBe(true);
+    expect(countsInRatio({ role: 'Instructor', flexRole: '' })).toBe(true);
+  });
+});

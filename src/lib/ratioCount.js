@@ -80,7 +80,11 @@ const inSet = (set, value) => {
  * field written.
  *
  * Order matters:
- *   1. STEAM / Summer Camp are flex work. Present and paid, never supply.
+ *   1. LEGACY: a `flexRole` (STEAM / Summer Camp). That feature was
+ *      removed and nothing writes the field any more, but 58 shift
+ *      documents from summer 2026 still carry it and must stay out of
+ *      the ratio on historical coverage views. Do not add a new writer —
+ *      make a centre role with "Counts toward the ratio" off instead.
  *   2. Training and Volunteer never fill a slot.
  *   3. A volunteer by per-centre membership, even on an untagged shift.
  *   4. Instructor / Lead / Manager are floor roles → counted.
@@ -98,7 +102,7 @@ const inSet = (set, value) => {
  */
 export function defaultIncludedInRatio(shift, opts = {}) {
   if (!shift) return false;
-  if (shift.flexRole) return false;
+  if (shift.flexRole) return false;                    // legacy — see above
   if (inSet(NEVER_IN_RATIO_ROLES, shift.role)) return false;
   if (opts.isVolunteer) return false;
   if (inSet(DEFAULT_IN_RATIO_ROLES, shift.role)) return true;

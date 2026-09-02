@@ -67,7 +67,6 @@ const STANDARD_ALIASES = [
 ];
 import { toast } from '../lib/notify';
 import { isFlexRole } from '../lib/subRoles';
-import { stateColorHex } from '../lib/centerConfig';
 
 // ───── Helpers ──────────────────────────────────────────────────────────
 function todayStr() {
@@ -418,9 +417,10 @@ function TodayTab({ centerId }) {
 
   const scheduledTodayNames = useMemo(() => {
     const set = new Set();
-    // From actual shift docs — but NOT flex (STEAM / Summer Camp) staff.
-    // They're present and paid, but aren't floor supply, so they must not
-    // show up as assignable instructors or be counted in the scheduler.
+    // From actual shift docs. The isFlexRole guard is LEGACY: STEAM /
+    // Summer Camp were removed and nothing writes flexRole any more, but
+    // the 58 summer-2026 shifts that carry it must stay out of the
+    // assignable pool when someone opens one of those past dates.
     for (const s of todayShifts) if (s.userName && !isFlexRole(s)) set.add(s.userName);
     // From fixed staff schedule for this day of week:
     const fixedMap = (centerConfig?.fixedStaff && Object.keys(centerConfig.fixedStaff).length > 0)
@@ -439,19 +439,6 @@ function TodayTab({ centerId }) {
     // SLOT_ELIGIBLE_ROLES is a module-level constant — safe to leave out.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [todayShifts, centerConfig, date, settings]);
-
-  // Flex (STEAM / Summer Camp) staff on today — excluded from the scheduler
-  // counts above, but surfaced as a chip so the owner still sees who's on
-  // flex work and doesn't wonder where they went.
-  const flexToday = useMemo(() => {
-    const seen = new Map();
-    for (const s of todayShifts) {
-      if (isFlexRole(s) && s.userName) {
-        seen.set(`${s.userName}|${s.flexRole}`, { name: s.userName, flexRole: s.flexRole });
-      }
-    }
-    return Array.from(seen.values());
-  }, [todayShifts]);
 
   // ── Lazy snapshot capture ────────────────────────────────────────────
   // When the viewed day is COMPLETE (all slots have ended) and no
@@ -553,24 +540,6 @@ function TodayTab({ centerId }) {
           and (when confident enough) a single actionable sentence. */}
       {dayAnalytics?.hasData && data?.totals?.all > 0 && (
         <DaySummary analytics={dayAnalytics} recommendation={recommendation} ratio={ratio} />
-      )}
-
-      {/* Flex chip — STEAM / Summer Camp staff are on today but not counted
-          as floor instructors. Shown so the owner can see who's on flex
-          work; they aren't offered in the slot "+ add" pickers. */}
-      {flexToday.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-1.5 text-xs text-amber-900 print:hidden">
-          <span className="font-semibold">On flex today (not counted):</span>
-          {flexToday.map(f => (
-            <span
-              key={`${f.name}|${f.flexRole}`}
-              className="inline-flex items-center rounded px-1.5 py-0.5 font-semibold text-white"
-              style={{ backgroundColor: stateColorHex(f.flexRole, centerConfig) }}
-            >
-              {f.name} · {f.flexRole}
-            </span>
-          ))}
-        </div>
       )}
 
       {/* Floating clipboard chip — appears when something is copied. Lets

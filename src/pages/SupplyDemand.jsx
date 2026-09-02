@@ -112,9 +112,10 @@ function timeToMin(t) {
 // building working this shift. Whether they COUNT toward the ratio is a
 // separate question, and it is no longer guessed from the role: it's the
 // shift's own `includedInRatio` field, read through countsInRatio().
-// The two are kept apart because flex (STEAM / Summer Camp) staff are
-// deliberately still LISTED in the expanded roster below while never
-// being counted — folding the two checks together would make them vanish.
+// The two are kept apart because the retired flex (STEAM / Summer Camp)
+// shifts are deliberately still LISTED in the expanded roster below while
+// never being counted — folding the two checks together would make them
+// vanish from the historical summer dates that still carry the tag.
 //
 // Excluded from presence: draft / cancelled shifts, and sickPay=true days.
 // The matchesSide check in computeSupply further narrows to shifts
@@ -144,9 +145,9 @@ function computeSupply(shifts, subRoleMatchers, dayWindow) {
   for (const s of shifts) {
     if (!isOnFloor(s)) continue;
     // One question, one answer, every screen: the shift's own
-    // includedInRatio field. This already covers STEAM / Summer Camp,
-    // trainees, volunteers, hosts and directors, so there is no separate
-    // flex check here any more.
+    // includedInRatio field. This already covers trainees, volunteers,
+    // hosts, directors and the retired flex shifts, so there is no
+    // separate flex check here any more.
     if (!countsInRatio(s)) continue;
     if (!matchesSide(s)) continue;
     const startMin = timeToMin(s.startTime);

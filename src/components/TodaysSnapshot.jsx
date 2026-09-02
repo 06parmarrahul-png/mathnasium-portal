@@ -130,8 +130,9 @@ export default function TodaysSnapshot() {
         sickPay:     !!s.sickPay,
         noShow:      !!s.noShow,
         isVolunteer: volunteerNames.has(name),
-        // Flex (STEAM / Summer Camp): present + paid, but not a floor
-        // instructor — kept off every headline instructor count below.
+        // LEGACY. Nothing writes flexRole any more (STEAM / Summer Camp
+        // were removed), but the 58 summer-2026 shifts that carry it are
+        // still tiered and coloured by it on the grid below.
         flexRole:    s.flexRole || null,
         // The shift's own answer to "does this count toward the ratio".
         // Passed straight through to CoverageGrid so the tile above and
@@ -169,15 +170,6 @@ export default function TodaysSnapshot() {
 
   const onlineCount = useMemo(() => (
     dayData.shiftEntries.filter(e => !e.flexRole && e.role === 'Online Instructor').length
-  ), [dayData]);
-
-  // Flex (STEAM / Summer Camp) people on today — surfaced as a banner so
-  // the owner sees who's doing flex work even though they're not in the
-  // instructor tiles above.
-  const flexToday = useMemo(() => (
-    dayData.shiftEntries
-      .filter(e => e.flexRole)
-      .map(e => ({ name: e.name, flexRole: e.flexRole }))
   ), [dayData]);
 
   const totalHours = useMemo(() => (
@@ -295,23 +287,6 @@ export default function TodaysSnapshot() {
                 </span>
                 <span className="text-sky-700"> — {volunteersToday.join(', ')}. </span>
                 <span className="text-sky-600/80 italic">Not counted in paid coverage.</span>
-              </div>
-            </div>
-          )}
-
-          {/* Flex banner — STEAM / Summer Camp people are present and paid
-              but aren't floor instructors, so they're excluded from the
-              instructor tiles and coverage numbers. Surfaced here so the
-              owner still sees who's on flex work today. */}
-          {flexToday.length > 0 && (
-            <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-xs">
-              <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-yellow-600" />
-              <div>
-                <span className="font-semibold text-amber-900">
-                  {flexToday.length} on flex {dayWord}
-                </span>
-                <span className="text-amber-800"> — {flexToday.map(f => `${f.name} (${f.flexRole})`).join(', ')}. </span>
-                <span className="text-amber-700/80 italic">Not counted as floor instructors.</span>
               </div>
             </div>
           )}

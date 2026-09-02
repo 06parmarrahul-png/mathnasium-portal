@@ -400,6 +400,9 @@ export function can(permissions, id) {
  */
 export function roleRatioDefault(roles, shiftLike) {
   const role = findRole(roles, shiftLike?.role);
+  // LEGACY: STEAM / Summer Camp were removed and nothing writes flexRole
+  // any more. Kept so an old flex shift can never be re-seeded into the
+  // ratio if someone opens it in the editor.
   if (shiftLike?.flexRole) return false;
   if (role && typeof role.countsInRatio === 'boolean') return role.countsInRatio;
   return defaultIncludedInRatio(shiftLike);

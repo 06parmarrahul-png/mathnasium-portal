@@ -230,23 +230,29 @@ export function sickStyleFor(shift) {
 }
 
 /**
- * Flex roles — a shift where the person is NOT working as a floor
- * instructor. Over the summer we run STEAM sessions and Summer Camp
- * alongside regular tutoring; whoever is running those is present and
- * PAID, but must NOT be counted as teaching supply (Supply & Demand,
- * Student Scheduler, coverage/instructor tiles). They still appear on
- * the schedule so everyone can see who's doing what — hence the loud,
- * distinct colours.
+ * LEGACY — flex roles (STEAM / Summer Camp). REMOVED as a feature.
  *
- * Stored on the shift as `flexRole: 'STEAM' | 'Summer Camp'` (unset =
- * a normal counted shift). Mutually exclusive — a shift is one or the
- * other, never both.
+ * Over the summer of 2026 the centre ran STEAM sessions and Summer Camp
+ * alongside regular tutoring, and whoever ran those was present and PAID
+ * but not teaching supply. That was expressed as `flexRole` on the shift,
+ * with its own picker on the Add/Edit Shift modals.
  *
- * Colours: STEAM = dark yellow (gold), Summer Camp = orange. Chosen to
- * be obviously different from each other and from the teaching sub-role
- * colours (lime / cyan / indigo) and Sick Pay (burgundy).
+ * The picker is gone. Custom centre roles replaced it: if the centre runs
+ * something like this again, someone creates a "STEAM" role in Manage
+ * Roles → Centre Roles with "Counts toward the ratio" switched off, and it
+ * behaves the same way without a bespoke field.
+ *
+ * What survives here is READ-ONLY support for the 58 shift documents that
+ * already carry the field — all of them dated 2026-07-13 to 2026-08-31,
+ * none today or later. They still have to bucket to STEAM hours in the
+ * August budget, stay out of the ratio on a July coverage view, and render
+ * with their own colour on an instructor's past schedule. Deleting this
+ * would quietly change numbers for weeks that are already closed.
+ *
+ * Nothing writes `flexRole` any more. Do not add a new caller — make a
+ * role instead.
  */
-export const FLEX_ROLES = ['STEAM', 'Summer Camp'];
+export const LEGACY_FLEX_ROLES = ['STEAM', 'Summer Camp'];
 
 export const FLEX_ROLE_STYLES = {
   'STEAM': {
@@ -259,7 +265,7 @@ export const FLEX_ROLE_STYLES = {
     blockText:    'text-white',
     blockSubText: 'text-yellow-100',
     stripe:       'bg-yellow-700',
-    hex:          '#a16207', // Tailwind yellow-700 — dark yellow, distinct from Manager gold
+    hex:          '#a16207',
   },
   'Summer Camp': {
     label:        'Summer Camp',
@@ -271,16 +277,16 @@ export const FLEX_ROLE_STYLES = {
     blockText:    'text-white',
     blockSubText: 'text-orange-100',
     stripe:       'bg-orange-500',
-    hex:          '#f97316', // Tailwind orange-500
+    hex:          '#f97316',
   },
 };
 
-/** True when the shift is a flex (STEAM / Summer Camp) assignment. */
+/** LEGACY. True when an OLD shift document carries a flex role. */
 export function isFlexRole(shift) {
-  return !!shift && FLEX_ROLES.includes(shift.flexRole);
+  return !!shift && LEGACY_FLEX_ROLES.includes(shift.flexRole);
 }
 
-/** Convenience: returns the flex style for a shift, else null. */
+/** LEGACY. Style for an old flex shift, else null. */
 export function flexStyleFor(shift) {
   if (!shift?.flexRole) return null;
   return FLEX_ROLE_STYLES[shift.flexRole] || null;

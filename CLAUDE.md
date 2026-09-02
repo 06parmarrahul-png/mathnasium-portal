@@ -114,6 +114,12 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 - **Month-at-a-time was removed.** A week is the maximum planning horizon.
 - **Over-staffing is cheap** — idle instructors do training modules. Err high.
 - **Trainees and volunteers never fill a ratio slot.**
+- **STEAM / Summer Camp (`flexRole`) was REMOVED.** The picker is gone and
+  nothing writes the field. Custom centre roles replaced it — make a role
+  with "Counts toward the ratio" off. What survives is read-only support for
+  58 shift docs dated 2026-07-13 → 2026-08-31 (none current), so August
+  payroll bucketing and past coverage don't change; every survivor is marked
+  `LEGACY`. **Don't add a new writer.**
 - Headcount precedence: `config.perDate['YYYY-MM-DD']` > `config.perDay['Monday']`
   > `minPerDay`/`maxPerDay`.
 

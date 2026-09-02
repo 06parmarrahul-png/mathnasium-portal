@@ -24,7 +24,7 @@ import {
   startOfMonth, endOfMonth, subMonths, addMonths,
 } from 'date-fns';
 import { generateSchedule, FIXED_SCHEDULES, DEFAULT_AUTO_HOST_NAMES } from '../lib/scheduler';
-import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, FLEX_ROLES, isFlexRole, subRoleShort, expandSubRoles, styleFor as subRoleStyleFor } from '../lib/subRoles';
+import { SUB_ROLES, SUB_ROLE_STYLES, STAFF_CAPABILITIES, isFlexRole, subRoleShort, expandSubRoles, styleFor as subRoleStyleFor } from '../lib/subRoles';
 import Avatar from '../components/Avatar';
 import { DEFAULT_CENTER_ID } from '../lib/centers';
 import {
@@ -103,13 +103,10 @@ const ROLE_OPTIONS = [
 ];
 
 // Roles that don't teach a specific level — the "Teaching Level" field is
-// hidden for them when scheduling (Host, Admin, Directors, Volunteer). Flex
-// shifts (STEAM / Summer Camp) also skip it. Instructor / Lead / Manager DO
-// teach or float the floor, so they keep the teaching level.
+// hidden for them when scheduling (Host, Admin, Directors, Volunteer).
+// Instructor / Lead / Manager DO teach or float the floor, so they keep it.
 const NON_TEACHING_ROLES = new Set(['Host', 'Admin', 'Center Director', 'Dir. of Education', 'Volunteer']);
-// A shift needs a teaching level unless it's a flex shift or a non-teaching role.
-function shiftNeedsTeachingLevel(role, flexRole) {
-  if (flexRole) return false;
+function shiftNeedsTeachingLevel(role) {
   return !NON_TEACHING_ROLES.has(role);
 }
 
@@ -309,42 +306,6 @@ function defaultShiftTimesFor(date, userLike, centerConfig) {
 // A flex shift means the person is present and PAID but is NOT working as
 // a floor instructor that shift, so they're excluded from Supply & Demand
 // and Student Scheduler instructor counts. Passing '' clears the flag.
-function FlexRolePicker({ value, onChange }) {
-  return (
-    <div>
-      <label className="block text-xs text-gray-500 mb-1">
-        Flex role <span className="text-gray-400">· not counted as a floor instructor</span>
-      </label>
-      <div className="flex gap-2">
-        {FLEX_ROLES.map(fr => {
-          const active = value === fr;
-          const activeCls = fr === 'STEAM'
-            ? 'bg-yellow-600 text-white border-yellow-600'
-            : 'bg-orange-500 text-white border-orange-500';
-          return (
-            <button
-              type="button"
-              key={fr}
-              onClick={() => onChange(active ? '' : fr)}
-              aria-pressed={active}
-              className={`flex-1 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors ${
-                active ? activeCls : 'bg-white text-gray-600 border-gray-300 hover:bg-gray-50'
-              }`}
-            >
-              {fr}
-            </button>
-          );
-        })}
-      </div>
-      {value && (
-        <p className="mt-1 text-xs text-gray-500">
-          Marked <b>{value}</b> — excluded from Supply &amp; Demand and Student Scheduler counts, still paid normally.
-        </p>
-      )}
-    </div>
-  );
-}
-
 /**
  * The role names this centre actually uses, for every "Role" dropdown on
  * this page. Comes from the centre's role registry (Manage Roles → Centre
@@ -383,9 +344,9 @@ function useRoleOptions(current) {
  * while you haven't touched it yourself, so picking a role never silently
  * overrides a deliberate choice.
  */
-function RatioToggle({ value, onChange, role, flexRole }) {
+function RatioToggle({ value, onChange, role }) {
   const { centreRoles } = useAuth();
-  const seeded = roleRatioDefault(centreRoles, { role, flexRole });
+  const seeded = roleRatioDefault(centreRoles, { role });
   const overridden = value !== seeded;
   return (
     <label
@@ -437,10 +398,8 @@ function useRatioToggle(initialShift) {
   // Re-seed from the centre's own default for the newly picked role —
   // so a role created with "Counts toward the ratio" ticked seeds ON —
   // but never once a human has moved the toggle themselves.
-  const reseed = (nextRole, nextFlex) => {
-    setIncluded(cur => (touched
-      ? cur
-      : roleRatioDefault(centreRoles, { role: nextRole, flexRole: nextFlex })));
+  const reseed = (nextRole) => {
+    setIncluded(cur => (touched ? cur : roleRatioDefault(centreRoles, { role: nextRole })));
   };
   return [included, setByUser, reseed];
 }
@@ -465,17 +424,13 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
     return 'Elementary';
   };
   const [subRole, setSubRole] = useState(guessSubRole(user));
-  // Flex role (STEAM / Summer Camp) — present + paid, but not counted as
-  // a floor instructor. Empty string = a normal counted shift.
-  const [flexRole, setFlexRole] = useState('');
   // Whether this shift counts toward the instructor:student ratio. Seeded
   // from the role, then owned by whoever touches the toggle.
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle({
     role: user?.instructorType || '',
   });
   const roleOptions = useRoleOptions(role);
-  const handleRoleChange = (next) => { setRole(next); reseedRatio(next, flexRole); };
-  const handleFlexChange = (next) => { setFlexRole(next); reseedRatio(role, next); };
+  const handleRoleChange = (next) => { setRole(next); reseedRatio(next); };
 
   const avail = availability.filter(a => a.userId === selectedUser && a.date === date);
   const availComment = avail.find(a => a.comment)?.comment || '';
@@ -509,8 +464,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
       endTime,
       role,
       shiftType,
-      subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '',
-      flexRole,
+      subRole: shiftNeedsTeachingLevel(role) ? subRole : '',
       [RATIO_FIELD]: includedInRatio,
       // New shifts land as drafts. The owner reviews them on the weekly
       // grid (drafts show striped) and clicks Publish when ready.
@@ -638,7 +592,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
           </div>
         </div>
 
-        {shiftNeedsTeachingLevel(role, flexRole) && (
+        {shiftNeedsTeachingLevel(role) && (
           <div>
             <label className="block text-xs text-gray-500 mb-1">
               Teaching Level <span className="text-red-500">*</span>
@@ -656,14 +610,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
           </div>
         )}
 
-        <FlexRolePicker value={flexRole} onChange={handleFlexChange} />
-
-        <RatioToggle
-          value={includedInRatio}
-          onChange={setIncludedInRatio}
-          role={role}
-          flexRole={flexRole}
-        />
+        <RatioToggle value={includedInRatio} onChange={setIncludedInRatio} role={role} />
 
         <button
           onClick={handleSubmit}
@@ -693,15 +640,11 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
   // that they were originally assigned, but excluded from payroll and
   // from the day's paid-hours total. Mutually exclusive with sickPay.
   const [noShow, setNoShow] = useState(!!shift.noShow);
-  // Flex role (STEAM / Summer Camp) — present + paid, not counted as a
-  // floor instructor. Empty string = a normal counted shift.
-  const [flexRole, setFlexRole] = useState(shift.flexRole || '');
   // Included in Ratio. An existing shift opens on whatever it was saved
   // with; a legacy shift with no stored value opens on the role default.
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle(shift);
   const roleOptions = useRoleOptions(role);
-  const handleRoleChange = (next) => { setRole(next); reseedRatio(next, flexRole); };
-  const handleFlexChange = (next) => { setFlexRole(next); reseedRatio(role, next); };
+  const handleRoleChange = (next) => { setRole(next); reseedRatio(next); };
 
   return (
     <Modal
@@ -743,7 +686,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
             </select>
           </div>
         </div>
-        {shiftNeedsTeachingLevel(role, flexRole) && (
+        {shiftNeedsTeachingLevel(role) && (
           <div>
             <label className="block text-xs text-gray-500 mb-1">
               Teaching Level <span className="text-red-500">*</span>
@@ -801,14 +744,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
           </div>
         </label>
 
-        <FlexRolePicker value={flexRole} onChange={handleFlexChange} />
-
-        <RatioToggle
-          value={includedInRatio}
-          onChange={setIncludedInRatio}
-          role={role}
-          flexRole={flexRole}
-        />
+        <RatioToggle value={includedInRatio} onChange={setIncludedInRatio} role={role} />
 
         {/* Draft state banner + Publish button — only shown when this shift
             is still in draft. Publishing flips status to 'live' so the
@@ -839,7 +775,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
             onClick={() => {
               const problem = shiftTimeProblem(startTime, endTime);
               if (problem) { toast.error(`${problem} A shift has to end after it starts.`); return; }
-              onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role, flexRole) ? subRole : '', sickPay, noShow, flexRole, [RATIO_FIELD]: includedInRatio });
+              onSave({ startTime, endTime, role, shiftType, subRole: shiftNeedsTeachingLevel(role) ? subRole : '', sickPay, noShow, [RATIO_FIELD]: includedInRatio });
             }}
             disabled={!(shiftHours({ startTime, endTime }) > 0)}
             className="flex-1 rounded-lg bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-40">
@@ -1263,7 +1199,7 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
   // posted rather than left to whoever happens to pick it up.
   const [includedInRatio, setIncludedInRatio, reseedRatio] = useRatioToggle({ role: '' });
   const roleOptions = useRoleOptions(role);
-  const handleRoleChange = (next) => { setRole(next); reseedRatio(next, ''); };
+  const handleRoleChange = (next) => { setRole(next); reseedRatio(next); };
 
   const handleSubmit = async () => {
     const problem = shiftTimeProblem(startTime, endTime);
@@ -1316,12 +1252,7 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
             </div>
           )}
         </div>
-        <RatioToggle
-          value={includedInRatio}
-          onChange={setIncludedInRatio}
-          role={role}
-          flexRole=""
-        />
+        <RatioToggle value={includedInRatio} onChange={setIncludedInRatio} role={role} />
         <button onClick={handleSubmit}
           className="w-full rounded-lg bg-orange-500 py-2.5 text-sm font-semibold text-white hover:bg-orange-600 transition-colors mt-1">
           Post Open Shift
@@ -2812,18 +2743,23 @@ export default function Admin() {
     } catch { /* notify optional */ }
   };
 
-  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay, noShow, flexRole, ...rest }) => {
+  const handleSaveEditShift = async ({ startTime, endTime, role, shiftType, subRole, sickPay, noShow, ...rest }) => {
     await updateDoc(doc(db, 'shifts', editShiftModal.id), {
       startTime, endTime, role, shiftType, subRole,
       sickPay: !!sickPay,
       noShow:  !!noShow,
-      // '' when cleared — normalise to null so the field is queryable
-      // and doesn't linger as an empty string on the doc.
-      flexRole: flexRole || null,
+      // `flexRole` is deliberately NOT in this payload. STEAM / Summer
+      // Camp were removed, so the modal no longer sends one — and writing
+      // `flexRole: undefined || null` would have quietly erased the tag
+      // from one of the 58 historical summer shifts the moment anyone
+      // opened and saved it. Leave whatever is stored alone.
+      //
       // Always written as a real boolean, so an edited shift stops
       // relying on the legacy role-derived fallback from that point on.
+      // The fallback reads the stored shift, so an old flex shift still
+      // resolves correctly if the field were ever missing.
       [RATIO_FIELD]: rest[RATIO_FIELD] === undefined
-        ? countsInRatio({ role, flexRole })
+        ? countsInRatio({ ...editShiftModal, role })
         : !!rest[RATIO_FIELD],
     });
     setEditShiftModal(null);
@@ -5676,6 +5612,8 @@ export default function Admin() {
                                 // Flex roles (STEAM / Summer Camp) and shift
                                 // states all read from the centre's editable
                                 // Appearance colours (Super Admin → Appearance).
+                                // LEGACY: only the 58 summer-2026 flex shifts still carry
+                                // this. Nothing writes it any more — see subRoles.js.
                                 const flexHex     = isFlexRole(s) ? stateColorHex(s.flexRole, centerConfig) : null;
                                 const bg = isSick      ? stateColorHex('Sick Pay', centerConfig)
                                         : isNoShow    ? stateColorHex('No-Show', centerConfig)

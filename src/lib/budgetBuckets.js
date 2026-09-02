@@ -66,6 +66,12 @@ function toMin(t) {
 // Work whose bucket is fixed regardless of clock time. Returns a bucket key,
 // or null when the shift should be time-split (in-centre floor staff).
 export function wholeShiftBucket(s) {
+  // LEGACY. The STEAM / Summer Camp shift tag was removed — nothing writes
+  // `flexRole` any more — but the 58 summer-2026 shifts that carry it must
+  // still bucket the same way, or the August budget and payroll would
+  // change retroactively. The `steam` / `summerCamp` ALLOCATIONS below are
+  // a separate question (planned hours, not shift tagging) and are left
+  // alone deliberately: changing them moves every day's budget total.
   if (s.flexRole === 'STEAM') return 'steam';
   if (s.flexRole === 'Summer Camp') return 'summerCamp';
   const role = s.role || 'Instructor';

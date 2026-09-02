@@ -180,6 +180,11 @@ export const ASSIGNMENT_COLOR_KEYS = SHIFT_ASSIGNMENTS;
 // STEAM defaults to a darker yellow than Manager (#ca8a04) so the two are
 // distinguishable out of the box; owners can still repaint either.
 export const DEFAULT_STATE_COLORS = {
+  // LEGACY. STEAM / Summer Camp were removed as a feature — nothing writes
+  // `flexRole` any more. These two stay so the 58 shift documents dated
+  // 2026-07-13 to 2026-08-31 that still carry it keep their colour on
+  // historical views. They are not in STATE_COLOR_KEYS, so the Appearance
+  // editor no longer offers them.
   'STEAM':       '#a16207', // yellow-700 — dark yellow, distinct from Manager gold
   'Summer Camp': '#f97316', // orange-500
   'Volunteer':   '#0284c7', // sky-600
@@ -192,7 +197,11 @@ export const DEFAULT_STATE_COLORS = {
   'No-Show':     '#374151', // gray-700 — slate
 };
 
-export const STATE_COLOR_KEYS = Object.keys(DEFAULT_STATE_COLORS);
+// What the Appearance editor offers. Deliberately NOT Object.keys() any
+// more: STEAM and Summer Camp keep their entries above so the 58 historical
+// summer-2026 shifts still render in their own colours, but the feature is
+// gone and there is nothing new to paint, so they aren't offered here.
+export const STATE_COLOR_KEYS = ['Volunteer', 'Training', 'Sick Pay', 'No-Show'];
 
 /**
  * Resolve a state/flex color: center override first, then the built-in

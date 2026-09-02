@@ -658,3 +658,24 @@ describe('Owner is not a centre role', () => {
     }
   });
 });
+
+describe('the retired flex tag still beats a role default', () => {
+  // A centre could create a role called "STEAM" that counts in ratio.
+  // A HISTORICAL shift carrying the old flexRole tag must still not
+  // count, or past coverage changes under them.
+  it('an old flex shift stays out even when its role counts', () => {
+    const roles = [...ROLES, { id: 'steam', name: 'STEAM', permissions: [], countsInRatio: true }];
+    expect(roleRatioDefault(roles, { role: 'STEAM' })).toBe(true);
+    expect(roleRatioDefault(roles, { role: 'STEAM', flexRole: 'STEAM' })).toBe(false);
+  });
+
+  // The replacement path the removal assumes: re-create it as a role.
+  it('a replacement STEAM role behaves the way the flex tag used to', () => {
+    const roles = [...ROLES, { id: 'steam', name: 'STEAM', permissions: [], countsInRatio: false }];
+    expect(roleRatioDefault(roles, { role: 'STEAM' })).toBe(false);
+    // ...and grants nothing extra, so it is purely a scheduling label.
+    const p = resolvePermissions({ platformRole: 'instructor', instructorType: 'STEAM', roles });
+    const base = resolvePermissions({ platformRole: 'instructor', roles: [] });
+    expect([...p].sort()).toEqual([...base].sort());
+  });
+});
