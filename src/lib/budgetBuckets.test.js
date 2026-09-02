@@ -280,3 +280,57 @@ describe('shift bucketing is untouched', () => {
     expect(bucketHoursForShift(shift({}), 0, WINDOW)).toEqual({});
   });
 });
+
+// A day the centre is shut must cost nothing. Two independent reasons a
+// day can be shut, and both have to work — a budget nobody could spend
+// makes the period read wildly under target for something nobody can act
+// on, and it was the thing most likely to creep back in silently.
+describe('closed days are never budgeted', () => {
+  const DAYS = datesBetween('2026-08-26', '2026-09-10');   // contains Labour Day
+
+  it('a statutory holiday drops out entirely', () => {
+    // 2026-09-07 is Labour Day, a Monday, worth 48h.
+    const open = budgetForDates(DAYS, MODEL);
+    const shut = budgetForDates(DAYS, MODEL, { isClosed: d => d === '2026-09-07' });
+    expect(open.total - shut.total).toBe(48);
+    expect(open.openDays - shut.openDays).toBe(1);
+    expect(shut.closedDays).toBe(1);
+  });
+
+  it('and drops out of the per-bucket split, not just the headline', () => {
+    const open = budgetForDates(DAYS, MODEL);
+    const shut = budgetForDates(DAYS, MODEL, { isClosed: d => d === '2026-09-07' });
+    expect(open.byCat.instructional - shut.byCat.instructional).toBe(31);
+    expect(open.byCat.host - shut.byCat.host).toBe(4);
+  });
+
+  it('several closures in one period all drop out', () => {
+    const shut = budgetForDates(DAYS, MODEL, {
+      isClosed: d => ['2026-09-07', '2026-09-01', '2026-08-29'].includes(d),
+    });
+    const open = budgetForDates(DAYS, MODEL);
+    // Mon 48 + Tue 39 + Sat 35.5
+    expect(open.total - shut.total).toBe(48 + 39 + 35.5);
+    expect(shut.closedDays).toBe(3);
+  });
+
+  // The other reason a day is shut: the centre never opens that weekday.
+  // The caller composes both into one isClosed, which is what the Staffing
+  // Budget page does — without it a centre that dropped Mondays but left
+  // hours in the Monday row would still be billed for them.
+  it('a weekday the centre never opens is never budgeted', () => {
+    const closedMondays = (d) => DOW_NAMES[new Date(`${d}T12:00:00`).getDay()] === 'Monday';
+    const open = budgetForDates(DAYS, MODEL);
+    const shut = budgetForDates(DAYS, MODEL, { isClosed: closedMondays });
+    const mondays = DAYS.filter(closedMondays).length;
+    expect(mondays).toBeGreaterThan(0);
+    expect(open.total - shut.total).toBe(mondays * 48);
+  });
+
+  it('closing every day costs nothing at all', () => {
+    const shut = budgetForDates(DAYS, MODEL, { isClosed: () => true });
+    expect(shut.total).toBe(0);
+    expect(shut.openDays).toBe(0);
+    for (const k of BUCKET_KEYS) expect(shut.byCat[k]).toBe(0);
+  });
+});

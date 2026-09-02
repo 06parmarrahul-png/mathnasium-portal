@@ -18,10 +18,15 @@ import {
  * Staffing Budget — Budget vs Actual, aligned to the centre's PAYROLL PERIODS
  * (the 11th–25th and the 26th–10th), straight off Ratio's shift data.
  *
- * Hours split by role, each vs an editable target (per-role, seeded from the
- * July 2026 model). Visual bars + numbers, plus a per-day over/under view and
- * a multi-period trend. Salaried staff + volunteers are excluded to match
- * Manage Payroll. Targets live on centerConfig.staffingBudget.
+ * Hours split by role, each vs its budget. Visual bars + numbers, plus a
+ * per-day over/under view. Salaried staff + volunteers are excluded to match
+ * Manage Payroll.
+ *
+ * The budget comes from the centre's DAY MODEL
+ * (centerConfig.staffingBudget.weekdayModel), edited here under "Default day
+ * budget" — a pay period's target is the sum of its real days. Individual
+ * periods can still carry their own saved override under
+ * staffingBudget.byPeriod.
  */
 
 // Paid hours — matches Manage Payroll (no-show = 0, payHoursOverride wins).
@@ -253,8 +258,8 @@ export default function StaffingBudget() {
 
   // `targetsFor(periodKey)` — resolve a period's
   // budget through the saved → legacy → default chain described up top.
-  // Exposed as functions (not just this period's value) so the trend chart
-  // can compare each of its 6 bars to that bar's own budget.
+  // Exposed as a function (not just this period's value) so a caller can
+  // ask about a period other than the one on screen.
   const targetsFor = useMemo(() => {
     const byPeriod = budgetCfg.byPeriod || {};
     return (key) => {
@@ -289,11 +294,28 @@ export default function StaffingBudget() {
   // What the day model says a period costs: the sum of its real days, with
   // closures dropped. No 14-day-cycle arithmetic, no extra-day top-up —
   // a 15- or 16-day period simply has more days in it.
-  const modelBudgetFor = useMemo(() => (fromStr, toStr, m) => budgetForDates(
-    datesBetween(fromStr, toStr),
-    m || savedModel,
-    { isClosed: (d) => !!holidayFor(d, centerConfig) },
-  ), [savedModel, centerConfig]);
+  // A day costs nothing if the centre is SHUT — for either reason:
+  //   • a configured holiday (Labour Day, Christmas, a one-off closure), or
+  //   • a weekday the centre never opens (operatingDays).
+  //
+  // Both matter. Without the holiday check a closed Monday would still be
+  // budgeted 48h nobody could spend, and the period would read wildly under
+  // budget for something nobody can act on. Without the operatingDays check
+  // a centre that shut Mondays but left hours in the Monday row would have
+  // them counted in the period total while the day rows showed 0 — the
+  // headline and the bars underneath it disagreeing again.
+  const modelBudgetFor = useMemo(() => {
+    const open = (Array.isArray(centerConfig?.operatingDays) && centerConfig.operatingDays.length)
+      ? centerConfig.operatingDays
+      : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const isClosed = (d) => (
+      !!holidayFor(d, centerConfig)
+      || !open.includes(DOW_NAMES[new Date(`${d}T12:00:00`).getDay()])
+    );
+    return (fromStr, toStr, m) => budgetForDates(
+      datesBetween(fromStr, toStr), m || savedModel, { isClosed },
+    );
+  }, [savedModel, centerConfig]);
 
   // For a period with no saved targets, the boxes show the DERIVED budget —
   // what the day model says this period costs. Showing DEFAULT_TARGETS
@@ -469,6 +491,18 @@ export default function StaffingBudget() {
   }, [hasOverride, modelBudgetFor, loStr, hiStr, targets, extra, closures]);
   const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (effTargets[c.key] || 0), 0), [effTargets]);
 
+  // Which buckets to SHOW. Retired work (STEAM, Summer Camp) is hidden
+  // unless this period actually has hours or a budget against it, so a
+  // current fortnight isn't cluttered with 0 / 0 rows for work the centre
+  // stopped doing — while July and August still report theirs in full.
+  // Only rendering filters; every sum above still walks all buckets, or
+  // historical totals would quietly lose those hours.
+  const visibleCategories = useMemo(() => CATEGORIES.filter(c => (
+    !isRetiredBucket(c.key)
+    || (period.byCat[c.key] || 0) > 0.05
+    || (effTargets[c.key] || 0) > 0.05
+  )), [period, effTargets]);
+
   const catScale = useMemo(
     () => Math.max(1, ...CATEGORIES.map(c => Math.max(period.byCat[c.key], effTargets[c.key] || 0))) * 1.1,
     [period, effTargets],
@@ -514,62 +548,7 @@ export default function StaffingBudget() {
     [perDay],
   );
 
-  // Total budget for ANY period — that period's saved targets plus its own
-  // extra-day top-up. Used by the trend so each bar compares to a budget
-  // built for its own length, not this period's.
-  const periodBudgetTotal = useMemo(() => (st) => {
-    const key = format(st, 'yyyy-MM-dd');
-    const en0 = periodEndFor(st);
-    // Same fork as effTargets: derived from the day model unless that
-    // period saved its own targets. Without this the trend would price
-    // every bar off DEFAULT_TARGETS and disagree with the headline.
-    if (!(budgetCfg.byPeriod || {})[key] && key > LEGACY_TARGETS_THROUGH) {
-      return modelBudgetFor(key, format(en0, 'yyyy-MM-dd')).total;
-    }
-    const t = targetsFor(key);
-    const base = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
-    const en = periodEndFor(st);
-    const len = Math.round((en - st) / 86400000) + 1;
-    const saved = extraDaysFor(key);
-    let topUp = 0;
-    for (let i = 0; i < Math.max(0, len - 14); i++) {
-      const wd = DOW_NAMES[addDays(st, i).getDay()];
-      const src = saved[wd] || WEEKDAY_DEFAULTS[wd] || {};
-      for (const c of CATEGORIES) topUp += Number(src[c.key]) || 0;
-    }
-    // Deduct closures for THIS period too, or a period containing a holiday
-    // shows a full-height budget line the centre never had a chance to spend
-    // — the trend would read as a slump rather than a shorter fortnight.
-    let closed = 0;
-    for (let i = 0; i < len; i++) {
-      const d = addDays(st, i);
-      const wd = DOW_NAMES[d.getDay()];
-      if (!opDays.includes(wd)) continue;
-      if (!holidayFor(format(d, 'yyyy-MM-dd'), centerConfig)) continue;
-      closed += weekdayBudgetTotal(wd, savedModel);
-    }
-    return Math.max(0, base + topUp - closed);
-  }, [targetsFor, extraDaysFor, opDays, centerConfig, budgetCfg, modelBudgetFor, savedModel]);
 
-  const trend = useMemo(() => {
-    const starts = [];
-    let s = periodStart;
-    for (let i = 0; i < 6; i++) { starts.unshift(s); s = prevPeriodStart(s); }
-    return starts.map(st => {
-      const key = format(st, 'yyyy-MM-dd');
-      const en = periodEndFor(st);
-      const a = aggregate(shifts, key, format(en, 'yyyy-MM-dd'), excludedNames, windowFor);
-      // Each bar is measured against ITS OWN period's budget — a single
-      // shared line would be wrong now that targets vary period to period,
-      // and each period tops up for its own extra day(s).
-      const budget = periodBudgetTotal(st);
-      return { label: format(st, 'MMM d'), total: a.total, instructional: a.byCat.instructional, budget };
-    });
-  }, [shifts, periodStart, excludedNames, windowFor, periodBudgetTotal]);
-  const trendMax = useMemo(
-    () => Math.max(1, ...trend.map(t => Math.max(t.total, t.budget || 0))) * 1.08,
-    [trend],
-  );
 
   // Normalised so '30' (freshly typed) and 30 (loaded from Firestore) don't
   // read as a change.
@@ -705,7 +684,7 @@ export default function StaffingBudget() {
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
         <h3 className="mb-4 text-sm font-bold text-gray-900">Hours by category vs budget</h3>
         <div className="space-y-3.5">
-          {CATEGORIES.map(c => {
+          {visibleCategories.map(c => {
             const actual = period.byCat[c.key];
             const target = effTargets[c.key] || 0;   // base + extra-day top-up
             const over = actual > target;
@@ -809,44 +788,6 @@ export default function StaffingBudget() {
               </div>
             );
           })}
-        </div>
-      </div>
-
-      {/* Trend — 6 periods */}
-      <div className="mt-5 rounded-2xl border bg-white p-5 shadow-sm">
-        <h3 className="mb-3 text-sm font-bold text-gray-900">Trend — last 6 pay periods</h3>
-        <div className="flex items-end justify-between gap-2" style={{ height: 140 }}>
-          {trend.map((t, i) => {
-            const totalH = (t.total / trendMax) * 100;
-            const instrH = (t.instructional / trendMax) * 100;
-            const budgetH = ((t.budget || 0) / trendMax) * 100;
-            const over = (t.budget || 0) > 0 && t.total > t.budget;
-            return (
-              <div key={i} className="flex flex-1 flex-col items-center justify-end gap-1" style={{ height: '100%' }}>
-                <span className={`text-[10px] font-mono ${over ? 'text-red-600 font-bold' : 'text-gray-500'}`}>{round1(t.total)}</span>
-                {/* Column is full-height so the budget tick can sit at its own
-                    level independent of how tall the bar is. */}
-                <div className="relative w-full max-w-[46px] flex-1">
-                  <div className="absolute bottom-0 w-full rounded-t bg-gray-100" style={{ height: `${totalH}%` }}
-                    title={`Total ${round1(t.total)}h · Instr ${round1(t.instructional)}h · Budget ${round1(t.budget || 0)}h`}>
-                    <div className="absolute bottom-0 w-full rounded-t bg-emerald-400" style={{ height: `${(instrH / Math.max(totalH, 0.001)) * 100}%` }} />
-                    <div className={`absolute inset-x-0 top-0 h-1 rounded-t ${over ? 'bg-red-500' : 'bg-gray-300'}`} />
-                  </div>
-                  {/* Per-period budget tick — this period's own target. */}
-                  {(t.budget || 0) > 0 && (
-                    <div className="pointer-events-none absolute -inset-x-1 border-t border-dashed border-amber-400"
-                      style={{ bottom: `${Math.min(100, budgetH)}%` }} title={`Budget ${round1(t.budget)}h`} />
-                  )}
-                </div>
-                <span className="text-[10px] text-gray-400">{t.label}</span>
-              </div>
-            );
-          })}
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-gray-500">
-          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-emerald-400" /> Instructional</span>
-          <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-sm bg-gray-200" /> Other</span>
-          <span className="flex items-center gap-1"><span className="h-2 w-3 border-t border-dashed border-amber-400" /> That period's own budget</span>
         </div>
       </div>
 
@@ -1053,7 +994,9 @@ export default function StaffingBudget() {
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  {CATEGORIES.map(c => (
+                  {CATEGORIES
+                    .filter(c => !isRetiredBucket(c.key) || Number(d.cats[c.key]) > 0)
+                    .map(c => (
                     <label key={c.key} className="block">
                       <span className="mb-1 block text-[11px] font-medium" style={{ color: c.color }}>{c.label}</span>
                       <input type="number" step="0.5" min="0"
