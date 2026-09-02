@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { boardBudget, slotHours, slotBuckets, roleForSlot, BOARD_BUCKETS } from './board-budget.js';
-import { WEEKDAY_DEFAULTS } from './budgetBuckets.js';
+import { WEEKDAY_DEFAULTS, resolveWeekdayModel } from './budgetBuckets.js';
 
 const WED_WINDOW = { start: '15:00', end: '19:00' };
 
@@ -32,11 +32,25 @@ describe('slotHours', () => {
 });
 
 describe('boardBudget — the day allotment', () => {
-  it('reads the real Wednesday budget: 52h total, 44h the board can spend', () => {
+  // Was 52h / 44h / 8h when the day model still carried 4h of STEAM.
+  // STEAM was retired, so the day is 4h lighter and the only work
+  // scheduled elsewhere is Online.
+  it('reads the real Wednesday budget: 48h total, 44h the board can spend', () => {
     const b = boardBudget({ dayName: 'Wednesday', instrWindow: WED_WINDOW, slots: [] });
-    expect(b.fullDay).toBe(52);            // 31 + 4 + 4 + 4 + 4 + 5
+    expect(b.fullDay).toBe(48);            // 31 + 4 + 4 + 4 + 5
     expect(b.boardAllotted).toBe(44);      // instructional 31 + host 4 + adminAssistant 4 + adminHours 5
-    expect(b.elsewhere).toBe(8);           // online 4 + steam 4
+    expect(b.elsewhere).toBe(4);           // online 4
+  });
+
+  // The board must follow the centre's OWN model, not the built-in
+  // default — that is the whole point of making the budget editable.
+  it('honours a centre\'s edited day model', () => {
+    const weekdayModel = resolveWeekdayModel({
+      staffingBudget: { weekdayModel: { Wednesday: { instructional: 40, host: 4, adminHours: 5 } } },
+    });
+    const b = boardBudget({ dayName: 'Wednesday', instrWindow: WED_WINDOW, slots: [] }, { weekdayModel });
+    expect(b.fullDay).toBe(49);
+    expect(b.elsewhere).toBe(0);           // this centre budgets no Online
   });
 
   it('has no admin-assistant allotment on Saturday, matching the real budget', () => {

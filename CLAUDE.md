@@ -179,13 +179,41 @@ Rules tests run against the emulator: `npm run test:rules` (needs Java).
 
 ### Budget
 
-`WEEKDAY_DEFAULTS` in `budgetBuckets.js` is the per-DAY model: Mon/Wed 52h,
-Tue/Thu 43h, Fri/Sat 39.5h, split across instructional / online / steam / host /
-adminAssistant / adminHours. `bucketHoursForShift` splits a floor shift at the
-instructional window (inside → Instructional, outside → Admin Hours); Host and
-Admin shifts are whole-shift buckets. The Staffing Board measures against
-`instructional + host + adminAssistant + adminHours` only — Online and STEAM are
-budgeted the same day but scheduled elsewhere.
+**The day model is the source of truth for the whole budget.** It lives at
+`centerConfig.staffingBudget.weekdayModel`, is edited from Staffing Budget →
+*Default day budget* (needs `centre.settings`), and falls back to
+`WEEKDAY_DEFAULTS` in `budgetBuckets.js`. Always read it via
+`resolveWeekdayModel(centerConfig)` and pass it down — `weekdayBudgetTotal(day,
+model)` takes it as a second argument.
+
+Defaults after STEAM was retired: Mon/Wed 48h, Tue/Thu 39h, Fri 36.5h, Sat
+35.5h → **492h per fortnight**.
+
+Everything derives from it:
+- Manage Staff Schedule — each day header's denominator.
+- Staffing Board — the same, plus which desks are budgeted.
+- Staffing Budget — a pay period's target is `budgetForDates()`, the sum of the
+  period's real days, holidays dropped. No 14-day-cycle arithmetic and no
+  extra-day top-up: a 15- or 16-day period simply has more days in it.
+
+**The bug this replaced:** the day model was a hardcoded constant only Manage
+Schedule read, while the Staffing Budget page edited a separate per-period
+number. Editing the budget moved one page and not the other, and the two had
+drifted to 538h vs 688h for the same fortnight.
+
+`staffingBudget.byPeriod['<period start>']` still holds **per-period
+overrides**, and a period on/before `LEGACY_TARGETS_THROUGH` (2026-07-11) uses
+the old global set. Those are the only cases where the two pages can differ;
+the page labels which is in play and offers a one-click reset to the model.
+Don't remove them — reviewed fortnights must keep the line they were judged on.
+
+`bucketHoursForShift` splits a floor shift at the instructional window (inside →
+Instructional, outside → Admin Hours); Host and Admin shifts are whole-shift
+buckets. The Staffing Board measures against `instructional + host +
+adminAssistant + adminHours` only — Online is budgeted the same day but
+scheduled elsewhere. The `steam` / `summerCamp` buckets are **retired**
+(`ACTIVE_BUCKETS` excludes them) but the keys survive so past periods and the 58
+historical flex shifts still report.
 
 ## Inspecting live data (read-only)
 

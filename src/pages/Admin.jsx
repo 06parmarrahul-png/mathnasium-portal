@@ -46,7 +46,7 @@ import {
   notifyOpenShift, notifySchedulePosted, notifyTimeOffDecision,
 } from '../lib/emailService';
 import { attachEmails } from '../lib/userContact';
-import { weekdayBudgetTotal } from '../lib/budgetBuckets';
+import { weekdayBudgetTotal, resolveWeekdayModel } from '../lib/budgetBuckets';
 import { isPaidStatHoliday, statPayForHoliday, minusDays } from '../lib/statPay';
 import {
   resolveUserForCenter,
@@ -2078,6 +2078,12 @@ function StatPayTab({ holidays, rows }) {
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, canSeeCenterSettings, canManageOperations } = useAuth();
+  // The centre's staffing day model. Manage Staff Schedule's day headers
+  // used to divide by a HARDCODED constant while the Staffing Budget page
+  // edited a completely separate per-period number — so editing the budget
+  // changed one page and not the other, and the two had drifted to 538h vs
+  // 688h for the same fortnight. Both now read this.
+  const weekdayModel = useMemo(() => resolveWeekdayModel(centerConfig), [centerConfig]);
   const [users, setUsers]               = useState([]);
   const [availability, setAvailability] = useState([]);
   const [shifts, setShifts]             = useState([]);
@@ -5353,7 +5359,7 @@ export default function Admin() {
                       // Denominator = what this weekday is budgeted for, so
                       // the header reads as a fraction of plan rather than a
                       // bare number with no reference point.
-                      const dayBudget = weekdayBudgetTotal(format(d, 'EEEE'));
+                      const dayBudget = weekdayBudgetTotal(format(d, 'EEEE'), weekdayModel);
                       const overBudget = dayBudget > 0 && dayTotalHrs > dayBudget;
                       const daySick = Math.round((sickByDate.get(ds) || 0) * 10) / 10;
                       const headerBg = holiday
@@ -5715,7 +5721,7 @@ export default function Admin() {
                         .reduce((sum, s) => sum + shiftHours(s), 0);
                       const hrsDisplay = isNaN(hrs) ? 0 : Math.round(hrs * 10) / 10;
                       const footSick = Math.round((sickByDate.get(ds) || 0) * 10) / 10;
-                      const footBudget = weekdayBudgetTotal(format(d, 'EEEE'));
+                      const footBudget = weekdayBudgetTotal(format(d, 'EEEE'), weekdayModel);
                       return (
                         <td key={ds} className="text-center py-2 text-xs text-gray-500">
                           {count > 0 ? (

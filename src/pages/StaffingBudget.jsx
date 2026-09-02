@@ -5,7 +5,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { isTrainingType } from '../lib/staffTypes';
 import { resolveInstructionalHours, holidayFor } from '../lib/centerConfig';
-import { BUDGET_BUCKETS, WEEKDAY_DEFAULTS, weekdayBudgetTotal, bucketHoursForShift } from '../lib/budgetBuckets';
+import {
+  BUDGET_BUCKETS, ACTIVE_BUCKETS, isRetiredBucket, WEEKDAY_DEFAULTS, weekdayBudgetTotal,
+  bucketHoursForShift, resolveWeekdayModel, serializeWeekdayModel, budgetForDates, datesBetween,
+} from '../lib/budgetBuckets';
 import { format, addDays, subDays } from 'date-fns';
 import {
   Wallet, ChevronLeft, ChevronRight, ChevronDown, Save, Check, Users, CalendarDays, RotateCcw,
@@ -175,7 +178,12 @@ function HBar({ value, target, scale, over }) {
 }
 
 export default function StaffingBudget() {
-  const { activeCenterId, centerConfig, canSeeAdminPanel, activeCenterName } = useAuth();
+  const { activeCenterId, centerConfig, canSeeAdminPanel, canSeeCenterSettings, activeCenterName } = useAuth();
+  // Viewing is admin-and-above; EDITING the budget is Centre Director,
+  // Dir. of Education, Owner, Admin Assistant and Enterprise — i.e. the
+  // 'centre.settings' permission. A plain Admin can read the page but not
+  // change what the centre is measured against.
+  const canEditBudget = canSeeCenterSettings;
   const [shifts, setShifts] = useState([]);
   const [users, setUsers] = useState([]);
   const [showTargets, setShowTargets] = useState(false);
@@ -219,6 +227,30 @@ export default function StaffingBudget() {
 
   const budgetCfg = useMemo(() => centerConfig?.staffingBudget || {}, [centerConfig]);
 
+  // ── The centre's day model — the source of truth for the whole budget ──
+  //
+  // What each weekday is worth, per bucket. Manage Staff Schedule divides
+  // its day headers by these numbers, the Staffing Board measures against
+  // them, and a pay period's target is their sum over the period's real
+  // days. Editing it here therefore moves every page at once.
+  //
+  // That is the fix for the bug this page had: the day model used to be a
+  // hardcoded constant nobody could edit, while THIS page edited a separate
+  // per-period number. Saving a budget by pay period changed the headline
+  // below and nothing else, and the two had drifted to 538h vs 688h.
+  const savedModel = useMemo(() => resolveWeekdayModel(centerConfig), [centerConfig]);
+  const [model, setModel] = useState(savedModel);
+  useEffect(() => { setModel(savedModel); }, [savedModel]);
+  const [showModel, setShowModel] = useState(false);
+  const setModelCat = (weekday, key, value) => setModel(prev => ({
+    ...prev,
+    [weekday]: { ...(prev[weekday] || {}), [key]: value },
+  }));
+  const modelDirty = useMemo(
+    () => JSON.stringify(serializeWeekdayModel(model)) !== JSON.stringify(serializeWeekdayModel(savedModel)),
+    [model, savedModel],
+  );
+
   // `targetsFor(periodKey)` — resolve a period's
   // budget through the saved → legacy → default chain described up top.
   // Exposed as functions (not just this period's value) so the trend chart
@@ -244,7 +276,36 @@ export default function StaffingBudget() {
     ? 'saved'
     : (loStr <= LEGACY_TARGETS_THROUGH ? 'legacy' : 'default');
 
-  const savedTargets = useMemo(() => targetsFor(loStr), [targetsFor, loStr]);
+  // Does this period carry its own saved override, or is it derived from
+  // the day model? An override is honoured so already-reviewed periods keep
+  // the exact line they were measured against — but it is the ONLY way the
+  // two pages can still differ, so the UI says so plainly and offers a
+  // one-click reset rather than letting it drift silently.
+  // Legacy periods count as overridden as well. They were measured against
+  // the centre's old single global target set, and re-pricing them off the
+  // day model would move budget lines on fortnights already reviewed.
+  const hasOverride = !!(budgetCfg.byPeriod || {})[loStr] || loStr <= LEGACY_TARGETS_THROUGH;
+
+  // What the day model says a period costs: the sum of its real days, with
+  // closures dropped. No 14-day-cycle arithmetic, no extra-day top-up —
+  // a 15- or 16-day period simply has more days in it.
+  const modelBudgetFor = useMemo(() => (fromStr, toStr, m) => budgetForDates(
+    datesBetween(fromStr, toStr),
+    m || savedModel,
+    { isClosed: (d) => !!holidayFor(d, centerConfig) },
+  ), [savedModel, centerConfig]);
+
+  // For a period with no saved targets, the boxes show the DERIVED budget —
+  // what the day model says this period costs. Showing DEFAULT_TARGETS
+  // there would display numbers the page isn't measuring against, and
+  // pressing Save would silently jump the budget to them.
+  const savedTargets = useMemo(() => {
+    if (hasOverride) return targetsFor(loStr);
+    const derived = modelBudgetFor(loStr, hiStr).byCat;
+    const out = {};
+    for (const k of TARGET_KEYS) out[k] = round1(derived[k] || 0);
+    return out;
+  }, [hasOverride, targetsFor, loStr, hiStr, modelBudgetFor]);
   const [targets, setTargets] = useState(savedTargets);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState(false);
@@ -259,7 +320,7 @@ export default function StaffingBudget() {
   useEffect(() => { setExtraDays(savedExtraDays || {}); }, [savedExtraDays]);
   const setExtraCat = (weekday, key, value) => setExtraDays(prev => ({
     ...prev,
-    [weekday]: { ...(WEEKDAY_DEFAULTS[weekday] || {}), ...(prev[weekday] || {}), [key]: value },
+    [weekday]: { ...(savedModel[weekday] || {}), ...(prev[weekday] || {}), [key]: value },
   }));
   const resetExtraDay = (weekday) => setExtraDays(prev => {
     const next = { ...prev };
@@ -330,7 +391,7 @@ export default function StaffingBudget() {
       const d = addDays(periodStart, i);
       const weekday = DOW_NAMES[d.getDay()];
       const saved = extraDays[weekday];
-      const seed = WEEKDAY_DEFAULTS[weekday] || {};
+      const seed = savedModel[weekday] || {};
       const cats = {};
       for (const c of CATEGORIES) {
         const raw = saved && saved[c.key] != null && saved[c.key] !== ''
@@ -353,7 +414,7 @@ export default function StaffingBudget() {
       for (const c of CATEGORIES) if (d.cats[c.key] > 0) alloc[c.key] = (alloc[c.key] || 0) + d.cats[c.key];
     }
     return { days, alloc, hours: days.reduce((n, d) => n + d.total, 0), periodDays };
-  }, [periodStart, periodEnd, opDays, extraDays]);
+  }, [periodStart, periodEnd, opDays, extraDays, savedModel]);
 
   // ── Days the centre was shut ────────────────────────────────────────────
   // The base targets describe a normal 14-day cycle, so they include a full
@@ -376,7 +437,7 @@ export default function StaffingBudget() {
       // Only days the centre would otherwise have been open cost anything.
       if (holiday && opDays.includes(weekday)) {
         const cats = {};
-        for (const c of CATEGORIES) cats[c.key] = Number(WEEKDAY_DEFAULTS[weekday]?.[c.key]) || 0;
+        for (const c of CATEGORIES) cats[c.key] = Number(savedModel[weekday]?.[c.key]) || 0;
         const total = CATEGORIES.reduce((n, c) => n + cats[c.key], 0);
         if (total > 0) days.push({ date: ds, weekday, name: holiday.name || 'Closed', label: format(d, 'EEE MMM d'), cats, total });
       }
@@ -387,17 +448,25 @@ export default function StaffingBudget() {
       for (const c of CATEGORIES) if (day.cats[c.key] > 0) alloc[c.key] = (alloc[c.key] || 0) + day.cats[c.key];
     }
     return { days, alloc, hours: days.reduce((n, x) => n + x.total, 0) };
-  }, [periodStart, hiStr, opDays, centerConfig]);
+  }, [periodStart, hiStr, opDays, centerConfig, savedModel]);
 
-  // What every bar on this page measures against: base + extra day − closures.
+  // What every bar on this page measures against.
+  //
+  //   No override  → the day model, summed over this period's real days.
+  //                  Identical, day for day, to the denominators Manage
+  //                  Staff Schedule shows in its column headers.
+  //   Override     → the saved 14-day targets plus the extra day minus
+  //                  closures, exactly as before. Kept so periods already
+  //                  reviewed keep the line they were measured against.
   const effTargets = useMemo(() => {
+    if (!hasOverride) return modelBudgetFor(loStr, hiStr).byCat;
     const out = {};
     for (const c of CATEGORIES) {
       const v = (Number(targets[c.key]) || 0) + (extra.alloc[c.key] || 0) - (closures.alloc[c.key] || 0);
       out[c.key] = Math.max(0, v); // a category can't owe negative hours
     }
     return out;
-  }, [targets, extra, closures]);
+  }, [hasOverride, modelBudgetFor, loStr, hiStr, targets, extra, closures]);
   const totalTarget = useMemo(() => CATEGORIES.reduce((n, c) => n + (effTargets[c.key] || 0), 0), [effTargets]);
 
   const catScale = useMemo(
@@ -435,11 +504,11 @@ export default function StaffingBudget() {
     // period target rather than quietly disagreeing with it.
     let modelTotal = 0;
     for (const r of rows) {
-      r.budget = r.isOp ? weekdayBudgetTotal(r.weekday) : 0;
+      r.budget = r.isOp ? weekdayBudgetTotal(r.weekday, savedModel) : 0;
       modelTotal += r.budget;
     }
     return { rows, opCount, modelTotal };
-  }, [byDateHours, hiStr, periodStart, opDays, centerConfig]);
+  }, [byDateHours, hiStr, periodStart, opDays, centerConfig, savedModel]);
   const dayScale = useMemo(
     () => Math.max(1, ...perDay.rows.map(r => Math.max(r.total, r.budget || 0))) * 1.05,
     [perDay],
@@ -450,6 +519,13 @@ export default function StaffingBudget() {
   // built for its own length, not this period's.
   const periodBudgetTotal = useMemo(() => (st) => {
     const key = format(st, 'yyyy-MM-dd');
+    const en0 = periodEndFor(st);
+    // Same fork as effTargets: derived from the day model unless that
+    // period saved its own targets. Without this the trend would price
+    // every bar off DEFAULT_TARGETS and disagree with the headline.
+    if (!(budgetCfg.byPeriod || {})[key] && key > LEGACY_TARGETS_THROUGH) {
+      return modelBudgetFor(key, format(en0, 'yyyy-MM-dd')).total;
+    }
     const t = targetsFor(key);
     const base = CATEGORIES.reduce((n, c) => n + (Number(t[c.key]) || 0), 0);
     const en = periodEndFor(st);
@@ -470,10 +546,10 @@ export default function StaffingBudget() {
       const wd = DOW_NAMES[d.getDay()];
       if (!opDays.includes(wd)) continue;
       if (!holidayFor(format(d, 'yyyy-MM-dd'), centerConfig)) continue;
-      closed += weekdayBudgetTotal(wd);
+      closed += weekdayBudgetTotal(wd, savedModel);
     }
     return Math.max(0, base + topUp - closed);
-  }, [targetsFor, extraDaysFor, opDays, centerConfig]);
+  }, [targetsFor, extraDaysFor, opDays, centerConfig, budgetCfg, modelBudgetFor, savedModel]);
 
   const trend = useMemo(() => {
     const starts = [];
@@ -523,6 +599,20 @@ export default function StaffingBudget() {
       clean.extraDays = cleanExtra;
       await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
         { staffingBudget: { byPeriod: { [loStr]: clean } }, updatedAt: serverTimestamp() },
+        { merge: true });
+      setSavedAt(true); setTimeout(() => setSavedAt(false), 2500);
+    } finally { setSaving(false); }
+  };
+
+  // Save the centre's DAY MODEL — the numbers every page divides by.
+  // Written whole (all seven weekdays) so a bucket someone cleared is
+  // actually cleared rather than refilled from the previous save.
+  const saveModel = async () => {
+    if (!activeCenterId) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'centers', activeCenterId, 'config', 'main'),
+        { staffingBudget: { weekdayModel: serializeWeekdayModel(model) }, updatedAt: serverTimestamp() },
         { merge: true });
       setSavedAt(true); setTimeout(() => setSavedAt(false), 2500);
     } finally { setSaving(false); }
@@ -644,13 +734,19 @@ export default function StaffingBudget() {
           <h3 className="flex items-center gap-1.5 text-sm font-bold text-gray-900"><CalendarDays size={15} /> By day — which days ran over / under</h3>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-gray-400">
-              Mon/Wed {weekdayBudgetTotal('Monday')}h · Tue/Thu {weekdayBudgetTotal('Tuesday')}h ·
-              Fri {weekdayBudgetTotal('Friday')}h · Sat {weekdayBudgetTotal('Saturday')}h
+              Mon/Wed {round1(weekdayBudgetTotal('Monday', savedModel))}h ·
+              Tue/Thu {round1(weekdayBudgetTotal('Tuesday', savedModel))}h ·
+              Fri {round1(weekdayBudgetTotal('Friday', savedModel))}h ·
+              Sat {round1(weekdayBudgetTotal('Saturday', savedModel))}h
             </span>
-            {Math.abs(perDay.modelTotal - totalTarget) > 1 && (
+            {/* With no override the headline IS the sum of these days, so
+                there is nothing to reconcile. An override is the one case
+                where the two can still differ — say so, and offer the fix,
+                rather than leaving a badge nobody can act on. */}
+            {hasOverride && Math.abs(perDay.modelTotal - totalTarget) > 1 && (
               <span className="rounded-full bg-amber-100 px-2 py-0.5 font-semibold text-amber-800"
-                title="The weekday model and the period targets are two different numbers for the same period. Reconcile them or the day bars and the headline will keep disagreeing.">
-                weekday model = {round1(perDay.modelTotal)}h vs period target {round1(totalTarget)}h
+                title="This period has its own saved targets, so it isn't measured against the day model. Clear them in Targets below to go back to the model.">
+                saved targets {round1(totalTarget)}h · day model {round1(perDay.modelTotal)}h
               </span>
             )}
           </div>
@@ -754,6 +850,120 @@ export default function StaffingBudget() {
         </div>
       </div>
 
+      {/* ── Default day budget: the source of truth ────────────────────
+          What each weekday is worth. Manage Staff Schedule divides its day
+          headers by these, the Staffing Board measures against them, and a
+          pay period's target is their sum. Editing here moves every page. */}
+      <div className="mt-5 rounded-2xl border-2 border-amber-200 bg-white p-4 shadow-sm">
+        <button onClick={() => setShowModel(v => !v)} className="flex w-full items-center justify-between text-sm font-bold text-gray-900">
+          <span className="flex flex-wrap items-center gap-2">
+            <span>Default day budget</span>
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">
+              Used by every page
+            </span>
+          </span>
+          <span className="text-xs font-normal text-gray-400">
+            {showModel ? 'Hide' : (canEditBudget ? 'Edit' : 'View')}
+          </span>
+        </button>
+        <p className="mt-1 text-xs text-gray-500">
+          What one of each weekday is worth. Manage Staff Schedule divides its day headers by these
+          numbers, and a pay period&rsquo;s target is simply their sum over the real days in the period.
+          Change them here and both pages move together.
+        </p>
+
+        {showModel && (
+          <>
+            {!canEditBudget && (
+              <p className="mt-3 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                Read-only — the default budget is set by the Centre Director, Director of Education,
+                Admin Assistant or Owner.
+              </p>
+            )}
+            <div className="mt-3 overflow-x-auto">
+              <table className="w-full min-w-[640px] text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400">
+                    <th className="pb-1.5 pr-2 font-semibold">Day</th>
+                    {ACTIVE_BUCKETS.map(c => (
+                      <th key={c.key} className="pb-1.5 px-1 font-semibold">{c.label}</th>
+                    ))}
+                    <th className="pb-1.5 pl-2 text-right font-semibold">Total</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {WEEKDAY_ORDER.map(wd => {
+                    const dayTotal = weekdayBudgetTotal(wd, model);
+                    const open = opDays.includes(wd);
+                    return (
+                      <tr key={wd} className={open ? '' : 'opacity-45'}>
+                        <td className="py-1.5 pr-2 font-medium text-gray-700">
+                          {wd}
+                          {!open && <span className="ml-1 text-[10px] uppercase text-gray-400">closed</span>}
+                        </td>
+                        {ACTIVE_BUCKETS.map(c => (
+                          <td key={c.key} className="px-1 py-1">
+                            <input
+                              type="number" step="0.5" min="0"
+                              disabled={!canEditBudget}
+                              value={model[wd]?.[c.key] ?? ''}
+                              placeholder="0"
+                              onChange={e => setModelCat(wd, c.key, e.target.value)}
+                              className="w-16 rounded-lg border px-2 py-1 text-sm focus:border-amber-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+                            />
+                          </td>
+                        ))}
+                        <td className="py-1.5 pl-2 text-right font-bold text-gray-800">{round1(dayTotal)}h</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2">
+                    <td className="pt-2 pr-2 text-xs font-semibold text-gray-500">Per fortnight</td>
+                    <td colSpan={ACTIVE_BUCKETS.length} />
+                    <td className="pt-2 pl-2 text-right text-base font-bold text-amber-700">
+                      {round1(WEEKDAY_ORDER.reduce((n, wd) => n + weekdayBudgetTotal(wd, model), 0) * 2)}h
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            {/* Retired buckets, shown only if a centre still carries hours
+                for them, so old numbers aren't invisible or un-clearable. */}
+            {BUDGET_BUCKETS.filter(c => isRetiredBucket(c.key)
+              && WEEKDAY_ORDER.some(wd => Number(model[wd]?.[c.key]) > 0)).map(c => (
+              <p key={c.key} className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                <b>{c.label}</b> is retired and no longer budgeted, but this centre still has hours
+                against it. Past periods keep reporting it either way.
+              </p>
+            ))}
+
+            {canEditBudget && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  onClick={saveModel}
+                  disabled={!modelDirty || saving}
+                  className="flex items-center gap-1.5 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-amber-700 disabled:opacity-40"
+                >
+                  {savedAt ? <Check size={14} /> : <Save size={14} />}
+                  {savedAt ? 'Saved' : 'Save default budget'}
+                </button>
+                <button
+                  onClick={() => setModel(resolveWeekdayModel(null))}
+                  disabled={saving}
+                  className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  <RotateCcw size={13} /> Reset to built-in
+                </button>
+                {modelDirty && <span className="text-xs font-medium text-amber-700">Unsaved changes</span>}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Targets — collapsible */}
       <div className="mt-5 rounded-2xl border bg-white p-4 shadow-sm">
         <button onClick={() => setShowTargets(v => !v)} className="flex w-full items-center justify-between text-sm font-bold text-gray-900">
@@ -776,19 +986,43 @@ export default function StaffingBudget() {
             <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
               These targets belong to <b>this pay period only</b>. Page to another period with the arrows up top and you'll see (and can save) a different set — editing one no longer rewrites the rest.
             </p>
+            {hasOverride ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                This period is measured against its <b>own saved targets</b>, not the default day budget
+                above. That&rsquo;s deliberate for periods already reviewed — but it&rsquo;s the only way the two
+                pages can disagree. Clearing it below puts this period back on the day model
+                ({round1(perDay.modelTotal)}h).
+              </p>
+            ) : (
+              <p className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+                This period follows the <b>default day budget</b> — {round1(perDay.modelTotal)}h, the sum of
+                its {perDay.opCount} open days. Nothing to reconcile; Manage Staff Schedule shows the same
+                numbers. Save targets here only if this period genuinely differs.
+              </p>
+            )}
+            {!canEditBudget && (
+              <p className="mt-2 rounded-lg bg-gray-50 px-3 py-2 text-xs text-gray-500">
+                Read-only — budgets are set by the Centre Director, Director of Education,
+                Admin Assistant or Owner.
+              </p>
+            )}
 
             {/* Hour targets, per role */}
             <p className="mb-1.5 mt-3 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Hour targets (per 14-day cycle)</p>
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {[
-                ['instructional', 'Instructional'], ['online', 'Online'], ['steam', 'STEAM'], ['summerCamp', 'Summer Camp'],
-                ['adminHours', 'Admin Hours'], ['adminAssistant', 'Admin Assistant'], ['host', 'Host'],
-              ].map(([k, label]) => (
+              {/* Retired buckets (STEAM, Summer Camp) only appear when this
+                  period actually carries hours for them, so historical
+                  periods stay editable without offering them to new ones. */}
+              {BUDGET_BUCKETS
+                .filter(c => !isRetiredBucket(c.key) || Number(targets[c.key]) > 0)
+                .map(c => [c.key, c.label])
+                .map(([k, label]) => (
                 <label key={k} className="block">
                   <span className="mb-1 block text-xs text-gray-500">{label}</span>
-                  <input type="number" step="1" min="0" value={targets[k]}
+                  <input type="number" step="1" min="0" value={targets[k] ?? 0}
+                    disabled={!canEditBudget}
                     onChange={e => setTargets(t => ({ ...t, [k]: e.target.value }))}
-                    className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none" />
+                    className="w-full rounded-lg border px-2 py-1.5 text-sm focus:border-amber-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400" />
                 </label>
               ))}
             </div>
@@ -823,9 +1057,10 @@ export default function StaffingBudget() {
                     <label key={c.key} className="block">
                       <span className="mb-1 block text-[11px] font-medium" style={{ color: c.color }}>{c.label}</span>
                       <input type="number" step="0.5" min="0"
-                        value={extraDays[d.weekday]?.[c.key] ?? (WEEKDAY_DEFAULTS[d.weekday]?.[c.key] ?? 0)}
+                        disabled={!canEditBudget}
+                        value={extraDays[d.weekday]?.[c.key] ?? (savedModel[d.weekday]?.[c.key] ?? 0)}
                         onChange={e => setExtraCat(d.weekday, c.key, e.target.value)}
-                        className="w-full rounded-lg border bg-white px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none" />
+                        className="w-full rounded-lg border bg-white px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400" />
                     </label>
                   ))}
                 </div>
@@ -839,36 +1074,47 @@ export default function StaffingBudget() {
                 <span className="text-2xl font-bold text-amber-900">{round1(totalTarget)}<span className="ml-1 text-sm font-semibold">h</span></span>
               </div>
               <div className="mt-1 text-right text-[11px] font-medium text-amber-700">
-                {round1(baseTarget)}h base (14-day cycle)
-                {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => d.total > 0).map(d => d.weekday).join(' + ')}</>}
-                {closures.hours > 0 && (
-                  <> − {round1(closures.hours)}h closed ({closures.days.map(d => d.name).join(', ')})</>
+                {hasOverride ? (
+                  <>
+                    {round1(baseTarget)}h base (14-day cycle)
+                    {extra.hours > 0 && <> + {round1(extra.hours)}h for {extra.days.filter(d => d.total > 0).map(d => d.weekday).join(' + ')}</>}
+                    {closures.hours > 0 && (
+                      <> − {round1(closures.hours)}h closed ({closures.days.map(d => d.name).join(', ')})</>
+                    )}
+                  </>
+                ) : (
+                  <>sum of {perDay.opCount} open days from the default day budget</>
                 )}
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <button onClick={saveTargets} disabled={!dirty || saving}
-                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
-                <Save size={14} /> {saving ? 'Saving…' : `Save hours for ${format(periodStart, 'MMM d')} – ${format(periodEnd, 'MMM d')}`}
-              </button>
-              {savedAt && <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700"><Check size={13} /> Saved</span>}
-              {dirty && !savedAt && (
-                <span className="text-xs font-medium text-amber-600">Unsaved changes — they only apply to this period.</span>
-              )}
-              {targetSource === 'saved' && !dirty && (
-                <button onClick={clearPeriodTargets} disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50">
-                  <RotateCcw size={12} /> Reset this period
+            {canEditBudget && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button onClick={saveTargets} disabled={!dirty || saving}
+                  className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-700 disabled:opacity-40">
+                  <Save size={14} /> {saving ? 'Saving…' : `Save hours for ${format(periodStart, 'MMM d')} – ${format(periodEnd, 'MMM d')}`}
                 </button>
-              )}
-            </div>
+                {savedAt && <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700"><Check size={13} /> Saved</span>}
+                {dirty && !savedAt && (
+                  <span className="text-xs font-medium text-amber-600">Unsaved changes — they only apply to this period.</span>
+                )}
+                {/* Clearing an override hands the period back to the day
+                    model, which is what makes the two pages agree again. */}
+                {hasOverride && !dirty && (
+                  <button onClick={clearPeriodTargets} disabled={saving}
+                    className="flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-xs font-semibold text-gray-500 hover:bg-gray-50 disabled:opacity-50">
+                    <RotateCcw size={12} /> Use the default day budget
+                  </button>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>
 
       <p className="mt-4 text-xs text-gray-400">
-        Per-day budgets come from the centre's weekday model — the same figures Manage Schedule shows in its day headers.
+        Per-day budgets come from the centre&rsquo;s default day budget above — the same figures Manage Staff
+        Schedule shows in its day headers, and the same ones a pay period&rsquo;s total is summed from.
       </p>
     </div>
   );

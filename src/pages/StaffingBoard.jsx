@@ -38,7 +38,7 @@ import { DEFAULT_TARGET_RATIO, hasCapability } from '../lib/subRoles';
 import { buildTimeOffIndex, timeOffOn, isOffOn } from '../lib/timeOff';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import { boardBudget, SLOT_ROLE, slotBuckets, slotHours } from '../lib/board-budget';
-import { WEEKDAY_DEFAULTS, BUDGET_BUCKETS } from '../lib/budgetBuckets';
+import { BUDGET_BUCKETS, resolveWeekdayModel, weekdayBudgetBuckets } from '../lib/budgetBuckets';
 import { getFixedStaffForDay, getWeekOfMonth, FIXED_SCHEDULES } from '../lib/scheduler';
 import { isTrainingType } from '../lib/staffTypes';
 import { RATIO_FIELD } from '../lib/ratioCount';
@@ -82,7 +82,7 @@ const canAdmin = (u) => (u?.instructorType || '').trim().toLowerCase() === 'admi
  * 10:00–14:00 is what they actually work — it's the dominant pattern across
  * their shift history and exactly the 4h the `adminAssistant` budget allows,
  * Monday to Friday. Saturday has no admin-assistant budget, so no slot is
- * offered; the board reads that straight off WEEKDAY_DEFAULTS rather than
+ * offered; the board reads that straight off the centre's day model rather than
  * hard-coding which days are which.
  */
 const ADMIN_SHIFT = { start: '10:00', end: '14:00' };
@@ -121,6 +121,9 @@ function fmt12(hhmm) {
 
 export default function StaffingBoard() {
   const { activeCenterId, centerConfig } = useAuth();
+  // The centre's staffing day model — same numbers Manage Staff Schedule
+  // divides by and the Staffing Budget page sums into a pay period.
+  const weekdayModel = useMemo(() => resolveWeekdayModel(centerConfig), [centerConfig]);
 
   const [mode, setMode] = useState('week');
   const [anchor, setAnchor] = useState(() => format(new Date(), 'yyyy-MM-dd'));
@@ -316,7 +319,7 @@ export default function StaffingBoard() {
 
         // Only on days the admin assistant is actually budgeted for — which is
         // Mon–Fri; Saturday has no adminAssistant allotment at all.
-        const hasAdminBudget = Number(WEEKDAY_DEFAULTS[dayName]?.adminAssistant) > 0;
+        const hasAdminBudget = weekdayBudgetBuckets(dayName, weekdayModel).adminAssistant > 0;
 
         // Management works a standing shift every open day. They're on the
         // board so the day reads true, pre-filled because there's nothing to
@@ -801,7 +804,7 @@ export default function StaffingBoard() {
           setPicked={setPicked}
           onSlotClick={onSlotClick}
           canCover={canCover}
-          budget={boardBudget(day, { excludeNames: budgetExcluded })}
+          budget={boardBudget(day, { excludeNames: budgetExcluded, weekdayModel })}
           salariedNames={budgetExcluded}
           onAddExtra={() => addExtraBody(day.date)}
           onRemoveSlot={(slotId) => removeSlot(day.date, slotId)}

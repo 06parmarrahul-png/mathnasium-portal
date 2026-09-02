@@ -97,7 +97,11 @@ export function slotBuckets(slot, instrWindow) {
  * @returns {Object} budget summary — see the fields below.
  */
 export function boardBudget(day, opts = {}) {
-  const allotted = WEEKDAY_DEFAULTS[day?.dayName] || {};
+  // opts.weekdayModel is the centre's own day model (Staffing Budget →
+  // Default day budget). Falls back to the built-in defaults only when a
+  // caller hasn't got centre config to hand.
+  const model = opts.weekdayModel || WEEKDAY_DEFAULTS;
+  const allotted = model[day?.dayName] || {};
   const used = {};
   const exclude = opts.excludeNames instanceof Set
     ? opts.excludeNames

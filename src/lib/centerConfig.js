@@ -127,6 +127,29 @@ export const DEFAULT_CENTER_CONFIG = {
   // Never write one without the other.
   staffRoles: [],
   staffRolePermissions: {},
+
+  // ─── Staffing budget ───────────────────────────────────────────────────
+  // Edited from Staffing Budget → Default day budget, by anyone with the
+  // `centre.settings` permission.
+  //
+  //   weekdayModel  { Monday: { instructional: 31, online: 4, ... }, ... }
+  //     THE SOURCE OF TRUTH. What one of each weekday is worth, per budget
+  //     bucket. Manage Staff Schedule divides its day headers by it, the
+  //     Staffing Board measures against it, and a pay period's target is
+  //     its sum over that period's real days. Absent → the built-in
+  //     WEEKDAY_DEFAULTS. Resolve with resolveWeekdayModel(), never read
+  //     it raw.
+  //
+  //   byPeriod      { '2026-09-11': { instructional: 496, ..., extraDays } }
+  //     Per-pay-period OVERRIDES. A period with an entry is measured
+  //     against it instead of the day model, so fortnights already
+  //     reviewed keep the line they were judged on. Everything else
+  //     derives from weekdayModel. The Staffing Budget page labels which
+  //     of the two is in play and offers a one-click reset to the model.
+  //
+  // Older docs also carry `manager`, `kpi`, `lead`, `flex`, `admin` and a
+  // `dailyBudgets` map from a previous model. Nothing reads them.
+  staffingBudget: {},
 };
 
 // NOTE: DEFAULT_ROLE_COLORS / ROLE_COLOR_KEYS / roleColorHex() used to
