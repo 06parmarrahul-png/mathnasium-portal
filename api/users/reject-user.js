@@ -1,6 +1,21 @@
 // POST /api/users/reject-user
 //
-// Fully rejects a pending instructor: disables their Firebase Auth account
+// THREE MODES, on one route. Vercel Hobby caps this project at 12
+// serverless functions and api/ is exactly at 12, so termination is
+// multiplexed here rather than added as a 13th file (see CLAUDE.md).
+//
+//   mode: 'reject'    (default) — the original behaviour, unchanged.
+//   mode: 'preview'   — collect everything the person owns and return it.
+//                       Deletes NOTHING. The client downloads this as the
+//                       termination record before committing.
+//   mode: 'terminate' — collect, return, and then erase all of it plus the
+//                       Auth account. Irreversible.
+//
+// Why preview is a separate round trip: the export has to be safely in the
+// admin's hands BEFORE anything is deleted. Returning it from the same
+// call that deletes would mean a dropped response destroyed the only copy.
+//
+// Rejects a pending instructor: disables their Firebase Auth account
 // (so the login itself stops working) and removes their Firestore profile.
 //
 // Why this is a server route, not a client write:
@@ -42,6 +57,69 @@ async function readJson(req) {
 // Centre access helper — mirrors the Firestore rules' hasCenterAccess(): a
 // user is "at" a centre if its id is in their centerIds array OR if it's
 // their legacy single centerId field.
+// Every collection that carries a person's data, and the fields that point
+// at them. Field names verified against the live database rather than
+// assumed — availabilityLog uses targetUid/actorUid, auditLog uses
+// actorUid/targetUserId, openShifts uses claimedBy/originalUserId, and
+// getting one wrong would leave that data orphaned but still on screen.
+const OWNED_COLLECTIONS = [
+  { col: 'shifts',                  idFields: ['userId'],                     nameFields: ['userName'] },
+  { col: 'availability',            idFields: ['userId'],                     nameFields: ['userName'] },
+  { col: 'openShifts',              idFields: ['claimedBy', 'originalUserId'] },
+  { col: 'timeOffRequests',         idFields: ['userId'],                     nameFields: ['userName'] },
+  { col: 'chat',                    idFields: ['userId', 'acceptedBy'] },
+  { col: 'availabilityLog',         idFields: ['targetUid', 'actorUid'] },
+  { col: 'notificationPreferences', idFields: ['userId'] },
+  { col: 'auditLog',                idFields: ['actorUid', 'targetUserId'] },
+];
+
+/**
+ * Find every document belonging to this person, keyed by collection.
+ *
+ * Queried per field and de-duplicated by document id, because a doc can
+ * match on more than one field (an availabilityLog row where they are both
+ * actor and target) and deleting it twice in one batch is an error.
+ *
+ * The name sweep is deliberate: documents written before the uid fields
+ * existed carry only a display name, and a uid-only scan would leave them
+ * behind — visible on the schedule under a person who no longer exists.
+ */
+async function collectOwnedDocs(db, uid, displayName) {
+  const out = {};
+  for (const { col, idFields, nameFields } of OWNED_COLLECTIONS) {
+    const seen = new Map();
+    for (const f of idFields) {
+      const snap = await db.collection(col).where(f, '==', uid).get();
+      snap.forEach(d => seen.set(d.id, { id: d.id, ...d.data() }));
+    }
+    for (const f of (displayName ? nameFields || [] : [])) {
+      const snap = await db.collection(col).where(f, '==', displayName).get();
+      snap.forEach(d => seen.set(d.id, { id: d.id, ...d.data() }));
+    }
+    // A doc keyed by uid — notificationPreferences uses the uid as its id.
+    try {
+      const direct = await db.collection(col).doc(uid).get();
+      if (direct.exists) seen.set(direct.id, { id: direct.id, ...direct.data() });
+    } catch { /* not all collections allow a doc() lookup by this id */ }
+    if (seen.size > 0) out[col] = [...seen.values()];
+  }
+  return out;
+}
+
+/** Delete everything collectOwnedDocs found. Chunked — batches cap at 500. */
+async function deleteOwnedDocs(db, owned) {
+  let deleted = 0;
+  for (const [col, docs] of Object.entries(owned)) {
+    for (let i = 0; i < docs.length; i += 400) {
+      const batch = db.batch();
+      for (const d of docs.slice(i, i + 400)) batch.delete(db.collection(col).doc(d.id));
+      await batch.commit();
+      deleted += Math.min(400, docs.length - i);
+    }
+  }
+  return deleted;
+}
+
 function userIsAtCenter(profile, centerId) {
   if (!profile || !centerId) return false;
   if (Array.isArray(profile.centerIds) && profile.centerIds.includes(centerId)) return true;
@@ -69,6 +147,20 @@ export default async function handler(req, res) {
   try { body = await readJson(req); }
   catch { return res.status(400).json({ error: 'Invalid JSON body' }); }
 
+  const mode = String(body.mode || 'reject').trim();
+  if (!['reject', 'preview', 'terminate'].includes(mode)) {
+    return res.status(400).json({ error: 'Unknown mode' });
+  }
+  // Termination erases payroll history and cannot be undone, so it sits
+  // with the people who own the centre — the same group that holds the
+  // 'centre.settings' permission on the client. A plain Admin can still
+  // reject a pending signup; they cannot terminate an employee.
+  if (mode !== 'reject' && !['super_admin', 'owner', 'director', 'admin_assistant'].includes(callerRole)) {
+    return res.status(403).json({
+      error: 'Terminating staff is limited to the Centre Director, Director of Education, Admin Assistant and Owner.',
+    });
+  }
+
   const uid = String(body.uid || '').trim();
   if (!uid) return res.status(400).json({ error: 'uid required' });
   if (uid === session.decoded.uid) {
@@ -95,7 +187,14 @@ export default async function handler(req, res) {
     // is not an owner. For rejection privilege, treat them as a notch
     // above admin: an AA can be rejected by an owner or super-admin, but
     // not by an admin or another AA.
-    const PRIVILEGE = { instructor: 1, admin: 2, admin_assistant: 2.5, owner: 3, super_admin: 4 };
+    // 'director' was missing from this map. Because the lookup falls back
+    // to 0, a director TARGET scored 0 (so anyone could remove them) and a
+    // director CALLER scored 0 (so they could remove nobody, since every
+    // target scored >= 0). Directors are owner-equivalent, so they sit
+    // with owner at 3.
+    const PRIVILEGE = {
+      instructor: 1, admin: 2, admin_assistant: 2.5, director: 3, owner: 3, super_admin: 4,
+    };
     if ((PRIVILEGE[targetRole] || 0) >= (PRIVILEGE[callerRole] || 0)) {
       return res.status(403).json({
         error: 'You cannot reject a user with equal or higher privilege.',
@@ -112,6 +211,84 @@ export default async function handler(req, res) {
         error: 'Target user is not at any centre you administer.',
       });
     }
+  }
+
+  // ── PREVIEW / TERMINATE ────────────────────────────────────────────
+  if (mode === 'preview' || mode === 'terminate') {
+    const owned = await collectOwnedDocs(db, uid, target.displayName);
+    const counts = Object.fromEntries(Object.entries(owned).map(([c, d]) => [c, d.length]));
+    const total = Object.values(counts).reduce((n, v) => n + v, 0);
+
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      exportedBy: { uid: session.decoded.uid, name: caller?.displayName || null, role: callerRole },
+      reason: 'Staff termination from Ratio — Manage Staff',
+      person: { uid, ...target },
+      counts,
+      total,
+      collections: owned,
+    };
+
+    if (mode === 'preview') {
+      return res.status(200).json({ ok: true, mode, counts, total, export: payload });
+    }
+
+    // Auth first: it's the security-critical half. If it fails, everything
+    // is still on record and the admin can retry, rather than the data
+    // being gone while the person can still sign in.
+    let killedAuth = false;
+    try {
+      await getAuth().deleteUser(uid);
+      killedAuth = true;
+    } catch (err) {
+      if (err?.code === 'auth/user-not-found') killedAuth = true;
+      else {
+        console.error('[terminate] deleteUser failed', { uid, code: err?.code });
+        return res.status(500).json({
+          error: 'Could not delete the sign-in account, so nothing else was removed: '
+            + (err?.message || 'unknown error'),
+        });
+      }
+    }
+
+    let deletedDocs = 0;
+    try {
+      deletedDocs = await deleteOwnedDocs(db, owned);
+      await db.collection('users').doc(uid).delete();
+    } catch (err) {
+      console.error('[terminate] data delete failed', { uid, message: err?.message });
+      return res.status(207).json({
+        ok: true, mode, counts, total, deletedAuth: killedAuth, deletedDocs,
+        warning: 'Sign-in was removed but some data could not be deleted: '
+          + (err?.message || '') + ' — run the termination again to finish.',
+      });
+    }
+
+    // The termination itself is recorded. It is the one trace that stays,
+    // and it has to: someone has to be able to answer who removed whom.
+    try {
+      await db.collection('auditLog').add({
+        action: 'staff.terminated',
+        actorUid: session.decoded.uid,
+        actorName: caller?.displayName || null,
+        actorRole: callerRole,
+        targetUserId: null,                       // the account no longer exists
+        centerId: target.centerId || null,
+        createdAt: new Date(),
+        details: {
+          terminatedName: target.displayName || null,
+          terminatedEmail: target.email || null,
+          documentsDeleted: total,
+          byCollection: counts,
+        },
+      });
+    } catch (err) {
+      console.error('[terminate] audit write failed', { uid, message: err?.message });
+    }
+
+    return res.status(200).json({
+      ok: true, mode, counts, total, deletedAuth: killedAuth, deletedDocs, deletedProfile: true,
+    });
   }
 
   // Best-effort disable of the Auth account. We try this first because it's

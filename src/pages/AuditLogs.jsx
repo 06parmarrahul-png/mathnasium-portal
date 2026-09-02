@@ -73,6 +73,14 @@ export default function AuditLogs() {
         const to   = (e.details?.toCentres   || []).join(', ') || 'none';
         return `Reassigned centres: ${name} (${from} → ${to})`;
       }
+      case 'staff.terminated': {
+        // The one trace a termination leaves. The account is gone, so the
+        // name lives in details — targetUserId would point at nothing.
+        const name = e.details?.terminatedName || 'a staff member';
+        const n = e.details?.documentsDeleted;
+        return `Terminated ${name}${c}`
+          + (Number.isFinite(n) ? ` — ${n} record${n === 1 ? '' : 's'} erased` : '');
+      }
       default:
         return e.action + c;
     }

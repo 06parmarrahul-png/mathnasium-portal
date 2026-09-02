@@ -33,6 +33,32 @@ Firebase is a **backend, not a deploy target**. Pushing code doesn't touch it.
 Only `firebase deploy --only firestore:rules` when `firestore.rules`,
 `storage.rules` or `firestore.indexes.json` change.
 
+### Terminating staff
+
+`api/users/reject-user.js` serves **three modes** on one route (the 12-function
+cap is why): `reject` (unchanged), `preview` (collect and return, delete
+nothing) and `terminate` (collect, return, then erase). Preview is a separate
+round trip on purpose — the export must be in the admin's hands before
+anything is deleted.
+
+Termination erases the Auth account, `users/{uid}`, and every document in
+`OWNED_COLLECTIONS` (shifts, availability, openShifts, timeOffRequests, chat,
+availabilityLog, notificationPreferences, auditLog). Field names there were
+verified against live data — availabilityLog uses `targetUid`/`actorUid`,
+auditLog uses `actorUid`/`targetUserId`, openShifts uses
+`claimedBy`/`originalUserId`. A uid-only scan misses legacy docs, so shifts /
+availability / timeOffRequests also sweep by `userName`.
+
+Gated on owner-level roles (`super_admin`/`owner`/`director`/`admin_assistant`),
+tighter than reject. The UI forces a JSON download of everything first, then
+requires typing the person's full name. A `staff.terminated` audit entry is the
+only trace left.
+
+**What it cannot remove:** chat messages *other people* wrote that mention the
+name (someone else's content), and anything in Resend — Ratio only sends
+through Resend and never creates contacts or audiences, so there is nothing
+stored there to delete.
+
 ### Hard constraint: 12 serverless functions
 
 Vercel Hobby caps the project at 12, and `api/` is **exactly at 12**. Do not add

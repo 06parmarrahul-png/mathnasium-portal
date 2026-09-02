@@ -78,4 +78,8 @@ export const AUDIT_ACTIONS = {
   // Centre access changes from the Manage Roles screen — when an
   // Enterprise user updates which centres a member belongs to.
   CENTER_ASSIGNMENT: 'super_admin.center_assignment',
+  // Written by api/users/reject-user.js (mode: 'terminate'), not from the
+  // client — the account is gone by then. Listed here so the code is
+  // discoverable and AuditLogs.jsx has something to match on.
+  STAFF_TERMINATED: 'staff.terminated',
 };
