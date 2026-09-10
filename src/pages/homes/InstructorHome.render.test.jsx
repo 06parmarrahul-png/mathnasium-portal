@@ -78,7 +78,7 @@ const draw = () => render(<MemoryRouter><InstructorHome /></MemoryRouter>);
 beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   sideSheet.current = {};
-  for (const k of ['shifts', 'openShifts', 'announcements', 'users']) snapshots[k] = [];
+  for (const k of ['shifts', 'openShifts', 'announcements', 'users', 'events']) snapshots[k] = [];
 });
 afterEach(() => { cleanup(); });
 
@@ -171,11 +171,17 @@ describe('mobile', () => {
     expect(container.firstChild.className).toMatch(/pb-28/);
   });
 
-  it('is a single column — nothing that can squeeze on a narrow screen', () => {
+  it('is a single column ON A PHONE — columns only from md up', () => {
+    // jsdom doesn't evaluate media queries, so this checks the classes:
+    // an UNPREFIXED grid-cols would split a 375px screen into two narrow
+    // columns. A `md:`-prefixed one is the tablet layout and is fine.
     snapshots.shifts = [shift()];
     const { container } = draw();
-    const cols = container.querySelectorAll('[class*="grid-cols-"]');
-    expect(cols.length).toBe(0);
+    const unconditional = [...container.querySelectorAll('[class*="grid-cols-"]')]
+      .filter(el => /(^|\s)grid-cols-/.test(el.className));
+    expect(unconditional).toEqual([]);
+    // ...and the tablet layout IS present.
+    expect(container.querySelector('[class*="md:grid-cols-2"]')).toBeTruthy();
   });
 
   it('carries the .nl token scope so its styles resolve', () => {
@@ -295,5 +301,75 @@ describe('which side am I on, and when do I move', () => {
     snapshots.shifts = [shift({ date: todayStr() })];
     sideSheet.current = { garbage: ['Kaitlyn MacDonald'], 'EM|nope': 'x' };
     expect(() => draw()).not.toThrow();
+  });
+});
+
+describe("this week, and what's on", () => {
+  // Fixed at 15 September 2026 so "this week" and "this month" are known
+  // windows rather than whatever today happens to be.
+  const DAY = '2026-09-15';
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 15, 12, 0, 0));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const evt = (over = {}) => ({
+    id: 'e1', title: 'Staff meeting', date: DAY,
+    startTime: '18:30', endTime: '19:30', type: 'meeting', note: '', ...over,
+  });
+
+  it('interleaves a staff meeting with shifts instead of listing them apart', () => {
+    // The whole reason the two are merged: "what's happening this week" is
+    // one question.
+    snapshots.shifts = [shift({ id: 's1', date: DAY })];
+    snapshots.events = [evt({ date: DAY })];
+    draw();
+    expect(screen.getByText('This week')).toBeTruthy();
+    // It appears in "This week" AND "What's on this month" — both true.
+    // Title in both lists; the type pill uses the short form so it does
+    // not simply repeat a title that already says "Staff meeting".
+    expect(screen.getAllByText('Staff meeting').length).toBe(2);
+    expect(screen.getAllByText('Meeting').length).toBeGreaterThan(0);
+  });
+
+  it('marks an event so it is not mistaken for a shift', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [evt({ date: DAY, type: 'fun-day', title: 'Pizza Fun Day' })];
+    draw();
+    expect(screen.getAllByText('Fun day').length).toBeGreaterThan(0);
+  });
+
+  it('says "All day" for an event with no time', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [evt({ date: DAY, startTime: null, endTime: null })];
+    draw();
+    expect(screen.getAllByText(/All day/).length).toBeGreaterThan(0);
+  });
+
+  it("shows the centre's own closures under What's on, with no event entered", () => {
+    // Closures come free from the holidays already configured — they should
+    // never need typing twice.
+    authValue.current = {
+      ...BASE_AUTH,
+      centerConfig: { holidays: [{ date: '2026-09-20', name: 'Thanksgiving' }] },
+    };
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.getByText(/Thanksgiving — centre closed/)).toBeTruthy();
+  });
+
+  it("hides What's on entirely when there is genuinely nothing", () => {
+    // An empty card is worse than none — people learn to ignore the space.
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.queryByText(/What's on this month/)).toBeNull();
+  });
+
+  it('survives a malformed event without taking the page down', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [{ id: 'bad', title: '', date: 'whenever' }, evt({ date: DAY })];
+    expect(() => draw()).not.toThrow();
+    expect(screen.getAllByText('Staff meeting').length).toBeGreaterThan(0);
   });
 });

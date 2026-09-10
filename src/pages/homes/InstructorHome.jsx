@@ -5,12 +5,15 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { setNewLook } from '../../lib/newLook';
 import { isHourlyPaid } from '../../lib/payProjection';
+import {
+  weekAhead, monthAhead, weekWindow, monthWindow, eventTypeLabel, eventTypeShort,
+} from '../../lib/centreEvents';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
 } from '../../lib/sideAssignments';
 import { Card, Pill, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
-import { fmtTime, fmtDay, todayISO, minutesOf } from '../../components/newlook/format';
+import { fmtTime, fmtDay, todayISO, minutesOf, asDate } from '../../components/newlook/format';
 
 /**
  * The floor-staff home — built for a phone held in one hand.
@@ -42,6 +45,7 @@ export default function InstructorHome() {
   const [dayRoster, setDayRoster] = useState({ date: null, rows: null });
   const [openShifts, setOpenShifts] = useState([]);
   const [announcement, setAnnouncement] = useState(null);
+  const [events, setEvents] = useState([]);
   // { date, map } — stamped so staleness is derived, never reset in an effect.
   const [sides, setSides] = useState({ date: null, map: null });
   const [roster, setRoster] = useState(null);
@@ -114,6 +118,17 @@ export default function InstructorHome() {
     );
   }, [activeCenterId, canTakeShifts, today]);
 
+  // Staff meetings, fun days and training. New collection — before it,
+  // neither had anywhere to live with a real date on it.
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      collection(db, 'centers', activeCenterId, 'events'),
+      snap => setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setEvents([]),
+    );
+  }, [activeCenterId]);
+
   useEffect(() => {
     if (!activeCenterId) return undefined;
     return onSnapshot(
@@ -174,6 +189,23 @@ export default function InstructorHome() {
   const currentBlock = isTodayDate(next?.date, today) ? blockAt(blocks, nowMin) : null;
   const upNext = isTodayDate(next?.date, today) ? nextSwitch(blocks, nowMin) : null;
 
+  // One merged, date-ordered list. The question is "what's happening this
+  // week", not "shifts, and separately, events" — splitting them makes the
+  // reader do the interleaving.
+  const week = useMemo(() => {
+    const w = weekWindow(today);
+    return weekAhead({ shifts: shifts || [], events, from: w.from, to: w.to });
+  }, [shifts, events, today]);
+
+  const onThisMonth = useMemo(() => {
+    const m = monthWindow(today);
+    return monthAhead({
+      events,
+      holidays: Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [],
+      from: m.from, to: m.to,
+    });
+  }, [events, centerConfig, today]);
+
   const dayShifts = dayRoster.date === next?.date ? dayRoster.rows : null;
   const onFloor = (dayShifts || []).filter(s => s.status !== 'draft').length;
   const first = (profile?.displayName || '').split(' ')[0] || 'there';
@@ -182,213 +214,276 @@ export default function InstructorHome() {
   return (
     // pb-28 clears the bottom tab bar on phones; it drops away at lg, where
     // the bar isn't rendered and the sidebar is back.
-    <div className="nl mx-auto w-full max-w-2xl space-y-3.5 pb-28 lg:pb-4">
+    // Two columns from `md` up — a tablet on the front desk has the room,
+    // and the split follows the reading order: what is happening to you
+    // right now on the left, what is coming on the right. A phone keeps
+    // one column, because two on 375px is two narrow columns.
+    <div className="nl mx-auto w-full max-w-2xl pb-28 md:max-w-4xl lg:pb-4">
+      <div className="mb-3.5">
 
-      <div className="flex items-start justify-between gap-3">
-        <h1 className="nl-display text-[26px] font-semibold leading-tight">
-          {greeting()}, {first}
-        </h1>
-        <button
-          type="button"
-          onClick={() => { setNewLook(profile?.uid, false); window.location.reload(); }}
-          className="-mr-1 mt-1 shrink-0 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold underline underline-offset-2"
-          style={{ color: 'var(--nl-muted)' }}>
-          Classic view
-        </button>
+        <div className="flex items-start justify-between gap-3">
+          <h1 className="nl-display text-[26px] font-semibold leading-tight">
+            {greeting()}, {first}
+          </h1>
+          <button
+            type="button"
+            onClick={() => { setNewLook(profile?.uid, false); window.location.reload(); }}
+            className="-mr-1 mt-1 shrink-0 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold underline underline-offset-2"
+            style={{ color: 'var(--nl-muted)' }}>
+            Classic view
+          </button>
+        </div>
       </div>
 
-      {shifts === null ? (
-        <Loading label="Getting your shifts…" />
-      ) : next ? (
-        <div className="rounded-2xl p-5" style={{ background: 'var(--nl-brand)', color: '#fff' }}>
-          <div className="text-[10px] font-bold uppercase tracking-[0.14em] opacity-80">
-            {isToday ? "You're on today" : `Next shift · ${fmtDay(next.date)}`}
-          </div>
-          {/* The biggest thing on the page, because it's the answer. */}
-          <div className="nl-display mt-1.5 text-[32px] font-bold leading-none sm:text-[36px]">
-            {fmtTime(next.startTime)} – {fmtTime(next.endTime)}
-          </div>
-          <div className="mt-2 text-[14px] opacity-90">
-            {[next.subRole, next.instructorType].filter(Boolean).join(' · ') || 'Floor'}
-            {isToday && startsIn(next.startTime)}
-          </div>
-
-          {dayShifts && onFloor > 0 && (
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
-              style={{ borderColor: 'rgba(255,255,255,.3)' }}>
-              <span className="text-[13px] opacity-90">
-                {onFloor} {onFloor === 1 ? 'person' : 'people'} rostered that day
-              </span>
-              <Btn to="/schedule" size="sm" variant="ghost"
-                className="!border-white/60 !text-white">
-                Full schedule <ArrowRight size={13} />
-              </Btn>
+      <div className="grid gap-3.5 md:grid-cols-2 md:items-start">
+        <div className="space-y-3.5">
+        {shifts === null ? (
+          <Loading label="Getting your shifts…" />
+        ) : next ? (
+          <div className="rounded-2xl p-5" style={{ background: 'var(--nl-brand)', color: '#fff' }}>
+            <div className="text-[10px] font-bold uppercase tracking-[0.14em] opacity-80">
+              {isToday ? "You're on today" : `Next shift · ${fmtDay(next.date)}`}
             </div>
-          )}
-        </div>
-      ) : (
-        <AllClear title="No shifts booked"
-          note="Nothing scheduled for you yet. Submitting your availability is how you get on the sheet." />
-      )}
+            {/* The biggest thing on the page, because it's the answer. */}
+            <div className="nl-display mt-1.5 text-[32px] font-bold leading-none sm:text-[36px]">
+              {fmtTime(next.startTime)} – {fmtTime(next.endTime)}
+            </div>
+            <div className="mt-2 text-[14px] opacity-90">
+              {[next.subRole, next.instructorType].filter(Boolean).join(' · ') || 'Floor'}
+              {isToday && startsIn(next.startTime)}
+            </div>
 
-      {/* ── Which side, and when you move ───────────────────────── */}
-      {next && blocks.length > 0 && (
-        <div>
-          <Lbl className="mb-1.5">
-            {isTodayDate(next.date, today) ? 'Your day' : `Your day · ${fmtDay(next.date)}`}
-          </Lbl>
-          <Card className="!p-0 overflow-hidden">
-            {blocks.map((b, i) => {
-              const live = currentBlock && b.startMin === currentBlock.startMin;
-              return (
-                <div key={`${b.side}-${b.start}`}
-                  className={`flex items-center gap-3 px-4 py-3.5 ${i > 0 ? 'border-t' : ''}`}
-                  style={{
-                    borderColor: 'var(--nl-rule)',
-                    background: live ? 'var(--nl-raised)' : undefined,
-                  }}>
-                  {/* A colour stripe rather than a dot: it survives being
-                      glanced at, and matches the HS/EM colours on the sheet
-                      Neeru prints, so the two read as the same thing. */}
-                  <span className="h-9 w-1.5 shrink-0 rounded-full"
-                    style={{ background: sideColour(b.side) }} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[15px] font-semibold tabular-nums">
-                      {fmtTime(b.start)} – {fmtTime(b.end)}
-                    </span>
-                    <span className="block text-[13px]" style={{ color: 'var(--nl-muted)' }}>
-                      {sideLabel(b.side)}
-                    </span>
-                  </span>
-                  {live && <Pill tone="brand">Now</Pill>}
-                </div>
-              );
-            })}
-          </Card>
-
-          {/* The second half of the question, said in words. */}
-          {upNext && (
-            <p className="mt-2 flex items-start gap-1.5 px-1 text-[13px] leading-relaxed"
-              style={{ color: 'var(--nl-ink2)' }}>
-              <MoveRight size={15} className="mt-0.5 shrink-0" style={{ color: sideColour(upNext.side) }} />
-              <span>You move to <b>{sideLabel(upNext.side)}</b> at <b>{fmtTime(upNext.start)}</b>.</span>
-            </p>
-          )}
-          {!upNext && hasSwitch(blocks) && isTodayDate(next.date, today) && currentBlock && (
-            <p className="mt-2 px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
-              No more moves today — you finish on {sideLabel(currentBlock.side)}.
-            </p>
-          )}
-          {!hasSwitch(blocks) && (
-            <p className="mt-2 px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
-              You&apos;re on {sideLabel(blocks[0].side)} the whole shift.
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Sides not posted yet. Only said on the day itself — for a shift
-          next week it is simply too early, and a permanent "not posted"
-          note would train people to ignore this whole section. */}
-      {next && isTodayDate(next.date, today) && sideMap && blocks.length === 0 && (
-        <p className="px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
-          Sides aren&apos;t posted for today yet. Ask whoever&apos;s running the floor.
-        </p>
-      )}
-
-      {/* ── The only thing with a button ────────────────────────── */}
-      {pending.length > 0 && (
-        <Card tone="warn" className="!border-[1.5px]">
-          <Pill tone="warn"><Mail size={12} /> Needs you</Pill>
-          {pending.slice(0, 3).map(s => (
-            <p key={s.id} className="mt-2.5 text-[14px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-              <b>{fmtDay(s.date)}</b> — you signed in but never signed out.
-              We emailed you a link to confirm you finished at {fmtTime(s.endTime)}.
-            </p>
-          ))}
-          <p className="mt-2.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--nl-muted)' }}>
-            Check your email — the link confirms it in one tap. Left at a
-            different time? Tell the centre instead.
-          </p>
-        </Card>
-      )}
-
-      {/* ── Coming up ───────────────────────────────────────────── */}
-      {upcoming.length > 1 && (
-        <div>
-          <Lbl className="mb-1.5">Coming up</Lbl>
-          <Card className="!p-0">
-            {upcoming.slice(1, 5).map((s, i) => (
-              <div key={s.id}
-                className={`flex items-center justify-between gap-3 px-4 py-3.5 ${i > 0 ? 'border-t' : ''}`}
-                style={{ borderColor: 'var(--nl-rule)' }}>
-                <span className="min-w-0">
-                  <span className="block truncate text-[14px] font-semibold">{fmtDay(s.date)}</span>
-                  <span className="block truncate text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-                    {[s.subRole, s.instructorType].filter(Boolean).join(' · ') || 'Floor'}
-                  </span>
+            {dayShifts && onFloor > 0 && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
+                style={{ borderColor: 'rgba(255,255,255,.3)' }}>
+                <span className="text-[13px] opacity-90">
+                  {onFloor} {onFloor === 1 ? 'person' : 'people'} rostered that day
                 </span>
-                <span className="shrink-0 text-[13px] tabular-nums" style={{ color: 'var(--nl-muted)' }}>
-                  {fmtTime(s.startTime)} – {fmtTime(s.endTime)}
+                <Btn to="/schedule" size="sm" variant="ghost"
+                  className="!border-white/60 !text-white">
+                  Full schedule <ArrowRight size={13} />
+                </Btn>
+              </div>
+            )}
+          </div>
+        ) : (
+          <AllClear title="No shifts booked"
+            note="Nothing scheduled for you yet. Submitting your availability is how you get on the sheet." />
+        )}
+
+        {/* ── Which side, and when you move ───────────────────────── */}
+        {next && blocks.length > 0 && (
+          <div>
+            <Lbl className="mb-1.5">
+              {isTodayDate(next.date, today) ? 'Your day' : `Your day · ${fmtDay(next.date)}`}
+            </Lbl>
+            <Card className="!p-0 overflow-hidden">
+              {blocks.map((b, i) => {
+                const live = currentBlock && b.startMin === currentBlock.startMin;
+                return (
+                  <div key={`${b.side}-${b.start}`}
+                    className={`flex items-center gap-3 px-4 py-3.5 ${i > 0 ? 'border-t' : ''}`}
+                    style={{
+                      borderColor: 'var(--nl-rule)',
+                      background: live ? 'var(--nl-raised)' : undefined,
+                    }}>
+                    {/* A colour stripe rather than a dot: it survives being
+                        glanced at, and matches the HS/EM colours on the sheet
+                        Neeru prints, so the two read as the same thing. */}
+                    <span className="h-9 w-1.5 shrink-0 rounded-full"
+                      style={{ background: sideColour(b.side) }} />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[15px] font-semibold tabular-nums">
+                        {fmtTime(b.start)} – {fmtTime(b.end)}
+                      </span>
+                      <span className="block text-[13px]" style={{ color: 'var(--nl-muted)' }}>
+                        {sideLabel(b.side)}
+                      </span>
+                    </span>
+                    {live && <Pill tone="brand">Now</Pill>}
+                  </div>
+                );
+              })}
+            </Card>
+
+            {/* The second half of the question, said in words. */}
+            {upNext && (
+              <p className="mt-2 flex items-start gap-1.5 px-1 text-[13px] leading-relaxed"
+                style={{ color: 'var(--nl-ink2)' }}>
+                <MoveRight size={15} className="mt-0.5 shrink-0" style={{ color: sideColour(upNext.side) }} />
+                <span>You move to <b>{sideLabel(upNext.side)}</b> at <b>{fmtTime(upNext.start)}</b>.</span>
+              </p>
+            )}
+            {!upNext && hasSwitch(blocks) && isTodayDate(next.date, today) && currentBlock && (
+              <p className="mt-2 px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
+                No more moves today — you finish on {sideLabel(currentBlock.side)}.
+              </p>
+            )}
+            {!hasSwitch(blocks) && (
+              <p className="mt-2 px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
+                You&apos;re on {sideLabel(blocks[0].side)} the whole shift.
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Sides not posted yet. Only said on the day itself — for a shift
+            next week it is simply too early, and a permanent "not posted"
+            note would train people to ignore this whole section. */}
+        {next && isTodayDate(next.date, today) && sideMap && blocks.length === 0 && (
+          <p className="px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
+            Sides aren&apos;t posted for today yet. Ask whoever&apos;s running the floor.
+          </p>
+        )}
+
+        {/* ── The only thing with a button ────────────────────────── */}
+        {pending.length > 0 && (
+          <Card tone="warn" className="!border-[1.5px]">
+            <Pill tone="warn"><Mail size={12} /> Needs you</Pill>
+            {pending.slice(0, 3).map(s => (
+              <p key={s.id} className="mt-2.5 text-[14px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
+                <b>{fmtDay(s.date)}</b> — you signed in but never signed out.
+                We emailed you a link to confirm you finished at {fmtTime(s.endTime)}.
+              </p>
+            ))}
+            <p className="mt-2.5 text-[12.5px] leading-relaxed" style={{ color: 'var(--nl-muted)' }}>
+              Check your email — the link confirms it in one tap. Left at a
+              different time? Tell the centre instead.
+            </p>
+          </Card>
+        )}
+        </div>
+
+        <div className="space-y-3.5">
+        {/* ── This week — shifts and events together ──────────────── */}
+        {week.length > 0 && (
+          <div>
+            <Lbl className="mb-1.5">This week</Lbl>
+            <Card className="!p-0">
+              {week.slice(0, 6).map((r, i) => (
+                <div key={`${r.kind}-${r.id}`}
+                  className={`flex items-center gap-3 px-4 py-3 ${i > 0 ? 'border-t' : ''}`}
+                  style={{ borderColor: 'var(--nl-rule)' }}>
+                  <span className="w-10 shrink-0 text-center">
+                    <span className="block text-[9.5px] font-bold uppercase tracking-[0.08em]"
+                      style={{ color: 'var(--nl-muted)' }}>
+                      {fmtDay(r.date, { weekday: 'short' })}
+                    </span>
+                    <span className="nl-display block text-[17px] font-bold leading-none">
+                      {asDate(r.date).getDate()}
+                    </span>
+                  </span>
+
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[13.5px] font-semibold">
+                      {r.kind === 'shift'
+                        ? `Shift${r.subRole ? ` · ${r.subRole}` : ''}`
+                        : r.title}
+                    </span>
+                    <span className="block truncate text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
+                      {r.startTime
+                        ? `${fmtTime(r.startTime)}${r.endTime ? ` – ${fmtTime(r.endTime)}` : ''}`
+                        : 'All day'}
+                      {r.kind === 'event' && r.note ? ` · ${r.note}` : ''}
+                    </span>
+                  </span>
+
+                  {r.kind === 'event' && (
+                    <Pill tone="note" className="shrink-0">{eventTypeShort(r.type)}</Pill>
+                  )}
+                </div>
+              ))}
+            </Card>
+          </div>
+        )}
+
+        {/* ── What's on this month ────────────────────────────────── */}
+        {onThisMonth.length > 0 && (
+          <div>
+            <Lbl className="mb-1.5">What&apos;s on this month</Lbl>
+            <Card className="!p-0">
+              {onThisMonth.slice(0, 6).map((r, i) => (
+                <div key={`${r.kind}-${r.id}`}
+                  className={`flex items-start gap-3 px-4 py-3 ${i > 0 ? 'border-t' : ''}`}
+                  style={{ borderColor: 'var(--nl-rule)' }}>
+                  <span className="w-11 shrink-0 rounded-lg py-1.5 text-center"
+                    style={{ background: 'var(--nl-raised)' }}>
+                    <span className="block text-[9px] font-bold uppercase tracking-[0.08em]"
+                      style={{ color: 'var(--nl-muted)' }}>
+                      {fmtDay(r.date, { month: 'short' })}
+                    </span>
+                    <span className="nl-display block text-[15px] font-bold leading-tight">
+                      {asDate(r.date).getDate()}
+                    </span>
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13.5px] font-semibold leading-snug">{r.title}</span>
+                    <span className="block text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
+                      {r.startTime ? `${fmtTime(r.startTime)} · ` : ''}
+                      {r.kind === 'closure' ? r.note : eventTypeLabel(r.type)}
+                      {r.kind === 'event' && r.note ? ` · ${r.note}` : ''}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </Card>
+          </div>
+        )}
+
+        {/* ── Open shifts ─────────────────────────────────────────── */}
+        {canTakeShifts && eligibleOpen.length > 0 && (
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <b className="block text-[14.5px]">
+                  {eligibleOpen.length} open {eligibleOpen.length === 1 ? 'shift' : 'shifts'}
+                </b>
+                <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
+                  You can cover {eligibleOpen.length === 1 ? 'it' : 'all of them'}
                 </span>
               </div>
-            ))}
+              <Btn to="/shift-board" variant="ghost" size="sm"
+                className="w-full justify-center sm:w-auto">
+                <CalendarDays size={14} /> Look
+              </Btn>
+            </div>
           </Card>
+        )}
+
+        {/* ── Their own pay period ────────────────────────────────── */}
+        {showPay && (
+          <Card>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <b className="block text-[14.5px]">Your hours this pay period</b>
+                <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
+                  With an estimate of what they come to — not a payslip.
+                </span>
+              </div>
+              <Btn to="/my-pay" variant="ghost" size="sm" className="w-full justify-center sm:w-auto">
+                <Wallet size={14} /> Open
+              </Btn>
+            </div>
+          </Card>
+        )}
+
+        {/* ── Announcement ────────────────────────────────────────── */}
+        {announcement && (
+          <Card>
+            <div className="flex items-center gap-2">
+              <Megaphone size={14} style={{ color: 'var(--nl-brand)' }} />
+              <Lbl>Latest from the centre</Lbl>
+            </div>
+            <b className="mt-1.5 block text-[14.5px] leading-snug">{announcement.title}</b>
+            <p className="mt-1 line-clamp-3 text-[13.5px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
+              {announcement.text}
+            </p>
+            <Btn to="/announcements" variant="quiet" size="sm"
+              className="mt-3 w-full justify-center sm:w-auto">Read it</Btn>
+          </Card>
+        )}
         </div>
-      )}
-
-      {/* ── Open shifts ─────────────────────────────────────────── */}
-      {canTakeShifts && eligibleOpen.length > 0 && (
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <b className="block text-[14.5px]">
-                {eligibleOpen.length} open {eligibleOpen.length === 1 ? 'shift' : 'shifts'}
-              </b>
-              <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-                You can cover {eligibleOpen.length === 1 ? 'it' : 'all of them'}
-              </span>
-            </div>
-            <Btn to="/shift-board" variant="ghost" size="sm"
-              className="w-full justify-center sm:w-auto">
-              <CalendarDays size={14} /> Look
-            </Btn>
-          </div>
-        </Card>
-      )}
-
-      {/* ── Their own pay period ────────────────────────────────── */}
-      {showPay && (
-        <Card>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="min-w-0">
-              <b className="block text-[14.5px]">Your hours this pay period</b>
-              <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-                With an estimate of what they come to — not a payslip.
-              </span>
-            </div>
-            <Btn to="/my-pay" variant="ghost" size="sm" className="w-full justify-center sm:w-auto">
-              <Wallet size={14} /> Open
-            </Btn>
-          </div>
-        </Card>
-      )}
-
-      {/* ── Announcement ────────────────────────────────────────── */}
-      {announcement && (
-        <Card>
-          <div className="flex items-center gap-2">
-            <Megaphone size={14} style={{ color: 'var(--nl-brand)' }} />
-            <Lbl>Latest from the centre</Lbl>
-          </div>
-          <b className="mt-1.5 block text-[14.5px] leading-snug">{announcement.title}</b>
-          <p className="mt-1 line-clamp-3 text-[13.5px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-            {announcement.text}
-          </p>
-          <Btn to="/announcements" variant="quiet" size="sm"
-            className="mt-3 w-full justify-center sm:w-auto">Read it</Btn>
-        </Card>
-      )}
+      </div>
     </div>
   );
 }

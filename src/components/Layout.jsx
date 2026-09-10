@@ -240,6 +240,9 @@ export default function Layout({ children }) {
     // and the Firestore rules enforce it too, this just hides the link.
     if (canSeeAdminPanel) {
       centre.push({ to: '/inventory', label: 'Inventory', icon: Package });
+      // Staff meetings and fun days. Sits with Centre because it is the
+      // centre's calendar, not a scheduling tool.
+      centre.push({ to: '/events', label: 'Centre Events', icon: CalendarCheck });
     }
     centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
   }
@@ -261,6 +264,7 @@ export default function Layout({ children }) {
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
       { to: '/inventory',             label: 'Inventory',             icon: Package },
       { to: '/availability-log',      label: 'Availability Log',      icon: History },
+      { to: '/events',                label: 'Centre Events',         icon: CalendarCheck },
     );
   } else if (!useOwnerLayout && isLead) {
     // Lead instructors get Student Scheduler — but NOT the broader
@@ -484,13 +488,30 @@ export default function Layout({ children }) {
       </aside>
       <div className="flex flex-1 flex-col overflow-hidden">
         <header className="flex items-center gap-3 border-b bg-white px-4 py-3 shadow-sm lg:hidden">
-          <button onClick={() => setOpen(true)}>
+          <button onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu size={24} className="text-gray-700" />
           </button>
           <div className="flex items-center gap-2">
             <Logo size={28} />
             <span className="font-bold text-gray-900">Mathnasium Portal</span>
           </div>
+
+          {/* Account and settings live on the avatar, top-right — where
+              people already look for them, and where they don't cost a
+              permanent sixth of the tab bar for something touched twice a
+              year. */}
+          <Link to="/account" title="Your account and settings"
+            aria-label="Your account and settings"
+            className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full">
+            {profile?.photoURL ? (
+              <img src={profile.photoURL} alt=""
+                className="h-9 w-9 rounded-full object-cover" />
+            ) : (
+              <span className="flex h-9 w-9 items-center justify-center rounded-full bg-red-600 text-sm font-bold text-white">
+                {profile?.displayName?.charAt(0)?.toUpperCase() || '?'}
+              </span>
+            )}
+          </Link>
         </header>
         <main className="flex-1 overflow-y-auto p-4 md:p-6 lg:p-8">
           {children}
@@ -523,7 +544,7 @@ function MobileTabs({ canTakeShifts, isVolunteer, showPay }) {
   const tabs = [
     { to: '/', label: 'Today', icon: House, exact: true },
     { to: '/schedule', label: 'Schedule', icon: CalendarDays },
-    canTakeShifts && { to: '/shift-board', label: 'Shifts', icon: Briefcase },
+    canTakeShifts && { to: '/shift-board', label: 'Job board', icon: Briefcase },
     showPay && { to: '/my-pay', label: 'Pay', icon: Wallet },
     !isVolunteer && { to: '/chat', label: 'Chat', icon: MessageSquare },
   ].filter(Boolean);

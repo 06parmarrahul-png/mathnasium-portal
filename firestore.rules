@@ -390,6 +390,22 @@ service cloud.firestore {
         allow write: if isOwnerLike() || isSuperAdmin() || isAdmin() || isLeadAt(centerId) || isManagerAt(centerId) || isHostAt(centerId);
       }
 
+      // Centre events — staff meetings, fun days, training.
+      //
+      // Read is open to any staff member of this centre: it is the answer
+      // to "what's on this month", and a rota nobody can see is the problem
+      // this replaced. Nothing sensitive lives here — a title, a date and a
+      // type.
+      //
+      // Writes are the same tier as announcements (owner / super-admin /
+      // admin), because an event is an announcement with a date on it, and
+      // the same people should be able to make both. Directors and admin
+      // assistants are covered by isOwnerLike().
+      match /events/{eventId} {
+        allow read: if canRunFloor(centerId) || isMemberAt(centerId);
+        allow create, update, delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
       // Per-day instructor assignments (slot -> staff names). Leads staff
       // the floor minute by minute, so they write here.
       //

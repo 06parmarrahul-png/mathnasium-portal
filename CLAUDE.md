@@ -510,6 +510,59 @@ Covered by five tests in `tests/rules/shifts.rules.test.js`, including that
 another centre's manager is still refused and that instructors cannot
 write.
 
+### Centre Events — meetings and fun days
+
+`centers/{centerId}/events/{id}` — `{ title, date, startTime?, endTime?,
+type, note }`, types `meeting | fun-day | training | other`. Managed at
+`/events` (admin+), shown to every instructor on their home.
+
+**Why its own collection rather than announcements:** announcements carry
+the date they were POSTED, not the date the thing happens, so nothing could
+sort or group by it. "Fun Day" existed as an announcement *category* and had
+never been used once in a year — which is what a feature with no home looks
+like. A calendar needs real dates.
+
+`src/lib/centreEvents.js`:
+
+- **`weekAhead`** merges shifts and events into ONE date-ordered list. The
+  question is "what's happening this week", not "shifts, and separately,
+  events" — splitting them makes the reader do the interleaving. Drafts and
+  cancellations are excluded; an all-day event sorts before timed ones.
+- **`monthAhead`** adds the centre's configured holidays as closures, so a
+  closed day never needs entering twice. Closures come free.
+- **`monthWindow`** runs from TODAY to month end, not from the 1st — someone
+  opening it on the 28th wants the next few days.
+- Local-noon date parsing throughout; `new Date('2026-09-17')` is the 16th
+  in Pacific.
+
+`eventTypeShort()` feeds the badge ("Meeting") while `eventTypeLabel()`
+feeds prose ("Staff meeting") — an event titled "Staff meeting" with a
+"Staff meeting" badge is the title repeating itself.
+
+**Rules:** read is `canRunFloor || isMemberAt` (staff can see the meeting
+they're expected at); writes are the announcements tier (owner /
+super-admin / admin) because an event IS an announcement with a date, and
+deliberately narrower than the floor tools. Six emulator tests, including
+that managers and hosts cannot write and instructors cannot delete.
+
+**The empty-card risk:** "What's on" renders nothing at all when there's
+nothing, rather than an empty shell — an always-empty card trains people to
+ignore the space. Worth watching whether anyone actually maintains it; the
+unused fun-day category is the warning from last time.
+
+### Mobile and tablet
+
+The floor-staff home is one column on a phone and **two from `md`** — left
+is what's happening to you now (shift, sides, anything needing action),
+right is what's coming (this week, what's on, pay, announcements). Reading
+order, not an arbitrary split.
+
+Five tabs, not six: Home · Schedule · **Job board** · My Pay · Chat, with
+**Settings behind the avatar** in the mobile header. Six tabs on a 375px
+screen is 62px each; Settings is touched about twice a year and doesn't earn
+a permanent sixth of the screen. `Shifts` was renamed `Job board` — the
+centre's own word for it.
+
 ### My Pay — a person's own projection
 
 `/my-pay` shows hourly staff their own pay period: the shifts in it, hours,

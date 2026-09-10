@@ -30,6 +30,7 @@ const PlatformRevenue           = lazy(() => import('./pages/PlatformRevenue'));
 const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
 const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
 const MyPay                     = lazy(() => import('./pages/MyPay'));
+const CentreEvents              = lazy(() => import('./pages/CentreEvents'));
 const ConfirmSignOut            = lazy(() => import('./pages/ConfirmSignOut'));
 const SupplyDemand              = lazy(() => import('./pages/SupplyDemand'));
 const StaffingBoard             = lazy(() => import('./pages/StaffingBoard'));
@@ -160,6 +161,7 @@ function AppRoutes() {
         {/* A person's own pay projection. The page gates itself on being
             paid hourly — volunteers and salaried staff would get a number
             that is not how they are paid. */}
+        <Route path="/events" element={<ProtectedRoute><Layout><CentreEvents /></Layout></ProtectedRoute>} />
         <Route path="/my-pay" element={<ProtectedRoute><Layout><MyPay /></Layout></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />

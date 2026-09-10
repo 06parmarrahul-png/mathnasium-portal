@@ -251,6 +251,52 @@ describe('schedulerInstructorAssignments — which side am I on', () => {
   });
 });
 
+describe('centre events — staff meetings and fun days', () => {
+  const PATH = `centers/${CENTRE}/events`;
+  const EVENT = { title: 'Staff meeting', date: '2026-09-17', startTime: '18:30', type: 'meeting' };
+
+  it('lets every instructor at this centre read what is on', () => {
+    // The whole point: staff can see the meeting they are expected at.
+    return (async () => {
+      await seed(PATH, 'e1', EVENT);
+      for (const uid of ['inst1', 'inst2', 'trainee1', 'vol1', 'host1', 'mgr1']) {
+        await assertSucceeds(getDoc(doc(as(uid), PATH, 'e1')));
+      }
+    })();
+  });
+
+  it('does not leak them to another centre', async () => {
+    await seed(PATH, 'e1', EVENT);
+    await assertFails(getDoc(doc(as('mgrOther'), PATH, 'e1')));
+  });
+
+  it('lets admins and owners create them', async () => {
+    for (const uid of ['owner1', 'admin1']) {
+      await assertSucceeds(setDoc(doc(as(uid), PATH, `e-${uid}`), EVENT));
+    }
+  });
+
+  it('does NOT let an instructor invent a staff meeting', async () => {
+    // Reading the calendar is not the same as writing to it.
+    for (const uid of ['inst1', 'trainee1', 'vol1']) {
+      await assertFails(setDoc(doc(as(uid), PATH, `bad-${uid}`), EVENT));
+    }
+  });
+
+  it('does not let a manager or host write them either', async () => {
+    // Same tier as announcements — deliberately narrower than the floor
+    // tools, because an event is a message to the whole centre.
+    for (const uid of ['mgr1', 'host1']) {
+      await assertFails(setDoc(doc(as(uid), PATH, `bad-${uid}`), EVENT));
+    }
+  });
+
+  it('does not let an instructor delete one', async () => {
+    await seed(PATH, 'e1', EVENT);
+    await assertFails(deleteDoc(doc(as('inst1'), PATH, 'e1')));
+  });
+});
+
 describe('schedulerTemplates — saved staffing shapes', () => {
   const tpl = { name: 'Term time', config: { minPerDay: 8, maxPerDay: 11, perDay: {} }, centerId: CENTRE };
   const path = `centers/${CENTRE}/schedulerTemplates`;
