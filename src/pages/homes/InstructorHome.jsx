@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, Wallet } from 'lucide-react';
+import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { setNewLook } from '../../lib/newLook';
-import { isHourlyPaid } from '../../lib/payProjection';
 import {
-  weekAhead, monthAhead, weekWindow, monthWindow, eventTypeLabel, eventTypeShort,
+  watchLastSeen, markSeen, newestDate, unreadCount, unreadLabel,
+} from '../../lib/announcementReads';
+import {
+  weekAhead, monthAhead, weekWindow, monthWindow, eventTypeShort,
 } from '../../lib/centreEvents';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
@@ -38,13 +40,21 @@ import { fmtTime, fmtDay, todayISO, minutesOf, asDate } from '../../components/n
  *   - buttons go full width on a phone, shrink to fit from `sm` up
  *   - the page ends with clearance for the bottom tab bar
  */
+
+/**
+ * How many announcements the home reads. Five is plenty to show the latest
+ * and count what is new; the badge says "5+" rather than "5" when the count
+ * fills the fetch, so the number is never quietly short.
+ */
+const ANNOUNCEMENT_FETCH = 5;
+
 export default function InstructorHome() {
-  const { profile, activeCenterId, mySubRoles, canTakeShifts, isVolunteer, centerConfig } = useAuth();
-  const showPay = isHourlyPaid({ displayName: profile?.displayName, isVolunteer }, centerConfig);
+  const { profile, activeCenterId, mySubRoles, canTakeShifts, centerConfig } = useAuth();
   const [shifts, setShifts] = useState(null);        // null = still loading
   const [dayRoster, setDayRoster] = useState({ date: null, rows: null });
   const [openShifts, setOpenShifts] = useState([]);
-  const [announcement, setAnnouncement] = useState(null);
+  const [announcements, setAnnouncements] = useState([]);
+  const [seenAt, setSeenAt] = useState(null);        // their own read marker
   const [events, setEvents] = useState([]);
   // { date, map } — stamped so staleness is derived, never reset in an effect.
   const [sides, setSides] = useState({ date: null, map: null });
@@ -136,16 +146,36 @@ export default function InstructorHome() {
         collection(db, 'announcements'),
         where('centerId', '==', activeCenterId),
         orderBy('date', 'desc'),
-        limit(5),
+        limit(ANNOUNCEMENT_FETCH),
       ),
       snap => {
         const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        // Pinned first decides which one the strip SHOWS. The unread count
+        // is worked out from dates, so this ordering cannot skew it.
         rows.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
-        setAnnouncement(rows[0] || null);
+        setAnnouncements(rows);
       },
-      () => setAnnouncement(null),
+      () => setAnnouncements([]),
     );
   }, [activeCenterId]);
+
+  // What they have already read. Stored per PERSON, not per browser — the
+  // front desk tablet is shared, and a device-level marker would clear one
+  // instructor's badge because a different one read it.
+  useEffect(() => {
+    if (!profile?.uid) return undefined;
+    return watchLastSeen(profile.uid, setSeenAt);
+  }, [profile?.uid]);
+
+  // Expanding it IS reading it. Applied locally first so the badge clears
+  // on the tap rather than after a round trip.
+  const readAnnouncements = () => {
+    const newest = newestDate(announcements);
+    if (!newest || !profile?.uid) return;
+    const previous = seenAt || '';
+    setSeenAt(newest);
+    markSeen(profile.uid, newest, previous).catch(() => {});
+  };
 
   // What Ratio needs FROM her. The confirm itself happens through the
   // emailed single-use link, so this points at the email rather than
@@ -234,6 +264,11 @@ export default function InstructorHome() {
           </button>
         </div>
       </div>
+
+      {/* Announcements — at the top, one line tall. */}
+      {announcements.length > 0 && (
+        <AnnouncementStrip rows={announcements} seenAt={seenAt} onRead={readAnnouncements} />
+      )}
 
       <div className="grid gap-3.5 md:grid-cols-2 md:items-start">
         <div className="space-y-3.5">
@@ -420,7 +455,9 @@ export default function InstructorHome() {
                     <span className="block text-[13.5px] font-semibold leading-snug">{r.title}</span>
                     <span className="block text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
                       {r.startTime ? `${fmtTime(r.startTime)} · ` : ''}
-                      {r.kind === 'closure' ? r.note : eventTypeLabel(r.type)}
+                      {/* Short form here too: an event titled "Staff meeting"
+                          was labelling itself "Staff meeting". */}
+                      {r.kind === 'closure' ? r.note : eventTypeShort(r.type)}
                       {r.kind === 'event' && r.note ? ` · ${r.note}` : ''}
                     </span>
                   </span>
@@ -449,41 +486,80 @@ export default function InstructorHome() {
             </div>
           </Card>
         )}
-
-        {/* ── Their own pay period ────────────────────────────────── */}
-        {showPay && (
-          <Card>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="min-w-0">
-                <b className="block text-[14.5px]">Your hours this pay period</b>
-                <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-                  With an estimate of what they come to — not a payslip.
-                </span>
-              </div>
-              <Btn to="/my-pay" variant="ghost" size="sm" className="w-full justify-center sm:w-auto">
-                <Wallet size={14} /> Open
-              </Btn>
-            </div>
-          </Card>
-        )}
-
-        {/* ── Announcement ────────────────────────────────────────── */}
-        {announcement && (
-          <Card>
-            <div className="flex items-center gap-2">
-              <Megaphone size={14} style={{ color: 'var(--nl-brand)' }} />
-              <Lbl>Latest from the centre</Lbl>
-            </div>
-            <b className="mt-1.5 block text-[14.5px] leading-snug">{announcement.title}</b>
-            <p className="mt-1 line-clamp-3 text-[13.5px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-              {announcement.text}
-            </p>
-            <Btn to="/announcements" variant="quiet" size="sm"
-              className="mt-3 w-full justify-center sm:w-auto">Read it</Btn>
-          </Card>
-        )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The announcements strip — top of the page, one line tall.
+ *
+ * It used to be a card at the very BOTTOM, under the week, the month and
+ * the open shifts. That is the last place a person looks and the first
+ * place they stop scrolling, so an announcement could be posted and simply
+ * never be seen. Moving it up cost nothing: a title fits on one line, and
+ * the rest is one tap away.
+ *
+ * The badge is the whole point of it being up here. Quiet grey when there
+ * is nothing new — a strip that always looks urgent is one people stop
+ * seeing — and expanding it is what marks it read, because a separate
+ * "mark as read" control is one nobody would ever press.
+ */
+function AnnouncementStrip({ rows, seenAt, onRead }) {
+  const [open, setOpen] = useState(false);
+  const latest = rows[0];
+  const count = unreadCount(rows, seenAt);
+  const badge = unreadLabel(count, rows.length, ANNOUNCEMENT_FETCH);
+  const isNew = count > 0;
+
+  const toggle = () => {
+    if (!open) onRead();      // opening it IS reading it
+    setOpen(o => !o);
+  };
+
+  return (
+    <div className="mb-3.5 overflow-hidden rounded-xl border"
+      style={{
+        background: isNew ? 'var(--nl-brandw)' : 'var(--nl-card)',
+        borderColor: isNew ? 'var(--nl-brand)' : 'var(--nl-rule)',
+      }}>
+      <button type="button" onClick={toggle} aria-expanded={open}
+        className="flex min-h-[48px] w-full items-center gap-2.5 px-3.5 py-2.5 text-left">
+        <Megaphone size={15} className="shrink-0" style={{ color: 'var(--nl-brand)' }} />
+
+        {/* The title wraps rather than truncating. A one-line preview of
+            the body underneath it looked tidier, but it stole the width
+            that made the title readable — and the title is the part
+            written to be read at a glance. */}
+        <span className="line-clamp-2 min-w-0 flex-1 text-[13.5px] font-semibold leading-snug">
+          {latest.title}
+        </span>
+
+        {badge && (
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-bold"
+            style={{ background: 'var(--nl-brand)', color: '#fff' }}>
+            {badge} new
+          </span>
+        )}
+
+        <ChevronDown size={16} aria-hidden="true"
+          className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          style={{ color: 'var(--nl-muted)' }} />
+      </button>
+
+      {open && (
+        <div className="border-t px-3.5 pb-3.5 pt-3" style={{ borderColor: 'var(--nl-rule)' }}>
+          <p className="whitespace-pre-line text-[13.5px] leading-relaxed"
+            style={{ color: 'var(--nl-ink2)' }}>
+            {latest.text}
+          </p>
+          <Btn to="/announcements" variant="quiet" size="sm"
+            className="mt-3 w-full justify-center sm:w-auto">
+            {rows.length > 1 ? 'All announcements' : 'Open announcements'}
+          </Btn>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -24,6 +24,9 @@ const rowsFor = (q) => {
   return snapshots[key] || [];
 };
 
+const docData = {};          // keyed by document path
+const writes = [];           // every setDoc the page makes
+
 vi.mock('../../firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/firestore', () => ({
   collection: (...a) => ({ __c: a.slice(1).join('/') }),
@@ -32,10 +35,19 @@ vi.mock('firebase/firestore', () => ({
   orderBy: () => ({}),
   limit: () => ({}),
   doc: (...a) => ({ __d: a.slice(1).join('/') }),
-  onSnapshot: (q, next) => {
+  setDoc: async (ref, data) => { writes.push({ path: ref.__d, data }); },
+  onSnapshot: (ref, next) => {
     if (typeof next === 'function') {
-      const rows = rowsFor(q);
-      next({ docs: rows.map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
+      // A document listener and a collection listener get different
+      // snapshot shapes. Handing a doc listener `{ docs: [] }` would throw
+      // on snap.exists() — a mock that blurs the two hides real bugs.
+      if (ref?.__d) {
+        const value = docData[ref.__d];
+        next({ exists: () => value !== undefined, data: () => value });
+      } else {
+        const rows = rowsFor(ref);
+        next({ docs: rows.map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
+      }
     }
     return () => {};
   },
@@ -79,6 +91,8 @@ beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   sideSheet.current = {};
   for (const k of ['shifts', 'openShifts', 'announcements', 'users', 'events']) snapshots[k] = [];
+  for (const k of Object.keys(docData)) delete docData[k];
+  writes.length = 0;
 });
 afterEach(() => { cleanup(); });
 
@@ -371,5 +385,132 @@ describe("this week, and what's on", () => {
     snapshots.events = [{ id: 'bad', title: '', date: 'whenever' }, evt({ date: DAY })];
     expect(() => draw()).not.toThrow();
     expect(screen.getAllByText('Staff meeting').length).toBeGreaterThan(0);
+  });
+});
+
+describe('announcements, at the top with a badge', () => {
+  const post = (over = {}) => ({
+    id: 'a1', centerId: 'langley', title: 'Fire drill Thursday',
+    text: 'Everyone out the back door. Two minutes, tops.',
+    date: '2026-09-08T17:00:00.000Z', pinned: false, ...over,
+  });
+
+  const READS = 'users/u1/private/reads';
+
+  it('puts the latest one at the top, above everything else', () => {
+    snapshots.announcements = [post()];
+    snapshots.shifts = [shift()];
+    const { container } = draw();
+    const strip = screen.getByText('Fire drill Thursday').closest('div');
+    const grid = container.querySelector('[class*="md:grid-cols-2"]');
+    // DOCUMENT_POSITION_FOLLOWING — the grid comes after the strip.
+    expect(strip.compareDocumentPosition(grid) & 4).toBeTruthy();
+  });
+
+  it('shows nothing at all when there are no announcements', () => {
+    snapshots.shifts = [shift()];
+    draw();
+    expect(screen.queryByText(/new$/)).toBeNull();
+  });
+
+  it('counts what is new for somebody who has never opened them', () => {
+    snapshots.announcements = [
+      post({ id: 'a1', date: '2026-09-08T17:00:00.000Z' }),
+      post({ id: 'a2', title: 'Older thing', date: '2026-09-01T17:00:00.000Z' }),
+    ];
+    draw();
+    expect(screen.getByText('2 new')).toBeTruthy();
+  });
+
+  it('stays quiet once they are caught up', () => {
+    docData[READS] = { announcementsSeenAt: '2026-09-08T17:00:00.000Z' };
+    snapshots.announcements = [post()];
+    draw();
+    // The strip is still there — the title is worth having — but nothing
+    // claims it is new. A badge that is always lit is one people stop seeing.
+    expect(screen.getByText('Fire drill Thursday')).toBeTruthy();
+    expect(screen.queryByText(/\bnew\b/)).toBeNull();
+  });
+
+  it('counts only the ones posted since they last looked', () => {
+    docData[READS] = { announcementsSeenAt: '2026-09-05T00:00:00.000Z' };
+    snapshots.announcements = [
+      post({ id: 'a1', date: '2026-09-08T17:00:00.000Z' }),
+      post({ id: 'a2', title: 'Older thing', date: '2026-09-01T17:00:00.000Z' }),
+    ];
+    draw();
+    expect(screen.getByText('1 new')).toBeTruthy();
+  });
+
+  it('opens on a tap, showing the whole thing', () => {
+    snapshots.announcements = [post()];
+    draw();
+    expect(screen.queryByText(/All announcements|Open announcements/)).toBeNull();
+    fireEvent.click(screen.getByText('Fire drill Thursday'));
+    expect(screen.getByText(/Everyone out the back door/)).toBeTruthy();
+    expect(screen.getByText('Open announcements')).toBeTruthy();
+  });
+
+  it('clears the badge on the tap, not after a round trip', () => {
+    snapshots.announcements = [post()];
+    draw();
+    expect(screen.getByText('1 new')).toBeTruthy();
+    fireEvent.click(screen.getByText('Fire drill Thursday'));
+    expect(screen.queryByText('1 new')).toBeNull();
+  });
+
+  it('records what they read against the PERSON, not the browser', () => {
+    // The front desk tablet is shared. A device-level marker would clear
+    // one instructor's badge because a different one read it.
+    snapshots.announcements = [post()];
+    draw();
+    fireEvent.click(screen.getByText('Fire drill Thursday'));
+    expect(writes.length).toBe(1);
+    expect(writes[0].path).toBe(READS);
+    expect(writes[0].data.announcementsSeenAt).toBe('2026-09-08T17:00:00.000Z');
+  });
+
+  it('never moves the marker backwards', () => {
+    docData[READS] = { announcementsSeenAt: '2026-09-20T00:00:00.000Z' };
+    snapshots.announcements = [post()];
+    draw();
+    fireEvent.click(screen.getByText('Fire drill Thursday'));
+    expect(writes).toEqual([]);
+  });
+
+  it('shows the pinned one rather than merely the newest', () => {
+    snapshots.announcements = [
+      post({ id: 'a1', title: 'Just a note', date: '2026-09-09T17:00:00.000Z' }),
+      post({ id: 'a2', title: 'Pinned: closed Monday', date: '2026-09-01T17:00:00.000Z', pinned: true }),
+    ];
+    draw();
+    const strip = screen.getByText('Pinned: closed Monday');
+    expect(strip).toBeTruthy();
+    // ...and pinning must not distort the count, which is worked out
+    // from dates.
+    expect(screen.getByText('2 new')).toBeTruthy();
+  });
+
+  it('survives an announcement with no date on it', () => {
+    snapshots.announcements = [post({ date: undefined })];
+    expect(() => draw()).not.toThrow();
+    fireEvent.click(screen.getByText('Fire drill Thursday'));
+    expect(writes).toEqual([]);       // nothing to record
+  });
+
+  it('does not break for somebody whose profile has not arrived', () => {
+    authValue.current = { ...BASE_AUTH, profile: null };
+    snapshots.announcements = [post()];
+    expect(() => draw()).not.toThrow();
+  });
+});
+
+describe('what the home no longer carries', () => {
+  it('leaves pay to the My Pay page', () => {
+    // It was a card that only linked elsewhere, and My Pay is already both
+    // a bottom tab and a sidebar entry — a third door to the same room.
+    snapshots.shifts = [shift()];
+    draw();
+    expect(screen.queryByText(/Your hours this pay period/)).toBeNull();
   });
 });

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   collection, addDoc, updateDoc, deleteDoc, doc,
   onSnapshot, query, where, orderBy, getDocs,
@@ -9,6 +9,7 @@ import { Megaphone, Plus, Trash2, Pin, PinOff, Edit3, Loader2 } from 'lucide-rea
 import { confirmDialog, toast } from '../lib/notify';
 import { attachEmails } from '../lib/userContact';
 import { notifyAnnouncement } from '../lib/emailService';
+import { markSeen, newestDate } from '../lib/announcementReads';
 
 const CATEGORIES = {
   general:   { bg: 'bg-gray-100',  text: 'text-gray-700',  label: 'General' },
@@ -41,6 +42,21 @@ export default function Announcements() {
       setPosts(data);
     },
   ), [activeCenterId]);
+
+  // Reading them here clears the badge on the home page. Without this a
+  // person could read every announcement and still be told they have
+  // unread ones, which teaches them to ignore the badge — and a badge
+  // people ignore is worse than no badge.
+  //
+  // The ref keeps one visit to one write: this fires again whenever a post
+  // is added or edited while the page is open.
+  const marked = useRef('');
+  useEffect(() => {
+    const newest = newestDate(posts);
+    if (!profile?.uid || !newest || newest <= marked.current) return;
+    marked.current = newest;
+    markSeen(profile.uid, newest).catch(() => {});
+  }, [posts, profile?.uid]);
 
   // Anyone with admin-panel access can post + manage announcements —
   // matches the Firestore rule. Instructors / hosts still read-only.
