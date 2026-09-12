@@ -20,6 +20,8 @@
  */
 
 import { initialsOf } from './deskNotes';
+import { linkAbout } from './deskLink';
+import { topicOf, labelsOf, mentionsFamily } from './deskVocab';
 
 /**
  * 'VB/NG' → the uids of those two people, where they still exist.
@@ -70,7 +72,7 @@ export function parseReplySignature(text) {
  * normalised to ISO. Returns null for a row with nothing in it — the
  * sheets are padded out with hundreds of empty ones.
  */
-export function noteFromRow(row, members, { importedAt } = {}) {
+export function noteFromRow(row, members, { importedAt, students = [] } = {}) {
   const subject = String(row?.subject ?? '').trim();
   const body = String(row?.body ?? '').trim();
   if (!subject && !body) return null;
@@ -90,6 +92,14 @@ export function noteFromRow(row, members, { importedAt } = {}) {
     });
   }
 
+  // Who it is about, and what it is about. Without this the imported
+  // archive arrives as 1,750 undifferentiated paragraphs: you can read it
+  // but you cannot ask it anything. 21% link to a real student record and
+  // another 23% carry a name — almost always a parent, and Ratio holds no
+  // parent list to link those to.
+  const link = linkAbout(row?.subject, body, students);
+  const blob = `${subject} ${body}`;
+
   const toLabel = String(row?.to ?? '').trim();
   const fromInitials = String(row?.from ?? '').trim();
   const fromUid = resolveInitials(fromInitials, members)[0] || null;
@@ -105,6 +115,12 @@ export function noteFromRow(row, members, { importedAt } = {}) {
     fromInitials,
     subject: subject || '(no subject)',
     body,
+    about: link.about,
+    aboutLinked: link.linked,
+    aboutHow: link.how,
+    family: mentionsFamily(blob),
+    topic: topicOf(blob),
+    labels: labelsOf(blob),
     loggedAt: row?.loggedAt || null,
     createdAt: row?.loggedAt ? `${row.loggedAt}T12:00:00.000Z` : (importedAt || new Date().toISOString()),
     // The sheet's own status, already folded to open/closed by the
@@ -131,14 +147,17 @@ export function notesFromRows(rows, members, opts) {
  * Shown as a confirmation. Writing 1,853 documents into a live centre is
  * not something to do on a button press with no idea of the shape of it.
  */
-export function importSummary(payload, members) {
-  const notes = notesFromRows(payload?.notes, members);
+export function importSummary(payload, members, students = []) {
+  const notes = notesFromRows(payload?.notes, members, { students });
   const matched = notes.filter(n => n.toAll || n.toUids.length > 0).length;
   return {
     notes: notes.length,
     notesAddressed: matched,
     notesUnmatched: notes.length - matched,
     open: notes.filter(n => n.status === 'open').length,
+    linkedToStudent: notes.filter(n => n.aboutLinked).length,
+    namedOnly: notes.filter(n => n.about && !n.aboutLinked).length,
+    topicKnown: notes.filter(n => n.topic).length,
     giftCards: (payload?.giftCards || []).length,
     receipts: (payload?.receipts || []).length,
     referrals: (payload?.referrals || []).length,

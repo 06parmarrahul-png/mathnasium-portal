@@ -223,3 +223,44 @@ describe('chunk', () => {
     expect(chunk([1, 2, 3])).toEqual([[1, 2, 3]]);
   });
 });
+
+describe('what an imported note knows about itself', () => {
+  const STUDENTS = ['Ranbir Randhawa', 'Lexie Liu'];
+  const row = (over = {}) => ({
+    to: 'VB', from: 'RR', subject: 'Student: Ranbir R.',
+    body: 'Mom wants to discuss his DWPs before the online session.',
+    loggedAt: '2026-09-01', status: 'open', replies: [], ...over,
+  });
+
+  it('links the abbreviated student name the sheet uses', () => {
+    const n = noteFromRow(row(), MEMBERS, { students: STUDENTS });
+    expect(n.about).toBe('Ranbir Randhawa');
+    expect(n.aboutLinked).toBe(true);
+  });
+
+  it('keeps a parent name even though Ratio holds no parent list', () => {
+    // 23% of the archive is this. Losing it would be losing the point.
+    const n = noteFromRow(row({ subject: 'Account: Manjeet Kaur' }), MEMBERS, { students: STUDENTS });
+    expect(n.about).toBe('Manjeet Kaur');
+    expect(n.aboutLinked).toBe(false);
+  });
+
+  it('leaves a topic subject without a person, rather than inventing one', () => {
+    const n = noteFromRow(row({ subject: 'Blog Post Reminder', body: 'Create questions' }),
+      MEMBERS, { students: STUDENTS });
+    expect(n.about).toBeNull();
+  });
+
+  it('files it and labels it from the centre’s own words', () => {
+    const n = noteFromRow(row(), MEMBERS, { students: STUDENTS });
+    expect(n.topic).toBe('Workout plan');
+    expect(n.labels).toEqual(expect.arrayContaining(['Workout plan · digital', 'Online']));
+    expect(n.family).toBe(true);        // "Mom"
+  });
+
+  it('works with no student list at all', () => {
+    const n = noteFromRow(row(), MEMBERS);
+    expect(() => n).not.toThrow();
+    expect(n.aboutLinked).toBe(false);
+  });
+});

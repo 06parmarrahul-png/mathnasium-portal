@@ -15,6 +15,7 @@ import {
   isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery,
 } from '../lib/deskNotes';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
+import { suggestStudents } from '../lib/deskLink';
 import { rowMatches, parseAmount } from '../lib/deskTrackers';
 import { TRACKER_LIST, TRACKERS } from '../lib/deskConfig';
 import DeskImport from '../components/DeskImport';
@@ -300,6 +301,22 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), { replies: next });
   };
 
+  /**
+   * Who a note is about, set by hand.
+   *
+   * The archive links 21% of notes to a student on its own and names
+   * another 23%; the rest are topics, or a parent spelled a way nothing
+   * recognises. Twenty open notes can be tidied in a couple of minutes,
+   * and every automatic guess needs a way to be corrected anyway.
+   */
+  const setAbout = async (note, name, linked) => {
+    await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), {
+      about: name || null,
+      aboutLinked: !!linked,
+      aboutHow: name ? 'by-hand' : 'none',
+    });
+  };
+
   const setStatus = async (note, status) => {
     await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), {
       status,
@@ -348,7 +365,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         <div className="space-y-2.5">
           {rows.map(n => (
             <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid}
-              onReply={reply} onStatus={setStatus} />
+              students={students} onReply={reply} onStatus={setStatus}
+              onSetAbout={setAbout} />
           ))}
         </div>
       )}
@@ -357,7 +375,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         sending={sending} me={profile?.displayName} />
 
       {canImport && (
-        <DeskImport centerId={centerId} members={members} existingCount={all.length} />
+        <DeskImport centerId={centerId} members={members} students={students}
+          existingCount={all.length} />
       )}
     </div>
   );
@@ -373,9 +392,10 @@ function toLine(note, nameByUid) {
   return note.toLabel || 'Unassigned';
 }
 
-function Msg({ note, uid, nameByUid, onReply, onStatus }) {
+function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
   const live = isOpen(note);
   const mine = live && (note.toAll || (note.toUids || []).includes(uid));
   const replies = note.replies || [];
@@ -410,12 +430,22 @@ function Msg({ note, uid, nameByUid, onReply, onStatus }) {
         <p className={`mt-1 whitespace-pre-line text-[14.5px] leading-relaxed ${
           live ? 'text-gray-700' : 'text-gray-500'}`}>{note.body}</p>
 
-        {(note.about || note.topic || labels.length > 0) && (
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {note.about && (
-              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11.5px] font-semibold text-emerald-700">
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {note.about ? (
+              <button onClick={() => setEditing(true)} title="Change who this is about"
+                className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${
+                  note.aboutLinked
+                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                    : 'border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
                 {note.about}{note.family ? ' · family' : ''}
-              </span>
+              </button>
+            ) : (
+              /* The whole point of the ask: an old note that names nobody
+                 can be given a name in one click. */
+              <button onClick={() => setEditing(true)}
+                className="rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[11.5px] font-medium text-gray-400 hover:border-gray-400 hover:text-gray-600">
+                + who's this about?
+              </button>
             )}
             {note.topic && (
               <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11.5px] font-semibold text-red-700">
@@ -427,7 +457,12 @@ function Msg({ note, uid, nameByUid, onReply, onStatus }) {
                 {l}
               </span>
             ))}
-          </div>
+        </div>
+
+        {editing && (
+          <AboutPicker note={note} students={students}
+            onPick={(name, linked) => { onSetAbout(note, name, linked); setEditing(false); }}
+            onCancel={() => setEditing(false)} />
         )}
 
         {replies.length > 0 && (
@@ -477,6 +512,64 @@ function Msg({ note, uid, nameByUid, onReply, onStatus }) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Who is this about?
+ *
+ * It offers the student list, because a linked name spells the same way
+ * every time and groups every note about that child together. But it also
+ * takes whatever is typed: a third of the archive is about a PARENT, and
+ * Ratio holds no parent list — refusing the name because there is no
+ * record to point at would throw away the thing worth keeping.
+ */
+function AboutPicker({ note, students, onPick, onCancel }) {
+  const [q, setQ] = useState(note.about || '');
+  const hits = useMemo(() => suggestStudents(q, students), [q, students]);
+  const exact = students.includes(q.trim());
+
+  return (
+    <div className="mt-2 rounded-lg border bg-gray-50 p-2.5">
+      <input value={q} onChange={e => setQ(e.target.value)} autoFocus
+        placeholder="Student, parent, or account name…"
+        onKeyDown={e => {
+          if (e.key === 'Escape') onCancel();
+          if (e.key === 'Enter' && q.trim()) onPick(q.trim(), exact);
+        }}
+        className="w-full rounded-lg border border-gray-300 px-2.5 py-1.5 text-[13px] focus:border-red-400 focus:outline-none" />
+
+      {hits.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {hits.map(n => (
+            <button key={n} onClick={() => onPick(n, true)}
+              className="rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-semibold text-emerald-700 hover:bg-emerald-100">
+              {n}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {q.trim() && !exact && (
+          <button onClick={() => onPick(q.trim(), false)}
+            className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-600 hover:bg-gray-100">
+            Use “{q.trim()}”
+          </button>
+        )}
+        {note.about && (
+          <button onClick={() => onPick(null, false)}
+            className="text-[12px] font-semibold text-gray-400 hover:text-gray-600">Clear</button>
+        )}
+        <button onClick={onCancel}
+          className="ml-auto text-[12px] font-semibold text-gray-400 hover:text-gray-600">Cancel</button>
+      </div>
+      {!note.aboutLinked && note.about && (
+        <p className="mt-1.5 text-[11px] text-gray-400">
+          Not linked to a student record — Ratio holds no parent list, so this is the name as written.
+        </p>
+      )}
     </div>
   );
 }

@@ -21,7 +21,7 @@ import { notesFromRows, importSummary, chunk } from '../lib/deskImport';
  * panel says so, in those words, whenever the desk already has notes in
  * it — which is the only state where that warning matters.
  */
-export default function DeskImport({ centerId, members, existingCount = 0 }) {
+export default function DeskImport({ centerId, members, students = [], existingCount = 0 }) {
   const [payload, setPayload] = useState(null);
   const [summary, setSummary] = useState(null);
   const [error, setError] = useState('');
@@ -39,7 +39,7 @@ export default function DeskImport({ centerId, members, existingCount = 0 }) {
         return;
       }
       setPayload(data);
-      setSummary(importSummary(data, members));
+      setSummary(importSummary(data, members, students));
     } catch (e) {
       setError(e?.message || 'Could not read that file.');
     }
@@ -48,7 +48,7 @@ export default function DeskImport({ centerId, members, existingCount = 0 }) {
   const run = async () => {
     if (!payload || !centerId) return;
     const jobs = [
-      ['notes', notesFromRows(payload.notes, members)],
+      ['notes', notesFromRows(payload.notes, members, { students })],
       ['giftCards', payload.giftCards || []],
       ['receipts', payload.receipts || []],
       ['referrals', payload.referrals || []],
@@ -134,6 +134,12 @@ export default function DeskImport({ centerId, members, existingCount = 0 }) {
           <p className="mb-1.5 font-semibold text-gray-900">This is what it will add:</p>
           <ul className="space-y-0.5">
             <li>{summary.notes} notes — {summary.open} of them still open</li>
+            <li>
+              {summary.linkedToStudent} linked to a student on file,
+              {' '}{summary.namedOnly} more carrying a name it can&apos;t link
+              {' '}<span className="text-gray-400">(parents, mostly — Ratio holds no parent list)</span>
+            </li>
+            <li>{summary.topicKnown} filed under a topic automatically</li>
             <li>{summary.giftCards} gift cards</li>
             <li>{summary.receipts} receipts</li>
             <li>{summary.referrals} referral rally rows</li>
