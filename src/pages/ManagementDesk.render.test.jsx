@@ -98,7 +98,8 @@ const draw = () => render(<MemoryRouter><ManagementDesk /></MemoryRouter>);
 beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   writes.length = 0;
-  for (const k of ['notes', 'users', 'giftCards', 'receipts', 'referrals', 'studentOfMonth']) {
+  for (const k of ['notes', 'users', 'schedulerStudents', 'giftCards',
+    'receipts', 'referrals', 'studentOfMonth']) {
     snapshots[k] = [];
   }
 });
@@ -179,75 +180,52 @@ describe('it renders', () => {
   });
 });
 
-describe('the question the spreadsheet could not answer', () => {
-  it('opens on what is waiting for ME', () => {
+describe('the chain', () => {
+  it('opens on Everyone — the whole chain, not just yours', () => {
+    // Seeing what Rachel already answered is the reason this beats email.
     snapshots.notes = [
-      note({ id: 'mine', toUids: ['vin'] }),
-      note({ id: 'theirs', toUids: ['neeru'], subject: 'Somebody else’s problem' }),
+      note({ id: 'a', toUids: ['vin'], body: 'Mine' }),
+      note({ id: 'b', toUids: ['neeru'], body: 'Somebody else\u2019s' }),
     ];
     draw();
-    expect(screen.getByText('Account: Manjeet Kaur')).toBeTruthy();
-    expect(screen.queryByText('Somebody else’s problem')).toBeNull();
+    expect(screen.getByText('Mine')).toBeTruthy();
+    expect(screen.getByText('Somebody else\u2019s')).toBeTruthy();
   });
 
-  it('counts them on the tab', () => {
+  it('filters to what is waiting on ME', () => {
     snapshots.notes = [
-      note({ id: 'a', toUids: ['vin'] }),
-      note({ id: 'b', toUids: ['vin'], subject: 'Another' }),
-      note({ id: 'c', toUids: ['vin'], subject: 'Settled one', status: 'closed' }),
+      note({ id: 'a', toUids: ['vin'], body: 'Mine' }),
+      note({ id: 'b', toUids: ['neeru'], body: 'Theirs' }),
     ];
     draw();
-    expect(screen.getByText('2')).toBeTruthy();      // not 3 — settled doesn't count
+    fireEvent.click(screen.getByText('For me'));
+    expect(screen.getByText('Mine')).toBeTruthy();
+    expect(screen.queryByText('Theirs')).toBeNull();
   });
 
-  it('keeps settled notes out of the inbox but findable under Settled', async () => {
-    // The settled note is NOT in the live subscription — it arrives only
-    // when Settled is opened, which is the whole point of the split.
-    snapshots.notes = [note({ status: 'closed' })];
+  it('puts a note addressed to Everyone in my list too', () => {
+    // 82 of the imported notes are addressed to ALL.
+    snapshots.notes = [note({ toUids: [], toAll: true, body: 'Fun day Saturday' })];
     draw();
-    expect(screen.queryByText('Account: Manjeet Kaur')).toBeNull();
-    fireEvent.click(screen.getByText('Settled'));
-    expect(await screen.findByText('Account: Manjeet Kaur')).toBeTruthy();
+    fireEvent.click(screen.getByText('For me'));
+    expect(screen.getByText('Fun day Saturday')).toBeTruthy();
+    expect(screen.getAllByText('Everyone').length).toBeGreaterThan(0);
   });
 
-  it('puts an ALL note in my list too', () => {
-    snapshots.notes = [note({ toUids: [], toAll: true })];
+  it('greys a settled note but leaves it in the chain', async () => {
+    // The history has to read straight through — that is what makes 1,750
+    // imported notes worth having. It arrives from the archive fetch, not
+    // the live subscription, so it is awaited.
+    snapshots.notes = [note({ status: 'closed', body: 'Sorted last week' })];
     draw();
-    expect(screen.getByText('Account: Manjeet Kaur')).toBeTruthy();
-    expect(screen.getByText(/Everyone/)).toBeTruthy();
+    expect(await screen.findByText('Sorted last week')).toBeTruthy();
+    expect(screen.getByText('Reopen')).toBeTruthy();
   });
 
-  it('searches settled history, which is why it was imported', async () => {
-    snapshots.notes = [
-      note({ id: 'old', status: 'closed', subject: 'Student: Harshad',
-        body: 'Amazon gift card was refunded' }),
-    ];
-    draw();
-    fireEvent.click(screen.getByText('Settled'));
-    fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'harshad' } });
-    expect(await screen.findByText('Student: Harshad')).toBeTruthy();
-  });
-
-  it('reaches the archive from a search WITHOUT opening Settled first', async () => {
-    // Looking up an old decision is the reason the history was imported.
-    // A search that only covered the twenty live notes would miss it.
-    snapshots.notes = [
-      note({ id: 'old', status: 'closed', subject: 'Student: Harshad',
-        body: 'Amazon gift card was refunded' }),
-    ];
-    draw();
-    fireEvent.click(screen.getByText('All open'));
-    fireEvent.change(screen.getByPlaceholderText('Search…'), { target: { value: 'harshad' } });
-    fireEvent.click(screen.getByText('Settled'));
-    expect(await screen.findByText('Student: Harshad')).toBeTruthy();
-  });
-});
-
-describe('settling a note', () => {
-  it('closes it and records who did', async () => {
+  it('marks one done and records who did it', async () => {
     snapshots.notes = [note()];
     draw();
-    fireEvent.click(screen.getByText('Settle it'));
+    fireEvent.click(screen.getByText('Mark done'));
     await Promise.resolve();
     expect(writes.length).toBe(1);
     expect(writes[0].path).toBe('centers/langley/notes/n1');
@@ -255,74 +233,89 @@ describe('settling a note', () => {
     expect(writes[0].data.settledByName).toBe('Vin Bhatia');
   });
 
-  it('offers a settled note back, rather than making it final', async () => {
-    snapshots.notes = [note({ status: 'closed' })];
-    draw();
-    fireEvent.click(screen.getByText('Settled'));
-    expect(await screen.findByText('Reopen')).toBeTruthy();
-  });
-});
-
-describe('replying', () => {
-  it('adds a reply with a name on it', async () => {
+  it('replies without leaving the chain', async () => {
     snapshots.notes = [note()];
     draw();
-    fireEvent.change(screen.getByPlaceholderText('Reply…'), { target: { value: 'Noted, thanks' } });
+    fireEvent.change(screen.getByPlaceholderText('Reply\u2026'), { target: { value: 'On it' } });
     fireEvent.click(screen.getByTitle('Send reply'));
     await Promise.resolve();
-    expect(writes[0].data.replies[0].text).toBe('Noted, thanks');
+    expect(writes[0].data.replies[0].text).toBe('On it');
     expect(writes[0].data.replies[0].name).toBe('Vin Bhatia');
   });
 
-  it('keeps the replies already there', async () => {
-    // The spreadsheet had two reply COLUMNS, split by which half of the
-    // team was answering. One thread, appended to, replaces both.
-    snapshots.notes = [note({ replies: [{ name: 'Rachel R', text: 'First', at: '2026-09-02T00:00:00Z' }] })];
+  it('searches the settled history, which is why it was imported', async () => {
+    snapshots.notes = [note({ status: 'closed', subject: 'Student: Harshad',
+      body: 'Amazon gift card was refunded' })];
     draw();
-    expect(screen.getByText('First')).toBeTruthy();
-    fireEvent.change(screen.getByPlaceholderText('Reply…'), { target: { value: 'Second' } });
-    fireEvent.click(screen.getByTitle('Send reply'));
-    await Promise.resolve();
-    expect(writes[0].data.replies.map(r => r.text)).toEqual(['First', 'Second']);
+    fireEvent.change(screen.getByPlaceholderText('Search\u2026'), { target: { value: 'harshad' } });
+    expect(await screen.findByText(/Amazon gift card was refunded/)).toBeTruthy();
   });
 });
 
-describe('writing a note', () => {
-  it('offers only people who can actually open the desk', () => {
-    snapshots.users = [
-      user('neeru', 'Neeru Sharma', { role: 'director' }),
-      user('kaitlyn', 'Kaitlyn MacDonald', { centerMemberships: { langley: { instructorType: 'Instructor' } } }),
-    ];
+describe('writing one', () => {
+  const setup = () => {
+    snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
+    snapshots.schedulerStudents = [{ name: 'Lexie Liu' }];
     draw();
-    fireEvent.click(screen.getByText('New note'));
-    expect(screen.getByText('Neeru Sharma')).toBeTruthy();
-    // Addressing a note to an instructor would file it where they cannot
-    // read it, and the sender would believe it had been passed on.
-    expect(screen.queryByText('Kaitlyn MacDonald')).toBeNull();
+    return screen.getByPlaceholderText(/can you please complete a care call/);
+  };
+
+  it('reads initials, the student and the topic before you send', () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'NG, can you please complete a care call for Lexie Liu' } });
+    expect(screen.getByText(/Vin \u2192 Neeru/)).toBeTruthy();
+    // The name shows in the preview chip; it is also inside the typed text.
+    expect(screen.getAllByText(/Lexie Liu/).length).toBeGreaterThan(0);
+    expect(screen.getByText('Care call')).toBeTruthy();
   });
 
-  it('refuses an incomplete note and says which bit', () => {
-    draw();
-    fireEvent.click(screen.getByText('New note'));
-    fireEvent.click(screen.getByText('Post it'));
-    expect(screen.getByText(/Give it a subject/)).toBeTruthy();
-    expect(writes).toEqual([]);
+  it('sends it, with everything it read attached', async () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'NG, can you please complete a care call for Lexie Liu' } });
+    fireEvent.click(screen.getByText('Send'));
+    await Promise.resolve(); await Promise.resolve();
+    const post = writes.find(w => w.op === 'add');
+    expect(post.data.toUids).toEqual(['neeru']);
+    expect(post.data.about).toBe('Lexie Liu');
+    expect(post.data.topic).toBe('Care call');
+    expect(post.data.status).toBe('open');
+    expect(post.data.body).toBe('can you please complete a care call for Lexie Liu');
   });
 
-  it('posts a complete one', async () => {
-    snapshots.users = [user('neeru', 'Neeru Sharma', { role: 'director' })];
-    draw();
-    fireEvent.click(screen.getByText('New note'));
-    fireEvent.click(screen.getByText('Neeru Sharma'));
-    fireEvent.change(screen.getByPlaceholderText(/Account: Manjeet Kaur/), { target: { value: 'Student: Ranbir R.' } });
-    fireEvent.change(screen.getByPlaceholderText(/Card was declined/), { target: { value: 'Funding changes' } });
-    fireEvent.click(screen.getByText('Post it'));
-    await Promise.resolve();
-    expect(writes.length).toBe(1);
-    expect(writes[0].data.subject).toBe('Student: Ranbir R.');
-    expect(writes[0].data.toUids).toEqual(['neeru']);
-    expect(writes[0].data.status).toBe('open');
-    expect(writes[0].data.fromName).toBe('Vin Bhatia');
+  it('handles Everyone', async () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'Everyone can you please remind staff of the meeting?' } });
+    expect(screen.getByText(/Vin \u2192 Everyone/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Send'));
+    await Promise.resolve(); await Promise.resolve();
+    const post = writes.find(w => w.op === 'add');
+    expect(post.data.toAll).toBe(true);
+    expect(post.data.toUids).toEqual([]);
+  });
+
+  it('will not send a line with nobody named', () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'All the gift cards arrived today' } });
+    expect(screen.getByText('Send').disabled).toBe(true);
+  });
+
+  it('will not send an address with nothing said', () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'NG,' } });
+    expect(screen.getByText('Send').disabled).toBe(true);
+  });
+
+  it('flags a code with no Ratio account rather than dropping it', () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'MY, new AFU family enrolled' } });
+    expect(screen.getByText(/MY \u2014 no Ratio account yet/)).toBeTruthy();
+    expect(screen.getByText('Send').disabled).toBe(false);
+  });
+
+  it('offers a correction for a near-miss name', () => {
+    const box = setup();
+    fireEvent.change(box, { target: { value: 'NG Lexi Lu needs a progress check' } });
+    expect(screen.getByText(/did you mean Lexie Liu/)).toBeTruthy();
   });
 });
 
