@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, PartyPopper } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
@@ -60,6 +60,7 @@ export default function InstructorHome() {
   // { date, map } — stamped so staleness is derived, never reset in an effect.
   const [sides, setSides] = useState({ date: null, map: null });
   const [roster, setRoster] = useState(null);
+  const [funSheet, setFunSheet] = useState(null);   // this month's uploaded image
   const today = todayISO();
 
   useEffect(() => {
@@ -139,6 +140,18 @@ export default function InstructorHome() {
       () => setEvents([]),
     );
   }, [activeCenterId]);
+
+  // The month's sheet, as the centre already draws it. One small document
+  // holding a URL — the image itself is in Storage and cached by the
+  // browser, so this costs a read, not a megabyte.
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      doc(db, 'centers', activeCenterId, 'funDayCalendars', today.slice(0, 7)),
+      snap => setFunSheet(snap.exists() ? snap.data() : null),
+      () => setFunSheet(null),
+    );
+  }, [activeCenterId, today]);
 
   useEffect(() => {
     if (!activeCenterId) return undefined;
@@ -384,7 +397,7 @@ export default function InstructorHome() {
             you are on is something you have to act on, and a fun day is
             something you need to know. When there are no sides posted
             this simply moves up into the gap. */}
-        {(funToday || funSoon.length > 0) && (
+        {(funToday || funSoon.length > 0 || funSheet?.imageUrl) && (
           <div>
             <Lbl className="mb-1.5">Fun day</Lbl>
             <Card className="!p-0 overflow-hidden">
@@ -404,10 +417,26 @@ export default function InstructorHome() {
                     </div>
                   )}
                 </div>
-              ) : (
+              ) : funSoon.length > 0 ? (
                 <div className="px-4 py-3" style={{ color: 'var(--nl-muted)' }}>
                   <span className="text-[13px]">Nothing on today.</span>
                 </div>
+              ) : null}
+
+              {/* The sheet the centre already makes. Shown UNDER today's
+                  activity when both exist: a picture cannot answer "what
+                  is it today", and that is the question. */}
+              {funSheet?.imageUrl && (
+                <a href={funSheet.imageUrl} target="_blank" rel="noreferrer"
+                  className="block border-t" style={{ borderColor: 'var(--nl-rule)' }}>
+                  <img src={funSheet.imageUrl} alt="This month's fun days"
+                    loading="lazy"
+                    className="w-full object-contain"
+                    style={{ maxHeight: 260, background: 'var(--nl-raised)' }} />
+                  <span className="block px-4 py-2 text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
+                    Tap to see the whole month
+                  </span>
+                </a>
               )}
 
               {funSoon.filter(f => f.date !== today).map((f, i) => (

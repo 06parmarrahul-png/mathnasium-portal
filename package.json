@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run",
-    "test:rules": "firebase emulators:exec --only firestore \"vitest run --dir tests/rules\"",
+    "test:rules": "firebase emulators:exec --only firestore,storage \"vitest run --dir tests/rules\"",
     "emu": "firebase emulators:start --only firestore,auth"
   },
   "dependencies": {

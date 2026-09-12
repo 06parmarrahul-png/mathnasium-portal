@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   collection, onSnapshot, query, addDoc, updateDoc, deleteDoc, doc,
 } from 'firebase/firestore';
@@ -15,7 +15,9 @@ import {
 import {
   funDaysInMonth, monthDays, monthLabel, monthOf, stepMonth, diffMonth,
 } from '../lib/funDays';
-import { writeBatch } from 'firebase/firestore';
+import { writeBatch, onSnapshot as onSnap } from 'firebase/firestore';
+import { uploadFunDayImage, removeFunDayImage, rejectReason, ACCEPT } from '../lib/funDayImage';
+import { Upload, ImageOff } from 'lucide-react';
 
 /**
  * Centre Events — where a staff meeting or a fun day becomes a real date.
@@ -342,6 +344,12 @@ function FunDayMonth({ events, centerId, profile }) {
         </div>
       </div>
 
+      <FunDayUpload centerId={centerId} profile={profile} ym={ym} />
+
+      <details className="mx-3 mb-2 rounded-lg border border-dashed">
+        <summary className="cursor-pointer px-3 py-2 text-[13px] font-semibold text-gray-500">
+          Or type the days in — gives instructors &ldquo;today&rsquo;s activity&rdquo; &#9662;
+        </summary>
       <div className="grid gap-x-4 gap-y-1 p-3 sm:grid-cols-2">
         {days.map(d => (
           <label key={d.date}
@@ -357,7 +365,8 @@ function FunDayMonth({ events, centerId, profile }) {
               className="w-full rounded-lg border border-transparent bg-gray-50 px-2.5 py-1.5 text-[13px] hover:border-gray-200 focus:border-red-500 focus:bg-white focus:outline-none" />
           </label>
         ))}
-      </div>
+        </div>
+      </details>
 
       <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
         <button onClick={save} disabled={!dirty || saving}
@@ -373,6 +382,103 @@ function FunDayMonth({ events, centerId, profile }) {
           {existing.length} set for {monthLabel(ym)}
         </span>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Upload the month, rather than retype it.
+ *
+ * The centre already makes this calendar every month. Asking somebody to
+ * then type thirty activities into Ratio is the same work twice, and the
+ * second time never happens — which is how a calendar ends up empty.
+ */
+function FunDayUpload({ centerId, profile, ym }) {
+  const [cal, setCal] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (!centerId || !ym) return undefined;
+    return onSnap(
+      doc(db, 'centers', centerId, 'funDayCalendars', ym),
+      snap => setCal(snap.exists() ? snap.data() : null),
+      () => setCal(null),
+    );
+  }, [centerId, ym]);
+
+  const pick = async (file) => {
+    setError('');
+    const problem = rejectReason(file);
+    if (problem) { setError(problem); return; }
+    setBusy(true);
+    try {
+      await uploadFunDayImage({
+        centerId, uid: profile?.uid, month: ym, file,
+        uploadedBy: profile?.displayName || profile?.email || null,
+      });
+      toast.success(`${monthLabel(ym)} is up — instructors see it on their home page.`);
+    } catch (e) {
+      setError(e?.message || 'That upload did not go through.');
+    } finally {
+      setBusy(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
+  };
+
+  const remove = async () => {
+    const ok = await confirmDialog({
+      title: `Take down ${monthLabel(ym)}?`,
+      message: 'Instructors will stop seeing the sheet on their home page.',
+      confirmText: 'Take it down', cancelText: 'Keep it', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await removeFunDayImage({ centerId, month: ym, storagePath: cal?.storagePath });
+      toast.success('Taken down.');
+    } catch (e) { toast.error(e?.message || 'Could not take that down.'); }
+  };
+
+  return (
+    <div className="border-b px-4 py-3">
+      {cal?.imageUrl ? (
+        <div>
+          <div className="overflow-hidden rounded-lg border bg-gray-50">
+            <img src={cal.imageUrl} alt={`Fun days for ${monthLabel(ym)}`}
+              className="max-h-72 w-full object-contain" />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button onClick={() => fileRef.current?.click()} disabled={busy}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[13px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50">
+              <Upload size={13} /> Replace
+            </button>
+            <button onClick={remove}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[13px] font-semibold text-gray-500 hover:bg-red-50 hover:text-red-600">
+              <ImageOff size={13} /> Take down
+            </button>
+            <span className="ml-auto text-[11.5px] text-gray-400">
+              {cal.uploadedBy ? `Put up by ${cal.uploadedBy}` : 'Uploaded'}
+            </span>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          className="flex w-full flex-col items-center gap-1.5 rounded-lg border-2 border-dashed border-gray-300 px-4 py-6 text-center hover:border-red-400 hover:bg-red-50/40 disabled:opacity-50">
+          <Upload size={20} className="text-gray-400" />
+          <span className="text-sm font-semibold text-gray-700">
+            {busy ? 'Uploading\u2026' : `Upload the ${monthLabel(ym)} sheet`}
+          </span>
+          <span className="text-xs text-gray-500">
+            A screenshot of the slide, or a photo of the printed one. Instructors see it on their home page.
+          </span>
+        </button>
+      )}
+
+      <input ref={fileRef} type="file" accept={ACCEPT} className="hidden"
+        onChange={e => pick(e.target.files?.[0])} />
+
+      {error && <p className="mt-2 text-sm font-semibold text-red-600">{error}</p>}
     </div>
   );
 }

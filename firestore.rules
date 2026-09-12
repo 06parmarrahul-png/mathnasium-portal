@@ -497,6 +497,21 @@ service cloud.firestore {
                           && resource.data.get('type', '') == 'fun-day');
       }
 
+      // The fun-day calendar image, one document per month
+      // (centers/{id}/funDayCalendars/2026-09).
+      //
+      // THIS is where it is decided what everybody sees: the document
+      // points at one uploaded image. Storage lets anyone write inside
+      // their own folder, deliberately, so this is the gate that matters
+      // — an instructor can upload a file, and cannot make the centre
+      // look at it.
+      //
+      // Read is every member of the centre: it is a poster on the wall.
+      match /funDayCalendars/{month} {
+        allow read: if canRunFloor(centerId) || isMemberAt(centerId);
+        allow create, update, delete: if canRunFunDaysAt(centerId);
+      }
+
       // ── Management Desk ──────────────────────────────────────────────
       //
       // Five collections, one gate. These carry parent account questions,

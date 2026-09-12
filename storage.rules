@@ -24,6 +24,33 @@ service firebase.storage {
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
+    // ─── Fun-day calendars ────────────────────────────────────────
+    // The month's activity sheet, uploaded as an image. The centre already
+    // makes one every month; retyping it into Ratio was the duplicate work
+    // this avoids.
+    //
+    // Same shape as profile pictures: you may only write inside your OWN
+    // folder, so nobody can overwrite or delete somebody else's file.
+    //
+    // WHAT THE CENTRE ACTUALLY SEES is not decided here. It is decided by
+    // centers/{id}/funDayCalendars/{YYYY-MM} in Firestore, which points at
+    // one image and is gated on canRunFunDaysAt() — properly, and with
+    // emulator tests behind it. An instructor uploading into their own
+    // folder changes nothing anybody looks at.
+    //
+    // This is deliberately NOT a cross-service firestore.get() gate. The
+    // Storage emulator does not support those, so such a rule could not be
+    // tested before shipping — and an untested rule on user-uploaded
+    // content is not worth the tidier path.
+    match /centers/{centerId}/fun-days/{userId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null
+                    && request.auth.uid == userId
+                    && request.resource.size < 8 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
     // Block everything else by default.
     match /{allPaths=**} {
       allow read, write: if false;

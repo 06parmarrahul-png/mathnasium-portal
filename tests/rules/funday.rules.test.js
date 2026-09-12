@@ -113,3 +113,42 @@ describe('nothing else about events moved', () => {
     }
   });
 });
+
+describe('the uploaded calendar image', () => {
+  const cal = (over = {}) => ({
+    month: '2026-09', imageUrl: 'https://example/x.png',
+    storagePath: `centers/${C}/fun-days/rahul/2026-09.png`,
+    uploadedBy: 'Rahul Parmar', uploadedAt: '2026-09-12T00:00:00.000Z', ...over,
+  });
+  const calRef = (uid, month = '2026-09') =>
+    doc(as(uid), 'centers', C, 'funDayCalendars', month);
+  const seedCal = (month, data) => testEnv.withSecurityRulesDisabled(
+    (ctx) => setDoc(doc(ctx.firestore(), 'centers', C, 'funDayCalendars', month), data));
+
+  it('lets the floor put the month up, and take it down', async () => {
+    await assertSucceeds(setDoc(calRef('rahul'), cal()));
+    await assertSucceeds(updateDoc(calRef('rahul'), { imageUrl: 'https://example/y.png' }));
+    await assertSucceeds(deleteDoc(calRef('mgr')));
+  });
+
+  it('stops an instructor changing what the centre looks at', async () => {
+    // Storage lets them upload into their own folder on purpose. THIS is
+    // the rule that stops that becoming everybody's problem.
+    await seedCal('2026-09', cal());
+    await assertFails(updateDoc(calRef('inst'), { imageUrl: 'https://example/mine.png' }));
+    await assertFails(setDoc(calRef('inst', '2026-10'), cal({ month: '2026-10' })));
+    await assertFails(deleteDoc(calRef('inst')));
+  });
+
+  it('stops a volunteer and another centre', async () => {
+    await assertFails(setDoc(calRef('vol', '2026-11'), cal()));
+    await assertFails(setDoc(calRef('other', '2026-11'), cal()));
+  });
+
+  it('lets every member of the centre see it', async () => {
+    await seedCal('2026-09', cal());
+    for (const uid of ['inst', 'vol', 'rahul', 'mgr']) {
+      await assertSucceeds(getDoc(calRef(uid)));
+    }
+  });
+});

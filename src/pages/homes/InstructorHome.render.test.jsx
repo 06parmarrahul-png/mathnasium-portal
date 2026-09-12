@@ -593,3 +593,59 @@ describe('the fun day', () => {
     expect(card.textContent).not.toContain('Staff meeting');
   });
 });
+
+describe('the uploaded fun-day sheet', () => {
+  const DAY = '2026-09-15';
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 15, 12, 0, 0));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const sheet = { month: '2026-09', imageUrl: 'https://example.test/sept.png', uploadedBy: 'Rahul' };
+
+  it('shows the month the centre already made, with nothing typed in', () => {
+    // The whole point: they make this sheet anyway. Retyping it is the
+    // work this avoids.
+    docData['centers/langley/funDayCalendars/2026-09'] = sheet;
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.getByText('Fun day')).toBeTruthy();
+    expect(screen.getByAltText("This month's fun days").getAttribute('src'))
+      .toBe('https://example.test/sept.png');
+  });
+
+  it('does NOT say "nothing on today" when a sheet is up', () => {
+    // It is right there on screen. Saying nothing is on would be wrong.
+    docData['centers/langley/funDayCalendars/2026-09'] = sheet;
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.queryByText(/Nothing on today/)).toBeNull();
+  });
+
+  it("leads with today's activity when the days were also typed in", () => {
+    // A picture cannot answer "what is it today", and that is the
+    // question — so the typed day goes above the sheet.
+    docData['centers/langley/funDayCalendars/2026-09'] = sheet;
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [{ id: 'f', type: 'fun-day', date: DAY, title: 'Double Bingo!' }];
+    const { container } = draw();
+    const todayText = screen.getByText('Double Bingo!');
+    const img = screen.getByAltText("This month's fun days");
+    expect(todayText.compareDocumentPosition(img) & 4).toBeTruthy();
+    expect(container).toBeTruthy();
+  });
+
+  it('shows nothing at all when there is neither', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.queryByText('Fun day')).toBeNull();
+  });
+
+  it('only looks for THIS month', () => {
+    docData['centers/langley/funDayCalendars/2026-08'] = sheet;
+    snapshots.shifts = [shift({ date: DAY })];
+    draw();
+    expect(screen.queryByAltText("This month's fun days")).toBeNull();
+  });
+});
