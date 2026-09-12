@@ -30,3 +30,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# The Management Desk import payload. Generated locally by
+# scripts/desk_import_convert.py and full of students' and parents'
+# names — it goes from that machine straight into Ratio and nowhere else.
+desk-import.json
+desk-import*.json

@@ -109,6 +109,12 @@ export const PERMISSIONS = [
     description: 'The centre chat and direct messages.',
   },
   {
+    id: 'notes.access',
+    group: 'Administration',
+    label: 'Use the Management Desk',
+    description: 'Post-it notes, gift cards, receipts, referral rally and student of the month.',
+  },
+  {
     id: 'roles.manage',
     group: 'Enterprise',
     label: 'Manage roles and permissions',
@@ -170,7 +176,7 @@ export function permissionLabel(id) {
 
 const ADMIN_PANEL_BASE = [
   'admin.panel', 'admin.operations', 'analytics.view', 'scheduler.run',
-  'shifts.take', 'chat.access',
+  'shifts.take', 'chat.access', 'notes.access',
 ];
 
 export const PLATFORM_ROLE_PERMISSIONS = {
@@ -215,10 +221,15 @@ const DIRECTOR_GRANTS = [...ADMIN_PANEL_BASE, 'centre.settings'];
 const BUILTIN_ROLE_SEEDS = [
   { name: 'Center Director',   permissions: DIRECTOR_GRANTS },
   { name: 'Dir. of Education', permissions: DIRECTOR_GRANTS },
-  { name: 'Manager',           permissions: ['scheduler.run', 'admin.operations'] },
+  // Manager, Host and a centre-titled Admin run the Management Desk
+  // alongside the owners and directors — that is who is actually on the
+  // post-it notes. Lead is deliberately NOT on the list: a Lead runs the
+  // floor for a shift, which is a different job from settling an account
+  // question. Any centre that disagrees can grant it in Manage Roles.
+  { name: 'Manager',           permissions: ['scheduler.run', 'admin.operations', 'notes.access'] },
   { name: 'Lead',              permissions: ['scheduler.run'] },
-  { name: 'Host',              permissions: ['scheduler.run', 'admin.operations'] },
-  { name: 'Admin',             permissions: [] },
+  { name: 'Host',              permissions: ['scheduler.run', 'admin.operations', 'notes.access'] },
+  { name: 'Admin',             permissions: ['notes.access'] },
   { name: 'Instructor',        permissions: [] },
   { name: 'Training',          permissions: [] },
   { name: 'Volunteer',         permissions: [] },

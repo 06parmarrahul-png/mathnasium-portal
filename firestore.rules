@@ -303,6 +303,53 @@ service cloud.firestore {
           || hasPermAt(centerId, 'scheduler.run');
     }
 
+    // The Management Desk — post-it notes, gift cards, receipts, the
+    // referral rally and student of the month.
+    //
+    // Owner, Admin Assistant, the two Director titles, Admin, Manager and
+    // Host. That is the set the centre named, and it is the same shape as
+    // canManageShiftsAt() rather than a new one to keep in step. LEADS ARE
+    // DEDUCTED DELIBERATELY: a Lead runs the floor for a shift, which is a
+    // different job from settling an account question. Any centre that
+    // disagrees grants 'notes.access' to the role in Manage Roles, which
+    // is what the trailing hasPermAt is for.
+    // WRITTEN FLAT, NOT COMPOSED FROM THE HELPERS ABOVE, AND THAT IS
+    // DELIBERATE. The obvious version —
+    //
+    //   isOwnerLike() || isSuperAdmin() || isAdmin()
+    //     || isManagerAt(centerId) || isHostAt(centerId)
+    //     || hasPermAt(centerId, 'notes.access')
+    //
+    // reads the same but ERRORS for anyone who reaches the end of it.
+    // Every helper in that chain re-reads the profile, and a document
+    // under /centers is evaluated alongside the other rules that match
+    // the same path — so the two share one document-access budget, and
+    // a chain that long runs out before it reaches the last clause.
+    //
+    // An evaluation error denies, so the DENY path still looks correct
+    // and nothing complains. It is the ALLOW path at the tail that dies:
+    // a Director of Education whose title lives only in centerMemberships
+    // (the modern shape), and anyone granted notes.access in Manage
+    // Roles, were both refused a desk they are supposed to run. The same
+    // chain on the top-level /shifts collection is fine, which is why
+    // this has not bitten anywhere else — measured in the emulator both
+    // ways, and desk.rules.test.js pins both cases.
+    //
+    // So: one profile read, one title read, then the registry lookup.
+    function canUseDeskAt(centerId) {
+      return profileExists() && (
+        profile().get('role', '') in [
+          'owner', 'super_admin', 'admin_assistant', 'director', 'admin'
+        ]
+        || titleAt(centerId) in [
+          'Manager', 'Host', 'Admin',
+          'Center Director', 'Centre Director',
+          'Dir. of Education', 'Director of Education'
+        ]
+        || hasPermAt(centerId, 'notes.access')
+      );
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
@@ -404,6 +451,40 @@ service cloud.firestore {
       match /events/{eventId} {
         allow read: if canRunFloor(centerId) || isMemberAt(centerId);
         allow create, update, delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      }
+
+      // ── Management Desk ──────────────────────────────────────────────
+      //
+      // Five collections, one gate. These carry parent account questions,
+      // card numbers on receipts, and notes about individual students'
+      // funding and family circumstances, so unlike `events` above there
+      // is NO widened read for ordinary staff: the same people who may
+      // write a note are the only ones who may read one.
+      //
+      // Deletion is owner-tier only, and the app does not offer it. A
+      // note is settled, not erased — the whole value of the 1,853 rows
+      // brought over from the spreadsheet is being able to look up what
+      // was decided, and any management account being able to wipe that
+      // history is not a power this needs to hand out.
+      match /notes/{noteId} {
+        allow read, create, update: if canUseDeskAt(centerId);
+        allow delete: if isOwnerLike() || isSuperAdmin();
+      }
+      match /giftCards/{cardId} {
+        allow read, create, update: if canUseDeskAt(centerId);
+        allow delete: if isOwnerLike() || isSuperAdmin();
+      }
+      match /receipts/{receiptId} {
+        allow read, create, update: if canUseDeskAt(centerId);
+        allow delete: if isOwnerLike() || isSuperAdmin();
+      }
+      match /referrals/{referralId} {
+        allow read, create, update: if canUseDeskAt(centerId);
+        allow delete: if isOwnerLike() || isSuperAdmin();
+      }
+      match /studentOfMonth/{rowId} {
+        allow read, create, update: if canUseDeskAt(centerId);
+        allow delete: if isOwnerLike() || isSuperAdmin();
       }
 
       // Per-day instructor assignments (slot -> staff names). Leads staff

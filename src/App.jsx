@@ -31,6 +31,7 @@ const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
 const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
 const MyPay                     = lazy(() => import('./pages/MyPay'));
 const CentreEvents              = lazy(() => import('./pages/CentreEvents'));
+const ManagementDesk            = lazy(() => import('./pages/ManagementDesk'));
 const ConfirmSignOut            = lazy(() => import('./pages/ConfirmSignOut'));
 const SupplyDemand              = lazy(() => import('./pages/SupplyDemand'));
 const StaffingBoard             = lazy(() => import('./pages/StaffingBoard'));
@@ -162,6 +163,9 @@ function AppRoutes() {
             paid hourly — volunteers and salaried staff would get a number
             that is not how they are paid. */}
         <Route path="/events" element={<ProtectedRoute><Layout><CentreEvents /></Layout></ProtectedRoute>} />
+        {/* The page itself checks notes.access and says so politely; the
+            Firestore rules are the boundary that actually holds. */}
+        <Route path="/desk" element={<ProtectedRoute><Layout><ManagementDesk /></Layout></ProtectedRoute>} />
         <Route path="/my-pay" element={<ProtectedRoute><Layout><MyPay /></Layout></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><Layout><AccountDetails /></Layout></ProtectedRoute>} />
         <Route path="/scheduler-creation" element={<ProtectedRoute><Layout><SchedulerCreation /></Layout></ProtectedRoute>} />

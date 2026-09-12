@@ -775,3 +775,46 @@ describe('Centre Settings no longer duplicates role colours', () => {
     expect(staffTypeColorHex(k, {})).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });
+
+describe('the Management Desk permission', () => {
+  const ROLES_FOR_DESK = builtInRoles(() => '#fff');
+  const permsFor = (platformRole, instructorType) => resolvePermissions({
+    platformRole, instructorType, roles: ROLES_FOR_DESK,
+  });
+
+  it('reaches the seven titles the centre named', () => {
+    // Owner, Admin Assistant, Admin, both Directors, Manager and Host.
+    expect(permsFor('owner').has('notes.access')).toBe(true);
+    expect(permsFor('super_admin').has('notes.access')).toBe(true);
+    expect(permsFor('admin_assistant').has('notes.access')).toBe(true);
+    expect(permsFor('director').has('notes.access')).toBe(true);
+    expect(permsFor('admin').has('notes.access')).toBe(true);
+    expect(permsFor('instructor', 'Manager').has('notes.access')).toBe(true);
+    expect(permsFor('instructor', 'Host').has('notes.access')).toBe(true);
+    expect(permsFor('instructor', 'Center Director').has('notes.access')).toBe(true);
+    expect(permsFor('instructor', 'Dir. of Education').has('notes.access')).toBe(true);
+    expect(permsFor('instructor', 'Admin').has('notes.access')).toBe(true);
+  });
+
+  it('stops at the floor', () => {
+    // A Lead runs the floor for a shift; that is a different job from
+    // settling a parent's account question. The notes carry students'
+    // funding and family circumstances.
+    expect(permsFor('instructor', 'Lead').has('notes.access')).toBe(false);
+    expect(permsFor('instructor', 'Instructor').has('notes.access')).toBe(false);
+    expect(permsFor('instructor', 'Training').has('notes.access')).toBe(false);
+    expect(permsFor('instructor', 'Volunteer').has('notes.access')).toBe(false);
+    expect(permsFor('instructor').has('notes.access')).toBe(false);
+  });
+
+  it('can be granted to any other role without a code change', () => {
+    const roles = [{ id: 'al', name: 'Assistant Lead', permissions: ['notes.access'] }];
+    expect(resolvePermissions({
+      platformRole: 'instructor', instructorType: 'Assistant Lead', roles,
+    }).has('notes.access')).toBe(true);
+  });
+
+  it('is offered in the role editor rather than being platform-only', () => {
+    expect(assignablePermissions().map(p => p.id)).toContain('notes.access');
+  });
+});
