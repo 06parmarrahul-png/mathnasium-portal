@@ -245,3 +245,20 @@ describe('nearestStudent', () => {
     expect(nearestStudent('Quentin Blackwood', STUDENTS)).toBeNull();
   });
 });
+
+describe('school work', () => {
+  it('reads SWT, and the plain-English version of it', () => {
+    expect(P('NG Lexie Liu is bringing SWT this week').labels).toContain('School work');
+    expect(P('NG Lexie Liu wants help with her school work').labels).toContain('School work');
+    expect(P('NG Lexie Liu had questions about science homework').labels).toContain('School work');
+  });
+
+  it('does NOT read "high school workout plan" as school work', () => {
+    // A real note says "change the high school workout plan colors". The
+    // string "school work" is sitting inside "school workout", and
+    // labelling that as school work would be exactly backwards.
+    const p = P('NG should we change the high school workout plan colours?');
+    expect(p.labels).not.toContain('School work');
+    expect(p.topic).toBe('Workout plan');
+  });
+});

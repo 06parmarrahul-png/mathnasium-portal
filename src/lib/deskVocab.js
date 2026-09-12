@@ -52,6 +52,14 @@ export const VOCAB = [
   { key: 'Hold',        re: /\bholds?\b/i },
   { key: 'Assessment',  re: /assessment|post[- ]?assess/i },
   { key: 'Trial',       re: /\btrial\b/i },
+  // SWT is School Work — a student bringing their own homework in, rather
+  // than working the Mathnasium curriculum. "homework" is the same thing
+  // said plainly, so it counts.
+  //
+  // The (?!out) is load-bearing: "high school WORKOUT plan" contains
+  // "school work", and labelling a workout-plan note as school work would
+  // be exactly backwards.
+  { key: 'School work', re: /\bswts?\b|school\s?work(?!out)|homework/i },
   { key: 'Prize',       re: /\bprize/i },
   { key: 'Sibling',     re: /siblings?\b/i },
   { key: 'E-transfer',  re: /e-?transfer/i },
