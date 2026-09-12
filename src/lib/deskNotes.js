@@ -32,6 +32,47 @@ import { resolvePermissions } from './roles';
 import { resolveUserForCenter } from './centerMembership';
 
 /**
+ * The titles that run the desk, and the platform roles that do.
+ *
+ * MUST STAY IDENTICAL TO canUseDeskAt() IN firestore.rules. The rules are
+ * the boundary; this is only what the app shows. When they disagree the
+ * result is one of two bad days: a page that loads and then refuses every
+ * read, or — what happened to Rahul — a person the rules would happily
+ * let in who cannot find the door.
+ */
+export const DESK_TITLES = [
+  'Manager', 'Host', 'Admin',
+  'Center Director', 'Centre Director',
+  'Dir. of Education', 'Director of Education',
+];
+
+export const DESK_PLATFORM_ROLES = [
+  'owner', 'super_admin', 'admin_assistant', 'director', 'admin',
+];
+
+/**
+ * Can this person open the desk?
+ *
+ * DELIBERATELY NOT just `permissions.has('notes.access')`.
+ *
+ * A centre that has ever saved its roles from Manage Roles has a stored
+ * registry, and the editor writes the WHOLE list back — so those stored
+ * arrays were frozen with the permissions that existed on the day they
+ * were saved. `notes.access` did not exist then, so it is absent, and the
+ * stored entry shadows the built-in grant. Rahul is a Host at a centre
+ * that had customised its roles, so the permission never reached him.
+ *
+ * The title check is what the rules do, so it is what this does. The
+ * permission is still honoured on top: that is the path a centre uses to
+ * put somebody else on the desk from Manage Roles.
+ */
+export function canUseDesk({ platformRole, instructorType, permissions } = {}) {
+  if (DESK_PLATFORM_ROLES.includes(String(platformRole || ''))) return true;
+  if (DESK_TITLES.includes(String(instructorType || '').trim())) return true;
+  return !!permissions?.has?.('notes.access');
+}
+
+/**
  * Who can be sent a note.
  *
  * Only people who can actually OPEN the desk. Addressing a note to an
@@ -46,13 +87,16 @@ export function deskMembers(users, centerId, centreRoles) {
   return (users || [])
     .filter(u => {
       const at = resolveUserForCenter(u, centerId);
-      const perms = resolvePermissions({
+      return canUseDesk({
         platformRole: u?.role,
         instructorType: at?.instructorType,
-        isVolunteer: at?.isVolunteer === true,
-        roles: centreRoles || [],
+        permissions: resolvePermissions({
+          platformRole: u?.role,
+          instructorType: at?.instructorType,
+          isVolunteer: at?.isVolunteer === true,
+          roles: centreRoles || [],
+        }),
       });
-      return perms.has('notes.access');
     })
     .sort((a, b) => String(a?.displayName || '').localeCompare(String(b?.displayName || '')));
 }

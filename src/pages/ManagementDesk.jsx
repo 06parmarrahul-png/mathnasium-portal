@@ -13,7 +13,7 @@ import { resolveRoles } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import {
   NOTE_VIEWS, filterNotes, myOpenCount, validateNote, recipientNames,
-  isOpen, initialsOf, deskMembers,
+  isOpen, initialsOf, deskMembers, canUseDesk,
 } from '../lib/deskNotes';
 import { rowMatches, parseAmount } from '../lib/deskTrackers';
 import { TRACKER_LIST, TRACKERS } from '../lib/deskConfig';
@@ -66,9 +66,12 @@ function fmtDate(iso) {
 }
 
 export default function ManagementDesk() {
-  const { profile, activeCenterId, centerConfig, can, canSeeCenterSettings } = useAuth();
+  const { profile, activeCenterId, centerConfig, permissions, canSeeCenterSettings,
+    myInstructorType } = useAuth();
   const [tab, setTab] = useState('notes');
-  const allowed = can('notes.access');
+  const allowed = canUseDesk({
+    platformRole: profile?.role, instructorType: myInstructorType, permissions,
+  });
 
   if (!allowed) {
     return (

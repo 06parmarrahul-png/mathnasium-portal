@@ -818,3 +818,71 @@ describe('the Management Desk permission', () => {
     expect(assignablePermissions().map(p => p.id)).toContain('notes.access');
   });
 });
+
+describe('a new permission reaching a centre that has customised its roles', () => {
+  // This is the bug that hid the Management Desk from a Host: the editor
+  // writes the WHOLE registry back, so a stored role's permissions are a
+  // snapshot of the catalogue on the day somebody pressed save. A grant
+  // added to a built-in seed afterwards was shadowed by that snapshot.
+  const storedAsOfBefore = () => builtInRoles(() => '#fff').map(r => ({
+    id: r.id, name: r.name, color: r.color, countsInRatio: r.countsInRatio,
+    permissions: r.permissions.filter(p => p !== 'notes.access'),
+    order: r.order, builtIn: true,
+  }));
+
+  it('reaches a Host whose registry was saved before it existed', () => {
+    const roles = resolveRoles({ staffRoles: storedAsOfBefore() }, () => '#fff');
+    expect(resolvePermissions({
+      platformRole: 'instructor', instructorType: 'Host', roles,
+    }).has('notes.access')).toBe(true);
+  });
+
+  it('reaches a Manager the same way', () => {
+    const roles = resolveRoles({ staffRoles: storedAsOfBefore() }, () => '#fff');
+    expect(resolvePermissions({
+      platformRole: 'instructor', instructorType: 'Manager', roles,
+    }).has('notes.access')).toBe(true);
+  });
+
+  it('does not hand it to a Lead, who was never seeded it', () => {
+    // The rescue is "take what the seed grants and the registry could not
+    // have known about" — not "grant everything to everybody".
+    const roles = resolveRoles({ staffRoles: storedAsOfBefore() }, () => '#fff');
+    expect(resolvePermissions({
+      platformRole: 'instructor', instructorType: 'Lead', roles,
+    }).has('notes.access')).toBe(false);
+  });
+
+  it('STILL respects a permission the centre knowingly unticked', () => {
+    // The other half, and the one that would be easy to break: unticking
+    // has to keep meaning something. A registry that names what it knew
+    // about is taken at its word for those.
+    const stored = storedAsOfBefore().map(r => (r.name === 'Host'
+      ? { ...r, permissions: r.permissions.filter(p => p !== 'scheduler.run') }
+      : r));
+    const roles = resolveRoles({
+      staffRoles: stored, knownPermissions: PERMISSION_IDS,
+    }, () => '#fff');
+    const p = resolvePermissions({ platformRole: 'instructor', instructorType: 'Host', roles });
+    expect(p.has('scheduler.run')).toBe(false);
+    // ...and with an up-to-date stamp, an unticked notes.access sticks too.
+    expect(p.has('notes.access')).toBe(false);
+  });
+
+  it('leaves a custom role alone — it has no seed to fall back on', () => {
+    const roles = resolveRoles({
+      staffRoles: [{ id: 'al', name: 'Assistant Lead', permissions: ['scheduler.run'], order: 9 }],
+    }, () => '#fff');
+    const al = roles.find(r => r.name === 'Assistant Lead');
+    expect(al.permissions).toEqual(['scheduler.run']);
+  });
+
+  it('treats a registry with no stamp as knowing only the old catalogue', () => {
+    const roles = resolveRoles({ staffRoles: storedAsOfBefore() }, () => '#fff');
+    const host = roles.find(r => r.name === 'Host');
+    // Everything it did store survives, plus the one it could not know.
+    expect(host.permissions).toContain('scheduler.run');
+    expect(host.permissions).toContain('admin.operations');
+    expect(host.permissions).toContain('notes.access');
+  });
+});

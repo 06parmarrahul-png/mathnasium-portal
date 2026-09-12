@@ -264,6 +264,16 @@ export function AuthProvider({ children }) {
     [centerConfig],
   );
 
+  // The person's job title AT THE ACTIVE CENTRE — per-centre first, with
+  // the legacy top-level field behind it. Exposed on the context because
+  // gates that mirror a Firestore rule need the same value the rule reads
+  // (see canUseDesk in deskNotes.js), and re-deriving it at each call
+  // site is how two of them end up disagreeing.
+  const myInstructorType = useMemo(
+    () => resolveUserForCenter(profile, activeCenterId)?.instructorType || '',
+    [profile, activeCenterId],
+  );
+
   const permissions = useMemo(() => resolvePermissions({
     platformRole:   role,
     instructorType: resolveUserForCenter(profile, activeCenterId)?.instructorType,
@@ -491,6 +501,7 @@ export function AuthProvider({ children }) {
       // Manage Roles is reachable through it without touching this file.
       permissions,
       can,
+      myInstructorType,
       // The active centre's role registry, for pickers and colour chips.
       centreRoles,
     }}>

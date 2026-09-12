@@ -123,6 +123,32 @@ export const PERMISSIONS = [
 ];
 
 export const PERMISSION_IDS = PERMISSIONS.map(p => p.id);
+
+/**
+ * The catalogue as it stood before `notes.access` was added.
+ *
+ * WHY THIS HAS TO EXIST
+ *   The role editor writes the WHOLE registry back on every save, so a
+ *   stored role's permission array is a snapshot of the catalogue on the
+ *   day somebody last pressed save. When a new permission is added to a
+ *   built-in role's seed, every centre that had ever customised its roles
+ *   silently missed it — the stored array shadowed the seed. That is
+ *   exactly how a Host at a customised centre ended up unable to see the
+ *   Management Desk that his job title is supposed to grant.
+ *
+ *   A stored registry now records which permissions existed when it was
+ *   written (`knownPermissions`). Anything the centre KNEW about and left
+ *   unticked stays unticked — unticking still means something. Anything
+ *   it could not have known about is taken from the seed, because an
+ *   absence cannot be a decision about a permission that did not exist.
+ *
+ *   Registries saved before that stamp have no list, so they get this
+ *   one: it is precisely what the catalogue held at the time.
+ */
+export const LEGACY_KNOWN_PERMISSIONS = [
+  'admin.panel', 'admin.operations', 'centre.settings', 'analytics.view',
+  'scheduler.run', 'shifts.take', 'chat.access', 'roles.manage',
+];
 const PERMISSION_ID_SET = new Set(PERMISSION_IDS);
 
 /**
@@ -297,14 +323,25 @@ export function resolveRoles(centerConfig, colorFor) {
   const stored = Array.isArray(centerConfig?.staffRoles) ? centerConfig.staffRoles : null;
   if (!stored || stored.length === 0) return builtins;
 
+  const known = new Set(Array.isArray(centerConfig?.knownPermissions)
+    ? centerConfig.knownPermissions
+    : LEGACY_KNOWN_PERMISSIONS);
+
   const byKey = new Map(builtins.map(r => [roleKey(r.name), r]));
   for (const raw of stored) {
     const role = normalizeRole(raw, colorFor);
     if (!role) continue;
     const existing = byKey.get(roleKey(role.name));
-    byKey.set(roleKey(role.name), existing
-      ? { ...existing, ...role, builtIn: existing.builtIn }
-      : role);
+    if (!existing) { byKey.set(roleKey(role.name), role); continue; }
+    // Seed grants this registry could not have had an opinion about,
+    // because they did not exist when it was saved.
+    const unknowable = existing.permissions.filter(p => !known.has(p));
+    byKey.set(roleKey(role.name), {
+      ...existing,
+      ...role,
+      permissions: [...new Set([...role.permissions, ...unknowable])],
+      builtIn: existing.builtIn,
+    });
   }
   // A built-in the centre explicitly removed from the stored array stays
   // present — built-ins are not deletable, and silently dropping one

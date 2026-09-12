@@ -7,7 +7,7 @@ import Logo from './Logo';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
 import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
-import { myOpenCount } from '../lib/deskNotes';
+import { myOpenCount, canUseDesk } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import CenterSwitcher from './CenterSwitcher';
 import {
@@ -49,7 +49,7 @@ const ROLE_LABEL = {
 
 export default function Layout({ children }) {
   const auth = useAuth();
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations, can } = auth;
+  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = auth;
   // The phone-first home is for people whose job is working shifts.
   // Leadership keeps the classic pages, whose numbers are known-good.
   const newLookEligible = canUseNewLook(auth);
@@ -63,7 +63,14 @@ export default function Layout({ children }) {
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
   const [deskNotes, setDeskNotes] = useState([]);
-  const canUseDesk = can('notes.access');
+  // Asked exactly the way the Firestore rules ask it — see canUseDesk.
+  // `can('notes.access')` alone hid the link from Hosts and Managers at
+  // any centre that had ever saved its roles from Manage Roles.
+  const canOpenDesk = canUseDesk({
+    platformRole: profile?.role,
+    instructorType: auth.myInstructorType,
+    permissions: auth.permissions,
+  });
 
   // Subscribe to data needed for the Shift Board badge counter — scoped to
   // the active center. Both queries are also used by the ShiftBoard page
@@ -93,7 +100,7 @@ export default function Layout({ children }) {
   // Only subscribed for people who can open the desk; for everybody else
   // the read would be refused by the rules anyway.
   useEffect(() => {
-    if (!canUseDesk || !activeCenterId) return undefined;
+    if (!canOpenDesk || !activeCenterId) return undefined;
     // Open notes only. The settled archive runs to 1,730 documents and
     // none of them can be waiting on anybody.
     return onSnapshot(
@@ -104,14 +111,14 @@ export default function Layout({ children }) {
       snap => setDeskNotes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setDeskNotes([]),
     );
-  }, [canUseDesk, activeCenterId]);
+  }, [canOpenDesk, activeCenterId]);
 
   // Gated on the way OUT rather than cleared in the effect: losing desk
   // access has to zero the badge immediately, and an effect that clears
   // state is a cascading render the linter is right to object to.
   const deskCount = useMemo(
-    () => (canUseDesk ? myOpenCount(deskNotes, profile?.uid) : 0),
-    [canUseDesk, deskNotes, profile?.uid]);
+    () => (canOpenDesk ? myOpenCount(deskNotes, profile?.uid) : 0),
+    [canOpenDesk, deskNotes, profile?.uid]);
 
   // Eligible-for-this-user count for the sidebar badge.
   const boardCount = useMemo(() => {
@@ -274,7 +281,7 @@ export default function Layout({ children }) {
       // centre's calendar, not a scheduling tool.
       centre.push({ to: '/events', label: 'Centre Events', icon: CalendarCheck });
     }
-    if (canUseDesk) {
+    if (canOpenDesk) {
       centre.push({ to: '/desk', label: 'Management Desk', icon: StickyNote, badge: deskCount });
     }
     centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
@@ -299,7 +306,7 @@ export default function Layout({ children }) {
       { to: '/availability-log',      label: 'Availability Log',      icon: History },
       { to: '/events',                label: 'Centre Events',         icon: CalendarCheck },
     );
-    if (canUseDesk) {
+    if (canOpenDesk) {
       manage.push({ to: '/desk', label: 'Management Desk', icon: StickyNote, badge: deskCount });
     }
   } else if (!useOwnerLayout && isLead) {

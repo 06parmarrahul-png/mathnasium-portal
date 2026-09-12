@@ -61,12 +61,23 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }))
 
 const { default: ManagementDesk } = await import('./ManagementDesk');
 
-const CAN_ALL = new Set(['notes.access', 'admin.panel']);
 const BASE_AUTH = {
   profile: { uid: 'vin', displayName: 'Vin Bhatia', role: 'director' },
+  myInstructorType: 'Center Director',
   activeCenterId: 'langley',
   centerConfig: { name: 'Mathnasium Langley' },
-  can: (id) => CAN_ALL.has(id),
+  permissions: new Set(['notes.access', 'admin.panel']),
+};
+
+// A Host at a centre that has customised its roles: the stored registry
+// froze before `notes.access` existed, so the permission never reaches
+// them. The rules let them in by title, and so must the page.
+const HOST_AUTH = {
+  profile: { uid: 'rahul', displayName: 'Rahul Parmar', role: 'instructor' },
+  myInstructorType: 'Host',
+  activeCenterId: 'langley',
+  centerConfig: { name: 'Mathnasium Langley' },
+  permissions: new Set(['scheduler.run', 'admin.operations']),
 };
 
 const note = (over = {}) => ({
@@ -95,7 +106,12 @@ afterEach(() => { cleanup(); });
 
 describe('who can see it', () => {
   it('turns away somebody without desk access, and shows them no data', () => {
-    authValue.current = { ...BASE_AUTH, can: () => false };
+    authValue.current = {
+      ...BASE_AUTH,
+      profile: { uid: 'k', displayName: 'Kaitlyn MacDonald', role: 'instructor' },
+      myInstructorType: 'Instructor',
+      permissions: new Set(['shifts.take']),
+    };
     snapshots.notes = [note()];
     draw();
     expect(screen.getByText(/for the management team/i)).toBeTruthy();
@@ -103,6 +119,42 @@ describe('who can see it', () => {
   });
 
   it('lets a management account in', () => {
+    draw();
+    expect(screen.getByText('Management Desk')).toBeTruthy();
+  });
+
+  it('lets a HOST in even when the permission never reached them', () => {
+    // Rahul. The centre had saved its roles from Manage Roles, and the
+    // editor writes the whole list back — so the stored 'Host' entry was
+    // frozen with the permissions that existed that day. notes.access was
+    // not one of them. The Firestore rules admit him by title; before
+    // this, the page did not, so he could not find the door.
+    authValue.current = { ...HOST_AUTH };
+    draw();
+    expect(screen.getByText('Management Desk')).toBeTruthy();
+    expect(screen.queryByText(/for the management team/i)).toBeNull();
+  });
+
+  it('lets a Manager in the same way', () => {
+    authValue.current = { ...HOST_AUTH, myInstructorType: 'Manager' };
+    draw();
+    expect(screen.getByText('Management Desk')).toBeTruthy();
+  });
+
+  it('still refuses a Lead', () => {
+    // Running the floor for a shift is not the same job as settling a
+    // parent's account question.
+    authValue.current = { ...HOST_AUTH, myInstructorType: 'Lead' };
+    draw();
+    expect(screen.getByText(/for the management team/i)).toBeTruthy();
+  });
+
+  it('lets in anybody granted the permission in Manage Roles', () => {
+    authValue.current = {
+      ...HOST_AUTH,
+      myInstructorType: 'Assistant Lead',
+      permissions: new Set(['notes.access']),
+    };
     draw();
     expect(screen.getByText('Management Desk')).toBeTruthy();
   });

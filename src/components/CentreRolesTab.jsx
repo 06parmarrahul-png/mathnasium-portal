@@ -37,7 +37,7 @@ import {
 } from 'lucide-react';
 import {
   resolveRoles, permissionGroups, makeRoleId, validateRole, canDeleteRole,
-  roleHolderCount, serializeRoles, permissionLookup, permissionLabel,
+  roleHolderCount, serializeRoles, permissionLookup, permissionLabel, PERMISSION_IDS,
 } from '../lib/roles';
 import { staffTypeColorHex, contrastText } from '../lib/centerConfig';
 import { defaultIncludedInRatio } from '../lib/ratioCount';
@@ -271,7 +271,15 @@ export default function CentreRolesTab({ users, centers }) {
       const staffRoles = serializeRoles(next);
       await setDoc(
         doc(db, 'centers', centreId, 'config', 'main'),
-        { staffRoles, staffRolePermissions: permissionLookup(staffRoles) },
+        {
+          staffRoles,
+          staffRolePermissions: permissionLookup(staffRoles),
+          // What the catalogue held when this was written. A permission
+          // added later cannot be read as "deliberately left off", so
+          // resolveRoles takes those from the built-in seed instead. See
+          // LEGACY_KNOWN_PERMISSIONS in roles.js.
+          knownPermissions: PERMISSION_IDS,
+        },
         { merge: true },
       );
       if (!editingActive) setOtherConfig(c => ({ ...(c || {}), staffRoles }));
