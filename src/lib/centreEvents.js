@@ -120,7 +120,10 @@ export function weekAhead({ shifts = [], events = [], from, to }) {
     });
   }
 
-  for (const e of eventsBetween(events, from, to)) {
+  // Fun days are excluded here for the same reason as monthAhead: there is
+  // one nearly every day, so a week's worth would push the shifts — the
+  // thing this list exists for — off the bottom. They have their own card.
+  for (const e of eventsBetween(events, from, to).filter(e => e.type !== 'fun-day')) {
     rows.push({
       kind: 'event',
       id: e.id,
@@ -153,7 +156,13 @@ export function weekAhead({ shifts = [], events = [], from, to }) {
  * @param holidays  centerConfig.holidays
  */
 export function monthAhead({ events = [], holidays = [], from, to }) {
-  const rows = eventsBetween(events, from, to).map(e => ({
+  // Fun days are EXCLUDED. There is one nearly every day, so twenty of
+  // them would bury the two staff meetings this card exists to show —
+  // and they have their own card now, so listing them here would also
+  // show every one of them twice. See funDays.js.
+  const rows = eventsBetween(events, from, to)
+    .filter(e => e.type !== 'fun-day')
+    .map(e => ({
     kind: 'event',
     id: e.id,
     date: e.date,

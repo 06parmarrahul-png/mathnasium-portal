@@ -126,7 +126,9 @@ describe('monthAhead — events plus the closures we already know', () => {
 
   it('folds configured holidays in as closures, free of charge', () => {
     const rows = monthAhead({
-      events: [ev({ id: 'fun', date: '2026-09-26', title: 'Pizza Fun Day', type: 'fun-day' })],
+      // A meeting, not a fun day: fun days are excluded from this card
+      // now and have their own. See the block at the end of this file.
+      events: [ev({ id: 'tr', date: '2026-09-26', title: 'First aid training', type: 'training' })],
       holidays: [{ date: '2026-10-05', name: 'Thanksgiving' }],
       from, to,
     });
@@ -195,5 +197,35 @@ describe('eventTypeLabel', () => {
   it('falls back rather than showing a blank', () => {
     expect(eventTypeLabel('nonsense')).toBe('Something else');
     expect(eventTypeLabel(undefined)).toBe('Something else');
+  });
+});
+
+describe('fun days are kept out of both lists', () => {
+  it('weekAhead shows the shifts and the meeting, not the fun days', () => {
+    // A week has five or six fun days in it. Listed here they would push
+    // the shifts — the thing this list exists for — off the bottom.
+    const rows = weekAhead({
+      shifts: [{ id: 's1', date: '2026-09-16', startTime: '15:00', endTime: '19:00', status: 'published' }],
+      events: [
+        { id: 'm', type: 'meeting', date: '2026-09-17', title: 'Staff meeting' },
+        { id: 'f', type: 'fun-day', date: '2026-09-16', title: 'Bingo' },
+      ],
+      from: '2026-09-15', to: '2026-09-21',
+    });
+    expect(rows.map(r => r.title || 'Shift')).toEqual(['Shift', 'Staff meeting']);
+  });
+});
+
+describe('monthAhead leaves fun days out', () => {
+  it('shows the meeting and the closure, not the twenty fun days', () => {
+    // One nearly every day. Listed here they would bury what this card
+    // exists to show, and appear twice — they have their own card.
+    const events = [
+      { id: 'm', type: 'meeting', date: '2026-09-17', title: 'Staff meeting' },
+      { id: 'f1', type: 'fun-day', date: '2026-09-16', title: 'Bingo' },
+      { id: 'f2', type: 'fun-day', date: '2026-09-18', title: 'Four Corners' },
+    ];
+    const out = monthAhead({ events, holidays: [], from: '2026-09-15', to: '2026-09-30' });
+    expect(out.map(r => r.title)).toEqual(['Staff meeting']);
   });
 });

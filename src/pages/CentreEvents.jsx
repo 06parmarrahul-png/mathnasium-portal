@@ -2,13 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   collection, onSnapshot, query, addDoc, updateDoc, deleteDoc, doc,
 } from 'firebase/firestore';
-import { CalendarPlus, Pencil, Trash2, PartyPopper, Users, GraduationCap, Star } from 'lucide-react';
+import {
+  CalendarPlus, Pencil, Trash2, PartyPopper, Users, GraduationCap, Star,
+  ChevronLeft, ChevronRight, Loader2,
+} from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   EVENT_TYPE_LIST, eventTypeLabel, validateEvent, asDate, toISO, isUsableEvent,
 } from '../lib/centreEvents';
+import {
+  funDaysInMonth, monthDays, monthLabel, monthOf, stepMonth, diffMonth,
+} from '../lib/funDays';
+import { writeBatch } from 'firebase/firestore';
 
 /**
  * Centre Events — where a staff meeting or a fun day becomes a real date.
@@ -229,7 +236,123 @@ export default function CentreEvents() {
           onEdit={setDraft} onDelete={remove} />
       )}
 
+      <FunDayMonth events={events || []} centerId={activeCenterId} profile={profile} />
+
       {events === null && <p className="text-sm text-gray-500">Loading…</p>}
+    </div>
+  );
+}
+
+/**
+ * A month of fun days, on one screen.
+ *
+ * There is an activity nearly every day, so entering them one at a time
+ * through the form above means thirty round trips — which is how a
+ * calendar stops being kept up to date by about the fourth of the month.
+ * Type down the column, press save once.
+ *
+ * Saving writes only what CHANGED: an untouched month writes nothing, and
+ * a cleared day deletes that one entry rather than the month.
+ */
+function FunDayMonth({ events, centerId, profile }) {
+  const [ym, setYm] = useState(() => monthOf(toISO(new Date())));
+  const [draft, setDraft] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  const existing = useMemo(() => funDaysInMonth(events, ym), [events, ym]);
+  const days = useMemo(() => monthDays(ym), [ym]);
+
+  // What is on screen: the draft where it has been touched, the stored
+  // value everywhere else. Keyed by date so switching months is clean.
+  const valueFor = (date) => (date in draft
+    ? draft[date]
+    : (existing.find(e => e.date === date)?.title || ''));
+
+  const changes = useMemo(() => diffMonth(events, draft, ym), [events, draft, ym]);
+  const dirty = changes.adds.length + changes.edits.length + changes.removes.length;
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const batch = writeBatch(db);
+      for (const a of changes.adds) {
+        batch.set(doc(collection(db, 'centers', centerId, 'events')), {
+          title: a.title, date: a.date, startTime: null, endTime: null,
+          type: 'fun-day', note: '',
+          createdAt: new Date().toISOString(),
+          createdBy: profile?.displayName || profile?.email || null,
+        });
+      }
+      for (const e of changes.edits) {
+        batch.update(doc(db, 'centers', centerId, 'events', e.id), { title: e.title });
+      }
+      for (const r of changes.removes) {
+        batch.delete(doc(db, 'centers', centerId, 'events', r.id));
+      }
+      await batch.commit();
+      setDraft({});
+      toast.success(`${monthLabel(ym)} saved — instructors see it on their home page.`);
+    } catch (e) {
+      toast.error(e?.message || 'Could not save those.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+  return (
+    <div className="mt-8 rounded-xl border bg-white">
+      <div className="flex flex-wrap items-center gap-3 border-b px-4 py-3">
+        <PartyPopper size={16} className="text-green-600" />
+        <div className="min-w-0 flex-1">
+          <h2 className="font-semibold text-gray-900">Fun days</h2>
+          <p className="text-xs text-gray-500">
+            One line per day. Instructors see today&apos;s on their home page.
+          </p>
+        </div>
+        <div className="flex items-center gap-1">
+          <button onClick={() => setYm(m => stepMonth(m, -1))} title="Previous month"
+            className="rounded-lg border p-1.5 text-gray-500 hover:bg-gray-50"><ChevronLeft size={15} /></button>
+          <span className="min-w-[128px] text-center text-sm font-bold text-gray-900">
+            {monthLabel(ym)}
+          </span>
+          <button onClick={() => setYm(m => stepMonth(m, 1))} title="Next month"
+            className="rounded-lg border p-1.5 text-gray-500 hover:bg-gray-50"><ChevronRight size={15} /></button>
+        </div>
+      </div>
+
+      <div className="grid gap-x-4 gap-y-1 p-3 sm:grid-cols-2">
+        {days.map(d => (
+          <label key={d.date}
+            className={`flex items-center gap-2 rounded-lg px-2 py-1 ${
+              d.weekday === 0 ? 'opacity-45' : ''}`}>
+            <span className="w-14 shrink-0 text-[11px] font-bold uppercase tracking-wide text-gray-400">
+              {DOW[d.weekday]} {d.day}
+            </span>
+            <input
+              value={valueFor(d.date)}
+              onChange={e => setDraft(x => ({ ...x, [d.date]: e.target.value }))}
+              placeholder={d.weekday === 0 ? 'Closed' : '—'}
+              className="w-full rounded-lg border border-transparent bg-gray-50 px-2.5 py-1.5 text-[13px] hover:border-gray-200 focus:border-red-500 focus:bg-white focus:outline-none" />
+          </label>
+        ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 border-t px-4 py-3">
+        <button onClick={save} disabled={!dirty || saving}
+          className="flex items-center gap-2 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-40">
+          {saving && <Loader2 size={14} className="animate-spin" />}
+          {saving ? 'Saving…' : dirty ? `Save ${dirty} change${dirty === 1 ? '' : 's'}` : 'Saved'}
+        </button>
+        {dirty > 0 && (
+          <button onClick={() => setDraft({})}
+            className="text-[13px] font-semibold text-gray-500 hover:text-gray-700">Discard</button>
+        )}
+        <span className="ml-auto text-xs text-gray-400">
+          {existing.length} set for {monthLabel(ym)}
+        </span>
+      </div>
     </div>
   );
 }

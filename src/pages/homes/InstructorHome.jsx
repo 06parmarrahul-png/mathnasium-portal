@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown } from 'lucide-react';
+import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, PartyPopper } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { setNewLook } from '../../lib/newLook';
@@ -10,6 +10,7 @@ import {
 import {
   weekAhead, monthAhead, weekWindow, monthWindow, eventTypeShort,
 } from '../../lib/centreEvents';
+import { funDayOn, funDaysAhead } from '../../lib/funDays';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
@@ -236,6 +237,12 @@ export default function InstructorHome() {
     });
   }, [events, centerConfig, today]);
 
+  // The fun day. Its own card rather than a line in "What's on" because
+  // there is one nearly every day: twenty of them would bury the two staff
+  // meetings that card exists to show. The question is "what is it today".
+  const funToday = useMemo(() => funDayOn(events, today), [events, today]);
+  const funSoon = useMemo(() => funDaysAhead(events, today, 4), [events, today]);
+
   const dayShifts = dayRoster.date === next?.date ? dayRoster.rows : null;
   const onFloor = (dayShifts || []).filter(s => s.status !== 'draft').length;
   const first = (profile?.displayName || '').split(' ')[0] || 'there';
@@ -369,6 +376,60 @@ export default function InstructorHome() {
           <p className="px-1 text-[13px]" style={{ color: 'var(--nl-muted)' }}>
             Sides aren&apos;t posted for today yet. Ask whoever&apos;s running the floor.
           </p>
+        )}
+
+        {/* ── Fun day ─────────────────────────────────────────────
+            Bottom of the left column, under the shift. The side
+            assignments sit above it deliberately: which end of the room
+            you are on is something you have to act on, and a fun day is
+            something you need to know. When there are no sides posted
+            this simply moves up into the gap. */}
+        {(funToday || funSoon.length > 0) && (
+          <div>
+            <Lbl className="mb-1.5">Fun day</Lbl>
+            <Card className="!p-0 overflow-hidden">
+              {funToday ? (
+                <div className="px-4 py-3.5" style={{ background: 'var(--nl-brandw)' }}>
+                  <div className="flex items-center gap-2">
+                    <PartyPopper size={15} style={{ color: 'var(--nl-brand)' }} />
+                    <span className="text-[10px] font-bold uppercase tracking-[0.14em]"
+                      style={{ color: 'var(--nl-brand)' }}>Today</span>
+                  </div>
+                  <div className="nl-display mt-1 text-[20px] font-bold leading-tight">
+                    {funToday.title}
+                  </div>
+                  {funToday.note && (
+                    <div className="mt-0.5 text-[13px]" style={{ color: 'var(--nl-ink2)' }}>
+                      {funToday.note}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="px-4 py-3" style={{ color: 'var(--nl-muted)' }}>
+                  <span className="text-[13px]">Nothing on today.</span>
+                </div>
+              )}
+
+              {funSoon.filter(f => f.date !== today).map((f, i) => (
+                <div key={f.date}
+                  className={`flex items-center gap-3 px-4 py-2.5 ${i > 0 || funToday ? 'border-t' : 'border-t'}`}
+                  style={{ borderColor: 'var(--nl-rule)' }}>
+                  <span className="w-10 shrink-0 text-center">
+                    <span className="block text-[9.5px] font-bold uppercase tracking-[0.08em]"
+                      style={{ color: 'var(--nl-muted)' }}>
+                      {fmtDay(f.date, { weekday: 'short' })}
+                    </span>
+                    <span className="nl-display block text-[15px] font-bold leading-none">
+                      {asDate(f.date).getDate()}
+                    </span>
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-[13.5px] font-semibold">
+                    {f.title}
+                  </span>
+                </div>
+              ))}
+            </Card>
+          </div>
         )}
 
         {/* ── The only thing with a button ────────────────────────── */}

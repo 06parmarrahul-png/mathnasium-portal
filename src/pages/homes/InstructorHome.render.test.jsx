@@ -514,3 +514,82 @@ describe('what the home no longer carries', () => {
     expect(screen.queryByText(/Your hours this pay period/)).toBeNull();
   });
 });
+
+describe('the fun day', () => {
+  const DAY = '2026-09-15';
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 8, 15, 12, 0, 0));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  const fun = (date, title) => ({ id: date, type: 'fun-day', date, title });
+
+  it("leads with today's activity", () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [fun(DAY, 'Double Bingo!')];
+    draw();
+    expect(screen.getByText('Fun day')).toBeTruthy();
+    expect(screen.getByText('Double Bingo!')).toBeTruthy();
+    expect(screen.getByText('Today')).toBeTruthy();
+  });
+
+  it('lists the next few days under it', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [fun(DAY, 'Double Bingo!'), fun('2026-09-16', 'Four Corners')];
+    draw();
+    expect(screen.getByText('Four Corners')).toBeTruthy();
+  });
+
+  it('says so plainly when there is nothing on today but something soon', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [fun('2026-09-17', 'Doodle Challenge')];
+    draw();
+    expect(screen.getByText(/Nothing on today/)).toBeTruthy();
+    expect(screen.getByText('Doodle Challenge')).toBeTruthy();
+  });
+
+  it('renders nothing at all when no fun days are set', () => {
+    // Same rule as "What's on" — an always-empty card trains people to
+    // ignore the space it occupies.
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [{ id: 'm', type: 'meeting', date: DAY, title: 'Staff meeting' }];
+    draw();
+    expect(screen.queryByText('Fun day')).toBeNull();
+  });
+
+  it('sits BELOW the side assignments, which you have to act on', () => {
+    // A fun day is something to know; which end of the room you are on is
+    // something to do.
+    authValue.current = { ...BASE_AUTH, profile: { uid: 'u1', displayName: 'Jason Soo' } };
+    snapshots.shifts = [shift({ date: DAY, startTime: '15:00', endTime: '18:30' })];
+    sideSheet.current = { 'EM|15:00': ['Jason Soo'], 'HS|17:00': ['Jason Soo'] };
+    snapshots.events = [fun(DAY, 'Double Bingo!')];
+    const { container } = draw();
+    const sides = screen.getByText('Your day');
+    const funLabel = screen.getByText('Fun day');
+    // DOCUMENT_POSITION_FOLLOWING — the fun day comes after the sides.
+    expect(sides.compareDocumentPosition(funLabel) & 4).toBeTruthy();
+    expect(container).toBeTruthy();
+  });
+
+  it('moves up into the gap when no sides are posted', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    sideSheet.current = {};
+    snapshots.events = [fun(DAY, 'Double Bingo!')];
+    draw();
+    expect(screen.queryByText('Your day')).toBeNull();
+    expect(screen.getByText('Double Bingo!')).toBeTruthy();
+  });
+
+  it('never shows a meeting as a fun day', () => {
+    snapshots.shifts = [shift({ date: DAY })];
+    snapshots.events = [
+      fun(DAY, 'Double Bingo!'),
+      { id: 'm', type: 'meeting', date: DAY, title: 'Staff meeting' },
+    ];
+    draw();
+    const card = screen.getByText('Fun day').parentElement;
+    expect(card.textContent).not.toContain('Staff meeting');
+  });
+});
