@@ -792,8 +792,25 @@ service cloud.firestore {
       // shift-swap entries from the Shift Board so they can manage swap
       // requests without going through an owner — but they CANNOT delete
       // general team-chat messages (preserving chat as an audit-able log).
+      //
+      // A person may also take back their OWN swap request, which is the
+      // whole of the "I've had second thoughts" path. Three conditions,
+      // and each one is load-bearing:
+      //   type    — so this never becomes a licence to delete chat messages
+      //   userId  — yours, not somebody else's shift taken off the board
+      //   open    — once it has been ACCEPTED the shift has already changed
+      //             hands, and erasing the request then would leave the
+      //             taker holding a shift with no record of how they got it
+      // Read with .get() defaults: a legacy document missing one of these
+      // fields must fall through to a denial, not blow up the evaluation.
       allow delete: if isOwnerLike() || isSuperAdmin()
-                       || (isAdmin() && resource.data.type == 'shift_swap');
+                       || (isAdmin() && resource.data.type == 'shift_swap')
+                       || (
+                            isSignedIn()
+                            && resource.data.get('type', '') == 'shift_swap'
+                            && resource.data.get('userId', '') == request.auth.uid
+                            && resource.data.get('swapStatus', '') == 'open'
+                          );
     }
 
     // Owners Chat — cross-centre peer space for owners and Enterprise

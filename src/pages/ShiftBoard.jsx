@@ -10,7 +10,7 @@ import { styleFor as subRoleStyleFor, requiredCapabilityForShift, hasCapability 
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
-  CalendarDays, Briefcase, Pencil, Trash2, X,
+  CalendarDays, Briefcase, Pencil, Trash2, X, RotateCcw,
 } from 'lucide-react';
 import { toast, confirmDialog } from '../lib/notify';
 import { SUB_ROLES } from '../lib/subRoles';
@@ -149,7 +149,7 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete 
   );
 }
 
-function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete }) {
+function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRetract }) {
   const [busy, setBusy] = useState(false);
   const isMine = swap.userId === profile?.uid;
   const eligible = !isMine && canTake(swap.shiftSubRole, mySubRoles);
@@ -190,8 +190,19 @@ function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete }) {
         {swap.shiftRole && <span>{swap.shiftRole}</span>}
       </div>
       {isMine ? (
-        <div className="rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2 text-xs text-yellow-800 text-center">
-          Waiting for someone to take this shift…
+        /* Second thoughts are allowed. Until this, a posted shift could
+           only be taken down by an owner or an admin — the poster had to
+           ask someone else to undo their own request. */
+        <div className="rounded-lg bg-yellow-50 border border-yellow-200 px-3 py-2">
+          <p className="text-xs text-yellow-800 text-center">
+            Waiting for someone to take this shift…
+          </p>
+          <button
+            onClick={() => onRetract(swap)}
+            className="mt-2 w-full flex items-center justify-center gap-1.5 rounded-lg border border-yellow-300 bg-white px-3 py-1.5 text-xs font-bold text-yellow-800 hover:bg-yellow-100"
+          >
+            <RotateCcw size={12} /> Take it back
+          </button>
         </div>
       ) : eligible ? (
         <button
@@ -453,9 +464,16 @@ export default function ShiftBoard() {
         : 'You don\'t have the required sub-role to take this shift.');
       return;
     }
-    // 15-minute grace period so the poster has time to retract without
-    // someone else snapping it up first. Only the poster can delete
-    // during this window (delete permission already checks userId).
+    // 15-minute grace period so the poster has time to take it back
+    // without someone else snapping it up first.
+    //
+    // The comment here used to claim "only the poster can delete during
+    // this window (delete permission already checks userId)". That was
+    // never true: the rules allowed owners and admins only, and the poster
+    // could not take anything back at all — which is what left Sarah
+    // stuck with a request she'd changed her mind about. The rule now
+    // permits it (own request, still open), so the window finally does
+    // what this comment always said it did.
     const GRACE_MS = 15 * 60 * 1000;
     const postedAtMs = swap.createdAt?.toMillis?.()
       ?? (swap.createdAt?.seconds ? swap.createdAt.seconds * 1000 : 0);
@@ -544,6 +562,32 @@ export default function ShiftBoard() {
       toast.success('Open shift removed.');
     } catch (err) {
       toast.error(err?.message || 'Failed to remove open shift.');
+    }
+  };
+
+  /**
+   * The poster taking their own request back down.
+   *
+   * Separate from the admin path on purpose: an admin cancelling somebody
+   * else's request is a different act, with a different confirmation, and
+   * the rules treat them differently too — a person may only remove their
+   * own request, and only while nobody has taken it.
+   */
+  const handleRetractSwap = async (swap) => {
+    const ok = await confirmDialog({
+      title: 'Take this back off the board?',
+      message: `${fmtDate(swap.shiftDate)} · ${fmtTime(swap.shiftStartTime)} – ${fmtTime(swap.shiftEndTime)}\n\nThe shift stays yours and nobody else can pick it up.`,
+      confirmText: 'Take it back',
+      cancelText: 'Leave it posted',
+    });
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'chat', swap.id));
+      toast.success('Taken off the board — the shift is still yours.');
+    } catch (err) {
+      toast.error(err?.code === 'permission-denied'
+        ? 'Too late — somebody has already taken this shift. Speak to a centre admin.'
+        : err?.message || 'Could not take that back. Please try again.');
     }
   };
 
@@ -675,6 +719,7 @@ export default function ShiftBoard() {
                 onTake={handleTakeSwap}
                 canAdmin={canSeeAdminPanel}
                 onDelete={handleAdminDeleteSwap}
+                onRetract={handleRetractSwap}
               />
             ))}
           </div>

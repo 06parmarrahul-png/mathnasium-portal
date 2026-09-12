@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import {
   collection, addDoc, deleteDoc, doc, onSnapshot,
-  query, where, orderBy, runTransaction, setDoc, writeBatch,
+  query, where, orderBy, limit, runTransaction, setDoc, writeBatch,
   getDocs, updateDoc,
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
@@ -19,10 +19,11 @@ import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
   getDay, addMonths, subMonths, isSameMonth,
 } from 'date-fns';
-import { toast } from '../lib/notify';
+import { toast, confirmDialog } from '../lib/notify';
 import { logAvailabilityChange, logAvailabilityBatch } from '../lib/availabilityLog';
 import { getWeekOfMonth } from '../lib/scheduler';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
+import { SWAP_TYPE, isOpenSwap, openSwapFor } from '../lib/shiftSwaps';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -35,6 +36,19 @@ function fmtTime(t) {
   if (h > 12) h -= 12;
   if (h === 0) h = 12;
   return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+/**
+ * "Sunday, Sep 20" from a YYYY-MM-DD.
+ *
+ * Parsed at local midnight rather than passed to Date() bare, which reads
+ * a plain date as UTC and lands on the day before west of Greenwich.
+ */
+function fmtDate(iso) {
+  if (!iso) return '';
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', {
+    weekday: 'long', month: 'short', day: 'numeric',
+  });
 }
 
 /**
@@ -100,7 +114,7 @@ function shiftTypeStyle(shiftType) {
 
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
-function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], canTakeShifts = true }) {
+function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onRetractSwap, postedSwap, postingSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], canTakeShifts = true }) {
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -250,14 +264,34 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                       volunteers have no access to — and swapping isn't
                       theirs to arrange anyway. They request time off
                       instead, and an admin sorts the cover. */}
-                  {canTakeShifts && (
+                  {canTakeShifts && (postedSwap ? (
+                    /* Already on the board. This state is the fix for the
+                       press-it-twice bug: before, the day looked exactly
+                       the same after posting as before it. */
+                    <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 p-3">
+                      <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-widest text-orange-700">
+                        <ArrowRightLeft size={11} /> Posted for swap
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-orange-800">
+                        It&apos;s on the Shift Board. The shift is still yours until
+                        somebody takes it.
+                      </p>
+                      <button
+                        onClick={() => onRetractSwap(postedSwap)}
+                        className="mt-2.5 w-full flex items-center justify-center gap-2 rounded-lg border border-orange-300 bg-white px-3 py-2 text-xs font-bold text-orange-700 hover:bg-orange-100 active:scale-95 transition-all"
+                      >
+                        <RotateCcw size={12} /> Take it back
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       onClick={() => onPostSwap(myShift)}
-                      className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all"
+                      disabled={postingSwap}
+                      className="mt-3 w-full flex items-center justify-center gap-2 rounded-lg bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 active:scale-95 transition-all disabled:opacity-60 disabled:active:scale-100"
                     >
-                      <ArrowRightLeft size={12} /> Post for Swap
+                      <ArrowRightLeft size={12} /> {postingSwap ? 'Posting…' : 'Post for Swap'}
                     </button>
-                  )}
+                  ))}
                 </div>
               )}
 
@@ -1228,6 +1262,8 @@ export default function Schedule() {
   const [shifts, setShifts] = useState([]);
   const [openShifts, setOpenShifts] = useState([]);
   const [timeOffRequests, setTimeOffRequests] = useState([]);
+  const [mySwapPosts, setMySwapPosts] = useState([]);
+  const [postingSwap, setPostingSwap] = useState(false);
   // Inline edit state for a PENDING time-off request. null = not editing.
   // Holds a working copy so the instructor can tweak dates/reason before
   // saving; approved/denied requests can never enter this state.
@@ -1267,6 +1303,27 @@ export default function Schedule() {
     snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   ), [activeCenterId, windowStart]);
 
+  // My own swap requests, so this page can SEE what it has already posted.
+  // It never could before, which is how the same shift went up twice: there
+  // was nothing to check against and nothing to show afterwards.
+  //
+  // Deliberately the same query the Shift Board and the sidebar badge use.
+  // The SDK serves an identical query from one subscription, so this costs
+  // nothing extra — and more importantly, it means this page and the board
+  // can never disagree about what is posted.
+  useEffect(() => onSnapshot(
+    query(
+      collection(db, 'chat'),
+      where('centerId', '==', activeCenterId),
+      orderBy('createdAt', 'desc'),
+      limit(200),
+    ),
+    snap => setMySwapPosts(snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(m => m.type === SWAP_TYPE && m.userId === profile?.uid)),
+    () => setMySwapPosts([]),
+  ), [activeCenterId, profile?.uid]);
+
   // Time-off requests are low-volume per centre (a few per month at most)
   // and don't have a `date` field on the doc — the date range lives in
   // startDate/endDate. We leave this listener unbounded for now; revisit
@@ -1289,6 +1346,21 @@ export default function Schedule() {
   const myShifts = useMemo(
     () => shifts.filter(s => s.userId === profile?.uid && s.status !== 'draft'),
     [shifts, profile],
+  );
+
+  // The shift the open day modal is about, and whether it is already on
+  // the Shift Board. Derived once here rather than recomputed in the JSX,
+  // so the modal's "your shift" and its "posted for swap" can never end up
+  // talking about two different rows.
+  const selectedShift = useMemo(
+    () => (selectedDate
+      ? myShifts.find(s => s.date === format(selectedDate, 'yyyy-MM-dd')) || null
+      : null),
+    [myShifts, selectedDate],
+  );
+  const selectedShiftSwap = useMemo(
+    () => openSwapFor(mySwapPosts, selectedShift?.id),
+    [mySwapPosts, selectedShift],
   );
   const myAvailMap = useMemo(() => {
     const m = {};
@@ -1420,6 +1492,23 @@ export default function Schedule() {
     setSelectedDate(null);
   };
 
+  /**
+   * Post a shift for swap — once.
+   *
+   * Sarah Ghazi got the same shift onto the board twice. Nothing stopped
+   * her, and there were three separate reasons why:
+   *
+   *   1. Nothing checked whether a request already existed.
+   *   2. The button stayed live while the write was in flight, so a
+   *      double-tap on a phone created two documents.
+   *   3. Posting closed the modal and said nothing lasting, so reopening
+   *      the day showed a fresh "Post for Swap" button — exactly as if
+   *      the first press had never happened.
+   *
+   * All three are fixed here and below: an in-flight lock, a check against
+   * the SERVER rather than the page's cached window, and a modal that now
+   * stays open and shows the posted state.
+   */
   const handlePostSwap = async (shift) => {
     // Trainees and volunteers don't trade shifts. The button is hidden
     // for them; this guards the path itself.
@@ -1427,9 +1516,55 @@ export default function Schedule() {
       toast.error('Your account can’t post shifts for swap. Speak to a centre admin.');
       return;
     }
-    const dateFormatted = new Date(shift.date + 'T00:00:00').toLocaleDateString('en-US', {
-      weekday: 'long', month: 'short', day: 'numeric',
+    if (postingSwap) return;                       // the double-tap
+    setPostingSwap(true);
+    try {
+      // Asked of the server, not of the 200-message window the page keeps
+      // for the UI. The window is fine for showing state; it is not a
+      // sound basis for "does this already exist".
+      const existing = await getDocs(query(
+        collection(db, 'chat'), where('shiftId', '==', shift.id),
+      ));
+      const already = existing.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .find(isOpenSwap);
+      if (already) {
+        toast.error(already.userId === profile?.uid
+          ? 'You’ve already posted this shift — it’s on the Shift Board.'
+          : `${already.userName || 'Someone'} has already posted this shift for swap.`);
+        return;
+      }
+      await postSwapDoc(shift);
+    } catch (err) {
+      toast.error(err?.message || 'Could not post that for swap. Please try again.');
+    } finally {
+      setPostingSwap(false);
+    }
+  };
+
+  /** Take a posted request back off the board. The shift stays yours. */
+  const handleRetractSwap = async (swap) => {
+    const ok = await confirmDialog({
+      title: 'Take this back off the board?',
+      message: `${fmtDate(swap.shiftDate)} · ${fmtTime(swap.shiftStartTime)} – ${fmtTime(swap.shiftEndTime)}\n\nThe shift stays yours and nobody else can pick it up.`,
+      confirmText: 'Take it back',
+      cancelText: 'Leave it posted',
     });
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'chat', swap.id));
+      toast.success('Taken off the board — the shift is still yours.');
+    } catch (err) {
+      // The rules refuse once somebody has accepted it, which is the one
+      // case worth naming: by then the shift has already changed hands.
+      toast.error(err?.code === 'permission-denied'
+        ? 'Too late — somebody has already taken this shift. Speak to a centre admin.'
+        : err?.message || 'Could not take that back. Please try again.');
+    }
+  };
+
+  const postSwapDoc = async (shift) => {
+    const dateFormatted = fmtDate(shift.date);
     await addDoc(collection(db, 'chat'), {
       text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}${shift.role ? ` (${shift.role})` : ''}`,
       userId: profile.uid,
@@ -1451,7 +1586,9 @@ export default function Schedule() {
       acceptedBy: null,
       acceptedByName: null,
     });
-    setSelectedDate(null);
+    // The modal deliberately STAYS OPEN. It used to close, which left no
+    // sign the press had worked; the day now shows "Posted for swap" with
+    // a way to take it back, which is the answer to "did that go through?"
     const cap = requiredCapabilityForShift(shift);
     const who = cap === 'Host' ? 'staff who can host' : cap ? `staff tagged ${cap}` : 'other staff';
     toast.success(`Posted to the Shift Board! Only ${who} can take it.`);
@@ -1861,6 +1998,7 @@ export default function Schedule() {
             return (
               <div
                 key={dateStr}
+                data-day={dateStr}
                 onClick={() => clickable && setSelectedDate(day)}
                 className={`
                   min-h-[88px] border-b border-r border-gray-100 p-1.5 transition-colors
@@ -2016,7 +2154,7 @@ export default function Schedule() {
         <DayModal
           date={selectedDate}
           myAvailability={myAvailMap[format(selectedDate, 'yyyy-MM-dd')]}
-          myShift={myShifts.find(s => s.date === format(selectedDate, 'yyyy-MM-dd'))}
+          myShift={selectedShift}
           openShifts={openShifts.filter(s => s.date === format(selectedDate, 'yyyy-MM-dd') && s.status === 'open')}
           timeOffMap={myTimeOffMap}
           centerConfig={centerConfig}
@@ -2025,6 +2163,9 @@ export default function Schedule() {
           onSaveAvail={handleSaveAvail}
           onDeleteAvail={handleDeleteAvail}
           onPostSwap={handlePostSwap}
+          onRetractSwap={handleRetractSwap}
+          postedSwap={selectedShiftSwap}
+          postingSwap={postingSwap}
           onClaimOpenShift={handleClaimOpenShift}
           onRequestTimeOff={handleRequestTimeOff}
           mySubRoles={mySubRoles}
