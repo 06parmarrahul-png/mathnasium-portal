@@ -16,6 +16,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 const snapshots = {};
 const writes = [];
+const reads = [];      // every one-shot getDocs, so a lazy fetch can be pinned
 
 // The mock HONOURS where() clauses. It has to: the page now subscribes to
 // open notes and fetches the settled archive separately, so a mock that
@@ -40,9 +41,10 @@ vi.mock('firebase/firestore', () => ({
   doc: (...a) => ({ __d: a.slice(1).join('/') }),
   addDoc: async (ref, data) => { writes.push({ op: 'add', path: ref.__c, data }); return { id: 'new' }; },
   updateDoc: async (ref, data) => { writes.push({ op: 'update', path: ref.__d, data }); },
-  getDocs: async (q) => ({
-    docs: rowsFor(q).map((r, i) => ({ id: r.id || `g${i}`, data: () => r })),
-  }),
+  getDocs: async (q) => {
+    reads.push(JSON.stringify(q?.__w || []));
+    return { docs: rowsFor(q).map((r, i) => ({ id: r.id || `g${i}`, data: () => r })) };
+  },
   onSnapshot: (q, next) => {
     if (typeof next === 'function') {
       next({ docs: rowsFor(q).map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
@@ -98,6 +100,7 @@ const draw = () => render(<MemoryRouter><ManagementDesk /></MemoryRouter>);
 beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   writes.length = 0;
+  reads.length = 0;
   for (const k of ['notes', 'users', 'schedulerStudents', 'giftCards',
     'receipts', 'referrals', 'studentOfMonth']) {
     snapshots[k] = [];
@@ -212,14 +215,30 @@ describe('the chain', () => {
     expect(screen.getAllByText('Everyone').length).toBeGreaterThan(0);
   });
 
-  it('greys a settled note but leaves it in the chain', async () => {
-    // The history has to read straight through — that is what makes 1,750
-    // imported notes worth having. It arrives from the archive fetch, not
-    // the live subscription, so it is awaited.
+  it('opens on Open, so a settled note is not in the way', () => {
+    // "General" and "Settled Notes" were the spreadsheet's two tabs, and
+    // General was everybody's LIVE notes. This is that habit.
     snapshots.notes = [note({ status: 'closed', body: 'Sorted last week' })];
     draw();
+    expect(screen.queryByText('Sorted last week')).toBeNull();
+  });
+
+  it('greys a settled note but leaves it in the chain under Settled', async () => {
+    snapshots.notes = [note({ status: 'closed', body: 'Sorted last week' })];
+    draw();
+    fireEvent.click(screen.getByText('Settled'));
     expect(await screen.findByText('Sorted last week')).toBeTruthy();
     expect(screen.getByText('Reopen')).toBeTruthy();
+  });
+
+  it('does not read the 1,730-note archive until somebody asks', () => {
+    // The whole reason Open is the default: opening the page costs the
+    // twenty live notes, not seventeen hundred settled ones.
+    snapshots.notes = [note({ status: 'closed', body: 'Old' })];
+    draw();
+    expect(reads.filter(r => r.includes('closed')).length).toBe(0);
+    fireEvent.click(screen.getByText('Settled'));
+    expect(reads.filter(r => r.includes('closed')).length).toBe(1);
   });
 
   it('marks one done and records who did it', async () => {
@@ -243,11 +262,16 @@ describe('the chain', () => {
     expect(writes[0].data.replies[0].name).toBe('Vin Bhatia');
   });
 
-  it('searches the settled history, which is why it was imported', async () => {
+  it('points at the settled matches rather than hiding them', async () => {
+    // Searching from Open would otherwise bury the answer, because the
+    // thing you are looking up is usually settled — that is what settled
+    // means. It says how many are through there and offers the click.
     snapshots.notes = [note({ status: 'closed', subject: 'Student: Harshad',
       body: 'Amazon gift card was refunded' })];
     draw();
     fireEvent.change(screen.getByPlaceholderText('Search\u2026'), { target: { value: 'harshad' } });
+    const more = await screen.findByText(/1 more match in Settled/);
+    fireEvent.click(more);
     expect(await screen.findByText(/Amazon gift card was refunded/)).toBeTruthy();
   });
 });

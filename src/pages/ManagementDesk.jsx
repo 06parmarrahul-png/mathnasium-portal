@@ -135,9 +135,19 @@ export default function ManagementDesk() {
  * state. So every message addressed to somebody carries one, wears a rail
  * until it is cleared, and counts in a filter.
  */
+/**
+ * Open, Settled, and yours — the spreadsheet's own shape.
+ *
+ * "General" and "Settled Notes" were its two tabs, and General was never
+ * everybody's notes, it was everybody's LIVE notes. Opening on Open is
+ * therefore the habit the team already has, and it happens to be the
+ * cheaper default too: the settled archive is 1,730 of the 1,750 rows, and
+ * this way it is never fetched until somebody presses Settled or searches.
+ *
+ * There is no separate "everyone" view because there was never a question
+ * it answered — Open already is everyone's.
+ */
 const VIEWS = [
-  { key: 'all',  label: 'Everyone' },
-  { key: 'mine', label: 'For me' },
   { key: 'open', label: 'Open' },
   { key: 'done', label: 'Settled' },
 ];
@@ -147,7 +157,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const [archive, setArchive] = useState(null);  // settled, fetched on demand
   const [people, setPeople] = useState([]);
   const [students, setStudents] = useState([]);
-  const [view, setView] = useState('all');
+  const [view, setView] = useState('open');
   const [q, setQ] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -166,7 +176,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   // somebody asks for it — by opening Settled, or by searching, which has
   // to reach the history because looking things up in it is the reason it
   // was imported.
-  const wantsArchive = view === 'done' || view === 'all' || q.trim().length > 0;
+  const wantsArchive = view === 'done' || q.trim().length > 0;
   const fetchedFor = useRef(null);
   useEffect(() => {
     if (!wantsArchive || !centerId || fetchedFor.current === centerId) return undefined;
@@ -220,21 +230,30 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
 
   const rows = useMemo(() => {
     const kept = all.filter(n => matchesQuery(n, q)).filter(n =>
-      view === 'all' ? true
-      : view === 'mine' ? (forMe(n) && isOpen(n))
-      : view === 'open' ? isOpen(n)
-      : !isOpen(n));
+      view === 'mine' ? (forMe(n) && isOpen(n))
+      : view === 'done' ? !isOpen(n)
+      : isOpen(n));
     // Oldest first: a chain reads downwards, and the composer is at the end.
     return kept.sort((a, b) =>
       String(a.createdAt || a.loggedAt || '').localeCompare(String(b.createdAt || b.loggedAt || '')));
   }, [all, view, q, uid]);        // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Searching from Open would otherwise hide the answer: the thing you are
+  // looking up is usually SETTLED — that is what settled means. Rather than
+  // quietly widening the view (which would contradict the chip that says
+  // "Open"), say how many are through there and offer the one click.
+  const hiddenSettled = useMemo(() => {
+    if (!q.trim() || view === 'done') return 0;
+    return (archive || []).filter(n => matchesQuery(n, q)).length;
+  }, [archive, q, view]);
+
   const counts = useMemo(() => ({
-    all: all.length,
     mine: (open || []).filter(forMe).length,
     open: (open || []).length,
-    done: (archive || []).length,
-  }), [all, open, archive, uid]);  // eslint-disable-line react-hooks/exhaustive-deps
+    // Unknown until the archive has been fetched, and it is not fetched
+    // until somebody asks. A count nobody needed is not worth 1,730 reads.
+    done: archive ? archive.length : null,
+  }), [open, archive, uid]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = async () => {
     if (!canSend(parsed) || sending) return;
@@ -292,21 +311,26 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   return (
     <div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="flex flex-1 flex-wrap gap-1">
-          {VIEWS.map(v => (
-            <button key={v.key} onClick={() => setView(v.key)}
-              className={`rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors ${
-                view === v.key ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
-              {v.label}
-              {counts[v.key] > 0 && (
-                <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] ${
-                  view === v.key ? 'bg-white/25' : 'bg-red-600 text-white'}`}>{counts[v.key]}</span>
-              )}
-            </button>
-          ))}
-        </div>
+        {VIEWS.map(v => (
+          <Chip key={v.key} on={view === v.key} onClick={() => setView(v.key)}
+            label={v.label} n={counts[v.key]} />
+        ))}
+        {/* "For me" sits apart from the two that describe the whole board,
+            because it asks a different question: not what is live, but
+            what is live AND waiting on you. */}
+        <span className="flex-1" />
+        <Chip on={view === 'mine'} onClick={() => setView('mine')}
+          label="For me" n={counts.mine} accent />
         <SearchBox value={q} onChange={setQ} />
       </div>
+
+      {hiddenSettled > 0 && (
+        <button onClick={() => setView('done')}
+          className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-[13px] font-semibold text-gray-600 hover:bg-gray-50">
+          {hiddenSettled} more {hiddenSettled === 1 ? 'match' : 'matches'} in Settled
+          <ArrowRight size={13} />
+        </button>
+      )}
 
       {open === null ? (
         <p className="py-10 text-center text-sm text-gray-500">Loading…</p>
@@ -316,7 +340,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           <p className="text-sm font-medium text-gray-500">
             {q ? 'Nothing matches that.'
               : view === 'mine' ? 'Nothing is waiting on you.'
-              : view === 'done' ? 'Nothing settled yet.' : 'Nothing here yet.'}
+              : view === 'done' ? 'Nothing settled yet.'
+              : 'Nothing open. Everything has been dealt with.'}
           </p>
         </div>
       ) : (
@@ -753,6 +778,22 @@ function RowForm({ spec, draft, setDraft, onSave, onCancel }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function Chip({ on, onClick, label, n, accent }) {
+  return (
+    <button onClick={onClick}
+      className={`shrink-0 rounded-full px-3 py-1.5 text-[13px] font-semibold transition-colors ${
+        on ? 'bg-gray-900 text-white'
+        : accent && n > 0 ? 'bg-red-50 text-red-700 hover:bg-red-100'
+        : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}>
+      {label}
+      {n > 0 && (
+        <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[11px] ${
+          on ? 'bg-white/25' : 'bg-red-600 text-white'}`}>{n}</span>
+      )}
+    </button>
   );
 }
 
