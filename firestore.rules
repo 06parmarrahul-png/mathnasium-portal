@@ -303,6 +303,27 @@ service cloud.firestore {
           || hasPermAt(centerId, 'scheduler.run');
     }
 
+    // Who may run the fun-day calendar.
+    //
+    // Written flat for the same reason as canUseDeskAt below: a document
+    // under /centers is evaluated alongside the other rules matching that
+    // path, so a long chain of profile-reading helpers runs out of
+    // document accesses before it reaches the end and errors — which
+    // denies, silently, on the ALLOW path.
+    function canRunFunDaysAt(centerId) {
+      return profileExists() && (
+        profile().get('role', '') in [
+          'owner', 'super_admin', 'admin_assistant', 'director', 'admin'
+        ]
+        || titleAt(centerId) in [
+          'Manager', 'Host', 'Admin', 'Lead',
+          'Center Director', 'Centre Director',
+          'Dir. of Education', 'Director of Education'
+        ]
+        || hasPermAt(centerId, 'admin.operations')
+      );
+    }
+
     // The Management Desk — post-it notes, gift cards, receipts, the
     // referral rally and student of the month.
     //
@@ -450,7 +471,30 @@ service cloud.firestore {
       // assistants are covered by isOwnerLike().
       match /events/{eventId} {
         allow read: if canRunFloor(centerId) || isMemberAt(centerId);
-        allow create, update, delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+
+        // Meetings, training and everything else stay at the announcements
+        // tier — an event of that kind IS an announcement with a date.
+        //
+        // FUN DAYS ARE DIFFERENT and are opened to whoever runs the floor.
+        // They are not an announcement; they are the activity the floor
+        // runs that day, there is one nearly every day, and the people who
+        // actually know what is happening — Managers, Hosts, Leads — could
+        // not enter a single one. The designated host could READ the fun
+        // day calendar and not write to it, which made the calendar
+        // nobody's job to keep.
+        //
+        // The type is checked on BOTH sides of an update so a meeting
+        // cannot be relabelled a fun day to get at it.
+        allow create: if isOwnerLike() || isSuperAdmin() || isAdmin()
+                      || (canRunFunDaysAt(centerId)
+                          && request.resource.data.get('type', '') == 'fun-day');
+        allow update: if isOwnerLike() || isSuperAdmin() || isAdmin()
+                      || (canRunFunDaysAt(centerId)
+                          && resource.data.get('type', '') == 'fun-day'
+                          && request.resource.data.get('type', '') == 'fun-day');
+        allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin()
+                      || (canRunFunDaysAt(centerId)
+                          && resource.data.get('type', '') == 'fun-day');
       }
 
       // ── Management Desk ──────────────────────────────────────────────

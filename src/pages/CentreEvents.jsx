@@ -41,7 +41,7 @@ const TYPE_ICON = {
 const BLANK = { title: '', date: '', startTime: '', endTime: '', type: 'meeting', note: '' };
 
 export default function CentreEvents() {
-  const { activeCenterId, profile, canSeeAdminPanel } = useAuth();
+  const { activeCenterId, profile, canSeeAdminPanel, canManageOperations } = useAuth();
   const [events, setEvents] = useState(null);
   const [draft, setDraft] = useState(null);      // null = form closed
   const [error, setError] = useState('');
@@ -115,12 +115,32 @@ export default function CentreEvents() {
     } catch (e) { toast.error(e?.message || 'Could not delete that.'); }
   };
 
-  if (!canSeeAdminPanel) {
+  // Two different jobs on one page. Meetings and training are an
+  // announcement with a date, so they stay at the admin tier. THE FUN-DAY
+  // CALENDAR IS FLOOR WORK — the Managers and Hosts who know what is
+  // happening that day are the ones who should be filling it in, and
+  // until now they could read it and not write to it, which made it
+  // nobody's job. The Firestore rules draw the same line.
+  if (!canSeeAdminPanel && !canManageOperations) {
     return (
       <div className="mx-auto max-w-lg rounded-xl border bg-white p-6 text-center">
         <p className="text-sm text-gray-600">
           Centre events are managed by admins. You&apos;ll see what&apos;s on from your home page.
         </p>
+      </div>
+    );
+  }
+
+  if (!canSeeAdminPanel) {
+    return (
+      <div className="mx-auto max-w-3xl pb-10">
+        <div className="mb-5">
+          <h1 className="text-2xl font-bold text-gray-900">Fun Days</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            The daily activity. Instructors see today&apos;s on their home page.
+          </p>
+        </div>
+        <FunDayMonth events={events || []} centerId={activeCenterId} profile={profile} />
       </div>
     );
   }

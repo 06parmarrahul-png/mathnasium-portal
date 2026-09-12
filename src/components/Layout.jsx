@@ -304,7 +304,9 @@ export default function Layout({ children }) {
       { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
       { to: '/inventory',             label: 'Inventory',             icon: Package },
       { to: '/availability-log',      label: 'Availability Log',      icon: History },
-      { to: '/events',                label: 'Centre Events',         icon: CalendarCheck },
+      // Without the admin panel this page is only the fun-day calendar, so
+      // the link says so rather than promising the rest.
+      { to: '/events', label: canSeeAdminPanel ? 'Centre Events' : 'Fun Days', icon: CalendarCheck },
     );
     if (canOpenDesk) {
       manage.push({ to: '/desk', label: 'Management Desk', icon: StickyNote, badge: deskCount });
