@@ -72,7 +72,7 @@ export function parseReplySignature(text) {
  * normalised to ISO. Returns null for a row with nothing in it — the
  * sheets are padded out with hundreds of empty ones.
  */
-export function noteFromRow(row, members, { importedAt, students = [] } = {}) {
+export function noteFromRow(row, members, { importedAt, students = [], sheetOrder } = {}) {
   const subject = String(row?.subject ?? '').trim();
   const body = String(row?.body ?? '').trim();
   if (!subject && !body) return null;
@@ -128,16 +128,21 @@ export function noteFromRow(row, members, { importedAt, students = [] } = {}) {
     status: row?.status === 'closed' ? 'closed' : 'open',
     replies,
     imported: true,
+    // Where the row sat in the workbook: General first, then Settled Notes,
+    // top to bottom. The sheet never kept a settle DATE, but Settled Notes
+    // was kept newest-settled at the top, so this is the settle order —
+    // see sortSettled.
+    ...(Number.isInteger(sheetOrder) ? { sheetOrder } : {}),
   };
 }
 
-/** Rows → documents, dropping the empties. Order is preserved. */
+/** Rows → documents, dropping the empties. Order is preserved, and recorded. */
 export function notesFromRows(rows, members, opts) {
   const out = [];
-  for (const r of rows || []) {
-    const n = noteFromRow(r, members, opts);
+  (rows || []).forEach((r, sheetOrder) => {
+    const n = noteFromRow(r, members, { ...opts, sheetOrder });
     if (n) out.push(n);
-  }
+  });
   return out;
 }
 

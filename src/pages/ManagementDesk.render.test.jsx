@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -17,6 +17,7 @@ import { MemoryRouter } from 'react-router-dom';
 const snapshots = {};
 const writes = [];
 const reads = [];      // every one-shot getDocs, so a lazy fetch can be pinned
+const listeners = [];  // live onSnapshot subscriptions, re-fired on a write
 
 // The mock HONOURS where() clauses. It has to: the page now subscribes to
 // open notes and fetches the settled archive separately, so a mock that
@@ -40,16 +41,29 @@ vi.mock('firebase/firestore', () => ({
   orderBy: () => ({}), limit: () => ({}),
   doc: (...a) => ({ __d: a.slice(1).join('/') }),
   addDoc: async (ref, data) => { writes.push({ op: 'add', path: ref.__c, data }); return { id: 'new' }; },
-  updateDoc: async (ref, data) => { writes.push({ op: 'update', path: ref.__d, data }); },
+  // Like the real listener, an update reaches every live query again — so a
+  // note marked done actually leaves the open list, as it does in the app.
+  updateDoc: async (ref, data) => {
+    writes.push({ op: 'update', path: ref.__d, data });
+    const parts = ref.__d.split('/');
+    const key = parts[parts.length - 2]; const id = parts[parts.length - 1];
+    if (snapshots[key]) {
+      snapshots[key] = snapshots[key].map(r => (r.id === id ? { ...r, ...data } : r));
+    }
+    for (const l of listeners) {
+      l.next({ docs: rowsFor(l.q).map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
+    }
+  },
   getDocs: async (q) => {
     reads.push(JSON.stringify(q?.__w || []));
     return { docs: rowsFor(q).map((r, i) => ({ id: r.id || `g${i}`, data: () => r })) };
   },
   onSnapshot: (q, next) => {
-    if (typeof next === 'function') {
-      next({ docs: rowsFor(q).map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
-    }
-    return () => {};
+    if (typeof next !== 'function') return () => {};
+    const l = { q, next };
+    listeners.push(l);
+    next({ docs: rowsFor(q).map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
+    return () => { const i = listeners.indexOf(l); if (i >= 0) listeners.splice(i, 1); };
   },
 }));
 
@@ -101,6 +115,7 @@ beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   writes.length = 0;
   reads.length = 0;
+  listeners.length = 0;
   for (const k of ['notes', 'users', 'schedulerStudents', 'giftCards',
     'receipts', 'referrals', 'studentOfMonth']) {
     snapshots[k] = [];
@@ -273,6 +288,61 @@ describe('the chain', () => {
     const more = await screen.findByText(/1 more match in Settled/);
     fireEvent.click(more);
     expect(await screen.findByText(/Amazon gift card was refunded/)).toBeTruthy();
+  });
+});
+
+describe('Settled, most recently settled first', () => {
+  const bodies = () => screen.getAllByText(/^(Imported, top|Imported, lower|Settled in Ratio|Just dealt)/)
+    .map(el => el.textContent);
+
+  it('is ordered by when it was settled, not when it was logged', async () => {
+    snapshots.notes = [
+      // Logged later, but lower down the spreadsheet's Settled tab.
+      note({ id: 'imp2', status: 'closed', body: 'Imported, lower', loggedAt: '2026-09-10', sheetOrder: 1 }),
+      note({ id: 'imp1', status: 'closed', body: 'Imported, top', loggedAt: '2026-08-13', sheetOrder: 0 }),
+      // Logged in May, settled in Ratio on Saturday.
+      note({ id: 'r1', status: 'closed', body: 'Settled in Ratio', loggedAt: '2026-05-27',
+        settledAt: '2026-09-12T03:14:43Z', settledByName: 'Neeru Gill' }),
+    ];
+    draw();
+    fireEvent.click(screen.getByText('Settled'));
+    await screen.findByText('Settled in Ratio');
+    expect(bodies()).toEqual(['Settled in Ratio', 'Imported, top', 'Imported, lower']);
+    // The local day it was settled — the day, so the timezone of the
+    // machine running this decides 11th or 12th.
+    expect(screen.getByText(/by Neeru · Sep 1[12], 2026/)).toBeTruthy();
+  });
+
+  it('puts the note you just marked done at the top, without a reload', async () => {
+    snapshots.notes = [
+      note({ id: 'imp1', status: 'closed', body: 'Imported, top', sheetOrder: 0 }),
+      note({ id: 'r1', status: 'closed', body: 'Settled in Ratio', settledAt: '2026-09-12T03:14:43Z' }),
+      note({ id: 'live', body: 'Just dealt with' }),
+    ];
+    draw();
+    // Settled is fetched once. Open it first so the fetch has already
+    // happened, which is the case that used to lose the note.
+    fireEvent.click(screen.getByText('Settled'));
+    await screen.findByText('Settled in Ratio');
+    fireEvent.click(screen.getByText('Open'));
+    fireEvent.click(await screen.findByText('Mark done'));
+    await waitFor(() => expect(writes.length).toBe(1));
+    fireEvent.click(screen.getByText('Settled'));
+    await waitFor(() => expect(bodies()).toEqual(['Just dealt with', 'Settled in Ratio', 'Imported, top']));
+    // Once each — not also lingering as a stale open copy.
+    expect(screen.getAllByText('Just dealt with')).toHaveLength(1);
+  });
+
+  it('takes a reopened note out of Settled straight away', async () => {
+    snapshots.notes = [
+      note({ id: 'r1', status: 'closed', body: 'Settled in Ratio', settledAt: '2026-09-12T03:14:43Z' }),
+      note({ id: 'imp1', status: 'closed', body: 'Imported, top', sheetOrder: 0 }),
+    ];
+    draw();
+    fireEvent.click(screen.getByText('Settled'));
+    await screen.findByText('Settled in Ratio');
+    fireEvent.click(screen.getAllByText('Reopen')[0]);
+    await waitFor(() => expect(bodies()).toEqual(['Imported, top']));
   });
 });
 

@@ -172,6 +172,20 @@ describe('notesFromRows', () => {
   it('copes with no rows', () => {
     expect(notesFromRows(null, MEMBERS)).toEqual([]);
   });
+
+  it('records where each row sat, because that is the only settle order the sheet kept', () => {
+    const rows = [
+      { subject: 'A', body: 'x', loggedAt: '2026-09-02', status: 'closed' },
+      {},
+      { subject: 'B', body: 'y', loggedAt: '2026-08-13', status: 'closed' },
+    ];
+    // The blank row still occupied a position; B was below it.
+    expect(notesFromRows(rows, MEMBERS).map(n => n.sheetOrder)).toEqual([0, 2]);
+  });
+
+  it('adds no sheetOrder to a note built on its own', () => {
+    expect('sheetOrder' in noteFromRow({ subject: 'A', body: 'x' }, MEMBERS)).toBe(false);
+  });
 });
 
 describe('importSummary — what it will do, before it does it', () => {

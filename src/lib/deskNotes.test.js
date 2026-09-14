@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   normaliseStatus, isOpen, initialsOf, isForMe, isFromMe, matchesQuery,
-  sortNotes, filterNotes, myOpenCount, validateNote, recipientNames, deskMembers,
+  sortNotes, sortSettled, applyToArchive, filterNotes, myOpenCount, validateNote,
+  recipientNames, deskMembers,
 } from './deskNotes';
 
 /**
@@ -142,6 +143,92 @@ describe('sorting', () => {
     const rows = [note({ id: 'a', loggedAt: '2026-09-01' }), note({ id: 'b', loggedAt: '2026-09-10' })];
     sortNotes(rows);
     expect(rows.map(n => n.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('sortSettled — most recently settled, not most recently logged', () => {
+  const closed = (over) => note({ status: 'closed', ...over });
+
+  it('orders notes settled in Ratio by when they were settled', () => {
+    const rows = [
+      closed({ id: 'old-note-settled-today', loggedAt: '2026-05-27', settledAt: '2026-09-14T16:01:39Z' }),
+      closed({ id: 'new-note-settled-earlier', loggedAt: '2026-09-10', settledAt: '2026-09-12T03:14:43Z' }),
+    ];
+    expect(sortSettled(rows).map(n => n.id)).toEqual(['old-note-settled-today', 'new-note-settled-earlier']);
+  });
+
+  it('follows the spreadsheet row order for imported notes, whatever their logged date', () => {
+    // The real top of the Settled Notes tab: 28 Aug above 2 Sep above 13 Aug.
+    const rows = [
+      closed({ id: 'row2', loggedAt: '2026-08-13', sheetOrder: 2 }),
+      closed({ id: 'row0', loggedAt: '2026-08-28', sheetOrder: 0 }),
+      closed({ id: 'row1', loggedAt: '2026-09-02', sheetOrder: 1 }),
+    ];
+    expect(sortSettled(rows).map(n => n.id)).toEqual(['row0', 'row1', 'row2']);
+  });
+
+  it('puts anything settled in Ratio above the whole import', () => {
+    const rows = [
+      closed({ id: 'imported', loggedAt: '2026-09-08', sheetOrder: 0 }),
+      closed({ id: 'ratio', loggedAt: '2025-06-01', settledAt: '2026-09-12T00:00:00Z' }),
+    ];
+    expect(sortSettled(rows).map(n => n.id)).toEqual(['ratio', 'imported']);
+  });
+
+  it('falls back to the logged date for an import with no row order', () => {
+    const rows = [
+      closed({ id: 'unranked-new', loggedAt: '2026-09-09' }),
+      closed({ id: 'ranked', loggedAt: '2025-01-01', sheetOrder: 1700 }),
+      closed({ id: 'unranked-old', loggedAt: '2026-01-01' }),
+    ];
+    expect(sortSettled(rows).map(n => n.id)).toEqual(['ranked', 'unranked-new', 'unranked-old']);
+  });
+
+  it('treats a reopened note (settledAt cleared to null) as having no settle time', () => {
+    const rows = [
+      closed({ id: 'nulled', settledAt: null, sheetOrder: 5 }),
+      closed({ id: 'ranked', sheetOrder: 3 }),
+    ];
+    expect(sortSettled(rows).map(n => n.id)).toEqual(['ranked', 'nulled']);
+  });
+
+  it('does not mutate what it was given', () => {
+    const rows = [closed({ id: 'a', sheetOrder: 1 }), closed({ id: 'b', sheetOrder: 0 })];
+    sortSettled(rows);
+    expect(rows.map(n => n.id)).toEqual(['a', 'b']);
+  });
+});
+
+describe('applyToArchive — Settled hears about writes it did not fetch', () => {
+  const closed = (over) => note({ status: 'closed', ...over });
+
+  it('puts a note just marked done into Settled', () => {
+    const out = applyToArchive([closed({ id: 'x' })], note({ id: 'n1' }),
+      { status: 'closed', settledAt: '2026-09-14T18:00:00Z' });
+    expect(out.map(n => n.id)).toEqual(['n1', 'x']);
+    expect(out[0].settledAt).toBe('2026-09-14T18:00:00Z');
+  });
+
+  it('takes a reopened note out of Settled', () => {
+    const out = applyToArchive([closed({ id: 'n1' }), closed({ id: 'x' })], closed({ id: 'n1' }),
+      { status: 'open', settledAt: null });
+    expect(out.map(n => n.id)).toEqual(['x']);
+  });
+
+  it('keeps a reply to a settled note, in place of the old copy', () => {
+    const r = [{ text: 'Called back, all sorted' }];
+    const out = applyToArchive([closed({ id: 'n1' })], closed({ id: 'n1' }), { replies: r });
+    expect(out).toHaveLength(1);
+    expect(out[0].replies).toEqual(r);
+  });
+
+  it('leaves Settled alone when a reply goes on an open note', () => {
+    const a = [closed({ id: 'x' })];
+    expect(applyToArchive(a, note({ id: 'n1' }), { replies: [] }).map(n => n.id)).toEqual(['x']);
+  });
+
+  it('does nothing before Settled has been fetched', () => {
+    expect(applyToArchive(null, note(), { status: 'closed' })).toBeNull();
   });
 });
 

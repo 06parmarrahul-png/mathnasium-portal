@@ -171,6 +171,54 @@ export function sortNotes(notes) {
   });
 }
 
+/**
+ * Settled, most recently SETTLED first — not by the date it was logged.
+ *
+ * Three kinds of note are in there, and only one of them knows when it
+ * was settled:
+ *
+ *   1. Settled in Ratio: `settledAt`. Newest first.
+ *   2. Imported: the spreadsheet never recorded a settle date, but the
+ *      Settled Notes tab was kept newest-settled at the TOP — a note
+ *      logged 13 Aug sat fourth, among September ones. `sheetOrder` is
+ *      that row position; lower is more recent.
+ *   3. Imported before `sheetOrder` existed: the logged date is all
+ *      there is.
+ *
+ * Every note in (1) was settled after the import, so all of them go
+ * above (2) and (3) without needing to compare a time with a row number.
+ */
+export function sortSettled(notes) {
+  const tier = (n) => (n?.settledAt ? 0 : Number.isFinite(n?.sheetOrder) ? 1 : 2);
+  return [...(notes || [])].sort((a, b) => {
+    const ta = tier(a); const tb = tier(b);
+    if (ta !== tb) return ta - tb;
+    if (ta === 0) return String(b.settledAt).localeCompare(String(a.settledAt));
+    if (ta === 1 && a.sheetOrder !== b.sheetOrder) return a.sheetOrder - b.sheetOrder;
+    const ad = String(a?.loggedAt || ''); const bd = String(b?.loggedAt || '');
+    if (ad !== bd) return ad < bd ? 1 : -1;
+    return String(b?.createdAt || '').localeCompare(String(a?.createdAt || ''));
+  });
+}
+
+/**
+ * The settled list after a write to one note.
+ *
+ * Settled is fetched once rather than listened to (1,730 documents), so
+ * nothing else tells it that a note was just marked done, reopened or
+ * replied to. Without this a note you had just settled was missing from
+ * Settled until a reload — the one note most likely to be looked for —
+ * and a reopened one stayed there as well as in Open.
+ *
+ * `null` stays null: not fetched yet, and the fetch will include it.
+ */
+export function applyToArchive(archive, note, fields) {
+  if (!archive) return archive;
+  const merged = { ...note, ...fields };
+  const rest = archive.filter(n => n.id !== note.id);
+  return isOpen(merged) ? rest : [merged, ...rest];
+}
+
 export const NOTE_VIEWS = {
   mine:   { key: 'mine',   label: 'For me' },
   open:   { key: 'open',   label: 'All open' },

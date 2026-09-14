@@ -12,7 +12,7 @@ import { toast } from '../lib/notify';
 import { resolveRoles } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import {
-  isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery,
+  isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery, sortSettled, applyToArchive,
 } from '../lib/deskNotes';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
 import { suggestStudents } from '../lib/deskLink';
@@ -55,6 +55,13 @@ const todayISO = () => {
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 };
+
+/** A full timestamp (settledAt), shown as the local day it happened on. */
+function fmtInstant(iso) {
+  const d = iso ? new Date(iso) : null;
+  if (!d || Number.isNaN(d.getTime())) return '';
+  return d.toLocaleDateString('en-CA', { day: 'numeric', month: 'short', year: 'numeric' });
+}
 
 /** "1 Sep 2026" from an ISO date. Local-noon so the day never slips. */
 function fmtDate(iso) {
@@ -223,7 +230,13 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const parsed = useMemo(
     () => parseNote(text, { staff: members, students }), [text, members, students]);
 
-  const all = useMemo(() => [...(open || []), ...(archive || [])], [open, archive]);
+  // Live wins over the fetched copy: a note reopened a moment ago is in the
+  // open listener before the archive has been told.
+  const all = useMemo(() => {
+    const live = open || [];
+    const ids = new Set(live.map(n => n.id));
+    return [...live, ...(archive || []).filter(n => !ids.has(n.id))];
+  }, [open, archive]);
 
   // A note to the whole team is in everybody's list — that is what
   // addressing it to everyone means.
@@ -234,6 +247,9 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
       view === 'mine' ? (forMe(n) && isOpen(n))
       : view === 'done' ? !isOpen(n)
       : isOpen(n));
+    // Settled is an archive you look back through: the one just dealt
+    // with belongs at the top.
+    if (view === 'done') return sortSettled(kept);
     // Oldest first: a chain reads downwards, and the composer is at the end.
     return kept.sort((a, b) =>
       String(a.createdAt || a.loggedAt || '').localeCompare(String(b.createdAt || b.loggedAt || '')));
@@ -289,6 +305,13 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     }
   };
 
+  // Every edit to a note goes through here so the settled list, which is
+  // fetched rather than listened to, hears about it too.
+  const write = async (note, fields) => {
+    await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), fields);
+    setArchive(a => applyToArchive(a, note, fields));
+  };
+
   const reply = async (note, body) => {
     if (!body.trim()) return;
     const next = [...(note.replies || []), {
@@ -298,7 +321,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
       text: body.trim(),
       at: new Date().toISOString(),
     }];
-    await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), { replies: next });
+    await write(note, { replies: next });
   };
 
   /**
@@ -310,7 +333,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
    * and every automatic guess needs a way to be corrected anyway.
    */
   const setAbout = async (note, name, linked) => {
-    await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), {
+    await write(note, {
       about: name || null,
       aboutLinked: !!linked,
       aboutHow: name ? 'by-hand' : 'none',
@@ -318,7 +341,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   };
 
   const setStatus = async (note, status) => {
-    await updateDoc(doc(db, 'centers', centerId, 'notes', note.id), {
+    await write(note, {
       status,
       settledAt: status === 'closed' ? new Date().toISOString() : null,
       settledByName: status === 'closed' ? (profile?.displayName || 'Someone') : null,
@@ -494,8 +517,13 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) 
               <RotateCcw size={12} /> Reopen
             </button>
           )}
-          {!live && note.settledByName && (
-            <span className="text-[11px] text-gray-400">by {firstNameOf(note.settledByName)}</span>
+          {/* Settled is ordered by this, so say it. Imported notes have no
+              settle date — the spreadsheet never kept one. */}
+          {!live && (note.settledByName || note.settledAt) && (
+            <span className="text-[11px] text-gray-400">
+              {[note.settledByName && `by ${firstNameOf(note.settledByName)}`,
+                fmtInstant(note.settledAt)].filter(Boolean).join(' · ')}
+            </span>
           )}
         </div>
 
