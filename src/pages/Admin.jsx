@@ -6,6 +6,8 @@ import {
 } from 'firebase/firestore';
 import { db, auth, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
+import { roleDisplayName } from '../lib/roleLabel';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   subscribeTemplates, saveTemplate, deleteTemplate,
@@ -510,7 +512,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
           <div className="flex items-center gap-2 rounded-lg bg-gray-50 px-3 py-2">
             <Avatar user={user} size={28} />
             <span className="text-sm font-medium text-gray-800">{user.displayName}</span>
-            {user.instructorType && <span className="text-xs text-gray-400">· {user.instructorType}</span>}
+            {user.instructorType && <span className="text-xs text-gray-400">· {roleDisplayName(user.instructorType)}</span>}
           </div>
         )}
 
@@ -585,7 +587,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
             >
               <option value="">No role</option>
-              {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{roleDisplayName(r)}</option>)}
             </select>
           </div>
           <div>
@@ -683,7 +685,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
             <select value={role} onChange={e => handleRoleChange(e.target.value)}
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
               <option value="">No role</option>
-              {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{roleDisplayName(r)}</option>)}
             </select>
           </div>
           <div>
@@ -887,7 +889,7 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIn
                       <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
                       <span className="text-xs text-gray-700">
                         Scheduled {fmtHHMM(s.startTime)} – {fmtHHMM(s.endTime)}
-                        {s.role ? ` · ${s.role}` : ''}
+                        {s.role ? ` · ${roleDisplayName(s.role)}` : ''}
                       </span>
                       {s.status === 'draft' && (
                         <span className="rounded bg-amber-100 px-1 py-px text-[10px] font-bold uppercase tracking-wider text-amber-700">Draft</span>
@@ -994,7 +996,7 @@ function AddStaffModal({ onClose, onSubmit }) {
               onChange={e => setInstructorType(e.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none"
             >
-              {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{roleDisplayName(r)}</option>)}
             </select>
           </div>
         </div>
@@ -1094,7 +1096,7 @@ function EditStaffModal({ user, onClose, onUpdateField, onTerminate, onSendReset
               onChange={e => onUpdateField(user.uid, 'instructorType', e.target.value)}
               className="w-full rounded border px-2 py-1.5 text-xs focus:border-red-500 focus:outline-none"
             >
-              {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{roleDisplayName(r)}</option>)}
             </select>
           </div>
           <div>
@@ -1600,7 +1602,7 @@ function AddOpenShiftModal({ date, centerConfig, onClose, onSave }) {
             <select value={role} onChange={e => handleRoleChange(e.target.value)}
               className="w-full rounded-lg border px-3 py-2 text-sm focus:border-red-500 focus:outline-none">
               <option value="">Any role</option>
-              {roleOptions.map(r => <option key={r} value={r}>{r}</option>)}
+              {roleOptions.map(r => <option key={r} value={r}>{roleDisplayName(r)}</option>)}
             </select>
           </div>
           {shiftNeedsTeachingLevel(role) && (
@@ -3648,9 +3650,9 @@ export default function Admin() {
   const [migrationResult, setMigrationResult] = useState(null);
   const handleRunCenterMigration = async () => {
     const ok = await confirmDialog({
-      title: 'Run multi-center migration?',
+      title: 'Run multi-centre migration?',
       message:
-        `• Creates a "${DEFAULT_CENTER_ID}" center doc if one doesn't exist\n` +
+        `• Creates a "${DEFAULT_CENTER_ID}" centre doc if one doesn't exist\n` +
         `• Stamps centerId="${DEFAULT_CENTER_ID}" onto every existing user, shift, availability, openShift, time-off request, chat, announcement, and notificationPreferences doc\n` +
         '• Skips any doc that already has a centerId (safe to run multiple times)',
       confirmText: 'Run migration',
@@ -5526,7 +5528,7 @@ export default function Admin() {
     spreadsheet: { label: 'Weekly Grid',    icon: Table },
     scheduler:   { label: 'Auto-Scheduler', icon: Wand2, badge: 'AI', badgeStyle: 'purple' },
     requests:    { label: 'Time Off',       icon: CalendarRange },
-    users:       { label: 'Manage Users',   icon: UserCheck },
+    users:       { label: PAGES.manageStaff.name, icon: UserCheck },
     payroll:     { label: 'Payroll',        icon: DollarSign },
     holidays:    { label: 'Holidays',       icon: CalendarX },
   };
@@ -5537,14 +5539,14 @@ export default function Admin() {
   // owner sees "Manage Schedule" / "Manage Staff" / "Manage Payroll"
   // as the page title when they navigate via the redesigned sidebar.
   const pageTitleByTab = {
-    spreadsheet: { title: 'Manage Schedule', subtitle: 'Weekly grid + auto-scheduler + time-off requests', icon: CalendarRange,    bg: 'bg-blue-100 text-blue-600' },
-    users:       { title: 'Manage Staff',    subtitle: 'Approve, roles, sub-roles',                     icon: Users,            bg: 'bg-emerald-100 text-emerald-600' },
+    spreadsheet: { title: PAGES.staffSchedule.name, subtitle: 'Weekly grid + auto-scheduler + time-off requests', icon: CalendarRange,    bg: 'bg-blue-100 text-blue-600' },
+    users:       { title: PAGES.manageStaff.name, subtitle: 'Approve, roles, sub-roles',                     icon: Users,            bg: 'bg-emerald-100 text-emerald-600' },
     scheduler:   { title: 'Auto-Scheduler',  subtitle: 'Generate a draft schedule from availability',   icon: Wand2,            bg: 'bg-purple-100 text-purple-600' },
-    payroll:     { title: 'Manage Payroll',  subtitle: 'Hourly summary + Radius timesheet compare',     icon: DollarSign,       bg: 'bg-amber-100 text-amber-600' },
+    payroll:     { title: PAGES.managePayroll.name, subtitle: 'Hourly summary + Radius timesheet compare',     icon: DollarSign,       bg: 'bg-amber-100 text-amber-600' },
     requests:    { title: 'Time Off Requests', subtitle: 'Approve or deny time off',                    icon: CalendarRange,    bg: 'bg-orange-100 text-orange-600' },
     holidays:    { title: 'Holidays',        subtitle: 'Stat holidays + centre closures',               icon: CalendarX,        bg: 'bg-purple-100 text-purple-600' },
   };
-  const pageHeader = pageTitleByTab[tab] || { title: 'Admin Panel', subtitle: 'Manage instructors and shifts', icon: Settings, bg: 'bg-purple-100 text-purple-600' };
+  const pageHeader = pageTitleByTab[tab] || { title: PAGES.staffSchedule.name, subtitle: 'Manage instructors and shifts', icon: Settings, bg: 'bg-purple-100 text-purple-600' };
   const PageIcon = pageHeader.icon;
 
   return (
@@ -5841,7 +5843,7 @@ export default function Admin() {
                             <div key={s.id}
                               className={`rounded px-1.5 py-1 mb-0.5 text-xs ${s.status === 'claimed' ? 'bg-green-100 border border-green-300' : 'bg-orange-100 border border-orange-300'}`}>
                               <div className="font-semibold text-orange-800">{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}</div>
-                              {s.role && <div className="text-orange-600 uppercase tracking-wide" style={{fontSize:'10px'}}>{s.role}</div>}
+                              {s.role && <div className="text-orange-600 uppercase tracking-wide" style={{fontSize:'10px'}}>{roleDisplayName(s.role)}</div>}
                               {s.claimedByName && <div className="text-green-700" style={{fontSize:'10px'}}>→ {s.claimedByName}</div>}
                               <button
                                 onClick={() => handleDeleteOpenShift(s.id)}
@@ -5893,7 +5895,7 @@ export default function Admin() {
                             <Avatar user={u} size={28} />
                             <div>
                               <div className="font-semibold text-gray-800 text-xs">{u.displayName}</div>
-                              <div className="text-gray-400" style={{fontSize:'10px'}}>{displayHrs}h · {u.instructorType || 'Instructor'}</div>
+                              <div className="text-gray-400" style={{fontSize:'10px'}}>{displayHrs}h · {roleDisplayName(u.instructorType || 'Instructor')}</div>
                             </div>
                           </button>
                         </td>
@@ -6252,7 +6254,7 @@ export default function Admin() {
                     <div key={s.id} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs border ${s.status === 'claimed' ? 'bg-green-100 border-green-300 text-green-800' : 'bg-white border-orange-300 text-orange-800'}`}>
                       <span className="font-medium">{new Date(s.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
                       <span>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}</span>
-                      {s.role && <span className="text-orange-500">{s.role}</span>}
+                      {s.role && <span className="text-orange-500">{roleDisplayName(s.role)}</span>}
                       {s.claimedByName ? <span className="text-green-700">→ {s.claimedByName}</span> : <span className="italic text-orange-400">unclaimed</span>}
                       <button onClick={() => handleDeleteOpenShift(s.id)} className="text-orange-300 hover:text-red-500 ml-1">
                         <X size={12} />
@@ -6483,7 +6485,7 @@ export default function Admin() {
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-1">
               <Settings size={18} className="text-purple-600" />
-              <h3 className="font-semibold text-gray-900">Multi-Center Setup</h3>
+              <h3 className="font-semibold text-gray-900">Multi-Centre Setup</h3>
             </div>
             <p className="text-sm text-gray-500 mb-4">
               Adds a <code className="px-1 rounded bg-gray-100 text-gray-700">centerId</code> field to every existing user, shift, availability, time-off, chat, announcement, and notification doc — so the portal can later support multiple Mathnasium locations. <span className="font-semibold">Run this once after deploying the multi-center groundwork.</span> Safe to run multiple times.
@@ -6499,7 +6501,7 @@ export default function Admin() {
                     <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
                     Running…
                   </>
-                ) : 'Run multi-center migration'}
+                ) : 'Run multi-centre migration'}
               </button>
               {migrationResult?.ok && (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -7564,7 +7566,7 @@ export default function Admin() {
                         />
                         <div>
                           <span className="font-semibold text-gray-900">{person.name}</span>
-                          <span className="ml-2 text-xs text-gray-500">{person.role}</span>
+                          <span className="ml-2 text-xs text-gray-500">{roleDisplayName(person.role)}</span>
                           {isDiscrepant && (
                             <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">⚠ Discrepancy</span>
                           )}
@@ -10422,7 +10424,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
             <h3 className="text-sm font-semibold text-gray-900">Average Coverage by Day</h3>
             <p className="mt-0.5 text-xs text-gray-500">
               Last {COVERAGE_WEEKS} weeks · target of {coverageTarget} instructors per day
-              {' '}(set in Center Settings).
+              {' '}(set in {PAGES.centreSettings.name}).
             </p>
           </div>
         </div>
@@ -10732,7 +10734,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
                   <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">Unsure</span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-semibold text-gray-900">{u.name}</p>
-                    <p className="text-xs text-gray-600">{u.role}</p>
+                    <p className="text-xs text-gray-600">{roleDisplayName(u.role)}</p>
                     {u.aspirations && (
                       <p className="mt-1 text-xs text-purple-700">
                         <span className="font-semibold">Goals:</span> {u.aspirations}

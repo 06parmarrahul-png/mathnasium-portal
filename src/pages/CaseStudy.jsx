@@ -14,6 +14,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import {
   BarChart3, Clock, TrendingUp, Users, ClipboardList, CalendarCheck,
   Copy, CheckCircle2, RefreshCw, Pencil, Info,
@@ -25,8 +26,11 @@ import {
 import { toast } from '../lib/notify';
 
 export default function CaseStudy() {
-  const { activeCenterId: centerId, isOwner, isSuperAdmin, isAdminAssistant } = useAuth();
-  const allowed = isOwner || isSuperAdmin || isAdminAssistant;
+  const { activeCenterId: centerId, isOwnerLike, centerConfig } = useAuth();
+  // Owner-level access, the same people whose sidebar links here. It
+  // used to leave out Directors, so the link in their sidebar opened on a
+  // refusal.
+  const allowed = isOwnerLike;
 
   const [range, setRange] = useState(defaultRange());
   const [data, setData] = useState(null);
@@ -54,7 +58,7 @@ export default function CaseStudy() {
   if (!allowed) {
     return (
       <div className="rounded-lg border border-gray-200 bg-white p-8 text-center text-sm text-gray-500">
-        Case study is owner-only.
+        {PAGES.caseStudy.name} is for centre leadership.
       </div>
     );
   }
@@ -74,7 +78,7 @@ export default function CaseStudy() {
       {/* ── Header ───────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Mathnasium Langley case study</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{PAGES.caseStudy.name}{centerConfig?.name ? ` · ${centerConfig.name}` : ''}</h1>
           <p className="text-sm text-gray-500 max-w-2xl">
             The numbers you can defend in front of a room of franchise owners.
             Computed from your own centre's data — no fake averages, no industry benchmarks borrowed from somewhere else.

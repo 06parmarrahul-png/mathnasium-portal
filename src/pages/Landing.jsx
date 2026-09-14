@@ -237,7 +237,7 @@ export default function Landing() {
           {[
             { n: '1', t: 'Connect your scheduler', b: 'Paste your Acuity iCal URL (or Radius / Guardian Portal export). Ratio pulls every appointment automatically.' },
             { n: '2', t: 'Import your tracker', b: 'Drop your Student Assessment Tracker CSV in. We auto-categorize by section header, detect assessments, link siblings.' },
-            { n: '3', t: 'Open the dashboard', b: 'Click Scheduler Creation in the sidebar. Print Today. Walk over to the front desk. You\'re live.' },
+            { n: '3', t: 'Open the dashboard', b: 'Click Student Scheduler in the sidebar. Print Today. Walk over to the front desk. You\'re live.' },
           ].map(s => (
             <div key={s.n} className="rounded-2xl border border-gray-200 bg-white p-6 shadow-sm">
               <div className="text-5xl font-bold text-red-600 leading-none">{s.n}</div>

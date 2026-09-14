@@ -65,7 +65,7 @@ export default function CenterSwitcher() {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-xs text-gray-400 leading-tight">
-            {isSuperAdmin ? 'Viewing as Enterprise' : 'Center'}
+            {isSuperAdmin ? 'Viewing as Enterprise' : 'Centre'}
           </p>
           <p className="text-sm font-semibold text-white truncate leading-tight">{activeLabel}</p>
         </div>

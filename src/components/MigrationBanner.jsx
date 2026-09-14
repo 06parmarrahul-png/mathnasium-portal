@@ -128,7 +128,7 @@ export default function MigrationBanner() {
         <div className="bg-amber-50 border-b border-amber-200 px-6 py-4 flex items-start gap-3">
           <ShieldAlert size={22} className="text-amber-600 shrink-0 mt-0.5" />
           <div>
-            <h2 className="text-base font-bold text-amber-900">Multi-Center Setup Required</h2>
+            <h2 className="text-base font-bold text-amber-900">Multi-Centre Setup Required</h2>
             <p className="text-xs text-amber-700 mt-0.5">
               The portal has been upgraded to support multiple Mathnasium centers, but your existing data hasn't been tagged yet.
             </p>
@@ -137,12 +137,12 @@ export default function MigrationBanner() {
 
         <div className="p-6 space-y-3">
           <p className="text-sm text-gray-700">
-            Until this one-time migration runs, every page in the portal will appear empty (because all queries now filter by center, and no docs are tagged). It's safe to run, idempotent, and finishes in seconds.
+            Until this one-time migration runs, every page in the portal will appear empty (because all queries now filter by centre, and no docs are tagged). It's safe to run, idempotent, and finishes in seconds.
           </p>
 
           {!isOwner ? (
             <div className="rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-              <p className="font-semibold mb-0.5">Tell your center owner.</p>
+              <p className="font-semibold mb-0.5">Tell your centre owner.</p>
               <p>Only the owner can run the migration. Once it's done, you'll have full access. Refresh this page after they finish.</p>
             </div>
           ) : (
@@ -182,14 +182,14 @@ export default function MigrationBanner() {
                       <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
                       Running migration…
                     </>
-                  ) : 'Run multi-center migration'}
+                  ) : 'Run multi-centre migration'}
                 </button>
                 <Link
                   to="/admin"
                   className="text-xs text-gray-500 hover:text-gray-700"
                   onClick={(e) => e.preventDefault()}
                 >
-                  (Same button is also in Admin → Manage Users)
+                  (Same button is also in Manage Staff)
                 </Link>
               </div>
             </>

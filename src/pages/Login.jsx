@@ -8,7 +8,7 @@ const FRIENDLY_ERRORS = {
   'auth/wrong-password':      'Invalid email or password.',
   'auth/user-not-found':      'No account found with this email.',
   'auth/invalid-email':       'That email address is not valid.',
-  'auth/user-disabled':       'This account has been disabled. Contact the center owner.',
+  'auth/user-disabled':       'This account has been disabled. Contact your centre owner.',
   'auth/too-many-requests':   'Too many failed attempts. Please wait a few minutes and try again.',
   'auth/network-request-failed': 'Network error. Please check your connection and try again.',
 };
@@ -83,7 +83,7 @@ export default function Login() {
               theirs in the form below (or has one from their existing
               account). Keep the header centre-neutral. */}
           <h1 className="text-3xl font-bold text-white">Ratio Solved</h1>
-          <p className="mt-1 text-gray-400">Staff Scheduling</p>
+          <p className="mt-1 text-gray-400">Staff Portal</p>
         </div>
         <div className="rounded-2xl bg-white p-8 shadow-2xl">
           <h2 className="mb-6 text-xl font-bold text-gray-900">{resetMode ? 'Reset Password' : 'Sign In'}</h2>

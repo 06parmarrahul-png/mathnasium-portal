@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
 import { toast } from '../lib/notify';
 import {
   ACTION_STYLE, AVAIL_ACTIONS, CONFLICT_TEXT,
@@ -135,7 +136,7 @@ function ConflictBanner({ conflict }) {
             <span key={s.id || i}>
               {i > 0 && ', '}
               {fmtTime(s.startTime)}–{fmtTime(s.endTime)}
-              {s.role ? ` (${s.role})` : ''}
+              {s.role ? ` (${roleDisplayName(s.role)})` : ''}
             </span>
           ))}
         </p>

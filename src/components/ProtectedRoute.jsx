@@ -11,7 +11,7 @@ function PendingScreen({ logout }) {
           </svg>
         </div>
         <h2 className="mb-2 text-xl font-bold text-gray-900">Account Pending Approval</h2>
-        <p className="mb-4 text-sm text-gray-500">Your account is awaiting approval from the center owner. You'll be able to access the portal once approved.</p>
+        <p className="mb-4 text-sm text-gray-500">Your account is waiting for approval from a centre owner or admin. You'll be able to access the portal once approved.</p>
         <div className="flex gap-2 justify-center">
           <button onClick={() => window.location.reload()} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Refresh Status</button>
           {logout && (
@@ -73,8 +73,8 @@ function NotForShiftTakers({ isTraining }) {
         <h2 className="mb-2 text-xl font-bold text-gray-900">Not part of your access</h2>
         <p className="text-sm text-gray-500">
           {isTraining
-            ? 'While you’re in training you work alongside an instructor rather than picking up or trading shifts. Your own schedule is on the Schedule page — speak to a centre admin if something needs to change.'
-            : 'Volunteer accounts work the shifts they’re given rather than claiming or swapping. Your schedule is on the Schedule page — request time off there if you can’t make one.'}
+            ? 'While you’re in training you work alongside an instructor rather than picking up or trading shifts. Your own shifts are on My Schedule — speak to a centre admin if something needs to change.'
+            : 'Volunteer accounts work the shifts they’re given rather than claiming or swapping. Your shifts are on My Schedule — request time off there if you can’t make one.'}
         </p>
         <a href="/" className="mt-4 inline-block rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700">Back to Home</a>
       </div>

@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { collection, addDoc, onSnapshot, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { MessageSquare, Send, ShieldAlert, Building2, Users, Globe } from 'lucide-react';
 import UserProfileModal from '../components/UserProfileModal';
 
@@ -29,10 +30,13 @@ const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2 };
  */
 
 export default function PlatformChat() {
-  const { profile, activeCenterId, isSuperAdmin, isOwner, isAdminAssistant, isAdmin } = useAuth();
+  const { profile, activeCenterId, isSuperAdmin, isOwner, isOwnerLike, isAdmin } = useAuth();
   const [searchParams] = useSearchParams();
-  // Management chat — admin, owner, AA, Enterprise.
-  const canSeeCentre = isSuperAdmin || isOwner || isAdminAssistant || isAdmin;
+  // Management chat — the same people the centerLeadership rules let in:
+  // owner-level (owner, admin assistant, directors), plain admin and
+  // Enterprise. Directors were missing here, so the Chats hub sent them to
+  // a refusal the rules would not have given.
+  const canSeeCentre = isSuperAdmin || isOwnerLike || isAdmin;
   // Owner Chat — strictly owners + Enterprise. AA is intentionally
   // excluded here even though they have owner-level access elsewhere.
   const canSeeOwners = isSuperAdmin || isOwner;
@@ -192,7 +196,7 @@ export default function PlatformChat() {
     );
   }
 
-  const pageTitle = activeTab === 'centre' ? 'Management Chat' : 'Owner Chat';
+  const pageTitle = activeTab === 'centre' ? PAGES.managementChat.name : PAGES.ownerChat.name;
   const tabDescription = activeTab === 'centre'
     ? 'Centre-level conversation — admins, owners, and Enterprise for this centre.'
     : 'Cross-centre channel for every centre owner and Enterprise across the platform.';

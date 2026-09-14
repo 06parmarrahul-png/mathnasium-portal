@@ -637,6 +637,37 @@ Also mock Firestore **by collection**. A mock handing every listener the
 same rows let the availability listener receive shift documents, and a test
 passed for the wrong reason.
 
+## Page names and job titles — one list
+
+Every page's name lives in `src/lib/pageNames.js` (`PAGES`). The sidebar,
+the phone tabs, each page's own title, Home shortcuts, the browser tab
+(`documentTitleFor`) and sentences that send someone somewhere ("it's on the
+Job Board") all read from it. **Import the name; don't type it.**
+
+Rules: the sidebar name is the name everywhere (no short forms on phones);
+personal pages start with "My" (My Schedule, My Pay, My Account); Canadian
+spelling, Centre. "Job Board" replaced "Shift Board" — it's the centre's own
+word, from Rahul's sketch of the phone home. The header reads
+"Mathnasium · Staff Portal" for everyone.
+
+`pageNames.test.js` scans every non-test source file (comments excluded) for
+retired names — Shift Board, Scheduler Creation, Notification Preferences,
+Manage Users, Instructor Portal, Account Details, Centre Chat, Admin Panel,
+"center owner" and others — and fails on any that come back.
+
+Job titles: the STORED names stay as they are ("Dir. of Education",
+"Center Director", "Training", "Lead", "Admin") because shift docs, payroll
+buckets, the rules and exact-match checks key on them. Everywhere a person
+reads one goes through `roleDisplayName()` in `src/lib/roleLabel.js` →
+Director of Education, Centre Director, Trainee, Lead Instructor, Admin
+Assistant. Dropdowns keep the stored value and show the display name.
+
+`components/Layout.render.test.jsx` renders the real sidebar for all ten roles
+against Langley's saved role registry: every link uses its page name, everyone
+but volunteers can reach a chat (owner-shaped sidebars get **Chats**, which
+Directors and the Admin Assistant used to lack), and each card shows the
+right title.
+
 ## Cole — the mascot each person picks
 
 The A+ at the top of the sidebar (and the phone header, and sign-up) is now

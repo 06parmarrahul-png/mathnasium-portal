@@ -7,6 +7,7 @@ import {
 import { ref as storageRef, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
 import { db, storage } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { toast, confirmDialog } from '../lib/notify';
 import { Link } from 'react-router-dom';
 import {
@@ -175,7 +176,7 @@ export default function AccountDetails() {
       <div className="flex items-center gap-3">
         <div className="rounded-xl bg-purple-100 p-2.5 text-purple-700"><UserCog size={22} /></div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Account Details</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{PAGES.myAccount.name}</h1>
           <p className="text-sm text-gray-500">Manage how you appear and how you sign in.</p>
         </div>
       </div>
@@ -377,7 +378,7 @@ function QuickLinksCard() {
             <Bell size={16} />
           </div>
           <div className="min-w-0">
-            <div className="text-sm font-medium text-gray-900">Notification Preferences</div>
+            <div className="text-sm font-medium text-gray-900">{PAGES.notifications.name}</div>
             <div className="text-xs text-gray-500 truncate">Control which emails and alerts you get.</div>
           </div>
         </Link>
@@ -547,7 +548,7 @@ function ProfilePictureCard({ profile }) {
         </div>
         <div className="min-w-0 flex-1">
           <p className="text-sm text-gray-700">
-            {profile?.photoURL ? 'Your team sees this picture next to your name.' : 'Upload a picture and your team will see it next to your name in chat, the shift board, and Manage Users.'}
+            {profile?.photoURL ? 'Your team sees this picture next to your name.' : `Upload a picture and your team will see it next to your name in ${PAGES.teamChat.name}, the ${PAGES.jobBoard.name} and ${PAGES.manageStaff.name}.`}
           </p>
           <p className="mt-1 text-xs text-gray-400">PNG / JPG / WebP. Under 4 MB.</p>
           <div className="mt-3 flex flex-wrap gap-2">

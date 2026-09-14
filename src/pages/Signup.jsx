@@ -88,12 +88,12 @@ export default function Signup() {
               they'll see at the top of their sidebar. */}
           <div className="mx-auto mb-4 inline-block"><Mascot id={mascot} size={72} /></div>
           <h1 className="text-3xl font-bold text-white">Mathnasium</h1>
-          <p className="mt-1 text-gray-400">Create Your Instructor Account</p>
+          <p className="mt-1 text-gray-400">Create Your Staff Account</p>
         </div>
         <div className="rounded-2xl bg-white p-8 shadow-2xl">
           <h2 className="mb-2 text-xl font-bold text-gray-900">Create Account</h2>
           <p className="mb-6 text-sm text-gray-500">
-            Pick your center and sign up. Your account needs approval from that center's owner or admin before you can access the portal.
+            Pick your centre and sign up. Your account needs approval from that centre's owner or admin before you can use the portal.
           </p>
           {error && (
             <div className="mb-4 rounded-lg bg-red-50 px-4 py-3 text-sm text-red-700 border border-red-200">{error}</div>
@@ -106,11 +106,11 @@ export default function Signup() {
               </label>
               {centersLoading ? (
                 <div className="w-full rounded-lg border border-gray-200 bg-gray-50 px-4 py-2.5 text-sm text-gray-400">
-                  Loading centers…
+                  Loading centres…
                 </div>
               ) : centers.length === 0 ? (
                 <div className="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-700">
-                  No centers are set up yet. Contact your center owner.
+                  No centres are set up yet. Contact your centre owner.
                 </div>
               ) : (
                 <select
@@ -119,7 +119,7 @@ export default function Signup() {
                   required
                   className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20 bg-white"
                 >
-                  <option value="">Select your center…</option>
+                  <option value="">Select your centre…</option>
                   {centers.map(c => (
                     <option key={c.id} value={c.id}>
                       {c.name || c.id}{c.city ? ` — ${c.city}${c.province ? `, ${c.province}` : ''}` : ''}

@@ -1,7 +1,7 @@
 // Chats hub — single sidebar entry for owners that consolidates every
 // chat surface available to them:
-//   - Centre Chat        (per-centre channel; same as /chat)
-//   - Online Chat        (subset of Centre Chat for online instructors)
+//   - Team Chat          (per-centre channel; same as /chat)
+//   - Online Chat        (subset of Team Chat for online instructors)
 //   - Leadership Chat    (cross-centre owner channel; same as /platform-chat)
 //   - Owner Chat         (private owner-only channel; same as platform but
 //                         filtered to messages from owner role)
@@ -18,6 +18,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import {
   MessagesSquare, MessageSquare, Headphones, Megaphone, Sparkles, ArrowRight,
 } from 'lucide-react';
@@ -67,7 +68,7 @@ export default function Chats() {
   const cards = [
     {
       to:   '/chat',
-      title: 'Centre Chat',
+      title: PAGES.teamChat.name,
       body:  'Day-to-day conversation with everyone scheduled at this centre.',
       icon:  MessageSquare,
       color: 'bg-blue-100 text-blue-700',
@@ -76,7 +77,7 @@ export default function Chats() {
     },
     {
       to:    '/platform-chat',
-      title: 'Management Chat',
+      title: PAGES.managementChat.name,
       body:  'Centre-level conversation with the admins, owners, and Enterprise tied to this centre. Switch centres to see another.',
       icon:  Headphones,
       color: 'bg-purple-100 text-purple-700',
@@ -85,7 +86,7 @@ export default function Chats() {
     },
     {
       to:    '/platform-chat?view=owners',
-      title: 'Owner Chat',
+      title: PAGES.ownerChat.name,
       body:  'Cross-centre channel for every centre owner and Enterprise across the platform.',
       icon:  Sparkles,
       color: 'bg-rose-100 text-rose-700',
@@ -99,7 +100,7 @@ export default function Chats() {
       <header className="mb-6 flex items-center gap-3">
         <div className="rounded-xl bg-blue-100 p-2.5 text-blue-700"><MessagesSquare size={22} /></div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Chats</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{PAGES.chats.name}</h1>
           <p className="text-sm text-gray-500">
             Every conversation surface for this centre, in one place.
           </p>
@@ -117,7 +118,7 @@ export default function Chats() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold text-gray-900">Announcements</h3>
+              <h3 className="text-lg font-bold text-gray-900">{PAGES.announcements.name}</h3>
               {recent.announcements > 0 && (
                 <span className="rounded-full bg-red-600 text-white text-[10px] font-bold px-1.5 py-0.5 min-w-[20px] text-center">
                   {recent.announcements}
@@ -157,7 +158,7 @@ export default function Chats() {
       </div>
 
       <p className="mt-6 text-xs text-gray-400 text-center">
-        Tip: notification preferences live on your <Link to="/account" className="underline">Account</Link> page.
+        Tip: choose which reminders you get on <Link to={PAGES.notifications.path} className="underline">{PAGES.notifications.name}</Link>.
       </p>
     </div>
   );

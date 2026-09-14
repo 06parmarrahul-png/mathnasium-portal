@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
+import { PAGES } from '../lib/pageNames';
 import {
   Activity, ChevronLeft, ChevronRight, Loader2, AlertTriangle, RotateCcw, Sparkles,
   Save, Check, TrendingUp,
@@ -572,7 +574,7 @@ export default function SupplyDemand() {
         <div className="flex items-start gap-3">
           <div className="rounded-lg bg-emerald-100 p-2 text-emerald-700"><Activity size={22} /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Staffing Supply &amp; Demand</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{PAGES.supplyDemand.name}</h1>
             <p className="text-sm text-gray-500">
               Per-slot student-to-instructor coverage, live from Acuity + your posted schedule.
             </p>
@@ -1044,7 +1046,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
                                 <li key={idx} className="text-xs text-gray-700">
                                   {s.name}
                                   {s.role && s.role !== 'Instructor' && (
-                                    <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                                    <span className="ml-1 text-[10px] text-gray-400">· {roleDisplayName(s.role)}</span>
                                   )}
                                 </li>
                               ))}
@@ -1059,7 +1061,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
                                 <li key={idx} className="text-xs text-gray-700">
                                   {s.name}
                                   {s.role && s.role !== 'Instructor' && (
-                                    <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                                    <span className="ml-1 text-[10px] text-gray-400">· {roleDisplayName(s.role)}</span>
                                   )}
                                 </li>
                               ))}
@@ -1501,7 +1503,7 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
                         {s.flexRole} · not counted
                       </span>
                     ) : s.role && s.role !== 'Instructor' && (
-                      <span className="ml-1 text-[10px] text-gray-400">· {s.role}</span>
+                      <span className="ml-1 text-[10px] text-gray-400">· {roleDisplayName(s.role)}</span>
                     )}
                   </li>
                 ))}

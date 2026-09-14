@@ -3,6 +3,7 @@ import {
   X, Mail, Phone, Building2, Shield, ShieldCheck, UserCog, Lock,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
 import { getContact } from '../lib/userContact';
 
 /**
@@ -149,9 +150,9 @@ export default function UserProfileModal({ user, onClose }) {
                   {role === 'super_admin' ? <ShieldCheck size={10} /> : role === 'owner' ? <Shield size={10} /> : <UserCog size={10} />}
                   {roleLabel}
                 </span>
-                {user.instructorType && user.instructorType !== roleLabel && (
+                {user.instructorType && roleDisplayName(user.instructorType) !== roleLabel && (
                   <span className="rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-medium text-white">
-                    {user.instructorType}
+                    {roleDisplayName(user.instructorType)}
                   </span>
                 )}
               </div>

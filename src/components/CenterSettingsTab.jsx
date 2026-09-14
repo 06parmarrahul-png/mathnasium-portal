@@ -83,7 +83,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
       <div className="rounded-xl border bg-white p-5 shadow-sm">
         <div className="flex items-center gap-2 mb-1">
           <Settings size={18} className="text-purple-600" />
-          <h3 className="font-semibold text-gray-900">Center Settings</h3>
+          <h3 className="font-semibold text-gray-900">Centre Settings</h3>
         </div>
         <p className="text-sm text-gray-500">
           Tunables for <strong>{centerConfig?.name || activeCenterId}</strong>. Changes apply immediately to the auto-scheduler, the Full Day picker, payroll exclusions, and the coverage grid for everyone at this center.
@@ -93,7 +93,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
       {/* Identity */}
       <Section title="Identity" icon={Building2}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Center name">
+          <Field label="Centre name">
             <input
               type="text"
               value={form?.name || ''}

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, addDoc, onSnapshot, query, where, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 import { toast } from '../lib/notify';
 import { hasCapability } from '../lib/subRoles';
@@ -212,7 +213,7 @@ export default function Chat() {
       <div className="mb-4 flex items-center gap-3">
         <div className="rounded-lg bg-green-100 p-2 text-green-600"><MessageSquare size={22} /></div>
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Team Chat</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{PAGES.teamChat.name}</h1>
           <p className="text-sm text-gray-500">Swap shifts, ask questions, and stay connected</p>
         </div>
       </div>

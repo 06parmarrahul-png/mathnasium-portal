@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { roleLabelFor } from './roleLabel';
+import { roleLabelFor, roleDisplayName } from './roleLabel';
 
 // Every case is a real Langley combination (platform role × centre title).
 describe('roleLabelFor', () => {
@@ -9,12 +9,12 @@ describe('roleLabelFor', () => {
   });
 
   it('shows the centre title for Leads, Managers, Directors and the admin assistant', () => {
-    expect(roleLabelFor({ platformRole: 'instructor', instructorType: 'Lead' })).toBe('Lead');
-    expect(roleLabelFor({ platformRole: 'instructor', instructorType: 'Training' })).toBe('Training');
+    expect(roleLabelFor({ platformRole: 'instructor', instructorType: 'Lead' })).toBe('Lead Instructor');
+    expect(roleLabelFor({ platformRole: 'instructor', instructorType: 'Training' })).toBe('Trainee');
     expect(roleLabelFor({ platformRole: 'admin', instructorType: 'Manager' })).toBe('Manager');
-    expect(roleLabelFor({ platformRole: 'director', instructorType: 'Center Director' })).toBe('Center Director');
-    expect(roleLabelFor({ platformRole: 'director', instructorType: 'Dir. of Education' })).toBe('Dir. of Education');
-    expect(roleLabelFor({ platformRole: 'admin_assistant', instructorType: 'Admin' })).toBe('Admin');
+    expect(roleLabelFor({ platformRole: 'director', instructorType: 'Center Director' })).toBe('Centre Director');
+    expect(roleLabelFor({ platformRole: 'director', instructorType: 'Dir. of Education' })).toBe('Director of Education');
+    expect(roleLabelFor({ platformRole: 'admin_assistant', instructorType: 'Admin' })).toBe('Admin Assistant');
   });
 
   it('keeps Owner and Enterprise over a leftover "Instructor" title', () => {
@@ -36,5 +36,23 @@ describe('roleLabelFor', () => {
 
   it('copes with nothing loaded yet', () => {
     expect(roleLabelFor()).toBe('Instructor');
+  });
+});
+
+describe('roleDisplayName — the stored title, as the team says it', () => {
+  it('spells out the abbreviations and the old spellings', () => {
+    expect(roleDisplayName('Dir. of Education')).toBe('Director of Education');
+    expect(roleDisplayName('Center Director')).toBe('Centre Director');
+    expect(roleDisplayName('Training')).toBe('Trainee');
+    expect(roleDisplayName('Lead')).toBe('Lead Instructor');
+    expect(roleDisplayName('Admin')).toBe('Admin Assistant');
+  });
+
+  it('leaves the rest alone, including a role a centre made up', () => {
+    for (const t of ['Host', 'Manager', 'Instructor', 'Volunteer', 'Front Desk Lead']) {
+      expect(roleDisplayName(t)).toBe(t);
+    }
+    expect(roleDisplayName('')).toBe('');
+    expect(roleDisplayName(undefined)).toBe('');
   });
 });

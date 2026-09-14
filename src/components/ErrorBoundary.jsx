@@ -34,7 +34,7 @@ export default class ErrorBoundary extends Component {
           <h1 className="text-xl font-bold text-gray-900 mb-2">Something went wrong</h1>
           <p className="text-sm text-gray-500 mb-4">
             The portal hit an unexpected error. Try reloading the page; if it keeps happening,
-            send the message below to the center owner.
+            send the message below to your centre owner.
           </p>
           {this.state.error?.message && (
             <pre className="mb-4 rounded-lg bg-gray-100 p-3 text-left text-xs text-gray-700 overflow-x-auto">

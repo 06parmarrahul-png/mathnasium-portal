@@ -10,6 +10,7 @@ import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
 import { myOpenCount, canUseDesk } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { roleLabelFor } from '../lib/roleLabel';
+import { PAGES, PORTAL_NAME, PORTAL_SUBTITLE, documentTitleFor } from '../lib/pageNames';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
@@ -133,6 +134,9 @@ export default function Layout({ children }) {
     return openCount + swapCount;
   }, [openShifts, chatDocs, profile, mySubRoles]);
 
+  // The owner-shaped sidebar (Growth / Demand / Supply / …) — see below.
+  const useOwnerLayout = isOwner || isAdminAssistant || isDirector;
+
   // Build nav based on role.
   //
   // Two distinct layouts:
@@ -165,17 +169,17 @@ export default function Layout({ children }) {
   // Directors get the full owner-style sidebar (Growth, Supply,
   // Intelligence, Centre) — they run the centre and need the same
   // navigation as an owner, just with a different label.
-  const useOwnerLayout = isOwner || isAdminAssistant || isDirector;
-
   // ─── GENERAL (both layouts share this) ─────────────────────────────
   const general = [
-    { to: '/', label: 'Home', icon: House },
+    { to: PAGES.home.path, label: PAGES.home.name, icon: House },
   ];
-  // Owners get a single "Chats" entry in General that goes to a hub
-  // page (/chats) collecting Centre Chat, Management Chat, and Owner
-  // Chat in one place. Cuts the sidebar down significantly.
-  if (isOwner) {
-    general.push({ to: '/chats', label: 'Chats', icon: MessagesSquare });
+  // The owner-shaped sidebar has no Communicate section, so everyone on it
+  // gets a single "Chats" entry: a hub holding Announcements, Team Chat,
+  // Management Chat and (owners only) Owner Chat. It used to be Owner-only,
+  // which left Directors and the Admin Assistant with no way to a chat or
+  // announcements from the sidebar at all.
+  if (useOwnerLayout) {
+    general.push({ to: PAGES.chats.path, label: PAGES.chats.name, icon: MessagesSquare });
   }
   // Personal scheduling surfaces. Enterprise users skip these entirely —
   // they're the platform operator and shouldn't be claiming shifts at
@@ -183,7 +187,7 @@ export default function Layout({ children }) {
   // page) since they run the business rather than take individual shifts,
   // but AA gets it back (they ARE scheduled like staff).
   if (!isSuperAdmin && !isOwner) {
-    general.push({ to: '/schedule', label: 'My Schedule', icon: CalendarDays });
+    general.push({ to: PAGES.mySchedule.path, label: PAGES.mySchedule.name, icon: CalendarDays });
   }
   // Shift Board is for instructors and AA (anyone who can claim shifts).
   // Owners see open shifts inside Manage Schedule and don't need a
@@ -194,12 +198,12 @@ export default function Layout({ children }) {
   // applies. The Shift Board is entirely about claiming and swapping,
   // so it's not theirs — see canTakeShifts in AuthContext.
   if (!isSuperAdmin && !isOwner && canTakeShifts) {
-    general.push({ to: '/shift-board', label: 'Shift Board', icon: Briefcase, badge: boardCount });
+    general.push({ to: PAGES.jobBoard.path, label: PAGES.jobBoard.name, icon: Briefcase, badge: boardCount });
   }
   // Their own hours and an estimate of what those come to. Not for owners
   // (they read the real payroll sheet) or for anyone not paid by the hour.
   if (!isOwnerLikeNav && showPay) {
-    general.push({ to: '/my-pay', label: 'My Pay', icon: Wallet });
+    general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
 
   // ─── OWNER LAYOUT ──────────────────────────────────────────────────
@@ -214,8 +218,8 @@ export default function Layout({ children }) {
   const growth = [];
   if (useOwnerLayout) {
     growth.push(
-      { to: '/leads',   label: 'Leads',   icon: UserPlus },
-      { to: '/intakes', label: 'Intakes', icon: CalendarCheck },
+      { to: PAGES.leads.path,   label: PAGES.leads.name,   icon: UserPlus },
+      { to: PAGES.intakes.path, label: PAGES.intakes.name, icon: CalendarCheck },
     );
   }
 
@@ -226,8 +230,8 @@ export default function Layout({ children }) {
   // not about building schedulers).
   const demand = [];
   if (useOwnerLayout) {
-    demand.push({ to: '/scheduler-creation', label: 'Student Scheduler', icon: ClipboardList });
-    demand.push({ to: '/staffing-board', label: 'Staffing Board', icon: LayoutGrid });
+    demand.push({ to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList });
+    demand.push({ to: PAGES.staffingBoard.path, label: PAGES.staffingBoard.name, icon: LayoutGrid });
   }
 
   // SUPPLY — staff. Schedule + roster + pay = supply being allocated,
@@ -236,13 +240,13 @@ export default function Layout({ children }) {
   const supply = [];
   if (useOwnerLayout && canSeeAdminPanel) {
     supply.push(
-      { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
-      { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
-      { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
+      { to: PAGES.staffSchedule.path, label: PAGES.staffSchedule.name, icon: CalendarRange },
+      { to: PAGES.manageStaff.path,   label: PAGES.manageStaff.name,   icon: Users },
+      { to: PAGES.managePayroll.path, label: PAGES.managePayroll.name, icon: Wallet },
       // Availability history sits with the staff tools, not with Centre
       // config: you open it while looking at a schedule dispute, which
       // is exactly when Manage Staff Schedule is the tab next door.
-      { to: '/availability-log',      label: 'Availability Log',      icon: History },
+      { to: PAGES.availabilityLog.path, label: PAGES.availabilityLog.name, icon: History },
     );
   }
 
@@ -252,10 +256,10 @@ export default function Layout({ children }) {
   // who runs operations should see them too).
   const intelligence = [];
   if (useOwnerLayout) {
-    intelligence.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
-    intelligence.push({ to: '/supply-demand',    label: 'Supply & Demand',  icon: Activity });
-    intelligence.push({ to: '/staffing-budget',  label: 'Staffing Budget',  icon: Wallet });
-    intelligence.push({ to: '/case-study',       label: 'Case Study',       icon: FileBarChart });
+    intelligence.push({ to: PAGES.centreAnalytics.path, label: PAGES.centreAnalytics.name, icon: BarChart3 });
+    intelligence.push({ to: PAGES.supplyDemand.path,    label: PAGES.supplyDemand.name,    icon: Activity });
+    intelligence.push({ to: PAGES.staffingBudget.path,  label: PAGES.staffingBudget.name,  icon: Wallet });
+    intelligence.push({ to: PAGES.caseStudy.path,       label: PAGES.caseStudy.name,       icon: FileBarChart });
   }
 
   // CENTRE — configuration. Sits at the bottom because owners touch it
@@ -267,15 +271,15 @@ export default function Layout({ children }) {
     // settings get touched twice a year. Admin-and-above only — the route
     // and the Firestore rules enforce it too, this just hides the link.
     if (canSeeAdminPanel) {
-      centre.push({ to: '/inventory', label: 'Inventory', icon: Package });
+      centre.push({ to: PAGES.inventory.path, label: PAGES.inventory.name, icon: Package });
       // Staff meetings and fun days. Sits with Centre because it is the
       // centre's calendar, not a scheduling tool.
-      centre.push({ to: '/events', label: 'Centre Events', icon: CalendarCheck });
+      centre.push({ to: PAGES.centreEvents.path, label: PAGES.centreEvents.name, icon: CalendarCheck });
     }
     if (canOpenDesk) {
-      centre.push({ to: '/desk', label: 'Management Desk', icon: StickyNote, badge: deskCount });
+      centre.push({ to: PAGES.desk.path, label: PAGES.desk.name, icon: StickyNote, badge: deskCount });
     }
-    centre.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
+    centre.push({ to: PAGES.centreSettings.path, label: PAGES.centreSettings.name, icon: Settings });
   }
 
   // ─── NON-OWNER LAYOUT (original Manage / Insights / Communicate) ──
@@ -289,32 +293,32 @@ export default function Layout({ children }) {
     // admin" tier, full list. (Owner / AA / Director reach the same
     // pages via Growth / Demand / Supply / Intelligence above instead.)
     manage.push(
-      { to: '/admin?tab=spreadsheet', label: 'Manage Staff Schedule', icon: CalendarRange },
-      { to: '/scheduler-creation',    label: 'Student Scheduler',    icon: ClipboardList },
-      { to: '/admin?tab=users',       label: 'Manage Staff',          icon: Users },
-      { to: '/admin?tab=payroll',     label: 'Manage Payroll',        icon: Wallet },
-      { to: '/inventory',             label: 'Inventory',             icon: Package },
-      { to: '/availability-log',      label: 'Availability Log',      icon: History },
+      { to: PAGES.staffSchedule.path,    label: PAGES.staffSchedule.name,    icon: CalendarRange },
+      { to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList },
+      { to: PAGES.manageStaff.path,      label: PAGES.manageStaff.name,      icon: Users },
+      { to: PAGES.managePayroll.path,    label: PAGES.managePayroll.name,    icon: Wallet },
+      { to: PAGES.inventory.path,        label: PAGES.inventory.name,        icon: Package },
+      { to: PAGES.availabilityLog.path,  label: PAGES.availabilityLog.name,  icon: History },
       // Without the admin panel this page is only the fun-day calendar, so
       // the link says so rather than promising the rest.
-      { to: '/events', label: canSeeAdminPanel ? 'Centre Events' : 'Fun Days', icon: CalendarCheck },
+      { to: PAGES.centreEvents.path, label: (canSeeAdminPanel ? PAGES.centreEvents : PAGES.funDays).name, icon: CalendarCheck },
     );
     if (canOpenDesk) {
-      manage.push({ to: '/desk', label: 'Management Desk', icon: StickyNote, badge: deskCount });
+      manage.push({ to: PAGES.desk.path, label: PAGES.desk.name, icon: StickyNote, badge: deskCount });
     }
   } else if (!useOwnerLayout && isLead) {
     // Lead instructors get Student Scheduler — but NOT the broader
     // admin pages (Manage Staff / Payroll stay owner-side). They run
     // the floor; they don't run HR.
     manage.push(
-      { to: '/scheduler-creation',    label: 'Student Scheduler',     icon: ClipboardList },
+      { to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList },
     );
   }
 
   const insights = [];
   if (!useOwnerLayout && isSuperAdmin) {
-    insights.push({ to: '/center-analytics', label: 'Centre Analytics', icon: BarChart3 });
-    insights.push({ to: '/intakes',          label: 'Intakes',          icon: CalendarCheck });
+    insights.push({ to: PAGES.centreAnalytics.path, label: PAGES.centreAnalytics.name, icon: BarChart3 });
+    insights.push({ to: PAGES.intakes.path,         label: PAGES.intakes.name,         icon: CalendarCheck });
   }
 
   // COMMUNICATE — chat, announcements, personal notification prefs.
@@ -323,18 +327,18 @@ export default function Layout({ children }) {
   // Volunteers get a bare-bones portal — no team messaging. The route
   // guard enforces it; this just keeps the sidebar honest.
   if (!isSuperAdmin && !isOwner && !isVolunteer) {
-    communicate.push({ to: '/chat', label: 'Chat', icon: MessageSquare });
+    communicate.push({ to: PAGES.teamChat.path, label: PAGES.teamChat.name, icon: MessageSquare });
   }
   if ((isAdmin || isAdminAssistant) && !isSuperAdmin && !isVolunteer) {
-    communicate.push({ to: '/platform-chat', label: 'Management Chat', icon: Headphones });
+    communicate.push({ to: PAGES.managementChat.path, label: PAGES.managementChat.name, icon: Headphones });
   }
   // Volunteers get the latest announcement on their Home page, which is
   // the whole of what they need from it.
   if (!isOwner && !isVolunteer) {
-    communicate.push({ to: '/announcements', label: 'Announcements', icon: Megaphone });
+    communicate.push({ to: PAGES.announcements.path, label: PAGES.announcements.name, icon: Megaphone });
   }
   if (!isOwner) {
-    communicate.push({ to: '/notifications', label: 'Notifications', icon: Bell });
+    communicate.push({ to: PAGES.notifications.path, label: PAGES.notifications.name, icon: Bell });
   }
 
   // ENTERPRISE — platform-operator only. Sits between COMMUNICATE and
@@ -342,12 +346,12 @@ export default function Layout({ children }) {
   const enterprise = [];
   if (isSuperAdmin) {
     enterprise.push(
-      { to: '/super-admin',      label: 'Manage Centres',   icon: Building2 },
-      { to: '/manage-roles',     label: 'Manage Roles',     icon: UserCog },
-      { to: '/platform-revenue', label: 'Platform Revenue', icon: DollarSign },
-      { to: '/platform-chat',              label: 'Management Chat', icon: Headphones },
-      { to: '/platform-chat?view=owners',  label: 'Owner Chat',      icon: Sparkles },
-      { to: '/audit-logs',                 label: 'Audit Logs',      icon: FileClock },
+      { to: PAGES.manageCentres.path,   label: PAGES.manageCentres.name,   icon: Building2 },
+      { to: PAGES.manageRoles.path,     label: PAGES.manageRoles.name,     icon: UserCog },
+      { to: PAGES.platformRevenue.path, label: PAGES.platformRevenue.name, icon: DollarSign },
+      { to: PAGES.managementChat.path,  label: PAGES.managementChat.name,  icon: Headphones },
+      { to: PAGES.ownerChat.path,       label: PAGES.ownerChat.name,       icon: Sparkles },
+      { to: PAGES.auditLogs.path,       label: PAGES.auditLogs.name,       icon: FileClock },
     );
   }
 
@@ -355,7 +359,7 @@ export default function Layout({ children }) {
   // section above. Super-admin lands here.
   const settingsSection = [];
   if (!useOwnerLayout && isSuperAdmin) {
-    settingsSection.push({ to: '/center-settings', label: 'Centre Settings', icon: Settings });
+    settingsSection.push({ to: PAGES.centreSettings.path, label: PAGES.centreSettings.name, icon: Settings });
   }
 
   const navSections = useOwnerLayout
@@ -394,6 +398,11 @@ export default function Layout({ children }) {
     return itemTab === currentTab;
   };
 
+  // The browser tab names the page, from the same list as the sidebar.
+  useEffect(() => {
+    document.title = documentTitleFor(location.pathname, location.search);
+  }, [location.pathname, location.search]);
+
   // Role badge for the bottom user card: the job title at THIS centre
   // (Host, Lead, Center Director), not the platform role — see roleLabelFor.
   const roleLabel = roleLabelFor({
@@ -413,8 +422,8 @@ export default function Layout({ children }) {
           {/* Their own Cole, picked at sign-up or on Account. */}
           <Mascot id={profile?.mascot} size={40} className="shrink-0" />
           <div>
-            <h1 className="text-lg font-bold leading-tight text-white">Mathnasium</h1>
-            <p className="text-xs text-gray-400">Instructor Portal</p>
+            <h1 className="text-lg font-bold leading-tight text-white">{PORTAL_NAME}</h1>
+            <p className="text-xs text-gray-400">{PORTAL_SUBTITLE}</p>
           </div>
           <button className="ml-auto lg:hidden" onClick={() => setOpen(false)}>
             <X size={20} />
@@ -465,7 +474,7 @@ export default function Layout({ children }) {
           <Link
             to="/account"
             onClick={() => setOpen(false)}
-            title="Account Details"
+            title={PAGES.myAccount.name}
             className="mb-3 -mx-1 flex items-center gap-3 rounded-lg px-1 py-1 transition-colors hover:bg-gray-700/60"
           >
             {isSuperAdmin ? (
@@ -529,15 +538,15 @@ export default function Layout({ children }) {
           </button>
           <div className="flex items-center gap-2">
             <Mascot id={profile?.mascot} size={28} className="shrink-0" />
-            <span className="font-bold text-gray-900">Mathnasium Portal</span>
+            <span className="font-bold text-gray-900">{PORTAL_NAME}</span>
           </div>
 
           {/* Account and settings live on the avatar, top-right — where
               people already look for them, and where they don't cost a
               permanent sixth of the tab bar for something touched twice a
               year. */}
-          <Link to="/account" title="Your account and settings"
-            aria-label="Your account and settings"
+          <Link to={PAGES.myAccount.path} title={PAGES.myAccount.name}
+            aria-label={PAGES.myAccount.name}
             className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full">
             {profile?.photoURL ? (
               <img src={profile.photoURL} alt=""
@@ -578,11 +587,13 @@ export default function Layout({ children }) {
 function MobileTabs({ canTakeShifts, isVolunteer, showPay }) {
   const location = useLocation();
   const tabs = [
-    { to: '/', label: 'Today', icon: House, exact: true },
-    { to: '/schedule', label: 'Schedule', icon: CalendarDays },
-    canTakeShifts && { to: '/shift-board', label: 'Job board', icon: Briefcase },
-    showPay && { to: '/my-pay', label: 'Pay', icon: Wallet },
-    !isVolunteer && { to: '/chat', label: 'Chat', icon: MessageSquare },
+    // Same names as the sidebar — a tab called "Pay" and a link called
+    // "My Pay" read as two places.
+    { to: PAGES.home.path, label: PAGES.home.name, icon: House, exact: true },
+    { to: PAGES.mySchedule.path, label: PAGES.mySchedule.name, icon: CalendarDays },
+    canTakeShifts && { to: PAGES.jobBoard.path, label: PAGES.jobBoard.name, icon: Briefcase },
+    showPay && { to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet },
+    !isVolunteer && { to: PAGES.teamChat.path, label: PAGES.teamChat.name, icon: MessageSquare },
   ].filter(Boolean);
 
   return (

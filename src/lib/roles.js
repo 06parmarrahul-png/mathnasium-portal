@@ -69,14 +69,14 @@ export const PERMISSIONS = [
   {
     id: 'admin.panel',
     group: 'Administration',
-    label: 'Open the Admin Panel',
-    description: 'The weekly grid, auto-scheduler, Manage Staff, payroll and time off.',
+    label: 'Full admin access',
+    description: 'Everything in day-to-day operations, plus Staffing Budget, Centre Events and Today’s Snapshot on Home.',
   },
   {
     id: 'admin.operations',
     group: 'Administration',
     label: 'Run day-to-day operations',
-    description: 'Staffing Board, Inventory and the Availability Log. Implied by Admin Panel access.',
+    description: 'Manage Staff Schedule, Manage Staff, Manage Payroll, Staffing Board, Inventory and the Availability Log. Included in full admin access.',
   },
   {
     id: 'centre.settings',
@@ -100,13 +100,13 @@ export const PERMISSIONS = [
     id: 'shifts.take',
     group: 'Floor',
     label: 'Claim and swap shifts',
-    description: 'Pick up open shifts from the Shift Board and trade with other staff.',
+    description: 'Pick up open shifts from the Job Board and trade with other staff.',
   },
   {
     id: 'chat.access',
     group: 'Floor',
     label: 'Use team messaging',
-    description: 'The centre chat and direct messages.',
+    description: 'Team Chat and direct messages.',
   },
   {
     id: 'notes.access',

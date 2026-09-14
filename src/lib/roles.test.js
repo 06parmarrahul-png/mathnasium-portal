@@ -484,7 +484,7 @@ describe('the permission catalogue', () => {
   });
 
   it('labels a known id and passes an unknown one through', () => {
-    expect(permissionLabel('admin.panel')).toBe('Open the Admin Panel');
+    expect(permissionLabel('admin.panel')).toBe('Full admin access');
     expect(permissionLabel('nope')).toBe('nope');
   });
 

@@ -30,6 +30,7 @@ import { useMemo, useState } from 'react';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
 import { toast, confirmDialog } from '../lib/notify';
 import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import {
@@ -400,8 +401,9 @@ export default function CentreRolesTab({ users, centers }) {
                 <span
                   className="shrink-0 rounded-full px-2.5 py-1 text-xs font-bold"
                   style={{ backgroundColor: role.color, color: contrastText(role.color) }}
+                  title={roleDisplayName(role.name) !== role.name ? `Saved as “${role.name}”` : undefined}
                 >
-                  {role.name}
+                  {roleDisplayName(role.name)}
                 </span>
 
                 <span className="flex items-center gap-1 text-xs text-gray-500" title={`${holders} at this centre`}>

@@ -6,6 +6,8 @@ import {
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
+import { PAGES } from '../lib/pageNames';
 import { styleFor as subRoleStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
@@ -124,7 +126,7 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete 
       {shift.role && (
         <div className="flex items-center gap-2 text-xs text-gray-500 mb-3">
           <Briefcase size={12} className="text-gray-400" />
-          <span>{shift.role}</span>
+          <span>{roleDisplayName(shift.role)}</span>
         </div>
       )}
       {eligible ? (
@@ -619,7 +621,7 @@ export default function ShiftBoard() {
             <CalendarDays size={22} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Shift Board</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{PAGES.jobBoard.name}</h1>
             <p className="text-sm text-gray-500">Open shifts and swap requests across the team</p>
           </div>
         </div>
@@ -641,7 +643,7 @@ export default function ShiftBoard() {
             <p className="font-semibold mb-0.5">No teaching sub-role assigned</p>
             <p className="text-xs">
               You need at least one teaching sub-role (Elementary / Highschool / Online) before you can claim shifts here.
-              Ask the center owner to set one in the admin panel.
+              Ask a centre owner or manager to set one in {PAGES.manageStaff.name}.
             </p>
           </div>
         </div>

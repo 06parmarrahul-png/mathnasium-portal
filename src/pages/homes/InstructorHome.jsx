@@ -3,6 +3,7 @@ import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'fireb
 import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, PartyPopper } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
+import { greeting } from '../../lib/greeting';
 import { setNewLook } from '../../lib/newLook';
 import {
   watchLastSeen, markSeen, newestDate, unreadCount, unreadLabel,
@@ -662,13 +663,6 @@ function sideColour(side) {
 /** Is this ISO date today? Compared as strings — both are centre-local. */
 function isTodayDate(date, today) {
   return !!date && date === today;
-}
-
-function greeting(d = new Date()) {
-  const h = d.getHours();
-  if (h < 12) return 'Morning';
-  if (h < 17) return 'Afternoon';
-  return 'Evening';
 }
 
 /** " · starts in 2h 15m", or " · underway" once it has begun. */

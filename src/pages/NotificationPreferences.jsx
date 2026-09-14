@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { Bell, BellOff, Mail, Phone, Clock, ChevronLeft } from 'lucide-react';
 import { Link } from 'react-router-dom';
 
@@ -82,7 +83,7 @@ export default function NotificationPreferences() {
         <div className="flex items-center gap-3">
           <div className="rounded-lg bg-orange-100 p-2 text-orange-600"><Bell size={22} /></div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Notification Preferences</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{PAGES.notifications.name}</h1>
             <p className="text-sm text-gray-500">Configure how and when you receive shift reminders</p>
           </div>
         </div>

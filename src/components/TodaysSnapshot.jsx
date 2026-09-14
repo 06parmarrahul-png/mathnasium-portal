@@ -4,6 +4,7 @@ import { format, addDays } from 'date-fns';
 import { Calendar, HandHeart, ChevronLeft, ChevronRight } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import CoverageGrid from './CoverageGrid';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
@@ -245,7 +246,7 @@ export default function TodaysSnapshot() {
             No staff scheduled {isToday ? 'today' : `for ${format(viewDate, 'EEE MMM d')}`}.
           </p>
           <p className="mt-1 text-xs text-gray-400">
-            Run the auto-scheduler or add shifts manually from the Admin Panel.
+            Run the auto-scheduler or add shifts in {PAGES.staffSchedule.name}.
           </p>
         </div>
       ) : (

@@ -1,4 +1,4 @@
-// Scheduler Creation — Enterprise sidebar page.
+// Student Scheduler (route /scheduler-creation) — the daily floor tool.
 //
 // Three sub-tabs:
 //   1. Setup    — iCal URLs, ratio, instructor pool, student roster (CSV
@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
 import { auth, db } from '../firebase';
 import {
   ClipboardList, Settings, CalendarCheck, BarChart3, Printer,
@@ -118,7 +119,9 @@ export default function SchedulerCreation() {
       <div className="mx-auto max-w-md rounded-xl bg-white p-8 shadow-sm text-center">
         <p className="text-3xl mb-2">🔒</p>
         <h1 className="text-xl font-bold text-gray-900 mb-2">Not available</h1>
-        <p className="text-sm text-gray-500">Scheduler Creation is open to Admins, Owners, Admin Assistants, and Enterprise.</p>
+        {/* Not a list of roles: any role can be given the Student Scheduler in
+            Edit Role Permissions, so a list here goes stale (it did). */}
+        <p className="text-sm text-gray-500">You don&apos;t have access to the {PAGES.studentScheduler.name}. A centre owner can give your role access.</p>
       </div>
     );
   }
@@ -131,7 +134,7 @@ export default function SchedulerCreation() {
       <header className="mb-4 flex items-center gap-3 print:hidden">
         <ClipboardList className="text-red-600" size={28} />
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Scheduler Creation</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{PAGES.studentScheduler.name}</h1>
           <p className="text-sm text-gray-500">Daily schedule, staffing forecast, and configuration for the active centre.</p>
         </div>
       </header>

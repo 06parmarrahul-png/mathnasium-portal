@@ -58,7 +58,7 @@ export default function OwnerAssistant() {
 
   const greeting = useMemo(() => {
     const name = profile?.displayName?.split(' ')[0] || 'there';
-    return `Hi ${name}. I'm your assistant — ask me about your center, schedule something, draft an email, or just chat.`;
+    return `Hi ${name}. I'm your assistant — ask me about your centre, schedule something, draft an email, or just chat.`;
   }, [profile?.displayName]);
 
   // Owner / AA gate. Render nothing for everyone else.

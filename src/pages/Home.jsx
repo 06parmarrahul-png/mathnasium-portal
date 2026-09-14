@@ -4,6 +4,8 @@ import { collection, onSnapshot, query, orderBy, limit, where } from 'firebase/f
 import { format } from 'date-fns';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { PAGES } from '../lib/pageNames';
+import { greeting } from '../lib/greeting';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import TodaysSnapshot from '../components/TodaysSnapshot';
 import CareerPlanModal from '../components/CareerPlanModal';
@@ -65,8 +67,8 @@ function daysUntil(dateStr) {
 }
 
 const quickLinks = [
-  { to: '/schedule', label: 'Scheduling', desc: 'Submit availability and view shifts', icon: CalendarDays, color: 'bg-blue-50 text-blue-600', border: 'border-blue-100' },
-  { to: '/chat',     label: 'Chat',       desc: 'Talk with your team and swap shifts', icon: MessageSquare, color: 'bg-green-50 text-green-600', border: 'border-green-100' },
+  { to: PAGES.mySchedule.path, label: PAGES.mySchedule.name, desc: 'Submit availability and view shifts', icon: CalendarDays, color: 'bg-blue-50 text-blue-600', border: 'border-blue-100' },
+  { to: PAGES.teamChat.path, label: PAGES.teamChat.name, desc: 'Talk with your team and swap shifts', icon: MessageSquare, color: 'bg-green-50 text-green-600', border: 'border-green-100' },
 ];
 
 export default function Home() {
@@ -165,7 +167,7 @@ export default function Home() {
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-bold text-gray-900">
-          Welcome back, {profile?.displayName?.split(' ')[0] || 'Instructor'}!
+          {greeting()}, {profile?.displayName?.split(' ')[0] || 'there'}
         </h1>
         <p className="mt-1 text-sm text-gray-500">
           {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
@@ -423,7 +425,7 @@ export default function Home() {
               </div>
               <div className="min-w-0">
                 <h3 className="font-semibold text-gray-900 group-hover:text-red-600 transition-colors">
-                  Manage Schedule
+                  {PAGES.staffSchedule.name}
                 </h3>
                 <p className="text-xs text-gray-500 truncate">Weekly grid, auto-scheduler, time-off requests</p>
               </div>

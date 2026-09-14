@@ -261,10 +261,10 @@ export default function SuperAdmin() {
           <div className="rounded-2xl border border-dashed border-gray-200 bg-gray-50 p-5">
             <h4 className="font-semibold text-gray-700 mb-1 flex items-center gap-2"><Users size={14} /> Future</h4>
             <ul className="text-xs text-gray-500 space-y-1 list-disc list-inside">
-              <li>Cross-center search (find an instructor by name across all centers)</li>
+              <li>Cross-centre search (find an instructor by name across all centres)</li>
               <li>Platform-wide analytics dashboard (total centers, users, shifts)</li>
-              <li>Impersonate owner of any center (with audit log)</li>
-              <li>Disable / archive a center</li>
+              <li>Impersonate owner of any centre (with audit log)</li>
+              <li>Disable / archive a centre</li>
               <li>Billing &amp; subscription management</li>
             </ul>
           </div>
@@ -420,7 +420,7 @@ function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName })
       <p className="text-sm text-gray-500 mb-4">
         The days <strong>{activeCenterName}</strong> is open. Closed days are
         dropped from the admin weekly grid, greyed out on the Schedule
-        calendar, and skipped by the auto-scheduler. Every center must keep at
+        calendar, and skipped by the auto-scheduler. Every centre must keep at
         least one day open.
       </p>
 
@@ -433,7 +433,7 @@ function OperatingDaysEditor({ activeCenterId, centerConfig, activeCenterName })
               key={day}
               onClick={() => !isLastOn && toggle(day)}
               disabled={isLastOn}
-              title={isLastOn ? 'A center must be open at least one day' : ''}
+              title={isLastOn ? 'A centre must be open at least one day' : ''}
               className={`rounded-lg px-3 py-2 text-sm font-semibold border-2 transition-all ${
                 on
                   ? 'bg-purple-600 text-white border-purple-600'
@@ -499,12 +499,12 @@ function CreateCenterForm({ existing }) {
   const handleCreate = async () => {
     setError('');
     if (!centerId.trim() || !name.trim()) {
-      setError('Center ID and Name are both required.');
+      setError('Centre ID and name are both required.');
       return;
     }
     const id = slugify(centerId);
     if (existing.includes(id)) {
-      setError(`A center with id "${id}" already exists. Pick a different id.`);
+      setError(`A centre with id "${id}" already exists. Pick a different id.`);
       return;
     }
     setCreating(true);
@@ -560,7 +560,7 @@ function CreateCenterForm({ existing }) {
       // Switch to the new center so the user can immediately see it empty
       if (addMeAsOwner) switchCenter(id);
     } catch (err) {
-      setError(err?.message || 'Failed to create center.');
+      setError(err?.message || 'Failed to create centre.');
     } finally {
       setCreating(false);
     }
@@ -571,14 +571,14 @@ function CreateCenterForm({ existing }) {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <Plus size={18} className="text-purple-600" />
-          <h3 className="font-semibold text-gray-900">Create New Center</h3>
+          <h3 className="font-semibold text-gray-900">Create New Centre</h3>
         </div>
         {!open ? (
           <button
             onClick={() => setOpen(true)}
             className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-purple-700 transition-colors"
           >
-            <Plus size={13} /> New Center
+            <Plus size={13} /> New Centre
           </button>
         ) : (
           <button
@@ -590,12 +590,12 @@ function CreateCenterForm({ existing }) {
         )}
       </div>
       {!open ? (
-        <p className="text-sm text-gray-500">Onboard a new Mathnasium location. Only super-admins can do this — center owners cannot add new centers themselves (security boundary).</p>
+        <p className="text-sm text-gray-500">Onboard a new Mathnasium location. Only Enterprise can do this — centre owners can't add new centres themselves (security boundary).</p>
       ) : (
         <div className="mt-3 space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Center Name</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Centre Name</label>
               <input
                 type="text"
                 value={name}
@@ -606,7 +606,7 @@ function CreateCenterForm({ existing }) {
             </div>
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">
-                Center ID (slug)
+                Centre ID (slug)
               </label>
               <input
                 type="text"
@@ -655,7 +655,7 @@ function CreateCenterForm({ existing }) {
               onChange={e => setAddMeAsOwner(e.target.checked)}
               className="accent-purple-600 h-4 w-4"
             />
-            <span className="text-sm text-gray-700">Add me as a member of this center & switch to it (recommended for testing)</span>
+            <span className="text-sm text-gray-700">Add me as a member of this centre & switch to it (recommended for testing)</span>
           </label>
           {error && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
@@ -674,7 +674,7 @@ function CreateCenterForm({ existing }) {
               </>
             ) : (
               <>
-                <Plus size={14} /> Create Center
+                <Plus size={14} /> Create Centre
               </>
             )}
           </button>

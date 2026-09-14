@@ -6,6 +6,8 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { roleDisplayName } from '../lib/roleLabel';
+import { PAGES } from '../lib/pageNames';
 import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
 import { isOperatingDay, isCenterClosedOn, closureReason, resolveInstructionalHours } from '../lib/centerConfig';
 import { notifyShiftClaimed } from '../lib/emailService';
@@ -273,7 +275,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                         <ArrowRightLeft size={11} /> Posted for swap
                       </p>
                       <p className="mt-1 text-xs leading-relaxed text-orange-800">
-                        It&apos;s on the Shift Board. The shift is still yours until
+                        It&apos;s on the {PAGES.jobBoard.name}. The shift is still yours until
                         somebody takes it.
                       </p>
                       <button
@@ -352,7 +354,7 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-bold text-orange-900">{fmtTime(s.startTime)} – {fmtTime(s.endTime)}</p>
-                          {s.role && <p className="text-xs text-orange-600 font-medium">{s.role}</p>}
+                          {s.role && <p className="text-xs text-orange-600 font-medium">{roleDisplayName(s.role)}</p>}
                         </div>
                         {canClaim ? (
                           <button
@@ -1530,7 +1532,7 @@ export default function Schedule() {
         .find(isOpenSwap);
       if (already) {
         toast.error(already.userId === profile?.uid
-          ? 'You’ve already posted this shift — it’s on the Shift Board.'
+          ? `You’ve already posted this shift — it’s on the ${PAGES.jobBoard.name}.`
           : `${already.userName || 'Someone'} has already posted this shift for swap.`);
         return;
       }
@@ -1566,7 +1568,7 @@ export default function Schedule() {
   const postSwapDoc = async (shift) => {
     const dateFormatted = fmtDate(shift.date);
     await addDoc(collection(db, 'chat'), {
-      text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}${shift.role ? ` (${shift.role})` : ''}`,
+      text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}${shift.role ? ` (${roleDisplayName(shift.role)})` : ''}`,
       userId: profile.uid,
       userName: profile.displayName,
       userRole: profile.role,
@@ -1591,7 +1593,7 @@ export default function Schedule() {
     // a way to take it back, which is the answer to "did that go through?"
     const cap = requiredCapabilityForShift(shift);
     const who = cap === 'Host' ? 'staff who can host' : cap ? `staff tagged ${cap}` : 'other staff';
-    toast.success(`Posted to the Shift Board! Only ${who} can take it.`);
+    toast.success(`Posted to the ${PAGES.jobBoard.name}! Only ${who} can take it.`);
   };
 
   const handleClaimOpenShift = async (openShift) => {
@@ -1793,7 +1795,7 @@ export default function Schedule() {
             <CalendarDays size={22} />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">My Schedule</h1>
+            <h1 className="text-2xl font-bold text-gray-900">{PAGES.mySchedule.name}</h1>
             <p className="text-sm text-gray-500">View shifts, set availability, and manage time off</p>
           </div>
         </div>
