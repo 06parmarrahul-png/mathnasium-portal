@@ -9,6 +9,7 @@ import MigrationBanner from './MigrationBanner';
 import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
 import { myOpenCount, canUseDesk } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
+import { roleLabelFor } from '../lib/roleLabel';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
@@ -36,16 +37,6 @@ function todayStr() {
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
 }
-
-// Role labels for user-visible surfaces. The underlying Firestore role string
-// stays 'super_admin' (so security rules + audit codes don't churn) but every
-// place a human sees the role, we render it as "Enterprise".
-const ROLE_LABEL = {
-  super_admin: 'Enterprise',
-  owner:       'Owner',
-  admin:       'Admin',
-  instructor:  'Instructor',
-};
 
 export default function Layout({ children }) {
   const auth = useAuth();
@@ -403,14 +394,13 @@ export default function Layout({ children }) {
     return itemTab === currentTab;
   };
 
-  // Role badge for the bottom user card
-  // Volunteer is a per-centre flag rather than a role, so it has to be
-  // checked before the role map — otherwise every volunteer reads as
-  // "Instructor", which is what they are in the data and not what they
-  // are to the team.
-  const roleLabel = isVolunteer
-    ? 'Volunteer'
-    : (ROLE_LABEL[profile?.role] || (isAdmin ? 'Admin' : 'Instructor'));
+  // Role badge for the bottom user card: the job title at THIS centre
+  // (Host, Lead, Center Director), not the platform role — see roleLabelFor.
+  const roleLabel = roleLabelFor({
+    platformRole: profile?.role,
+    instructorType: auth.myInstructorType,
+    isVolunteer,
+  });
 
   return (
     <div className="flex h-screen bg-gray-50">
