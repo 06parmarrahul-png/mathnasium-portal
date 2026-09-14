@@ -3,7 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import Logo from '../components/Logo';
+import Mascot from '../components/Mascot';
+import MascotPicker from '../components/MascotPicker';
+import { DEFAULT_MASCOT } from '../lib/mascots';
 
 const SIGNUP_ERRORS = {
   'auth/email-already-in-use':   'An account with this email already exists.',
@@ -19,6 +21,7 @@ export default function Signup() {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [centerId, setCenterId] = useState('');
+  const [mascot, setMascot] = useState(DEFAULT_MASCOT);
   const [centers, setCenters] = useState([]);
   const [centersLoading, setCentersLoading] = useState(true);
   const [error, setError] = useState('');
@@ -65,7 +68,7 @@ export default function Signup() {
       // created as plain "Instructor"; the owner promotes from the admin panel.
       // centerId IS user-selectable: it's the center they're joining. Their
       // account lands in that center's pending-approval queue.
-      await signup(email, password, name, { phone, centerId });
+      await signup(email, password, name, { phone, centerId, mascot });
       navigate('/');
     } catch (err) {
       const code = err?.code || '';
@@ -81,7 +84,9 @@ export default function Signup() {
     <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-gray-900 via-gray-800 to-red-900 px-4 py-8">
       <div className="w-full max-w-md">
         <div className="mb-8 text-center">
-          <div className="mx-auto mb-4 inline-block"><Logo size={72} /></div>
+          {/* Whichever Cole is picked below, live — it's the first thing
+              they'll see at the top of their sidebar. */}
+          <div className="mx-auto mb-4 inline-block"><Mascot id={mascot} size={72} /></div>
           <h1 className="text-3xl font-bold text-white">Mathnasium</h1>
           <p className="mt-1 text-gray-400">Create Your Instructor Account</p>
         </div>
@@ -158,6 +163,13 @@ export default function Signup() {
                 className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-500/20"
                 placeholder="Confirm your password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
             </div>
+            <fieldset>
+              <legend className="mb-1 block text-sm font-medium text-gray-700">Pick your character</legend>
+              <p className="mb-2 text-xs text-gray-400">
+                It sits at the top of your sidebar. You can change it any time from your account.
+              </p>
+              <MascotPicker value={mascot} onChange={setMascot} />
+            </fieldset>
             <button type="submit" disabled={loading || centersLoading || centers.length === 0}
               className="w-full rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-colors hover:bg-red-700 disabled:opacity-50">
               {loading ? 'Creating Account…' : 'Create Account'}

@@ -637,6 +637,25 @@ Also mock Firestore **by collection**. A mock handing every listener the
 same rows let the availability listener receive shift documents, and a test
 passed for the wrong reason.
 
+## Cole — the mascot each person picks
+
+The A+ at the top of the sidebar (and the phone header, and sign-up) is now
+**Cole**, Ratio's mascot, in one of four outfits: `classic` (Cole),
+`coach` (Coach Cole), `cool` (Cool Cole), `bot` (Cole-bot). Each person picks
+one at sign-up and can change it on Account → "Your character"; it's stored as
+`users/{uid}.mascot` and read through `resolveMascotId()`, so a missing or
+unknown value draws the original. No rules change was needed — self-update
+already allows any field except role / approval / centre ones.
+
+`src/lib/mascots.js` builds every drawing as SVG markup from one rig
+(shaded balls, face, gloves, poses) and `components/Mascot.jsx` shows it as an
+`<img>` data URL — its own document, so clip-path ids can't collide, and no
+markup is injected. Poses (`stand`, `thumbs`, `wave`, `cheer`, `think`,
+`peace`, `coach`) exist for empty states and celebrations; only the head
+crop is used so far. `mascots.test.js` parses all 56 combinations, because a
+typo in one pose would be a broken image for exactly the people who picked it.
+The old Mathnasium `Logo.jsx` was deleted with its last use.
+
 ## Server-side dates: never use UTC
 
 Vercel Lambdas run UTC; the centre runs Pacific. From ~5pm local the

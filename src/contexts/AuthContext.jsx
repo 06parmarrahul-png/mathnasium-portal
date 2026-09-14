@@ -15,6 +15,7 @@ import { buildInitialMembership, resolveUserForCenter } from '../lib/centerMembe
 import { expandSubRoles } from '../lib/subRoles';
 import { resolveRoles, resolvePermissions, can as hasPermission } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
+import { resolveMascotId } from '../lib/mascots';
 
 const AuthContext = createContext(null);
 
@@ -340,7 +341,7 @@ export function AuthProvider({ children }) {
    * @param {string} email
    * @param {string} password
    * @param {string} displayName
-   * @param {Object} extras - { instructorType, phone }
+   * @param {Object} extras - { phone, centerId, mascot }
    */
   const signup = async (email, password, displayName, extras = {}) => {
     const cleanEmail = email.trim();
@@ -396,6 +397,8 @@ export function AuthProvider({ children }) {
       instructorType: isFirstOwner ? 'Owner' : 'Instructor',
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',
+      // Which Cole sits at the top of their sidebar (src/lib/mascots.js).
+      mascot: resolveMascotId(extras.mascot),
       // Multi-center fields — primary + array (for staff who work at multiple)
       centerId,
       centerIds: [centerId],

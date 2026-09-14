@@ -3,7 +3,7 @@ import { Link, useLocation } from 'react-router-dom';
 import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import Logo from './Logo';
+import Mascot from './Mascot';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
 import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
@@ -410,7 +410,8 @@ export default function Layout({ children }) {
       {open && <div className="fixed inset-0 z-20 bg-black/50 lg:hidden" onClick={() => setOpen(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-30 w-64 flex flex-col transform bg-gradient-to-b from-gray-900 to-gray-800 text-white transition-transform duration-200 ease-in-out lg:relative lg:translate-x-0 ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="shrink-0 flex items-center gap-3 border-b border-gray-700 px-5 py-5">
-          <Logo size={40} />
+          {/* Their own Cole, picked at sign-up or on Account. */}
+          <Mascot id={profile?.mascot} size={40} className="shrink-0" />
           <div>
             <h1 className="text-lg font-bold leading-tight text-white">Mathnasium</h1>
             <p className="text-xs text-gray-400">Instructor Portal</p>
@@ -527,7 +528,7 @@ export default function Layout({ children }) {
             <Menu size={24} className="text-gray-700" />
           </button>
           <div className="flex items-center gap-2">
-            <Logo size={28} />
+            <Mascot id={profile?.mascot} size={28} className="shrink-0" />
             <span className="font-bold text-gray-900">Mathnasium Portal</span>
           </div>
 

@@ -11,15 +11,18 @@ import { toast, confirmDialog } from '../lib/notify';
 import { Link } from 'react-router-dom';
 import {
   UserCog, Mail, Lock, Image as ImageIcon, Trash2, Save, AlertTriangle,
-  CheckCircle2, ShieldAlert, Bell, ArrowRight, Phone, Eye, EyeOff,
+  CheckCircle2, ShieldAlert, Bell, ArrowRight, Phone, Eye, EyeOff, Smile,
 } from 'lucide-react';
 import { watchOwnContact, saveContact, lazyMigrateContact } from '../lib/userContact';
+import MascotPicker from '../components/MascotPicker';
+import { mascotFor, resolveMascotId } from '../lib/mascots';
 
 /**
  * Account Details — the signed-in user's self-service profile page.
  *
  * Sections:
  *  - Profile picture (Firebase Storage upload, removable)
+ *  - Your character (which Cole sits at the top of the sidebar)
  *  - Personal info (firstName, lastName, bio)
  *  - Email (verifyBeforeUpdateEmail — sends a verification link to the
  *    new address; the auth-level change happens when they click it)
@@ -185,6 +188,8 @@ export default function AccountDetails() {
 
       {/* Profile picture */}
       <ProfilePictureCard profile={profile} />
+
+      <MascotCard profile={profile} />
 
       {/* Personal info */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -382,6 +387,42 @@ function QuickLinksCard() {
 }
 
 // ─── Profile picture card ──────────────────────────────────────────────────
+
+/**
+ * Which Cole sits at the top of your sidebar. Saves on tap — there is one
+ * thing to choose, so a Save button would only be a second click. The
+ * picker shows the new pick straight away and goes back if the write fails.
+ */
+function MascotCard({ profile }) {
+  const [pending, setPending] = useState(null);
+  const shown = pending ?? resolveMascotId(profile?.mascot);
+
+  const choose = async (id) => {
+    if (!profile?.uid || id === shown) return;
+    setPending(id);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), { mascot: id, profileUpdatedAt: serverTimestamp() });
+      toast.success(`${mascotFor(id).name} it is.`);
+    } catch (err) {
+      toast.error(err?.message || 'Couldn\'t change your character. Try again.');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-1 flex items-center gap-2">
+        <Smile size={16} className="text-purple-600" />
+        <h2 className="font-semibold text-gray-900">Your character</h2>
+      </div>
+      <p className="mb-4 text-sm text-gray-500">
+        Sits at the top of your sidebar and phone header. Change it whenever you like.
+      </p>
+      <MascotPicker value={shown} onChange={choose} disabled={pending !== null} wide />
+    </div>
+  );
+}
 
 function ProfilePictureCard({ profile }) {
   const fileRef = useRef(null);
