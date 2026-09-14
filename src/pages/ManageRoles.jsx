@@ -8,8 +8,9 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   UserCog, ShieldAlert, Shield, Building2, KeyRound, AlertTriangle, Lock, X, MapPin,
-  Mail,
+  Mail, Trash2,
 } from 'lucide-react';
+import TerminateStaffModal from '../components/TerminateStaffModal';
 
 /**
  * Manage Roles — Enterprise-only cross-centre role editor.
@@ -83,6 +84,10 @@ export default function ManageRoles() {
   const [codeMeta, setCodeMeta] = useState({ hasCode: false, loading: true });
   // { mode: 'set' | 'promote' | 'demote_owner', user, targetRole }
   const [modal, setModal] = useState(null);
+  // Terminate lives here as well as in Manage Staff, because Manage Staff
+  // hides owners, internal accounts and the shared "Admin Team" login —
+  // so those could not be removed from anywhere.
+  const [terminateUser, setTerminateUser] = useState(null);
 
   // Subscribe to centres (for the filter dropdown).
   useEffect(() => {
@@ -534,6 +539,19 @@ export default function ManageRoles() {
                           <Mail size={11} /> Send reset
                         </button>
                       )}
+                      {/* Terminate — Enterprise can't be removed from
+                          here (the server refuses it too). Same flow as
+                          Manage Staff: the full record downloads first,
+                          then the name has to be typed. */}
+                      {role !== 'super_admin' && (
+                        <button
+                          onClick={() => setTerminateUser(u)}
+                          className="flex items-center gap-1 rounded-lg border border-red-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
+                          title="Delete this account and everything that belongs to it. Downloads a full record first."
+                        >
+                          <Trash2 size={11} /> Terminate
+                        </button>
+                      )}
                     </div>
                   )}
                 </li>
@@ -566,6 +584,13 @@ export default function ManageRoles() {
             await applyRoleChange(user, targetRole, { codeUsed });
             setModal(null);
           }}
+        />
+      )}
+      {terminateUser && (
+        <TerminateStaffModal
+          user={terminateUser}
+          onClose={() => setTerminateUser(null)}
+          onDone={() => setTerminateUser(null)}
         />
       )}
     </div>
