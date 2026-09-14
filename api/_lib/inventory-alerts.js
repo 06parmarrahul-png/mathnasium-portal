@@ -62,6 +62,7 @@
 //                           Falls back to VERCEL_URL.
 
 import { Resend } from 'resend';
+import { isManagerOfCentre } from './staffAccess.js';
 
 let _resend = null;
 function resendClient() {
@@ -80,8 +81,10 @@ const DIRECTOR_TITLES = new Set([
   'dir. of education', 'director of education',
 ]);
 
-function isAdminish(u) {
+function isAdminish(u, centerId) {
   if (ADMIN_ROLES.has(u.role)) return true;
+  // The centre's Manager took over from the Admin role (see staffAccess.js).
+  if (isManagerOfCentre(u, centerId)) return true;
   const t = String(u.instructorType || '').trim().toLowerCase();
   return DIRECTOR_TITLES.has(t);
 }
@@ -364,7 +367,7 @@ export async function runInventorySweep({ db, fromAddress, force = false }) {
         // and their preferences doc share an id.
         .filter(d => !blockedUids.has(d.id))
         .map(d => d.data() || {})
-        .filter(u => u.approved && u.email && isAdminish(u))
+        .filter(u => u.approved && u.email && isAdminish(u, centerId))
         .map(u => String(u.email).trim());
     }
 

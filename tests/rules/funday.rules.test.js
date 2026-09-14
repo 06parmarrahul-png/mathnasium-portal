@@ -82,7 +82,12 @@ describe('nothing else about events moved', () => {
     // Meetings are an announcement with a date on them, and stay at the
     // announcements tier.
     await assertFails(setDoc(ref('rahul', 'm1'), meeting()));
-    await assertFails(setDoc(ref('mgr', 'm2'), meeting({ type: 'training' })));
+  });
+
+  it('lets a Manager make one — Managers took over the Admin role', async () => {
+    // Since 2026-09-14 the announcements tier includes the Manager of the
+    // centre (isAdminOrManagerAt); see managers.rules.test.js.
+    await assertSucceeds(setDoc(ref('mgr', 'm2'), meeting({ type: 'training' })));
   });
 
   it('stops a meeting being relabelled a fun day to get at it', async () => {

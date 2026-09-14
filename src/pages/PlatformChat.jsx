@@ -4,6 +4,7 @@ import { collection, addDoc, onSnapshot, getDocs, query, orderBy, limit, where }
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { PAGES } from '../lib/pageNames';
+import { isCentreManager, inManagementChat } from '../lib/managementTier';
 import { MessageSquare, Send, ShieldAlert, Building2, Users, Globe } from 'lucide-react';
 import UserProfileModal from '../components/UserProfileModal';
 
@@ -36,7 +37,7 @@ export default function PlatformChat() {
   // owner-level (owner, admin assistant, directors), plain admin and
   // Enterprise. Directors were missing here, so the Chats hub sent them to
   // a refusal the rules would not have given.
-  const canSeeCentre = isSuperAdmin || isOwnerLike || isAdmin;
+  const canSeeCentre = isSuperAdmin || isOwnerLike || isAdmin || isCentreManager(profile, activeCenterId);
   // Owner Chat — strictly owners + Enterprise. AA is intentionally
   // excluded here even though they have owner-level access elsewhere.
   const canSeeOwners = isSuperAdmin || isOwner;
@@ -114,10 +115,7 @@ export default function PlatformChat() {
       .filter(u => u.approved
         && u.internal !== true
         && u.displayName !== 'Admin Team'
-        && (u.role === 'super_admin'
-            || ((u.role === 'owner' || u.role === 'admin_assistant' || u.role === 'admin')
-                && (Array.isArray(u.centerIds) ? u.centerIds.includes(activeCenterId)
-                                                : u.centerId === activeCenterId))),
+        && inManagementChat(u, activeCenterId),
       )
       .sort((a, b) => {
         const ra = ROLE_ORDER[a.role] ?? 9;
@@ -178,11 +176,15 @@ export default function PlatformChat() {
       month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
     }) : '';
   const initials = (name) => name?.split(' ').map(w => w.charAt(0)).join('').toUpperCase().slice(0, 2) || '??';
-  const roleBadge = (role) => {
+  // `sender` is the author's user doc when we have it: a Manager's messages
+  // carry userRole 'instructor', so the badge comes from their title.
+  const roleBadge = (role, sender) => {
     if (role === 'super_admin')     return { label: 'Enterprise',      cls: 'bg-purple-100 text-purple-700' };
     if (role === 'owner')           return { label: 'Owner',           cls: 'bg-red-100 text-red-700' };
     if (role === 'admin_assistant') return { label: 'Admin Assistant', cls: 'bg-teal-100 text-teal-700' };
+    if (role === 'director')        return { label: 'Director',        cls: 'bg-amber-100 text-amber-700' };
     if (role === 'admin')           return { label: 'Admin',           cls: 'bg-emerald-100 text-emerald-700' };
+    if (isCentreManager(sender, activeCenterId)) return { label: 'Manager', cls: 'bg-emerald-100 text-emerald-700' };
     return null;
   };
 
@@ -229,10 +231,10 @@ export default function PlatformChat() {
               </div>
             ) : messages.map(msg => {
               const isMe = msg.userId === profile?.uid;
-              const badge = roleBadge(msg.userRole);
               // Avatar + name are click targets that open the profile
               // viewer for that message's sender.
               const senderUser = allUsers.find(u => u.uid === msg.userId);
+              const badge = roleBadge(msg.userRole, senderUser);
               const senderHasPhoto = !!senderUser?.photoURL;
               return (
                 <div key={msg.id} className={`flex gap-3 ${isMe ? 'flex-row-reverse' : ''}`}>

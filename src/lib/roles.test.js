@@ -60,7 +60,11 @@ const legacy = ({ platformRole: role, instructorType: it, isVolunteer }) => {
   const isHost           = it === 'Host';
   const isTraining       = it === 'Training';
 
-  const canSeeAdminPanel     = isSuperAdmin || isOwner || isAdminAssistant || isAdmin || isDirector;
+  // ONE DELIBERATE CHANGE since this was copied: the Admin platform role was
+  // retired on 2026-09-14 and the Manager title took over everything it
+  // granted, so a Manager now reaches the admin panel exactly as an Admin
+  // did. Everything else below is still verbatim.
+  const canSeeAdminPanel     = isSuperAdmin || isOwner || isAdminAssistant || isAdmin || isManager || isDirector;
   const canSeeCenterSettings = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
   const canRunScheduler      = canSeeAdminPanel || isLead || isManager || isHost;
   const canManageOperations  = canSeeAdminPanel || isManager || isHost;
@@ -152,6 +156,14 @@ describe('equivalence on the real Langley roster', () => {
     expect(can(p, 'admin.panel')).toBe(true);
     expect(can(p, 'scheduler.run')).toBe(true);
     expect(can(p, 'centre.settings')).toBe(false);
+  });
+
+  it('Sabrina keeps every permission when her account moves off the Admin role', () => {
+    // The whole point of retiring Admin into the Manager title: switching
+    // her platform role to instructor must cost nothing.
+    const before = perms({ platformRole: 'admin', instructorType: 'Manager' });
+    const after = perms({ platformRole: 'instructor', instructorType: 'Manager' });
+    expect([...after].sort()).toEqual([...before].sort());
   });
 
   it('Rahul (instructor + Host) runs the floor without the admin panel', () => {

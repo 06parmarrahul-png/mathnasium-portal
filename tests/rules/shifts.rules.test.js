@@ -283,12 +283,16 @@ describe('centre events — staff meetings and fun days', () => {
     }
   });
 
-  it('does not let a manager or host write them either', async () => {
+  it('does not let a host write them either', async () => {
     // Same tier as announcements — deliberately narrower than the floor
     // tools, because an event is a message to the whole centre.
-    for (const uid of ['mgr1', 'host1']) {
-      await assertFails(setDoc(doc(as(uid), PATH, `bad-${uid}`), EVENT));
-    }
+    await assertFails(setDoc(doc(as('host1'), PATH, 'bad-host1'), EVENT));
+  });
+
+  it('lets the centre’s Manager write them, now that Managers are the admin tier', async () => {
+    // The announcements tier took in the Manager of the centre on
+    // 2026-09-14 when the Admin role was retired (isAdminOrManagerAt).
+    await assertSucceeds(setDoc(doc(as('mgr1'), PATH, 'ok-mgr1'), EVENT));
   });
 
   it('does not let an instructor delete one', async () => {

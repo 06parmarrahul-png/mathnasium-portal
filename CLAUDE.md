@@ -637,6 +637,41 @@ Also mock Firestore **by collection**. A mock handing every listener the
 same rows let the availability listener receive shift documents, and a test
 passed for the wrong reason.
 
+## Managers are the admin — the Admin platform role is retired
+
+Decided 2026-09-14. Only two accounts were ever left on `role: 'admin'`: the
+shared "Admin Team" login and the Manager. Everything the Admin role unlocked
+is now unlocked by the **Manager job title, at that centre** — so a Manager is
+made in Manage Staff, per centre, without an Enterprise login.
+
+- **Rules:** `isAdminOrManagerAt(centerId)` replaced `isAdmin()` in every
+  admin-only rule (announcements, Management Chat / `centerLeadership`,
+  schedulerStudents/Aliases/Settings, meetings in `events`, `config`,
+  `connectors`, `demandSnapshots`, deleting swap posts). It uses
+  `isManagerOfCentre` — a MEMBER of that centre titled Manager there —
+  NOT the older `isManagerAt`, which also accepts a legacy top-level
+  `instructorType` at any centre. A mutation test proved the difference:
+  with `isManagerAt`, a Burnaby Manager got into Langley on 10 paths.
+  Staff private details (contact, pay rate): `isManagerOfUsersCentre`,
+  the Manager's primary centre only. Tests: `tests/rules/managers.rules.test.js`.
+- **Client:** the built-in Manager seed carries `ADMIN_PANEL_BASE`;
+  `src/lib/managementTier.js` (`isCentreManager`, `inManagementChat`) mirrors
+  the rules for the Management Chat link, page, member list and badges, and the
+  Online channel. Manage Roles no longer offers "→ Admin"; demotions land on
+  Instructor.
+- **Server:** `api/_lib/staffAccess.js` decides who may add / approve / remove
+  staff (owner tier, legacy admin, or Manager of that centre) and the removal
+  ranking (a Manager ranks with Admin; a director by title with a director by
+  role). Directors were missing from both endpoints' first check and could not
+  add staff at all. Only the owner tier may create a director-titled account.
+- **Data:** `scripts/managers-take-over-admin.cjs` (dry run unless `--apply`)
+  adds the admin grants to each saved Manager role and moves admin-role
+  accounts that hold a Manager title to `instructor`. It refuses the account
+  switch until the DEPLOYED rules contain `isAdminOrManagerAt`. Accounts with
+  no Manager title (Admin Team) are listed, not touched.
+
+`isAdmin()` / `isAdmin` stay in place until the last admin-role account is gone.
+
 ## Page names and job titles — one list
 
 Every page's name lives in `src/lib/pageNames.js` (`PAGES`). The sidebar,

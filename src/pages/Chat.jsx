@@ -7,6 +7,8 @@ import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 
 import { toast } from '../lib/notify';
 import { hasCapability } from '../lib/subRoles';
 import { resolveUserForCenter } from '../lib/centerMembership';
+import { isCentreManager } from '../lib/managementTier';
+import { roleDisplayName } from '../lib/roleLabel';
 import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
@@ -47,7 +49,9 @@ export default function Chat() {
     || profile?.role === 'super_admin'
     || profile?.role === 'owner'
     || profile?.role === 'admin_assistant'
-    || profile?.role === 'admin';
+    || profile?.role === 'admin'
+    // Managers took over the Admin role (src/lib/managementTier.js).
+    || isCentreManager(profile, activeCenterId);
   // If somebody loses Online access while looking at the Online tab, bounce
   // them back to All so they don't get stuck on an empty/hidden channel.
   useEffect(() => {
@@ -104,7 +108,8 @@ export default function Chat() {
           || u.role === 'super_admin'
           || u.role === 'owner'
           || u.role === 'admin_assistant'
-          || u.role === 'admin')
+          || u.role === 'admin'
+          || isCentreManager(u, activeCenterId))
       : base;
     return [...filtered].sort((a, b) => {
       const ra = ROLE_ORDER[a.role] ?? 9;
@@ -435,7 +440,7 @@ export default function Chat() {
               : role === 'admin_assistant' ? 'Admin Assistant'
               : role === 'admin'         ? 'Admin'
               : resolveUserForCenter(m, activeCenterId)?.isVolunteer === true ? 'Volunteer'
-              : (m.instructorType || '');
+              : roleDisplayName(resolveUserForCenter(m, activeCenterId)?.instructorType || '');
             return (
               <button
                 key={m.id || m.uid}

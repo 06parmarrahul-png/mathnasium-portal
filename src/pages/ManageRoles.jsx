@@ -216,15 +216,18 @@ export default function ManageRoles() {
       setModal({ mode: 'promote', user, targetRole: 'director' });
     }
   };
+  // Demotions land on Instructor, not Admin: the Admin role was retired on
+  // 2026-09-14 and its powers moved to the Manager job title. Someone who
+  // should still run the centre keeps a Manager title (set in Manage Staff).
   const handleDemoteAdminAssistant = async (user) => {
     const ok = await confirmDialog({
       title: 'Demote Admin Assistant?',
-      message: `${user.displayName || user.email} is currently Admin Assistant. Demote to Admin? They'll keep centre access but lose Centre Settings and the ability to manage other admins.`,
-      confirmText: 'Demote to Admin',
+      message: `${user.displayName || user.email} is currently Admin Assistant. Demote to Instructor? They keep their job title and whatever it gives them (a Manager keeps running the centre), but lose owner-level access and Centre Settings.`,
+      confirmText: 'Demote to Instructor',
       danger: true,
     });
     if (!ok) return;
-    await applyRoleChange(user, 'admin', { codeUsed: false });
+    await applyRoleChange(user, 'instructor', { codeUsed: false });
   };
 
   const handleMoveCentre = (user) => {
@@ -301,12 +304,12 @@ export default function ManageRoles() {
   const handleDemoteOwner = async (user) => {
     const ok = await confirmDialog({
       title: 'Demote owner?',
-      message: `${user.displayName || user.email} is currently Owner. Demote to Admin? They'll keep centre access but lose Centre Analytics, Centre Settings, and the ability to manage other admins.`,
-      confirmText: 'Demote to Admin',
+      message: `${user.displayName || user.email} is currently Owner. Demote to Instructor? They keep their job title and whatever it gives them (a Manager keeps running the centre), but lose owner-level access, Centre Analytics and Centre Settings.`,
+      confirmText: 'Demote to Instructor',
       danger: true,
     });
     if (!ok) return;
-    await applyRoleChange(user, 'admin', { codeUsed: false });
+    await applyRoleChange(user, 'instructor', { codeUsed: false });
   };
 
   const applyRoleChange = async (user, nextRole, { codeUsed }) => {
@@ -460,14 +463,14 @@ export default function ManageRoles() {
                           onClick={() => handleDemoteOwner(u)}
                           className="rounded-lg border border-red-300 bg-white px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50"
                         >
-                          Demote to Admin
+                          Demote to Instructor
                         </button>
                       ) : role === 'admin_assistant' ? (
                         <button
                           onClick={() => handleDemoteAdminAssistant(u)}
                           className="rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
                         >
-                          Demote to Admin
+                          Demote to Instructor
                         </button>
                       ) : (
                         <>
@@ -479,14 +482,9 @@ export default function ManageRoles() {
                               → Instructor
                             </button>
                           )}
-                          {role !== 'admin' && (
-                            <button
-                              onClick={() => handleQuickRoleChange(u, 'admin')}
-                              className="rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
-                            >
-                              → Admin
-                            </button>
-                          )}
+                          {/* No "→ Admin": that role is retired. Its powers
+                              come from the Manager job title now, which is
+                              set per centre in Manage Staff. */}
                           <button
                             onClick={() => handlePromoteToDirector(u)}
                             className="flex items-center gap-1 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"

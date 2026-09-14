@@ -91,6 +91,36 @@ service cloud.firestore {
       return profileExists() && profile().get('role', '') == 'admin';
     }
 
+    // MANAGERS ARE THE ADMIN NOW (decided 2026-09-14). The Admin platform
+    // role is being retired — two accounts were left on it, one of them the
+    // Manager — so everything it unlocked is unlocked by the Manager job
+    // title instead, at that centre. A title is per centre and can be given
+    // from Manage Staff; the platform role applied everywhere and needed an
+    // Enterprise login to hand out. isAdmin() stays in the OR only until the
+    // last admin-role account has been switched.
+    function isAdminOrManagerAt(centerId) {
+      return isAdmin() || isManagerOfCentre(centerId);
+    }
+
+    // Manager of exactly this centre: a member of it, whose title THERE is
+    // Manager. Stricter than isManagerAt, which also accepts the legacy
+    // top-level instructorType at any centre — fine for the floor tools it
+    // guards, not for admin-level reach.
+    function isManagerOfCentre(centerId) {
+      return profileExists()
+        && centerId in profile().get('centerIds', [])
+        && titleAt(centerId) == 'Manager';
+    }
+
+    // A Manager reading a staff member's private details (contact, pay
+    // rate): only for someone at the Manager's own primary centre. One extra
+    // read, the other person's profile.
+    function isManagerOfUsersCentre(userId) {
+      return isManagerOfCentre(profile().get('centerId', ''))
+        && get(/databases/$(database)/documents/users/$(userId)).data
+             .get('centerIds', []).hasAny([profile().get('centerId', '')]);
+    }
+
     // Lead instructors — not a top-level role, but an instructorType
     // value. Granted limited write access to scheduler-operational
     // collections below (assignments, check-ins, walk-ins) so Leads
@@ -423,7 +453,7 @@ service cloud.firestore {
         // and it cannot escalate to platform power: `roles.manage` is on
         // the PLATFORM_ONLY list in src/lib/roles.js and is stripped on
         // read, on write and again at resolution.
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin()
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
                      || hasPermAt(centerId, 'centre.settings');
       }
 
@@ -437,17 +467,17 @@ service cloud.firestore {
 
       match /schedulerStudents/{studentId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
       }
 
       match /schedulerAliases/{aliasId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
       }
 
       match /schedulerSettings/{docId} {
         allow read:  if canRunFloor(centerId);
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
       }
 
       // Walk-in / manual student additions per day. One doc per date,
@@ -485,14 +515,14 @@ service cloud.firestore {
         //
         // The type is checked on BOTH sides of an update so a meeting
         // cannot be relabelled a fun day to get at it.
-        allow create: if isOwnerLike() || isSuperAdmin() || isAdmin()
+        allow create: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
                       || (canRunFunDaysAt(centerId)
                           && request.resource.data.get('type', '') == 'fun-day');
-        allow update: if isOwnerLike() || isSuperAdmin() || isAdmin()
+        allow update: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
                       || (canRunFunDaysAt(centerId)
                           && resource.data.get('type', '') == 'fun-day'
                           && request.resource.data.get('type', '') == 'fun-day');
-        allow delete: if isOwnerLike() || isSuperAdmin() || isAdmin()
+        allow delete: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
                       || (canRunFunDaysAt(centerId)
                           && resource.data.get('type', '') == 'fun-day');
       }
@@ -614,7 +644,7 @@ service cloud.firestore {
       // Saved demand + supply overrides per day. Feeds the auto-
       // scheduler's staffing recommendations, so writes stay owner-like.
       match /demandSnapshots/{dateId} {
-        allow read:  if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow read:  if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
         allow write: if isOwnerLike() || isSuperAdmin();
       }
 
@@ -633,7 +663,7 @@ service cloud.firestore {
       // collection, not here. Read/write is admin-and-above because the
       // Apptoto appointments card renders inside the Admin Panel.
       match /connectors/{connectorId} {
-        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdmin();
+        allow read, write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
       }
 
       // ─── Inventory (centre supplies) ────────────────────────────────
@@ -715,6 +745,10 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && (
           request.auth.uid == userId
           || isOwnerLike() || isSuperAdmin() || isAdmin()
+          // Managers took over the Admin role (see isAdminOrManagerAt), but
+          // only for staff at their own centre — the Admin role reached
+          // every account on the platform.
+          || isManagerOfUsersCentre(userId)
         );
       }
 
@@ -944,7 +978,8 @@ service cloud.firestore {
       // Read with .get() defaults: a legacy document missing one of these
       // fields must fall through to a denial, not blow up the evaluation.
       allow delete: if isOwnerLike() || isSuperAdmin()
-                       || (isAdmin() && resource.data.type == 'shift_swap')
+                       || (isAdminOrManagerAt(resource.data.get('centerId', ''))
+                           && resource.data.get('type', '') == 'shift_swap')
                        || (
                             isSignedIn()
                             && resource.data.get('type', '') == 'shift_swap'
@@ -965,22 +1000,33 @@ service cloud.firestore {
       allow delete: if isOwner() || isSuperAdmin();
     }
 
-    // Centre Leadership Chat — per-centre management space for admin,
-    // owner, AA, and Enterprise. Each message carries a centerId; reads are
-    // role-gated here but the client also filters by activeCenterId.
+    // Centre Leadership Chat (Management Chat in the app) — per-centre
+    // space for owner-level staff, Enterprise, and Managers of THAT centre
+    // (who took over from the Admin role). Each message carries a centerId,
+    // and the app queries by it, so the Manager check can be made against it.
     match /centerLeadership/{msgId} {
-      allow read:   if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin());
-      allow create: if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin())
+      allow read:   if isSignedIn() && (isOwnerLike() || isSuperAdmin()
+                    || isAdminOrManagerAt(resource.data.get('centerId', '')));
+      allow create: if isSignedIn() && (isOwnerLike() || isSuperAdmin()
+                    || isAdminOrManagerAt(request.resource.data.get('centerId', '')))
                     && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (isAdmin() || isOwnerLike() || isSuperAdmin());
+      allow update: if isSignedIn() && (isOwnerLike() || isSuperAdmin()
+                    || isAdminOrManagerAt(resource.data.get('centerId', '')));
       allow delete: if isOwnerLike() || isSuperAdmin();
     }
 
     match /announcements/{annId} {
       allow read:  if isSignedIn();
-      // Admin-panel writes — admins / owners / super-admins all post and
-      // manage announcements. Instructors / hosts can only read.
-      allow create, update, delete: if isOwnerLike() || isSuperAdmin() || isAdmin();
+      // Owner-level staff and Enterprise post and manage announcements
+      // anywhere; a Manager, only at their own centre, and cannot move one
+      // to another centre. Instructors / hosts can only read.
+      allow create: if isOwnerLike() || isSuperAdmin()
+                    || isAdminOrManagerAt(request.resource.data.get('centerId', ''));
+      allow update: if isOwnerLike() || isSuperAdmin()
+                    || (isAdminOrManagerAt(resource.data.get('centerId', ''))
+                        && request.resource.data.get('centerId', '') == resource.data.get('centerId', ''));
+      allow delete: if isOwnerLike() || isSuperAdmin()
+                    || isAdminOrManagerAt(resource.data.get('centerId', ''));
     }
 
     match /notificationPreferences/{userId} {

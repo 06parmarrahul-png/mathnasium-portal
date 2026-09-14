@@ -37,6 +37,7 @@
 //           400 / 403 / 409 / 500 on errors
 
 import { authenticateRequest, getAuth, getFirestore } from '../_lib/firebase-admin.js';
+import { canManageStaffAnywhere, canManageStaffAt, canCreateTitle } from '../_lib/staffAccess.js';
 import { Resend } from 'resend';
 
 const ALLOWED_INSTRUCTOR_TYPES = new Set([
@@ -117,9 +118,9 @@ export default async function handler(req, res) {
 
   const caller = session.profile;
   const callerRole = caller?.role || '';
-  // Anyone with admin-panel access can create staff (owner / AA / admin /
-  // super-admin). Plain instructors can't.
-  if (!['super_admin', 'owner', 'admin_assistant', 'admin'].includes(callerRole)) {
+  // Owner-level staff, the old Admin role, and a centre's Manager (checked
+  // against the target centre below). Plain instructors can't.
+  if (!canManageStaffAnywhere(caller)) {
     return res.status(403).json({ error: 'Not authorized' });
   }
   if (!caller?.approved) {
@@ -149,6 +150,9 @@ export default async function handler(req, res) {
   if (!ALLOWED_INSTRUCTOR_TYPES.has(instructorType)) {
     return res.status(400).json({ error: `instructorType must be one of: ${[...ALLOWED_INSTRUCTOR_TYPES].join(', ')}` });
   }
+  if (!canCreateTitle(caller, instructorType)) {
+    return res.status(403).json({ error: 'Only an owner, director or admin assistant can create a director account.' });
+  }
   if (priority < 1 || priority > 3) {
     return res.status(400).json({ error: 'priority must be 1, 2, or 3.' });
   }
@@ -170,6 +174,9 @@ export default async function handler(req, res) {
   }
   if (!targetCenterId) {
     return res.status(400).json({ error: 'Could not determine target centre.' });
+  }
+  if (!canManageStaffAt(caller, targetCenterId)) {
+    return res.status(403).json({ error: 'You can only add staff at a centre you manage.' });
   }
 
   // ── Create the Auth account ─────────────────────────────────────────

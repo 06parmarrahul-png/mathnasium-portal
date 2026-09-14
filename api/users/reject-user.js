@@ -46,6 +46,7 @@
 //                404 { error: 'User not found' }
 
 import { authenticateRequest, getAuth, getFirestore } from '../_lib/firebase-admin.js';
+import { canManageStaffAnywhere, staffCentresOf, privilegeOf } from '../_lib/staffAccess.js';
 
 async function readJson(req) {
   if (req.body && typeof req.body === 'object') return req.body;
@@ -219,8 +220,10 @@ export default async function handler(req, res) {
 
   const caller = session.profile;
   const callerRole = caller?.role || '';
-  // Anyone without admin-panel access has no business here.
-  if (!['super_admin', 'owner', 'admin_assistant', 'admin'].includes(callerRole)) {
+  // Owner-level staff, the old Admin role, and a centre's Manager. Directors
+  // were missing from this list, so they were turned away here before the
+  // terminate check below — which names them — was ever reached.
+  if (!canManageStaffAnywhere(caller)) {
     return res.status(403).json({ error: 'Not authorized' });
   }
 
@@ -346,19 +349,18 @@ export default async function handler(req, res) {
     // director CALLER scored 0 (so they could remove nobody, since every
     // target scored >= 0). Directors are owner-equivalent, so they sit
     // with owner at 3.
-    const PRIVILEGE = {
-      instructor: 1, admin: 2, admin_assistant: 2.5, director: 3, owner: 3, super_admin: 4,
-    };
-    if ((PRIVILEGE[targetRole] || 0) >= (PRIVILEGE[callerRole] || 0)) {
+    // The ranks live in _lib/staffAccess.js now, because a Manager (who
+    // took over the Admin role) ranks with Admin by TITLE, not by role, and
+    // a director by title ranks with a director by role.
+    if (privilegeOf(target) >= privilegeOf(caller)) {
       return res.status(403).json({
         error: 'You cannot reject a user with equal or higher privilege.',
       });
     }
-    // And they must share at least one centre with the target — otherwise
-    // an owner of one centre could remove an instructor from another.
-    const callerCenters = Array.isArray(caller.centerIds)
-      ? caller.centerIds
-      : (caller.centerId ? [caller.centerId] : []);
+    // And the target must be at a centre the caller manages staff at —
+    // otherwise an owner of one centre could remove an instructor from
+    // another. For a Manager that is only the centres they manage.
+    const callerCenters = staffCentresOf(caller);
     const shareCenter = callerCenters.some(c => userIsAtCenter(target, c));
     if (!shareCenter) {
       return res.status(403).json({

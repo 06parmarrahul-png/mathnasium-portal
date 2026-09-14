@@ -252,7 +252,10 @@ const BUILTIN_ROLE_SEEDS = [
   // post-it notes. Lead is deliberately NOT on the list: a Lead runs the
   // floor for a shift, which is a different job from settling an account
   // question. Any centre that disagrees can grant it in Manage Roles.
-  { name: 'Manager',           permissions: ['scheduler.run', 'admin.operations', 'notes.access'] },
+  // Managers ARE the admin tier (2026-09-14): the Admin platform role was
+  // retired and the Manager title carries everything it granted, at that
+  // centre. The Firestore rules mirror it in isAdminOrManagerAt().
+  { name: 'Manager',           permissions: [...ADMIN_PANEL_BASE] },
   { name: 'Lead',              permissions: ['scheduler.run'] },
   { name: 'Host',              permissions: ['scheduler.run', 'admin.operations', 'notes.access'] },
   { name: 'Admin',             permissions: ['notes.access'] },

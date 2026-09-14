@@ -10,6 +10,7 @@ import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
 import { myOpenCount, canUseDesk } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { roleLabelFor } from '../lib/roleLabel';
+import { isCentreManager } from '../lib/managementTier';
 import { PAGES, PORTAL_NAME, PORTAL_SUBTITLE, documentTitleFor } from '../lib/pageNames';
 import CenterSwitcher from './CenterSwitcher';
 import {
@@ -329,7 +330,9 @@ export default function Layout({ children }) {
   if (!isSuperAdmin && !isOwner && !isVolunteer) {
     communicate.push({ to: PAGES.teamChat.path, label: PAGES.teamChat.name, icon: MessageSquare });
   }
-  if ((isAdmin || isAdminAssistant) && !isSuperAdmin && !isVolunteer) {
+  // The centre's Manager is in Management Chat too — Managers took over the
+  // Admin role (see src/lib/managementTier.js).
+  if ((isAdmin || isAdminAssistant || isCentreManager(profile, activeCenterId)) && !isSuperAdmin && !isVolunteer) {
     communicate.push({ to: PAGES.managementChat.path, label: PAGES.managementChat.name, icon: Headphones });
   }
   // Volunteers get the latest announcement on their Home page, which is

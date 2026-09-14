@@ -39,13 +39,25 @@ const LANGLEY = {
   },
 };
 
-function authFor({ role, title, volunteer = false }) {
-  const roles = resolveRoles(LANGLEY, () => '#999');
+// After scripts/managers-take-over-admin.cjs: the Manager role carries
+// what the retired Admin role did.
+const LANGLEY_AFTER = {
+  staffRolePermissions: {
+    ...LANGLEY.staffRolePermissions,
+    Manager: ['admin.panel', 'admin.operations', 'analytics.view', 'scheduler.run', 'shifts.take', 'chat.access', 'notes.access'],
+  },
+};
+
+function authFor({ role, title, volunteer = false, config = LANGLEY }) {
+  const roles = resolveRoles(config, () => '#999');
   const permissions = resolvePermissions({ platformRole: role, instructorType: title, isVolunteer: volunteer, roles });
   const isDirector = role === 'director';
   return {
-    profile: { uid: `u-${title}`, displayName: 'Sam Lee', role },
-    activeCenterId: 'langley', centerConfig: LANGLEY, mySubRoles: ['Elementary'], logout: () => {},
+    profile: {
+      uid: `u-${title}-${role}`, displayName: 'Sam Lee', role, centerId: 'langley', centerIds: ['langley'],
+      centerMemberships: { langley: { instructorType: title, isVolunteer: volunteer } },
+    },
+    activeCenterId: 'langley', centerConfig: config, mySubRoles: ['Elementary'], logout: () => {},
     isSuperAdmin: role === 'super_admin', isOwner: role === 'owner', isDirector,
     isAdminAssistant: role === 'admin_assistant', isAdmin: role === 'admin',
     isOwnerLike: ['owner', 'admin_assistant', 'super_admin'].includes(role) || isDirector,
@@ -61,6 +73,8 @@ const PEOPLE = {
   education: { role: 'director', title: 'Dir. of Education' },
   aa:        { role: 'admin_assistant', title: 'Admin' },
   manager:   { role: 'admin', title: 'Manager' },
+  // The same Manager once their account is off the retired Admin role.
+  managerNow:{ role: 'instructor', title: 'Manager', config: LANGLEY_AFTER },
   host:      { role: 'instructor', title: 'Host' },
   lead:      { role: 'instructor', title: 'Lead' },
   instructor:{ role: 'instructor', title: 'Instructor' },
@@ -124,6 +138,24 @@ describe('everyone can reach a chat', () => {
     const { sidebar } = draw('volunteer');
     expect(sidebar).not.toContain('Team Chat');
     expect(sidebar).not.toContain('Chats');
+  });
+});
+
+describe('Managers took over the Admin role', () => {
+  it('a Manager off the Admin role keeps exactly the same sidebar', () => {
+    const before = draw('manager').sidebar;
+    cleanup();
+    const after = draw('managerNow').sidebar;
+    expect(after).toEqual(before);
+    expect(after).toContain('Management Chat');
+    expect(after).toContain('Centre Events');
+    expect(after).not.toContain('Fun Days');
+  });
+
+  it('Hosts and Leads still have no Management Chat', () => {
+    expect(draw('host').sidebar).not.toContain('Management Chat');
+    cleanup();
+    expect(draw('lead').sidebar).not.toContain('Management Chat');
   });
 });
 
