@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  periodFor, stepPeriod, periodLabel, isInPeriod,
+  periodFor, stepPeriod, periodLabel, isInPeriod, payDateFor, upcomingPayroll,
   scheduledHours, payHours, isAdjusted, summarisePeriod,
   sickStatus, statsInPeriod, grossPay, isPlausibleRate, money,
   SICK_DAYS_PER_YEAR, PROBATION_DAYS, isHourlyPaid,
@@ -74,6 +74,40 @@ describe('pay periods — 11th-25th and 26th-10th', () => {
     expect(isInPeriod('2026-09-10', p)).toBe(false);
     expect(isInPeriod('2026-09-26', p)).toBe(false);
     expect(isInPeriod(null, p)).toBe(false);
+  });
+});
+
+describe('pay dates and the payroll to run next', () => {
+  it('pays five days after a period closes: the 10th on the 15th, the 25th on the 30th', () => {
+    expect(payDateFor({ start: '2026-08-26', end: '2026-09-10' })).toBe('2026-09-15');
+    expect(payDateFor({ start: '2026-09-11', end: '2026-09-25' })).toBe('2026-09-30');
+    expect(payDateFor({ start: '2026-12-26', end: '2027-01-10' })).toBe('2027-01-15');
+  });
+
+  it('on the 14th opens the payroll being paid on the 15th, not the period running now', () => {
+    expect(upcomingPayroll('2026-09-14')).toEqual({ start: '2026-08-26', end: '2026-09-10' });
+  });
+
+  it('keeps it through payday, and moves on the day after', () => {
+    expect(upcomingPayroll('2026-09-15')).toEqual({ start: '2026-08-26', end: '2026-09-10' });
+    expect(upcomingPayroll('2026-09-16')).toEqual({ start: '2026-09-11', end: '2026-09-25' });
+  });
+
+  it('does the same for the 25th-ending period, paid on the 30th', () => {
+    expect(upcomingPayroll('2026-09-26')).toEqual({ start: '2026-09-11', end: '2026-09-25' });
+    expect(upcomingPayroll('2026-09-30')).toEqual({ start: '2026-09-11', end: '2026-09-25' });
+    expect(upcomingPayroll('2026-10-01')).toEqual({ start: '2026-09-26', end: '2026-10-10' });
+  });
+
+  it('before a period has even closed, that period is the next payroll', () => {
+    expect(upcomingPayroll('2026-09-05')).toEqual({ start: '2026-08-26', end: '2026-09-10' });
+    expect(upcomingPayroll('2026-09-20')).toEqual({ start: '2026-09-11', end: '2026-09-25' });
+  });
+
+  it('crosses the year', () => {
+    expect(upcomingPayroll('2026-12-31')).toEqual({ start: '2026-12-26', end: '2027-01-10' });
+    expect(upcomingPayroll('2027-01-14')).toEqual({ start: '2026-12-26', end: '2027-01-10' });
+    expect(upcomingPayroll('2027-01-16')).toEqual({ start: '2027-01-11', end: '2027-01-25' });
   });
 });
 

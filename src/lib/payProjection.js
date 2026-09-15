@@ -88,6 +88,32 @@ export function periodLabel(period) {
   return `${a.getDate()} ${month(a)} – ${b.getDate()} ${month(b)}`;
 }
 
+/**
+ * The day a period is paid: five days after it closes. A period ending on
+ * the 10th is paid on the 15th, one ending on the 25th on the 30th. This
+ * is the rule Manage Payroll's "paid" label always used; it now lives here
+ * so the label and the default period can't disagree.
+ */
+export function payDateFor(period) {
+  const d = parse(period.end);
+  d.setDate(d.getDate() + 5);
+  return iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
+}
+
+/**
+ * The payroll to run next: the latest period whose pay date hasn't passed.
+ *
+ * Not the period containing today. On 14 September the period running is
+ * 11–25 September, but the payroll being prepared is 26 August – 10
+ * September, paid on the 15th. It stays the default through payday itself,
+ * and moves on the day after.
+ */
+export function upcomingPayroll(todayISO) {
+  const current = periodFor(todayISO);
+  const previous = stepPeriod(current, -1);
+  return todayISO <= payDateFor(previous) ? previous : current;
+}
+
 export function isInPeriod(dateISO, period) {
   return !!dateISO && dateISO >= period.start && dateISO <= period.end;
 }

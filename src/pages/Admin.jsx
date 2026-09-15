@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Fragment } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import {
   collection, onSnapshot, doc, updateDoc, deleteDoc, deleteField,
@@ -55,6 +55,10 @@ import {
 import { attachEmails } from '../lib/userContact';
 import { weekdayBudgetTotal, resolveWeekdayModel } from '../lib/budgetBuckets';
 import { isPaidStatHoliday, statPayForHoliday, minusDays } from '../lib/statPay';
+import { periodFor, stepPeriod, payDateFor, upcomingPayroll, todayISO as localTodayISO } from '../lib/payProjection';
+import {
+  holidayCards, defaultHolidayDate, holidayYears, windowIsLoaded, windowIsClosed, buildStatRows,
+} from '../lib/statHolidayGrid';
 import {
   signOutState, resolvedActualHours, effectiveSignOut,
   buildSignOutRequest, newSignOutToken, SIGNOUT_TTL_DAYS, payrollNeedsReview,
@@ -1878,6 +1882,239 @@ function ImportFromWiwButton({ approvedUsers, onImport, onDeleteRange }) {
   );
 }
 
+// ── Pay period stepper ─────────────────────────────────────────────────
+// ‹ previous · the selected period and its pay date · next ›, plus a way
+// back to the payroll being prepared. Shared by This Period and Sick Days,
+// which read the same selected period.
+const shortMD = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+export function PayPeriodStepper({ start, end, isDefault, onStep, onReset }) {
+  const valid = start && end;
+  const pays = valid ? payDateFor({ start, end }) : null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="inline-flex items-stretch overflow-hidden rounded-lg border border-green-200 bg-white">
+        <button type="button" onClick={() => onStep(-1)} aria-label="Previous pay period"
+          className="px-2.5 text-green-700 hover:bg-green-50">
+          <ChevronLeft size={16} />
+        </button>
+        <span className="border-x border-green-100 px-3 py-1.5 text-xs text-gray-700">
+          {valid ? <><b className="text-gray-900">{shortMD(start)} – {shortMD(end)}</b> · paid {shortMD(pays)}</> : 'Pick a period'}
+        </span>
+        <button type="button" onClick={() => onStep(1)} aria-label="Next pay period"
+          className="px-2.5 text-green-700 hover:bg-green-50">
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      {isDefault ? (
+        <span className="rounded-full bg-green-100 px-2.5 py-1 text-[11px] font-semibold text-green-800">Upcoming payroll</span>
+      ) : (
+        <button type="button" onClick={onReset}
+          className="rounded-lg border border-green-200 bg-green-50 px-3 py-1.5 text-xs font-medium text-green-700 hover:bg-green-100">
+          Back to upcoming payroll
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Sick days in one pay period ────────────────────────────────────────
+// Who was off sick in the selected period, and how much of it is paid.
+// The figures come from the payroll calculation itself (sickPaidHours /
+// sickUnpaidHours), so this list is what the money is.
+export function PeriodSickDays({ start, end, isDefault, onStep, onReset, people }) {
+  const withSick = people.filter(p => p.dates.length > 0);
+  const paidTotal = Math.round(withSick.reduce((s, p) => s + p.paidHours, 0) * 100) / 100;
+  const unpaidTotal = Math.round(withSick.reduce((s, p) => s + p.unpaidHours, 0) * 100) / 100;
+  return (
+    <div className="rounded-xl border bg-white shadow-sm overflow-hidden">
+      <div className="px-5 py-4 border-b bg-amber-50/60">
+        <div className="flex flex-wrap items-center gap-3">
+          <Activity size={18} className="text-amber-700 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900">
+              {isDefault ? 'Current Pay Period Sick Days' : 'Pay Period Sick Days'}
+            </h3>
+            <p className="text-xs text-gray-600">
+              Everyone off sick in this pay period. Paid hours follow the 5-day allowance and probation, the same as the payroll sheet.
+            </p>
+          </div>
+          <PayPeriodStepper start={start} end={end} isDefault={isDefault} onStep={onStep} onReset={onReset} />
+        </div>
+      </div>
+      {withSick.length === 0 ? (
+        <p className="px-5 py-6 text-sm text-gray-500">No sick days in {shortMD(start)} – {shortMD(end)}.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs uppercase text-gray-500">
+              <tr>
+                <th className="px-4 py-2 text-left">Staff</th>
+                <th className="px-4 py-2 text-left">Role</th>
+                <th className="px-4 py-2 text-left">Sick days this period</th>
+                <th className="px-4 py-2 text-center">Paid</th>
+                <th className="px-4 py-2 text-center">Unpaid</th>
+                <th className="px-4 py-2 text-center">Used this year</th>
+              </tr>
+            </thead>
+            <tbody>
+              {withSick.map(p => (
+                <tr key={p.name} className="border-t border-gray-100">
+                  <td className="px-4 py-2 font-medium text-gray-900">{p.name}</td>
+                  <td className="px-4 py-2 text-xs text-gray-600">{p.role}</td>
+                  <td className="px-4 py-2 text-xs">
+                    {p.dates.map(d => (
+                      <span key={d.date}
+                        className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 mr-1 mb-1 ${
+                          d.external ? 'border-gray-300 bg-gray-100 text-gray-700'
+                          : d.paid ? 'border-amber-200 bg-amber-50 text-amber-800'
+                          : 'border-red-200 bg-red-50 text-red-700'
+                        }`}>
+                        {shortMD(d.date)}
+                        {d.hours > 0 && <span className="font-semibold">{d.hours}h</span>}
+                        {d.external && <span className="text-[9px] uppercase tracking-wide text-gray-500">off-system</span>}
+                        {!d.external && !d.paid && <span className="text-[9px] uppercase tracking-wide">unpaid</span>}
+                      </span>
+                    ))}
+                  </td>
+                  <td className={`px-4 py-2 text-center font-bold ${p.paidHours > 0 ? 'text-amber-700' : 'text-gray-300'}`}>
+                    {p.paidHours > 0 ? `${p.paidHours}h` : '—'}
+                  </td>
+                  <td className={`px-4 py-2 text-center font-bold ${p.unpaidHours > 0 ? 'text-red-600' : 'text-gray-300'}`}>
+                    {p.unpaidHours > 0 ? `${p.unpaidHours}h` : '—'}
+                  </td>
+                  <td className="px-4 py-2 text-center text-xs text-gray-600">
+                    {p.usedThisYear == null ? '—' : `${p.usedThisYear} of ${SICK_DAYS_PER_YEAR}`}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot className="border-t bg-gray-50 text-xs">
+              <tr>
+                <td className="px-4 py-2 font-semibold text-gray-700" colSpan={3}>
+                  {withSick.length} {withSick.length === 1 ? 'person' : 'people'} off sick
+                </td>
+                <td className="px-4 py-2 text-center font-bold text-amber-700">{paidTotal}h</td>
+                <td className="px-4 py-2 text-center font-bold text-red-600">{unpaidTotal > 0 ? `${unpaidTotal}h` : '—'}</td>
+                <td />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Stat holidays grid ─────────────────────────────────────────────────
+// Every paid statutory holiday as a card: its pay period, the day that
+// period is paid, and how many qualify. The next one is marked. Opening a
+// card shows the full roster for that holiday — the table this tab used to
+// be, which only ever covered the holidays inside the selected pay period.
+const HOLIDAY_STATUS = {
+  next:         { label: 'Next up',     cls: 'bg-purple-600 text-white' },
+  upcoming:     { label: 'Upcoming',    cls: 'bg-gray-100 text-gray-700' },
+  'being-paid': { label: 'Being paid',  cls: 'bg-amber-100 text-amber-800' },
+  paid:         { label: 'Paid',        cls: 'bg-emerald-100 text-emerald-800' },
+};
+
+export function StatHolidaysTab({ cards, rowsFor, openDate, onOpen, todayKey, historyFrom }) {
+  const years = holidayYears(cards);
+  const openCard = cards.find(c => c.date === openDate) || null;
+  const [year, setYear] = useState(() => (openCard ? openCard.date.slice(0, 4) : years[0]));
+  const shown = cards.filter(c => c.date.startsWith(year));
+  const weekday = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+
+  if (cards.length === 0) {
+    return (
+      <div className="rounded-xl border bg-white p-6 text-sm text-gray-500 shadow-sm">
+        No statutory holidays are set up for this centre. Add them in Manage Staff Schedule → Holidays.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border bg-white shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 border-b bg-purple-50/40 px-5 py-4">
+          <Activity size={18} className="text-purple-700 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900">Stat Holidays</h3>
+            <p className="text-xs text-gray-600">
+              Each holiday is paid in the pay period it falls in. Staff qualify with 15+ days worked in the 30 days before it. Open a holiday to see everyone's working.
+            </p>
+          </div>
+          {years.length > 1 && (
+            <div className="flex gap-1">
+              {years.map(y => (
+                <button key={y} type="button" onClick={() => setYear(y)}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${y === year ? 'bg-purple-600 text-white' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
+                  {y}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+          {shown.map(c => {
+            const s = HOLIDAY_STATUS[c.status];
+            const isOpen = c.date === openDate;
+            const loaded = windowIsLoaded(c, historyFrom);
+            const closed = windowIsClosed(c, todayKey);
+            const rows = loaded ? rowsFor(c.date) : [];
+            const eligible = rows.filter(r => r.qualifies).length;
+            const hours = Math.round(rows.reduce((t, r) => t + (r.qualifies ? r.totalStat : 0), 0) * 100) / 100;
+            return (
+              <button key={c.date} type="button" onClick={() => onOpen(isOpen ? null : c.date)}
+                aria-expanded={isOpen}
+                className={`flex flex-col gap-2 rounded-xl border p-3.5 text-left transition-colors ${
+                  isOpen ? 'border-purple-500 bg-purple-50 ring-2 ring-purple-200'
+                  : c.status === 'next' ? 'border-purple-300 bg-white hover:bg-purple-50/40'
+                  : 'border-gray-200 bg-white hover:bg-gray-50'
+                }`}>
+                <div className="flex w-full items-center justify-between gap-2">
+                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${s.cls}`}>{s.label}</span>
+                  <ChevronDown size={14} className={`text-gray-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">{c.holiday.name || 'Statutory holiday'}</p>
+                  <p className="text-xs text-gray-500">{weekday(c.date)}</p>
+                </div>
+                <div className="rounded-lg bg-gray-50 px-2.5 py-1.5 text-[11px] text-gray-600">
+                  Pay period <b className="text-gray-800">{shortMD(c.period.start)} – {shortMD(c.period.end)}</b>
+                  <span className="block">Paid {shortMD(c.payDate)}</span>
+                </div>
+                <p className="text-xs">
+                  {!loaded ? (
+                    <span className="text-gray-400">Before Ratio’s shift records</span>
+                  ) : (
+                    <>
+                      <b className={eligible > 0 ? 'text-emerald-700' : 'text-gray-500'}>{eligible} eligible</b>
+                      {eligible > 0 && <span className="text-gray-500"> · {hours}h</span>}
+                      {!closed && <span className="block text-[10px] text-gray-400">Window still open — counts include scheduled shifts</span>}
+                    </>
+                  )}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {openCard && (
+        windowIsLoaded(openCard, historyFrom)
+          ? <StatPayTab holidays={[openCard.holiday]} rows={rowsFor(openCard.date)} />
+          : (
+            <div className="rounded-xl border bg-white p-5 text-sm text-gray-600 shadow-sm">
+              {openCard.holiday.name}’s qualifying window starts {shortMD(openCard.windowStart)}, before the shifts this page has loaded,
+              so it can’t be worked out here.
+            </div>
+          )
+      )}
+    </div>
+  );
+}
+
 // ── Sick Days roster (year-to-date) ────────────────────────────────────
 // Per-employee tally of sick days used vs remaining for the current
 // calendar year, with probation status. Policy: 5 sick days per year,
@@ -1902,7 +2139,7 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate, onA
           <Activity size={18} className="text-amber-700 shrink-0" />
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900">
-              Sick Days · {year}
+              Sick Days This Year · {year}
             </h3>
             <p className="text-xs text-gray-600">
               Policy: {maxPerYear} paid sick days per calendar year, available after the {probationDays}-day probation period (BC ESA minimum).
@@ -2374,15 +2611,22 @@ export default function Admin() {
     });
   };
 
-  // Payroll state
-  const today = new Date();
-  const defaultPeriod = today.getDate() >= 11 && today.getDate() <= 25
-    ? { start: `${format(today, 'yyyy-MM')}-11`, end: `${format(today, 'yyyy-MM')}-25` }
-    : today.getDate() > 25
-      ? { start: `${format(today, 'yyyy-MM')}-26`, end: format(new Date(today.getFullYear(), today.getMonth() + 1, 10), 'yyyy-MM-dd') }
-      : { start: format(new Date(today.getFullYear(), today.getMonth() - 1, 26), 'yyyy-MM-dd'), end: `${format(new Date(today.getFullYear(), today.getMonth(), 10), 'yyyy-MM')}-10` };
+  // Payroll state. Opens on the payroll being prepared, not the period
+  // running today: on the 14th that's 26 Aug – 10 Sep, paid on the 15th
+  // (see upcomingPayroll). It used to open on the period containing today,
+  // so every payroll run started by stepping back a period by hand.
+  const todayKey = localTodayISO();
+  const defaultPeriod = upcomingPayroll(todayKey);
   const [payStart, setPayStart] = useState(defaultPeriod.start);
   const [payEnd,   setPayEnd]   = useState(defaultPeriod.end);
+  const isDefaultPayPeriod = payStart === defaultPeriod.start && payEnd === defaultPeriod.end;
+  // Step to the period before or after whatever is selected. A hand-typed
+  // range that isn't a real period snaps to the period its start falls in.
+  const stepPayPeriod = (delta) => {
+    const next = stepPeriod(periodFor(payStart || todayKey), delta);
+    setPayStart(next.start); setPayEnd(next.end);
+  };
+  const resetPayPeriod = () => { setPayStart(defaultPeriod.start); setPayEnd(defaultPeriod.end); };
   const [radiusData, setRadiusData] = useState([]); // parsed Radius timesheet rows
   const [radiusFileName, setRadiusFileName] = useState('');
   // Whether the Radius import card is expanded. Defaults false so the
@@ -4006,6 +4250,9 @@ export default function Admin() {
         for (const [ds, hrs] of p.sickDatesInPeriod) {
           if (paid.has(ds)) paidH += hrs; else unpaidH += hrs;
         }
+        // Which of this period's sick days are the paid ones — Sick Days
+        // lists them day by day.
+        p.sickPaidDates = [...p.sickDatesInPeriod.keys()].filter(ds => paid.has(ds));
         p.sickPaidHours   = Math.round(paidH * 100) / 100;
         p.sickUnpaidHours = Math.round(unpaidH * 100) / 100;
       }
@@ -4196,7 +4443,7 @@ export default function Admin() {
       out.push({
         uid: u.uid,
         name: u.displayName,
-        role: u.instructorType || 'Instructor',
+        role: roleDisplayName(u.instructorType || 'Instructor'),
         hireDate: hire,
         daysIn,
         onProbation,
@@ -4214,32 +4461,22 @@ export default function Admin() {
   // Sub-tab inside Manage Payroll: "This period" or "Sick days".
   const [payrollSubtab, setPayrollSubtab] = useState('period');
 
-  // Diagnostic for stat pay — flags WHY a person did or didn't qualify
-  // for stat pay on each holiday in the pay period. Used by the small
-  // info panel on the payroll tab when stat pay isn't showing up.
-  const statDiagnostic = useMemo(() => {
-    if (!payStart || !payEnd) return null;
-    const holidaysList = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
-    const allInPeriod = holidaysList.filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
-    // Only real statutory holidays pay. Plain closures are surfaced
-    // separately so it's obvious why they aren't generating stat pay,
-    // rather than them just silently vanishing from this tab.
-    const inPeriod = allInPeriod.filter(isPaidStatHoliday);
-    const closuresInPeriod = allInPeriod.filter(h => !isPaidStatHoliday(h));
-    // Aggregate by a STABLE identity (userId, else roster-name→uid, else raw
-    // name) so a timesheet import that renames a person slightly doesn't
-    // split their shifts and hide their stat-pay qualification. Mirrors the
-    // payroll calc above.
+  // Everyone's shifts, grouped for stat pay. Aggregated by a STABLE
+  // identity (userId, else roster-name→uid, else raw name) so a timesheet
+  // import that renames a person slightly doesn't split their shifts and
+  // hide their stat-pay qualification. Mirrors the payroll calc above.
+  // Excludes the same people hourly payroll excludes — salaried staff (the
+  // Centre Director + Director of Education), volunteers, and anyone hidden
+  // from ops: stat pay is an hourly-staff entitlement.
+  // Shared by the pay-period diagnostic and the holiday grid, so the two
+  // can't count differently.
+  const statPeople = useMemo(() => {
     const nameToUid = {};
     const uidToName = {};
     for (const u of usersForCentre) {
       if (u?.displayName && u?.uid) { nameToUid[u.displayName] = u.uid; uidToName[u.uid] = u.displayName; }
     }
     const canonId = (s) => s.userId || nameToUid[s.userName] || s.userName;
-    // Exclude the same people the hourly payroll excludes — salaried staff
-    // (e.g. the Centre Director + Director of Education), volunteers, and
-    // anyone hidden from ops. Stat pay is an hourly-staff entitlement, so
-    // these roles shouldn't appear in the diagnostic or the Stat Pay tab.
     const isExcluded = (name) =>
       salaryStaff.has(name) || volunteerNames.has(name) || hiddenFromOps.has(name);
     const byPerson = {};
@@ -4252,90 +4489,135 @@ export default function Admin() {
       if (!byPerson[id]) byPerson[id] = { name: dispName, shifts: [] };
       byPerson[id].shifts.push(s);
     }
-    // Uses the same lib as the payroll calc, so this tab and the money can
-    // never disagree — they used to be two separate copies of the rule.
-    const detail = inPeriod.map(h => {
-      const perPerson = Object.values(byPerson).map(p => {
-        const r = statPayForHoliday(p.shifts, h.date, payableShiftHours);
-        return {
-          name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours,
-          // Carried through so the roster can show what made up the count.
-          // Paid sick days legally qualify, which looks wrong at a glance
-          // unless the split is visible.
-          sickDays: r.sickDays, workedDays: r.workedDays,
-          // Full working for the expandable breakdown: every qualifying day
-          // and the two numbers the average is built from. Cheap to carry —
-          // it's already computed — and it saves exporting a spreadsheet
-          // just to answer "why is this person's stat pay 4.88?".
-          days: r.days, totalHours: r.totalHours, windowStart: r.windowStart,
-        };
-      }).sort((a, b) => b.count - a.count);
-      return { holiday: h, windowStart: statPayForHoliday([], h.date, payableShiftHours).windowStart, perPerson };
-    });
+    return Object.values(byPerson);
+  }, [shifts, usersForCentre, salaryStaff, volunteerNames, hiddenFromOps]);
+
+  // One holiday's result for every person. Uses the same lib as the payroll
+  // calc, so these tabs and the money can never disagree — they used to be
+  // two separate copies of the rule.
+  const statDetailFor = useCallback((h) => ({
+    holiday: h,
+    windowStart: statPayForHoliday([], h.date, payableShiftHours).windowStart,
+    perPerson: statPeople.map(p => {
+      const r = statPayForHoliday(p.shifts, h.date, payableShiftHours);
+      return {
+        name: p.name, count: r.daysWorked, qualifies: r.qualifies, statHours: r.hours,
+        // Carried through so the roster can show what made up the count.
+        // Paid sick days legally qualify, which looks wrong at a glance
+        // unless the split is visible.
+        sickDays: r.sickDays, workedDays: r.workedDays,
+        // Full working for the expandable breakdown: every qualifying day
+        // and the two numbers the average is built from — it saves
+        // exporting a spreadsheet just to answer "why is this 4.88?".
+        days: r.days, totalHours: r.totalHours, windowStart: r.windowStart,
+      };
+    }).sort((a, b) => b.count - a.count),
+  }), [statPeople]);
+
+  // Diagnostic for stat pay — flags WHY a person did or didn't qualify
+  // for stat pay on each holiday in the pay period. Used by the small
+  // info panel on the payroll tab when stat pay isn't showing up.
+  const statDiagnostic = useMemo(() => {
+    if (!payStart || !payEnd) return null;
+    const holidaysList = Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : [];
+    const allInPeriod = holidaysList.filter(h => h?.date && h.date >= payStart && h.date <= payEnd);
+    // Only real statutory holidays pay. Plain closures are surfaced
+    // separately so it's obvious why they aren't generating stat pay,
+    // rather than them just silently vanishing from this tab.
+    const inPeriod = allInPeriod.filter(isPaidStatHoliday);
+    const closuresInPeriod = allInPeriod.filter(h => !isPaidStatHoliday(h));
     return {
       holidaysConfigured: holidaysList.length,
       inPeriod,
       closuresInPeriod,
-      detail,
+      detail: inPeriod.map(statDetailFor),
     };
-  }, [shifts, usersForCentre, centerConfig?.holidays, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps]);
+  }, [centerConfig?.holidays, payStart, payEnd, statDetailFor]);
 
-  // Roster shape for the Stat Pay sub-tab (mirrors sickDaysSummary). One row
-  // per person, merged across every stat holiday in the period, with role
-  // looked up from payroll / the centre roster.
+  // Role shown on stat rows: from payroll, else the centre roster, as the
+  // team says it.
+  const statRoleByName = useMemo(() => {
+    const roleByName = new Map();
+    for (const p of payrollSummary) roleByName.set(p.name, roleDisplayName(p.role));
+    for (const u of usersForCentre) {
+      if (u.displayName && !roleByName.has(u.displayName)) {
+        roleByName.set(u.displayName, roleDisplayName(u.instructorType || 'Instructor'));
+      }
+    }
+    return roleByName;
+  }, [payrollSummary, usersForCentre]);
+
+  // Roster shape for the pay period (mirrors sickDaysSummary). One row per
+  // person, merged across every stat holiday in the period.
   const statPaySummary = useMemo(() => {
     if (!statDiagnostic || statDiagnostic.inPeriod.length === 0) {
       return { holidays: [], rows: [] };
     }
-    const roleByName = new Map();
-    for (const p of payrollSummary) roleByName.set(p.name, p.role);
-    for (const u of usersForCentre) {
-      if (u.displayName && !roleByName.has(u.displayName)) {
-        roleByName.set(u.displayName, u.instructorType || 'Instructor');
-      }
+    return { holidays: statDiagnostic.inPeriod, rows: buildStatRows(statDiagnostic.detail, statRoleByName) };
+  }, [statDiagnostic, statRoleByName]);
+
+  // ─── Stat Pay tab: every holiday ──────────────────────────────────────
+  // The shifts listener only reaches back WINDOW_DAYS (180), so a holiday
+  // whose 30-day window starts earlier can't be counted and says so,
+  // rather than showing "0 eligible".
+  const statHistoryFrom = minusDays(todayKey, 180);
+  const statCards = useMemo(
+    () => holidayCards(centerConfig?.holidays, todayKey),
+    [centerConfig?.holidays, todayKey],
+  );
+  const statRowsByDate = useMemo(() => {
+    const out = new Map();
+    for (const c of statCards) {
+      if (!windowIsLoaded(c, statHistoryFrom)) continue;
+      out.set(c.date, buildStatRows([statDetailFor(c.holiday)], statRoleByName));
     }
+    return out;
+  }, [statCards, statHistoryFrom, statDetailFor, statRoleByName]);
+  // Which holiday card is open. Starts on the one in the selected pay
+  // period, else the next one; 'auto' keeps following the period until
+  // somebody opens or closes a card themselves.
+  const [openHoliday, setOpenHoliday] = useState('auto');
+  const openHolidayDate = openHoliday === 'auto'
+    ? defaultHolidayDate(statCards, { start: payStart, end: payEnd })
+    : openHoliday;
+
+  // ─── Sick Days tab: the selected pay period ──────────────────────────
+  // Built from the payroll calculation (so paid / unpaid is what the money
+  // is) plus days recorded as taken outside Ratio, which have no shift.
+  const periodSickPeople = useMemo(() => {
+    const round2 = (n) => Math.round(n * 100) / 100;
+    const yearByName = new Map(sickDaysSummary.map(r => [r.name, r]));
     const byName = new Map();
-    for (const d of statDiagnostic.detail) {
-      for (const p of d.perPerson) {
-        if (!byName.has(p.name)) {
-          byName.set(p.name, {
-            name: p.name,
-            role: roleByName.get(p.name) || 'Instructor',
-            perHoliday: [],
-            totalStat: 0,
-            qualifies: false,
-          });
-        }
-        const row = byName.get(p.name);
-        row.perHoliday.push({
-          holiday: d.holiday, count: p.count, qualifies: p.qualifies, statHours: p.statHours,
-          sickDays: p.sickDays, workedDays: p.workedDays,
-          days: p.days, totalHours: p.totalHours, windowStart: p.windowStart,
-        });
-        if (p.qualifies) { row.totalStat += p.statHours; row.qualifies = true; }
+    for (const p of payrollSummary) {
+      if (!p.sickDatesInPeriod || p.sickDatesInPeriod.size === 0) continue;
+      const paidSet = new Set(p.sickPaidDates || []);
+      byName.set(p.name, {
+        name: p.name,
+        role: roleDisplayName(p.role),
+        paidHours: p.sickPaidHours || 0,
+        unpaidHours: p.sickUnpaidHours || 0,
+        dates: [...p.sickDatesInPeriod].map(([date, hrs]) => ({ date, hours: round2(hrs), paid: paidSet.has(date), external: false })),
+      });
+    }
+    for (const r of sickDaysSummary) {
+      const external = (r.externalSickDates || []).filter(d => d >= payStart && d <= payEnd);
+      if (external.length === 0) continue;
+      if (!byName.has(r.name)) {
+        byName.set(r.name, { name: r.name, role: roleDisplayName(r.role), paidHours: 0, unpaidHours: 0, dates: [] });
+      }
+      const row = byName.get(r.name);
+      for (const d of external) {
+        if (!row.dates.some(x => x.date === d)) row.dates.push({ date: d, hours: 0, paid: false, external: true });
       }
     }
-    const rows = [...byName.values()]
+    return [...byName.values()]
       .map(r => ({
         ...r,
-        totalStat: Math.round(r.totalStat * 100) / 100,
-        // Highest window shift count across the period's holidays — used to
-        // rank the not-yet-eligible staff by who's closest to the 15 mark.
-        shifts: r.perHoliday.reduce((mx, h) => Math.max(mx, h.count || 0), 0),
-        // Sick/worked split from whichever holiday supplied that peak count,
-        // so the breakdown shown always adds up to the number beside it.
-        sickDays: (r.perHoliday.reduce(
-          (best, h) => (!best || (h.count || 0) > (best.count || 0)) ? h : best, null,
-        ) || {}).sickDays || 0,
+        dates: r.dates.sort((a, b) => a.date.localeCompare(b.date)),
+        usedThisYear: yearByName.get(r.name)?.used ?? null,
       }))
-      .sort((a, b) => {
-        if (a.qualifies !== b.qualifies) return Number(b.qualifies) - Number(a.qualifies);
-        // Eligible: highest stat pay first. Not yet eligible: closest to 15 first.
-        if (a.qualifies) return (b.totalStat - a.totalStat) || a.name.localeCompare(b.name);
-        return (b.shifts - a.shifts) || a.name.localeCompare(b.name);
-      });
-    return { holidays: statDiagnostic.inPeriod, rows };
-  }, [statDiagnostic, payrollSummary, usersForCentre]);
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [payrollSummary, sickDaysSummary, payStart, payEnd]);
 
   // Update a user's hire date (used by the Sick days tab so the owner
   // can correct probation dates without going to Manage Staff).
@@ -4381,11 +4663,10 @@ export default function Admin() {
   // period close. If the centre's period ends on a different day, we
   // still show end+5 (e.g. ending 31st → paid 5 days later) which matches
   // the same "5-day arrears" cadence.
-  const payoutLabel = payEnd ? (() => {
-    const end = new Date(payEnd + 'T00:00:00');
-    end.setDate(end.getDate() + 5);
-    return end.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-  })() : '';
+  const payoutLabel = payEnd
+    ? new Date(payDateFor({ start: payStart, end: payEnd }) + 'T00:00:00')
+        .toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+    : '';
 
   // Headline "Total hours" = what we actually PAY, i.e. the sum of Pay h.
   // That means no-shows count 0 and per-shift overrides are honoured — the
@@ -6944,20 +7225,34 @@ export default function Admin() {
 
           {/* ── Stat Pay sub-tab ──────────────────────────────────────── */}
           {payrollSubtab === 'stat' && (
-            <StatPayTab holidays={statPaySummary.holidays} rows={statPaySummary.rows} />
+            <StatHolidaysTab
+              cards={statCards}
+              rowsFor={(date) => statRowsByDate.get(date) || []}
+              openDate={openHolidayDate}
+              onOpen={setOpenHoliday}
+              todayKey={todayKey}
+              historyFrom={statHistoryFrom}
+            />
           )}
 
           {/* ── Sick Days sub-tab ─────────────────────────────────────── */}
           {payrollSubtab === 'sick' && (
-            <SickDaysTab
-              rows={sickDaysSummary}
-              year={new Date().getFullYear()}
-              maxPerYear={SICK_DAYS_PER_YEAR}
-              probationDays={PROBATION_DAYS}
-              onAddExternalSickDate={handleAddExternalSickDate}
-              onRemoveExternalSickDate={handleRemoveExternalSickDate}
-              onSetHireDate={handleSetHireDate}
-            />
+            <div className="space-y-4">
+              <PeriodSickDays
+                start={payStart} end={payEnd} isDefault={isDefaultPayPeriod}
+                onStep={stepPayPeriod} onReset={resetPayPeriod}
+                people={periodSickPeople}
+              />
+              <SickDaysTab
+                rows={sickDaysSummary}
+                year={new Date().getFullYear()}
+                maxPerYear={SICK_DAYS_PER_YEAR}
+                probationDays={PROBATION_DAYS}
+                onAddExternalSickDate={handleAddExternalSickDate}
+                onRemoveExternalSickDate={handleRemoveExternalSickDate}
+                onSetHireDate={handleSetHireDate}
+              />
+            </div>
           )}
 
           {/* ── "This Period" sub-tab — wraps the original payroll UI ── */}
@@ -7012,26 +7307,12 @@ export default function Admin() {
                 <input type="date" value={payEnd} onChange={e => setPayEnd(e.target.value)}
                   className="rounded-lg border px-3 py-2 text-sm focus:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500/20" />
               </div>
-              {/* Quick select buttons */}
-              <div className="flex flex-wrap gap-2">
-                {[
-                  { label: '11th – 25th', fn: () => {
-                    const y = today.getMonth() === 0 && today.getDate() < 11 ? today.getFullYear() - 1 : today.getFullYear();
-                    const m = String(today.getMonth() + 1).padStart(2,'0');
-                    setPayStart(`${y}-${m}-11`); setPayEnd(`${y}-${m}-25`);
-                  }},
-                  { label: '26th – 10th', fn: () => {
-                    const start = new Date(today.getFullYear(), today.getMonth(), 26);
-                    const end   = new Date(today.getFullYear(), today.getMonth() + 1, 10);
-                    setPayStart(format(start, 'yyyy-MM-dd')); setPayEnd(format(end, 'yyyy-MM-dd'));
-                  }},
-                ].map(q => (
-                  <button key={q.label} onClick={q.fn}
-                    className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs font-medium text-green-700 hover:bg-green-100 transition-colors">
-                    {q.label}
-                  </button>
-                ))}
-              </div>
+              {/* Step through real pay periods from whatever is selected. The
+                  old "11th – 25th / 26th – 10th" buttons only ever picked this
+                  month's two, so last month's payroll meant typing dates. */}
+              <PayPeriodStepper
+                start={payStart} end={payEnd} isDefault={isDefaultPayPeriod}
+                onStep={stepPayPeriod} onReset={resetPayPeriod} />
             </div>
 
             {/* Summary bar */}
