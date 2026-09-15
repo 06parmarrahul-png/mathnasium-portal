@@ -282,6 +282,38 @@ export function roleKey(name) {
   return String(name ?? '').trim().toLowerCase().replace(/[^a-z]/g, '');
 }
 
+// ─── Director titles ─────────────────────────────────────────────────────
+//
+// A director title is owner-level access, so only the owner tier may put
+// one on anybody — firestore.rules refuses it for everyone else
+// (writesDirectorTitle), and these two let the UI stop offering it.
+
+const DIRECTOR_TITLE_KEYS = new Set(['centerdirector', 'centredirector', 'dirofeducation', 'directorofeducation']);
+
+/**
+ * Is this a director title, in any spelling? Folded with roleKey(), which
+ * is also how the rules fold it — so a custom role named "Centre Director"
+ * counts, not just the stored built-ins.
+ */
+export function isDirectorTitle(name) {
+  return DIRECTOR_TITLE_KEYS.has(roleKey(name));
+}
+
+const OWNER_TIER_ROLES = new Set(['super_admin', 'owner', 'director', 'admin_assistant']);
+// isDirector() in the rules matches these exactly, on the top-level title.
+const RULES_DIRECTOR_TITLES = new Set(['Center Director', 'Centre Director', 'Dir. of Education', 'Director of Education']);
+
+/**
+ * May this person give someone a director title? The same test as the
+ * rules' `isOwnerLike() || isSuperAdmin()`: the platform role, or the
+ * legacy top-level title spelled exactly — not the per-centre title, which
+ * the rules don't read there. Deliberately NOT AuthContext's isOwnerLike,
+ * which is wider, so nobody is offered a choice the save would refuse.
+ */
+export function canGrantDirectorTitle(profile) {
+  return OWNER_TIER_ROLES.has(profile?.role) || RULES_DIRECTOR_TITLES.has(profile?.instructorType);
+}
+
 /** A stable id for a newly created role, unique within the registry. */
 export function makeRoleId(name, existing = []) {
   const base = String(name ?? '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')

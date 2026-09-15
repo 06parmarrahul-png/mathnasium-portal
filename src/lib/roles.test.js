@@ -26,6 +26,8 @@ import {
   roleHolderCount,
   serializeRoles,
   permissionLookup,
+  isDirectorTitle,
+  canGrantDirectorTitle,
 } from './roles';
 
 const ROLES = builtInRoles(() => '#000000');
@@ -896,5 +898,45 @@ describe('a new permission reaching a centre that has customised its roles', () 
     expect(host.permissions).toContain('scheduler.run');
     expect(host.permissions).toContain('admin.operations');
     expect(host.permissions).toContain('notes.access');
+  });
+});
+
+describe('director titles are the owner tier’s to give', () => {
+  // Mirrors writesDirectorTitle / isOwnerLike() || isSuperAdmin() in
+  // firestore.rules — tests/rules/directorTitles.rules.test.js pins the rules.
+  it('recognises every spelling, including a custom role named like one', () => {
+    for (const t of ['Center Director', 'Centre Director', 'Dir. of Education', 'Director of Education',
+      'center director', ' CENTRE-DIRECTOR ', 'Director-of-Education']) {
+      expect(isDirectorTitle(t)).toBe(true);
+    }
+    for (const t of ['Manager', 'Host', 'Lead', 'Admin', 'Owner', 'Instructor', 'Assistant Director', 'Director', '', null, undefined]) {
+      expect(isDirectorTitle(t)).toBe(false);
+    }
+  });
+
+  it('every built-in director role is caught, and nothing else in the registry is', () => {
+    expect(ROLES.filter(r => isDirectorTitle(r.name)).map(r => r.name).sort())
+      .toEqual(['Center Director', 'Dir. of Education']);
+  });
+
+  it('the owner tier may grant one: owner, admin assistant, director, Enterprise', () => {
+    for (const role of ['owner', 'admin_assistant', 'director', 'super_admin']) {
+      expect(canGrantDirectorTitle({ role, instructorType: 'Instructor' })).toBe(true);
+    }
+  });
+
+  it('as may a director by legacy top-level title, spelled as the rules match it', () => {
+    expect(canGrantDirectorTitle({ role: 'instructor', instructorType: 'Center Director' })).toBe(true);
+    expect(canGrantDirectorTitle({ role: 'instructor', instructorType: 'center director' })).toBe(false);
+  });
+
+  it('Managers, Hosts and the old Admin role may not — nor a director only by per-centre title', () => {
+    expect(canGrantDirectorTitle({ role: 'admin', instructorType: 'Manager' })).toBe(false);
+    expect(canGrantDirectorTitle({ role: 'instructor', instructorType: 'Manager' })).toBe(false);
+    expect(canGrantDirectorTitle({ role: 'instructor', instructorType: 'Host' })).toBe(false);
+    expect(canGrantDirectorTitle({
+      role: 'instructor', centerMemberships: { langley: { instructorType: 'Center Director' } },
+    })).toBe(false);
+    expect(canGrantDirectorTitle(null)).toBe(false);
   });
 });
