@@ -37,6 +37,7 @@ import {
   isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
+import CoverageModelCard from '../components/CoverageModelCard';
 import CentreRolesTab from '../components/CentreRolesTab';
 import TerminateStaffModal from '../components/TerminateStaffModal';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
@@ -9570,6 +9571,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const dateInstructors = {};
   for (const s of posted) {
     if (s.date < coverageLookbackStart || s.date > todayStr) continue;
+    // Teaching cover, not headcount. This counted every name on a posted
+    // shift, so the host, the admin desk, trainees and the directors all
+    // read as coverage — the one question countsInRatio() exists to answer.
+    if (!countsInRatio(s)) continue;
     if (!dateInstructors[s.date]) dateInstructors[s.date] = new Set();
     if (s.userName) dateInstructors[s.date].add(s.userName);
   }
@@ -9599,10 +9604,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       pct: samples > 0 ? avg / coverageTarget : 0,
     };
   });
-  const coverageHasData = coverageRows.some(r => r.samples > 0);
-  // Normalise bar widths against whichever is bigger — the target line or
-  // the best-observed-day — so the threshold marker always stays in view.
-  const coverageScale = Math.max(coverageTarget, ...coverageRows.map(r => r.best || 0));
 
   // ─── Hour-by-hour coverage heatmap (same look-back window) ─────────────
   // Goal: a day×hour grid showing average distinct-instructor count covering
@@ -9645,6 +9646,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
     for (const hour of heatmapHours) {
       const onAtHour = new Set();
       for (const s of shiftsThisDate) {
+        if (!countsInRatio(s)) continue;   // teaching cover only — see above
         const sh = parseInt(((s.startTime || '0').split(':')[0]), 10);
         const eh = parseInt(((s.endTime   || '0').split(':')[0]), 10);
         const em = parseInt(((s.endTime   || '0').split(':')[1]) || '0', 10);
@@ -10517,91 +10519,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
 
       {/* ── Coverage module: Day-of-Week + Hourly heatmap ───────────── */}
       {view === 'coverage' && (<>
-      <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-baseline justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">Average Coverage by Day</h3>
-            <p className="mt-0.5 text-xs text-gray-500">
-              Last {COVERAGE_WEEKS} weeks · target of {coverageTarget} instructors per day
-              {' '}(set in {PAGES.centreSettings.name}).
-            </p>
-          </div>
-        </div>
-
-        {!coverageHasData ? (
-          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
-            No posted schedules in the last {COVERAGE_WEEKS} weeks yet — once you start posting, this fills in.
-          </p>
-        ) : (
-          <div className="space-y-2.5">
-            {coverageRows.map(r => {
-              const filledPct = coverageScale > 0 ? Math.min(100, (r.avg / coverageScale) * 100) : 0;
-              const targetPct = coverageScale > 0 ? (coverageTarget / coverageScale) * 100 : 0;
-              const status = r.samples === 0
-                ? 'none'
-                : r.avg < coverageTarget * 0.85
-                  ? 'short'
-                  : r.avg < coverageTarget
-                    ? 'tight'
-                    : 'ok';
-              const barColor = status === 'short'
-                ? 'bg-rose-500'
-                : status === 'tight'
-                  ? 'bg-amber-500'
-                  : status === 'ok'
-                    ? 'bg-emerald-500'
-                    : 'bg-gray-300';
-              const statusLabel = r.samples === 0
-                ? 'No data'
-                : r.shortDays > 0
-                  ? `Short on ${r.shortDays} of ${r.samples} ${r.samples === 1 ? 'day' : 'days'}`
-                  : `Hit target on all ${r.samples} ${r.samples === 1 ? 'day' : 'days'}`;
-              return (
-                <div key={r.day}>
-                  <div className="mb-0.5 flex items-baseline justify-between text-xs">
-                    <span className="font-semibold text-gray-700">{r.day}</span>
-                    <span className="text-gray-500">
-                      <span className={`font-semibold ${status === 'short' ? 'text-rose-600' : status === 'tight' ? 'text-amber-700' : status === 'ok' ? 'text-emerald-700' : 'text-gray-500'}`}>
-                        {r.samples > 0 ? r.avg.toFixed(1) : '—'}
-                      </span>
-                      <span className="text-gray-400"> avg · {statusLabel}</span>
-                    </span>
-                  </div>
-                  <div className="relative h-3 rounded-full bg-gray-100 overflow-hidden">
-                    <div
-                      className={`h-full rounded-full transition-all ${barColor}`}
-                      style={{ width: `${filledPct}%` }}
-                    />
-                    {/* Dashed target threshold */}
-                    <div
-                      className="absolute top-0 bottom-0 border-l-2 border-dashed border-gray-500/60"
-                      style={{ left: `${targetPct}%` }}
-                      title={`Target: ${coverageTarget}`}
-                    />
-                  </div>
-                  {r.samples > 0 && (
-                    <p className="mt-1 text-[10px] text-gray-400">
-                      Range {r.worst}–{r.best} over {r.samples} observed {r.samples === 1 ? 'day' : 'days'}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {coverageHasData && (
-          <p className="mt-4 flex items-center gap-1.5 text-xs text-gray-500">
-            <span className="inline-block h-2 w-2 rounded-full bg-rose-500" /> below target
-            <span className="mx-1">·</span>
-            <span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> tight
-            <span className="mx-1">·</span>
-            <span className="inline-block h-2 w-2 rounded-full bg-emerald-500" /> meeting target
-            <span className="mx-2 text-gray-300">|</span>
-            <span className="text-gray-400">dashed line = target ({coverageTarget})</span>
-          </p>
-        )}
-      </div>
+      {/* Target vs availability vs rota, per half hour. Replaced "Average
+          Coverage by Day", whose daily average against one number for the
+          whole day could not say which HALF HOUR was short. */}
+      <CoverageModelCard users={users} shifts={shifts} />
 
       {/* ── Average Hourly Coverage By Day (day × hour heatmap) ─────────── */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -10609,7 +10530,8 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
           <div>
             <h3 className="text-sm font-semibold text-gray-900">Average Instructional Hour Coverage</h3>
             <p className="mt-0.5 text-xs text-gray-500">
-              Hour-by-hour coverage over the last {COVERAGE_WEEKS} weeks vs your daily target of {coverageTarget} instructors.
+              What actually happened, hour by hour, over the last {COVERAGE_WEEKS} weeks, vs your daily
+              target of {coverageTarget}. Counts only staff who fill a ratio slot.
               Only your centre's <b>instructional hours</b> are shown — set them under <b>Centre Settings → Hours</b>.
             </p>
           </div>

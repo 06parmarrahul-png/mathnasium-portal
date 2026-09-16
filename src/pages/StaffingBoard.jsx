@@ -44,6 +44,7 @@ import { isTrainingType } from '../lib/staffTypes';
 import { RATIO_FIELD } from '../lib/ratioCount';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
+import CoverageTargetsPanel from '../components/CoverageTargetsPanel';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -671,6 +672,10 @@ export default function StaffingBoard() {
           </p>
         </div>
       </div>
+
+      {/* What the centre WANTS per half hour. Read by Centre Analytics →
+          Coverage; nothing on this board is scheduled from it. */}
+      <CoverageTargetsPanel />
 
       {/* Controls */}
       <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">

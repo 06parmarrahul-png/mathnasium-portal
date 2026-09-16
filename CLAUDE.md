@@ -161,6 +161,40 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 - Headcount precedence: `config.perDate['YYYY-MM-DD']` > `config.perDay['Monday']`
   > `minPerDay`/`maxPerDay`.
 
+### Coverage targets — what we want, per half hour
+
+`centerConfig.coverageModel[weekday]['HH:MM'] = count`. Every other staffing
+target is a number for a WHOLE DAY (`perDate > perDay > minPerDay`); this is the
+only per-slot one. Read it through `resolveCoverageModel()` in
+`src/lib/coverageModel.js` — never raw.
+
+- **Set on the Staffing Board** (`CoverageTargetsPanel`), because the people who
+  know the answer are Managers and Hosts and Centre Analytics is owner-tier.
+  The rules already let a Manager write centre config, so no permission moved.
+  **Hosts get it read-only** — the rules don't let them write config.
+- **Shown in Centre Analytics → Coverage** (`CoverageModelCard`), in the Supply
+  & Demand shape: half-hour columns, rows for wanted / available / scheduled.
+- **It is a WANT, not a rota.** Nothing schedules from it. The auto-scheduler
+  and the board still size days from real bookings (`demand-staffing.js`).
+- **Who counts:** a shift goes through `countsInRatio()` as everywhere else.
+  Availability has no shift to read, so `countsOnFloor()` asks the same
+  question one step earlier via `roleRatioDefault()` — a custom role with
+  "Counts toward the ratio" off is excluded without naming any roles.
+- **No availability submitted is NOT nobody free.** Most days here have none on
+  file, so averaging the blank weeks in would mark the centre unstaffable all
+  week. The rota averages over every upcoming date; availability averages only
+  over the dates somebody filled in, and renders "—" when that is none.
+  `classifySlot` can then say a slot is short on the rota but never that it
+  can't be staffed. Same rule as the weekly grid's failsafe.
+- A gap on **scheduled** is a rota to fix; a gap on **available** is a hiring or
+  availability problem, so they're separate colours and separate sentences.
+
+**What it replaced:** "Average Coverage by Day" — an 8-week average of distinct
+instructors per weekday against one number for the whole day. It counted every
+name on a posted shift, so hosts, trainees and the admin desk read as teaching
+cover; it never went through `countsInRatio()`. The hourly heatmap stayed (it
+answers what actually happened) and now counts the ratio properly too.
+
 ### Fixed staff and the two desks
 
 - **Host = a CAPABILITY in `subRoles`**, checked with `hasCapability(u.subRoles,
