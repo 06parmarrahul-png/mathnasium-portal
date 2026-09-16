@@ -161,6 +161,39 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 - Headcount precedence: `config.perDate['YYYY-MM-DD']` > `config.perDay['Monday']`
   > `minPerDay`/`maxPerDay`.
 
+### Supply & Demand — one chart per side, supply from the Student Scheduler
+
+Two charts: **Elementary / Middle** and **High School**. They are counted apart
+because an instructor stands on one side at a time — the old single centre-wide
+chart counted five elementary instructors as help for four high schoolers and
+read over-staffed nearly every half hour.
+
+**Supply is the Student Scheduler**, not the rota:
+`centers/{id}/schedulerInstructorAssignments/{date}` — `"<side>|<HH:MM>"` →
+display names, which is what Neeru actually sets. `src/lib/floorSupply.js`
+(`floorSupply`, pure, tested) turns that into per-side per-slot counts, and
+falls back to `supplyFromShifts` (each shift's own sub-role) for a day whose
+sides aren't set yet — a week out there is nothing to read. The card says which
+of the two it is showing; `source` is `'scheduler'` or `'shifts'`.
+
+Trainees and volunteers are on the sheet and are not a ratio slot, so `skip`
+leaves them out of the count and names them under the chart. A name the roster
+can't match still counts — the sheet is what happened, and a spelling we can't
+match is not evidence of a trainee.
+
+Demand per side was always there (`students.EM` / `students.HS` from the
+bookings cache, less no-shows, plus walk-ins); it is no longer summed.
+
+**The snapshot bug this fixed:** the single-card version called
+`saveSnapshot(centerId, date, { ALL: … })`, but that function only reads `EM`
+and `HS` — so every snapshot saved since was written as zeros, and the
+auto-scheduler's "typical Monday" learnt nothing. All three live snapshots were
+zeros. Per-side saving restores the shape the file always documented.
+
+Checked against live days before shipping: 15 Sept and 16 Sept 2026. The split
+found High School one instructor short at 3:00pm on the 16th (4 students, 1
+instructor) where the combined chart said "matched".
+
 ### Coverage targets — what we want, day by day
 
 `centerConfig.coverageModel[weekday] = { day: 12, '16:30': 14 }`. `day` is the
