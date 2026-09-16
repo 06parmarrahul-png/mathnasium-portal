@@ -15,6 +15,7 @@ import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 import { isFlexRole, DEFAULT_TARGET_RATIO } from '../lib/subRoles';
 import { countsInRatio } from '../lib/ratioCount';
+import SlotBarChart from '../components/SlotBarChart';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -836,7 +837,7 @@ function CombinedCard({ emData, hsData, uniqueOnFloor, dayWindow, emRatio, hsRat
       </div>
 
       {/* Same chart component the per-side cards use. */}
-      <Chart demand={combined.demand} rows={combined.rows} maxY={maxY} forecastRatio={Math.max(emRatio, hsRatio)} slotLabel={slotLabel} />
+      <Chart rows={combined.rows} maxY={maxY} forecastRatio={Math.max(emRatio, hsRatio)} slotLabel={slotLabel} />
 
       {/* ── RATIO STATUS + IMPACT ─────────────────────────────────────
           Same column-aligned layout as the EM/HS cards. Uses blended
@@ -1239,7 +1240,7 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
       </div>
 
       {/* Bar chart */}
-      <Chart demand={demand} rows={rows} maxY={maxY} forecastRatio={forecastRatio} slotLabel={slotLabel} />
+      <Chart rows={rows} maxY={maxY} forecastRatio={forecastRatio} slotLabel={slotLabel} />
 
       {/* ── RATIO STATUS + IMPACT ──────────────────────────────────────
           Directly under the chart, exactly like Andy's boss's tool:
@@ -1595,19 +1596,13 @@ function StatBox({ label, value, sub, tone }) {
 }
 
 // ─── SVG bar chart ───────────────────────────────────────────────────────
-// Two series per slot: green bar = demand (students), overlaid line = supply
-// capacity (supply × forecastRatio). Bars re-tint red/amber when supply
-// can't meet demand at the target ratio. Compact so we can fit 10 slots in
-// a single row without horizontal scroll on desktop.
+// The drawing lives in components/SlotBarChart.jsx now, so the Coverage
+// view is the SAME chart rather than a second one that drifts from this.
+// What stays here is what is specific to this page: demand is the bar,
+// capacity (supply × target ratio) is the marker line, and the y-axis is
+// counted in students.
 
-function Chart({ demand, rows, maxY, forecastRatio, slotLabel }) {
-  const W = 780, H = 260, PADL = 40, PADB = 32, PADT = 14, PADR = 12;
-  const chartW = W - PADL - PADR;
-  const chartH = H - PADT - PADB;
-  const barW   = chartW / demand.length * 0.62;
-  const groupW = chartW / demand.length;
-  const yScale = (v) => PADT + chartH - (v / maxY) * chartH;
-
+function Chart({ rows, maxY, forecastRatio, slotLabel }) {
   // Y-axis step = target ratio. So a ratio of 3 gives ticks at 3, 6,
   // 9, … and a ratio of 4 gives 4, 8, 12, …. Each tick = "one more
   // instructor's worth of capacity", which is the language owners
@@ -1619,84 +1614,20 @@ function Chart({ demand, rows, maxY, forecastRatio, slotLabel }) {
   let tickStep = baseStep;
   while (maxY / tickStep > targetTicks + 2) tickStep += baseStep;
 
-  const GREEN_FILL = '#a7d5a3';   // demand-served (light green)
-  const OVER_FILL  = '#f8c9c9';   // extra capacity (pink)
-  const UNDER_FILL = '#cdb98b';   // students beyond capacity (tan)
-  const GREEN_LINE = '#166534';   // matched marker
-  const UNDER_LINE = '#ea580c';   // understaffed marker
-  const OVER_LINE  = '#dc2626';   // overstaffed marker
-
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="xMidYMid meet">
-      {/* Y-axis title */}
-      <text x={10} y={PADT + chartH / 2} transform={`rotate(-90 10 ${PADT + chartH / 2})`} textAnchor="middle" fontSize="10" fill="#6b7280">
-        Students
-      </text>
-      {/* Y grid + labels */}
-      {Array.from({ length: Math.ceil(maxY / tickStep) + 1 }, (_, i) => {
-        const val = i * tickStep;
-        if (val > maxY + tickStep) return null;
-        const y = yScale(val);
-        return (
-          <g key={i}>
-            <line x1={PADL} x2={W - PADR} y1={y} y2={y} stroke="#e5e7eb" strokeWidth="1" />
-            <text x={PADL - 6} y={y + 3} textAnchor="end" fontSize="10" fill="#6b7280">{val}</text>
-          </g>
-        );
-      })}
-
-      {rows.map((r, i) => {
-        const x = PADL + i * groupW + (groupW - barW) / 2;
-        const barTopVal = Math.max(r.demand, r.capacity);
-        const overlapVal = Math.min(r.demand, r.capacity);
-        const barTopY   = yScale(barTopVal);
-        const overlapY  = yScale(overlapVal);
-        const baseY     = yScale(0);
-        const barH      = baseY - barTopY;
-        const greenH    = baseY - overlapY;
-        const capY      = yScale(r.capacity);
-
-        // Colour scheme depends on how the mismatch resolves.
-        const isOver  = r.status === 'overstaffed';
-        const isUnder = r.status === 'understaffed';
-        const upperFill = isOver ? OVER_FILL : (isUnder ? UNDER_FILL : 'transparent');
-        const markerColor = r.status === 'matched' ? GREEN_LINE : (isUnder ? UNDER_LINE : OVER_LINE);
-
-        return (
-          <g key={i}>
-            {/* Upper "mismatch" portion — extra capacity (pink) or shortfall (tan) */}
-            {barTopVal !== overlapVal && (
-              <rect x={x} y={barTopY} width={barW} height={overlapY - barTopY} fill={upperFill} />
-            )}
-            {/* Green portion = served */}
-            <rect x={x} y={overlapY} width={barW} height={greenH} fill={GREEN_FILL} />
-            {/* Bar outline for visual crispness */}
-            <rect x={x} y={barTopY} width={barW} height={barH} fill="none" stroke="#a3a3a3" strokeWidth="0.5" opacity="0.6" />
-            {/* Capacity marker line */}
-            <line x1={x - 3} x2={x + barW + 3} y1={capY} y2={capY} stroke={markerColor} strokeWidth="2.5" />
-            {/* Demand value above the bar */}
-            <text x={x + barW / 2} y={barTopY - 4} textAnchor="middle" fontSize="11" fontWeight="600" fill="#111827">
-              {r.demand}
-            </text>
-            {/* Slot label */}
-            <text x={x + barW / 2} y={H - PADB + 14} textAnchor="middle" fontSize="10" fill="#6b7280">
-              {slotLabel(i)}
-            </text>
-          </g>
-        );
-      })}
-
-      {/* Legend at the bottom — matches the boss's screenshot ordering. */}
-      <g transform={`translate(${PADL}, ${H - 2})`}>
-        <rect x="0" y="-9" width="10" height="9" fill={GREEN_FILL} />
-        <text x="14" y="-1" fontSize="10" fill="#4b5563">Demand (students)</text>
-        <line x1="130" y1="-5" x2="146" y2="-5" stroke={GREEN_LINE} strokeWidth="2.5" />
-        <text x="150" y="-1" fontSize="10" fill="#4b5563">Supply — matched</text>
-        <line x1="248" y1="-5" x2="264" y2="-5" stroke={UNDER_LINE} strokeWidth="2.5" />
-        <text x="268" y="-1" fontSize="10" fill="#4b5563">Supply — understaffed</text>
-        <line x1="378" y1="-5" x2="394" y2="-5" stroke={OVER_LINE} strokeWidth="2.5" />
-        <text x="398" y="-1" fontSize="10" fill="#4b5563">Supply — overstaffed</text>
-      </g>
-    </svg>
+    <SlotBarChart
+      items={rows.map((r, i) => ({
+        label: slotLabel(i), value: r.demand, marker: r.capacity, status: r.status,
+      }))}
+      maxY={maxY}
+      tickStep={tickStep}
+      axisTitle="Students"
+      legend={{
+        fill: 'Demand (students)',
+        matched: 'Supply — matched',
+        under: 'Supply — understaffed',
+        over: 'Supply — overstaffed',
+      }}
+    />
   );
 }

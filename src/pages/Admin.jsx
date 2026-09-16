@@ -134,15 +134,6 @@ function shiftNeedsTeachingLevel(role) {
 // and assignmentColorHex() in src/lib/centerConfig.js. Those nine colors
 // are per-center and editable from Super Admin → Appearance.
 
-// Friendly hour-of-day label, '9a', '12p', '5p' style. Used by the
-// coverage heatmap on the Analytics tab.
-function hourLabel(h) {
-  const hh = ((h % 24) + 24) % 24;
-  const ampm = hh < 12 ? 'a' : 'p';
-  let display = hh % 12;
-  if (display === 0) display = 12;
-  return `${display}${ampm}`;
-}
 
 function fmtHHMM(t) {
   if (!t) return '';
@@ -9605,90 +9596,11 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
     };
   });
 
-  // ─── Hour-by-hour coverage heatmap (same look-back window) ─────────────
-  // Goal: a day×hour grid showing average distinct-instructor count covering
-  // each hour. "Covering hour H" means the shift's startTime <= H:00 and
-  // endTime is strictly after H:00 (so 15:00–19:00 covers 15, 16, 17, 18).
-  //
-  // We use INSTRUCTIONAL hours (teaching window, e.g. 3pm-7pm), not
-  // OPERATING hours (full open window, e.g. 10am-8pm). Owners only care
-  // about coverage during teaching hours — showing 10am as "red" is
-  // misleading because the centre isn't even running classes then.
-  // Each centre's instructional hours are configured in Centre Settings,
-  // so this auto-tailors per centre (Mathnasium Langley's 3-7p, a centre
-  // with longer hours, etc.).
-  const opHoursMap = centerConfig?.instructionalHours || DEFAULT_CENTER_CONFIG.instructionalHours;
-  let earliestHour = 24;
-  let latestHour = 0;
-  for (const day of operatingDaysList) {
-    const h = opHoursMap[day];
-    if (!h) continue;
-    earliestHour = Math.min(earliestHour, parseInt(h.start.split(':')[0], 10));
-    latestHour   = Math.max(latestHour,   parseInt(h.end.split(':')[0], 10));
-  }
-  if (earliestHour >= latestHour) { earliestHour = 9; latestHour = 20; }
-  const heatmapHours = [];
-  for (let h = earliestHour; h < latestHour; h++) heatmapHours.push(h);
-
-  const dateShiftMap = {};
-  for (const s of posted) {
-    if (s.date < coverageLookbackStart || s.date > todayStr) continue;
-    if (!dateShiftMap[s.date]) dateShiftMap[s.date] = [];
-    dateShiftMap[s.date].push(s);
-  }
-  const hourBuckets = {}; // dayName -> hour -> [counts per date]
-  for (const [date, shiftsThisDate] of Object.entries(dateShiftMap)) {
-    const d = new Date(date + 'T12:00:00');
-    if (!isOperatingDay(d, centerConfig)) continue;
-    if (holidayFor(d, centerConfig)) continue;
-    const dayName = ALL_WEEKDAYS[d.getDay()];
-    if (!hourBuckets[dayName]) hourBuckets[dayName] = {};
-    for (const hour of heatmapHours) {
-      const onAtHour = new Set();
-      for (const s of shiftsThisDate) {
-        if (!countsInRatio(s)) continue;   // teaching cover only — see above
-        const sh = parseInt(((s.startTime || '0').split(':')[0]), 10);
-        const eh = parseInt(((s.endTime   || '0').split(':')[0]), 10);
-        const em = parseInt(((s.endTime   || '0').split(':')[1]) || '0', 10);
-        const startsByHour = sh <= hour;
-        // Still on if their end-hour is strictly after this hour OR the end
-        // is exactly this hour but with leftover minutes.
-        const stillThere = eh > hour || (eh === hour && em > 0);
-        if (startsByHour && stillThere && s.userName) onAtHour.add(s.userName);
-      }
-      if (!hourBuckets[dayName][hour]) hourBuckets[dayName][hour] = [];
-      hourBuckets[dayName][hour].push(onAtHour.size);
-    }
-  }
-  const heatmapCells = {};
-  for (const day of operatingDaysList) {
-    heatmapCells[day] = {};
-    for (const h of heatmapHours) {
-      const arr = hourBuckets[day]?.[h] || [];
-      heatmapCells[day][h] = {
-        avg: arr.length > 0 ? arr.reduce((a, b) => a + b, 0) / arr.length : 0,
-        samples: arr.length,
-      };
-    }
-  }
-  const heatmapHasData = Object.keys(dateShiftMap).length > 0;
-
-  // Lowest-coverage hour buckets (skip thinly-sampled and closed hours).
-  const gapCandidates = [];
-  for (const day of operatingDaysList) {
-    const dayOpen = opHoursMap[day];
-    if (!dayOpen) continue;
-    const dayStartH = parseInt(dayOpen.start.split(':')[0], 10);
-    const dayEndH   = parseInt(dayOpen.end.split(':')[0], 10);
-    for (const h of heatmapHours) {
-      if (h < dayStartH || h >= dayEndH) continue;
-      const cell = heatmapCells[day][h];
-      if (cell.samples < 2) continue;
-      gapCandidates.push({ day, hour: h, avg: cell.avg, samples: cell.samples });
-    }
-  }
-  gapCandidates.sort((a, b) => a.avg - b.avg);
-  const coverageGaps = gapCandidates.slice(0, 5);
+  // (Removed) The hour-by-hour heatmap and its "lowest-coverage hour
+  // buckets" list. It reported an 8-week average of what already happened,
+  // against a single daily target, and the Coverage view now answers the
+  // question people were actually asking it — what do we want per half
+  // hour, and can availability cover it — in CoverageModelCard.
 
   // Manual student count + edit modal.
   const studentCount     = Number(centerConfig?.activeStudentCount ?? 0) || 0;
@@ -10517,138 +10429,13 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       </div>
       )}
 
-      {/* ── Coverage module: Day-of-Week + Hourly heatmap ───────────── */}
+      {/* ── Coverage: what we want per day, and whether we can staff it ── */}
       {view === 'coverage' && (<>
       {/* Target vs availability vs rota, per half hour. Replaced "Average
           Coverage by Day", whose daily average against one number for the
           whole day could not say which HALF HOUR was short. */}
       <CoverageModelCard />
 
-      {/* ── Average Hourly Coverage By Day (day × hour heatmap) ─────────── */}
-      <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="mb-4 flex items-baseline justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-900">Average Instructional Hour Coverage</h3>
-            <p className="mt-0.5 text-xs text-gray-500">
-              What actually happened, hour by hour, over the last {COVERAGE_WEEKS} weeks, vs your daily
-              target of {coverageTarget}. Counts only staff who fill a ratio slot.
-              Only your centre's <b>instructional hours</b> are shown — set them under <b>Centre Settings → Hours</b>.
-            </p>
-          </div>
-        </div>
-
-        {!heatmapHasData ? (
-          <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-8 text-center text-sm text-gray-400">
-            No posted schedules in the look-back window yet — once you start posting, this fills in.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <div className="min-w-[640px]">
-              {/* Column header — hours */}
-              <div className="flex items-center gap-px pl-24">
-                {heatmapHours.map(h => (
-                  <div key={h} className="flex-1 py-1 text-center text-[10px] font-medium text-gray-400">
-                    {hourLabel(h)}
-                  </div>
-                ))}
-              </div>
-              {/* Rows — one per operating day */}
-              {operatingDaysList.map(day => {
-                const dayOpen = opHoursMap[day];
-                const dayStart = dayOpen ? parseInt(dayOpen.start.split(':')[0], 10) : 0;
-                const dayEnd   = dayOpen ? parseInt(dayOpen.end.split(':')[0], 10) : 24;
-                return (
-                  <div key={day} className="mb-px flex items-center gap-px">
-                    <div className="w-24 shrink-0 truncate pr-2 text-xs font-semibold text-gray-700">{day}</div>
-                    {heatmapHours.map(h => {
-                      const cell = heatmapCells[day]?.[h] || { avg: 0, samples: 0 };
-                      const isOpen = h >= dayStart && h < dayEnd;
-                      // Match the by-day chart's red / amber / green thresholds
-                      // so both panels speak the same visual language.
-                      let bgClass, textClass;
-                      if (!isOpen) {
-                        bgClass = 'bg-gray-200/60';
-                        textClass = 'text-gray-400';
-                      } else if (cell.samples === 0) {
-                        bgClass = 'bg-gray-50';
-                        textClass = 'text-gray-300';
-                      } else if (cell.avg < coverageTarget * 0.85) {
-                        bgClass = 'bg-rose-500';
-                        textClass = 'text-white';
-                      } else if (cell.avg < coverageTarget) {
-                        bgClass = 'bg-amber-500';
-                        textClass = 'text-white';
-                      } else {
-                        bgClass = 'bg-emerald-500';
-                        textClass = 'text-white';
-                      }
-                      const label = !isOpen
-                        ? '—'
-                        : cell.samples === 0
-                          ? '·'
-                          : cell.avg.toFixed(1).replace(/\.0$/, '');
-                      const tip = !isOpen
-                        ? `${day} ${hourLabel(h)}–${hourLabel(h + 1)} · closed`
-                        : cell.samples === 0
-                          ? `${day} ${hourLabel(h)}–${hourLabel(h + 1)} · no data`
-                          : `${day} ${hourLabel(h)}–${hourLabel(h + 1)} · ${cell.avg.toFixed(1)} avg over ${cell.samples} ${cell.samples === 1 ? 'day' : 'days'}`;
-                      return (
-                        <div
-                          key={h}
-                          title={tip}
-                          className={`flex h-8 flex-1 items-center justify-center rounded-sm text-[10px] font-semibold transition-colors ${bgClass} ${textClass}`}
-                        >
-                          {label}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-              {/* Legend — same colour grammar as the by-day chart above. */}
-              <div className="mt-3 flex flex-wrap items-center gap-3 pl-24 text-[10px] text-gray-500">
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-rose-500" /> below target
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-amber-500" /> tight
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-3 w-3 rounded-sm bg-emerald-500" /> meeting target
-                </span>
-                <span className="text-gray-400">· grey = closed at that hour</span>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Lowest-coverage hour buckets */}
-        {coverageGaps.length > 0 && (
-          <div className="mt-5 border-t border-gray-100 pt-4">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
-              Lowest-coverage hour buckets
-            </p>
-            <div className="space-y-1.5">
-              {coverageGaps.map((g, i) => (
-                <div key={`${g.day}-${g.hour}`} className="flex items-center gap-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                  <span className="w-4 text-right text-xs font-bold text-gray-400">{i + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-semibold text-gray-800">
-                      {g.day} · {hourLabel(g.hour)}–{hourLabel(g.hour + 1)}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      Avg <span className={`font-semibold ${g.avg < coverageTarget * 0.5 ? 'text-rose-600' : 'text-amber-700'}`}>{g.avg.toFixed(1)}</span> instructors over {g.samples} observed {g.samples === 1 ? 'day' : 'days'}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <p className="mt-2 text-xs text-gray-400">
-              These are your thinnest hours — investigate whether they're real shortages (lots of students that hour) or natural slack (lunchtime, mid-morning weekdays).
-            </p>
-          </div>
-        )}
-      </div>
       </>)}
 
       {/* ── Hiring module: 4-month forecast + job posting tools ─────── */}

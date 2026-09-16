@@ -166,48 +166,61 @@ min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
 `centerConfig.coverageModel[weekday] = { day: 12, '16:30': 14 }`. `day` is the
 headline — what that whole day wants. The `'HH:MM'` keys are per-half-hour
 overrides for when the afternoon isn't flat; a slot with none inherits the day,
-so the common case is one input and not eight. Read it through
+so the flat case is one number and not eight. Read it through
 `resolveCoverageModel()` / `targetFor()` in `src/lib/coverageModel.js` — never
 raw. Every other staffing target in the app is a whole-day number
 (`perDate > perDay > minPerDay`); this is the only one with slot resolution.
 
+**It is the Supply & Demand chart, literally.** `components/SlotBarChart.jsx` was
+lifted out of `SupplyDemand.jsx` so both pages draw through one component
+(geometry and palette in `src/lib/slotChart.js`). Same bars, same marker lines,
+same status pills underneath. S&D asks "enough instructors for the students
+booked"; Coverage asks "enough for what we asked for" — so the series are named
+`value` / `marker`, and the axis title and legend come from the caller. **Don't
+recolour it in one place**: a green bar has to mean the same thing on both.
+
 `CoverageModelCard` is the single surface, mounted on **both** Centre Analytics →
 Coverage and the **Staffing Board** — Managers and Hosts can reach the board and
 Centre Analytics is owner-tier, and one component means the two can't drift. It
-is self-subscribing (users, availability, shifts, time off) precisely because
-those two pages hold different slices of data.
+self-subscribes (users, availability, shifts, time off) precisely because those
+two pages hold different slices of data.
 
-- **A bar per operating day**, height = instructors available, dashed rule =
-  that day's target, shaded band = the shortfall. Targets are typed under the
-  bars. **Click a day** and it opens into that day's instructional half hours:
-  wanted / available / scheduled / status, with per-slot inputs.
+- **A bar per operating day**, height = instructors available, marker = that
+  day's target, targets typed underneath. **Click a day** and the same chart
+  redraws for that day's instructional half hours, with per-slot inputs.
 - **It follows instructional hours, per weekday**, resolved for that actual date
   (`resolveInstructionalHours`), so Fri and Sat windows differ from Mon–Thu and
   a summer override moves them. It does NOT assume 3–7.
-- **The bar counts PEOPLE, the rows count each half hour.** Somebody free
-  3:00–7:00 is one instructor on the bar and appears in all eight slot columns;
-  summing slots would report them as eight. The expansion says so out loud.
+- **The bar counts PEOPLE, the expansion counts each half hour.** Somebody free
+  3:00–7:00 is one instructor on the day bar and appears in all eight slot
+  columns; summing slots would report them as eight.
+- **Impact = instructors to FIND**, i.e. what availability can't cover. A slot
+  whose rota is short but whose people are free is `Matched` with a blank
+  impact — the rota gap is its own row. Mixing the two made a column read
+  "Matched" with an impact of seven.
 - **Who counts:** a shift goes through `countsInRatio()` as everywhere else.
   Availability has no shift to read, so `countsOnFloor()` asks the same question
   one step earlier via `roleRatioDefault()` — a custom role with "Counts toward
   the ratio" off is excluded without naming any roles.
 - **No availability submitted is NOT nobody free.** Most days here have none on
-  file. Those days render blank, sit out of the week's totals, and `classifySlot`
-  will call a slot short on the rota but never unstaffable. Same rule as the
-  weekly grid's failsafe.
-- A gap on **scheduled** is a rota to fix; a gap on **available** is a hiring or
-  availability problem — separate colours, separate sentences.
+  file. Those days read `No data`, sit out of the week's totals, and
+  `classifySlot` will call a slot short on the rota but never unstaffable. Same
+  rule as the weekly grid's failsafe. `No data` and `—` (no target set) are
+  deliberately different pills.
 - **Editing mirrors the config write rule**: owner tier, Enterprise, legacy
   Admin, or a Manager of that centre. **Hosts get it read-only** — they run the
   board but the rules don't let them write centre config.
 - Writes use `updateDoc`, never `setDoc(merge)`: a merge write deep-merges maps,
   so a target you CLEARED would quietly survive.
 
-**What it replaced:** "Average Coverage by Day" — an 8-week average of distinct
-instructors per weekday against one number for the whole centre. It counted
-every name on a posted shift, so hosts, trainees and the admin desk read as
-teaching cover; it never went through `countsInRatio()`. The hourly heatmap
-stayed (it answers what actually happened) and now counts the ratio properly too.
+**What it replaced — both look-back cards are gone.** "Average Coverage by Day"
+(an 8-week average of distinct instructors against one daily number) and
+"Average Instructional Hour Coverage" (the day × hour heatmap and its
+lowest-coverage list). Both counted every name on a posted shift, so hosts,
+trainees and the admin desk read as teaching cover, and both answered "what
+already happened" when the question people brought to the page was "can we staff
+next week". The Snapshot tile's "Coverage vs target" still uses the 8-week
+`coverageRows`, and now counts the ratio properly.
 
 ### Fixed staff and the two desks
 
