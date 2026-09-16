@@ -1,6 +1,28 @@
 import { describe, it, expect } from 'vitest';
 import {
-  normaliseStatus, isOpen, initialsOf, isForMe, isFromMe, matchesQuery, sortNotes, sortSettled, applyToArchive, filterNotes, myOpenCount, validateNote, recipientNames, deskMembers, LIVE_STATUSES, statusFields, dueState, dueLabel, daysUntilDue, dueSuggestions, sortByDue, deskSummary,
+  normaliseStatus,
+  isOpen,
+  initialsOf,
+  isForMe,
+  isFromMe,
+  matchesQuery,
+  sortNotes,
+  sortSettled,
+  applyToArchive,
+  filterNotes,
+  myOpenCount,
+  validateNote,
+  recipientNames,
+  deskMembers,
+  LIVE_STATUSES,
+  statusFields,
+  dueState,
+  dueLabel,
+  daysUntilDue,
+  dueSuggestions,
+  sortByDue,
+  deskSummary,
+  canDeleteNotes,
 } from './deskNotes';
 
 /**
@@ -527,5 +549,28 @@ describe('the summary both the desk and the home card read', () => {
     const s = deskSummary([], 'me', TODAY);
     expect(s).toMatchObject({ onYou: 0, overdue: 0, dueThisWeek: 0, oldestDays: 0 });
     expect(s.items).toEqual([]);
+  });
+});
+
+describe('who may erase a note rather than settle it', () => {
+  // Mirrors `isOwnerLike() || isSuperAdmin()` on the notes rule. If these
+  // drift apart, somebody gets a delete button that Firestore refuses.
+  it('the owner tier can', () => {
+    for (const platformRole of ['owner', 'admin_assistant', 'director', 'super_admin']) {
+      expect(canDeleteNotes({ platformRole })).toBe(true);
+    }
+  });
+
+  it('a director by legacy title can, the way the rules read it', () => {
+    expect(canDeleteNotes({ platformRole: 'instructor', instructorType: 'Center Director' })).toBe(true);
+    expect(canDeleteNotes({ platformRole: 'instructor', instructorType: 'Dir. of Education' })).toBe(true);
+  });
+
+  it('Managers, Hosts and the old Admin role cannot — they run the desk, they don’t clear it', () => {
+    for (const instructorType of ['Manager', 'Host', 'Admin', 'Lead', 'Instructor']) {
+      expect(canDeleteNotes({ platformRole: 'instructor', instructorType })).toBe(false);
+    }
+    expect(canDeleteNotes({ platformRole: 'admin', instructorType: 'Manager' })).toBe(false);
+    expect(canDeleteNotes({})).toBe(false);
   });
 });

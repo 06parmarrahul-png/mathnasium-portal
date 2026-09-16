@@ -347,6 +347,15 @@ Two deliberate exclusions:
 
 Impact on real data: 49 of 1837 person-day cells (2.7%), worst week 7 cells.
 
+**Deleting a note** is owner-tier only — `canDeleteNotes()` mirrors the rule's
+`isOwnerLike() || isSuperAdmin()`, so Managers and Hosts run the desk but cannot
+clear it. It lives behind a **tidy-up mode** (the bin next to the search box):
+tick the notes, one confirmation naming the count, one batch write, one audit
+entry (`desk.notes_deleted`). Deliberately not a cross on every card — the desk
+settles notes rather than erasing them, and this exists for test rows and notes
+typed into the wrong centre. No rules change was needed; the delete rule was
+always there and the UI simply never offered it.
+
 ### The desk: four statuses, and due dates
 
 A note is **Open · In progress · Waiting · Settled**. The middle two are

@@ -1,20 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs,
+  collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, writeBatch,
 } from 'firebase/firestore';
 import {
   StickyNote, Gift, Receipt, Users, Star, Plus, Search, Check,
-  RotateCcw, X, Pencil, Send, ArrowRight, ChevronDown, Flag,
+  RotateCcw, X, Pencil, Send, ArrowRight, ChevronDown, Flag, Trash2,
 } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
-import { toast } from '../lib/notify';
+import { toast, confirmDialog } from '../lib/notify';
+import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { resolveRoles } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import {
   isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery, sortSettled, applyToArchive,
   LIVE_STATUSES, NOTE_STATUSES, normaliseStatus, statusFields, statusLabel,
-  dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays,
+  dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays, canDeleteNotes,
 } from '../lib/deskNotes';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
 import { suggestStudents } from '../lib/deskLink';
@@ -171,6 +172,11 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const [students, setStudents] = useState([]);
   const [view, setView] = useState('open');
   const today = ymdOf(new Date());
+  // Tidy-up mode. Off by default and owner-tier only: the desk settles
+  // notes, it does not erase them, and this exists for the other case —
+  // test rows and notes typed into the wrong centre.
+  const [tidy, setTidy] = useState(false);
+  const [picked, setPicked] = useState(() => new Set());
   const [q, setQ] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -369,6 +375,53 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     await write(note, { dueDate: dueDate || null });
   };
 
+  const canDelete = canDeleteNotes({
+    platformRole: profile?.role,
+    instructorType: profile?.instructorType,
+  });
+
+  const togglePick = (id) => setPicked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const leaveTidy = () => { setTidy(false); setPicked(new Set()); };
+
+  /**
+   * Erase the selected notes. One confirmation for the batch, naming the
+   * count, and it says "permanently" because it is: unlike settling, there
+   * is nothing to look back at afterwards.
+   */
+  const deletePicked = async () => {
+    const ids = [...picked];
+    if (ids.length === 0) return;
+    const ok = await confirmDialog({
+      title: `Delete ${ids.length} ${ids.length === 1 ? 'note' : 'notes'}?`,
+      message: 'This erases them permanently, along with any replies on them. '
+        + 'Settling a note keeps it in the archive — deleting does not. There is no undo.',
+      confirmText: `Delete ${ids.length}`,
+      danger: true,
+    });
+    if (!ok) return;
+    try {
+      // One batch: a half-finished tidy-up is a worse state than either end.
+      const batch = writeBatch(db);
+      for (const id of ids) batch.delete(doc(db, 'centers', centerId, 'notes', id));
+      await batch.commit();
+      setArchive(prev => (prev ? prev.filter(n => !picked.has(n.id)) : prev));
+      leaveTidy();
+      toast.success(`${ids.length} ${ids.length === 1 ? 'note' : 'notes'} deleted.`);
+      logAuditEvent(profile, {
+        action: AUDIT_ACTIONS.DESK_NOTES_DELETED,
+        centerId,
+        details: { count: ids.length, ids: ids.slice(0, 25) },
+      });
+    } catch (err) {
+      toast.error(err?.message || 'Could not delete those.');
+    }
+  };
+
   return (
     <div>
       {/* What is on YOU — a desk-wide number is not something anybody can
@@ -384,6 +437,25 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         </div>
       )}
 
+      {tidy && (
+        <div className="sticky top-2 z-20 mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2">
+          <span className="text-[13px] font-semibold text-red-800">
+            {picked.size === 0
+              ? 'Tick the notes to delete.'
+              : `${picked.size} selected`}
+          </span>
+          <span className="flex-1" />
+          <button onClick={leaveTidy}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={deletePicked} disabled={picked.size === 0}
+            className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-1.5 text-[12.5px] font-bold text-white hover:bg-red-700 disabled:opacity-40">
+            <Trash2 size={13} /> Delete {picked.size > 0 ? picked.size : ''}
+          </button>
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {VIEWS.map(v => (
           <Chip key={v.key} on={view === v.key} onClick={() => setView(v.key)}
@@ -396,6 +468,12 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         <Chip on={view === 'mine'} onClick={() => setView('mine')}
           label="For me" n={counts.mine} accent />
         <SearchBox value={q} onChange={setQ} />
+        {canDelete && !tidy && (
+          <button onClick={() => setTidy(true)} title="Delete notes — test rows, or one typed into the wrong centre"
+            className="rounded-lg border border-gray-300 bg-white p-2 text-gray-400 hover:border-red-300 hover:text-red-600">
+            <Trash2 size={14} />
+          </button>
+        )}
       </div>
 
       {hiddenSettled > 0 && (
@@ -425,7 +503,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           {rows.map(n => (
             <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid}
               students={students} onReply={reply} onStatus={setStatus}
-              onSetAbout={setAbout} onSetDue={setDue} today={today} />
+              onSetAbout={setAbout} onSetDue={setDue} today={today}
+              tidy={tidy} picked={picked.has(n.id)} onPick={togglePick} />
           ))}
         </div>
       )}
@@ -451,7 +530,8 @@ function toLine(note, nameByUid) {
   return note.toLabel || 'Unassigned';
 }
 
-function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, onSetDue, today }) {
+function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, onSetDue, today,
+  tidy = false, picked = false, onPick }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -474,9 +554,21 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, on
 
   return (
     <div className="flex items-start gap-2.5">
-      <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-gray-100 text-[11px] font-bold text-gray-600">
-        {note.fromInitials || initialsOf(note.fromName) || '—'}
-      </span>
+      {/* In tidy-up mode the avatar's slot becomes the tick box, so the row
+          doesn't reflow and nothing new appears beside the text. */}
+      {tidy ? (
+        <input
+          type="checkbox"
+          checked={picked}
+          onChange={() => onPick(note.id)}
+          aria-label={`Select "${note.subject || note.body?.slice(0, 40) || 'note'}" for deletion`}
+          className="mt-3 h-5 w-5 shrink-0 accent-red-600"
+        />
+      ) : (
+        <span className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border bg-gray-100 text-[11px] font-bold text-gray-600">
+          {note.fromInitials || initialsOf(note.fromName) || '—'}
+        </span>
+      )}
       <div className={`min-w-0 flex-1 rounded-r-xl rounded-bl-xl border border-l-[3px] p-3 ${rail} ${
         live ? 'bg-white' : 'border-dashed bg-gray-50/70'}`}>
         <div className="flex flex-wrap items-baseline gap-1.5 text-xs text-gray-500">

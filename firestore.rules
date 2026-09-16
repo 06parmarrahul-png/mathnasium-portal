@@ -726,11 +726,13 @@ service cloud.firestore {
       // is NO widened read for ordinary staff: the same people who may
       // write a note are the only ones who may read one.
       //
-      // Deletion is owner-tier only, and the app does not offer it. A
-      // note is settled, not erased — the whole value of the 1,853 rows
-      // brought over from the spreadsheet is being able to look up what
-      // was decided, and any management account being able to wipe that
-      // history is not a power this needs to hand out.
+      // Deletion is owner-tier only. A note is settled, not erased — the
+      // whole value of the 1,853 rows brought over from the spreadsheet is
+      // being able to look up what was decided, and any management account
+      // being able to wipe that history is not a power this needs to hand
+      // out. The desk offers it behind a deliberate "tidy up" mode (see
+      // canDeleteNotes), for test rows and notes typed into the wrong
+      // centre — never as a cross on every card.
       match /notes/{noteId} {
         allow read, create, update: if canUseDeskAt(centerId);
         allow delete: if isOwnerLike() || isSuperAdmin();

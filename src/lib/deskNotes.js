@@ -28,7 +28,7 @@
  *   never lose who it was for just because they no longer work here.
  */
 
-import { resolvePermissions } from './roles';
+import { resolvePermissions, isDirectorTitle } from './roles';
 import { resolveUserForCenter } from './centerMembership';
 
 /**
@@ -115,6 +115,28 @@ export function deskMembers(users, centerId, centreRoles) {
  * is that, written down, so a note nobody can move stops reading as a note
  * nobody has touched.
  */
+/**
+ * Who may ERASE a note, as opposed to settling one.
+ *
+ * MUST STAY IDENTICAL TO the notes rule in firestore.rules, which reads
+ * `isOwnerLike() || isSuperAdmin()` — the owner, the admin assistant, a
+ * director (by role, or by the legacy top-level title, which is what
+ * isDirector() matches) and Enterprise. Managers and Hosts run the desk
+ * and cannot clear it; tests/rules/desk.rules.test.js pins that.
+ *
+ * The desk's stance is that a note is SETTLED, not erased — the value of
+ * the 1,853 rows carried over from the spreadsheet is being able to look
+ * up what was decided. Deleting is for the other case: test rows, or a
+ * note typed into the wrong centre. That is why it is a deliberate mode
+ * rather than a cross on every card.
+ */
+export const NOTE_DELETE_ROLES = ['owner', 'admin_assistant', 'director', 'super_admin'];
+
+export function canDeleteNotes({ platformRole, instructorType } = {}) {
+  if (NOTE_DELETE_ROLES.includes(String(platformRole || ''))) return true;
+  return isDirectorTitle(instructorType);
+}
+
 export const NOTE_STATUSES = [
   { key: 'open',        label: 'Open',        short: 'Open' },
   { key: 'in_progress', label: 'In progress', short: 'In progress' },

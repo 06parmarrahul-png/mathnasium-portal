@@ -82,6 +82,9 @@ export const AUDIT_ACTIONS = {
   // client — the account is gone by then. Listed here so the code is
   // discoverable and AuditLogs.jsx has something to match on.
   STAFF_TERMINATED: 'staff.terminated',
+  // The desk settles notes rather than erasing them, so the rare erasure
+  // is worth a line in the log.
+  DESK_NOTES_DELETED: 'desk.notes_deleted',
   // Clearing data left behind by an account deleted before Terminate
   // existed. Also written server-side.
   STAFF_ORPHANS_PURGED: 'staff.orphans_purged',

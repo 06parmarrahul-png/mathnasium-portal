@@ -58,6 +58,24 @@ vi.mock('firebase/firestore', () => ({
     reads.push(JSON.stringify(q?.__w || []));
     return { docs: rowsFor(q).map((r, i) => ({ id: r.id || `g${i}`, data: () => r })) };
   },
+  writeBatch: () => {
+    const ops = [];
+    return {
+      delete: (ref) => ops.push(ref.__d),
+      set: () => {},
+      commit: async () => {
+        writes.push({ op: 'deleteBatch', ids: ops.slice() });
+        for (const path of ops) {
+          const parts = path.split('/');
+          const key = parts[parts.length - 2]; const id = parts[parts.length - 1];
+          if (snapshots[key]) snapshots[key] = snapshots[key].filter(r => r.id !== id);
+        }
+        for (const l of listeners) {
+          l.next({ docs: rowsFor(l.q).map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
+        }
+      },
+    };
+  },
   onSnapshot: (q, next) => {
     if (typeof next !== 'function') return () => {};
     const l = { q, next };
@@ -67,9 +85,15 @@ vi.mock('firebase/firestore', () => ({
   },
 }));
 
+const confirmAnswer = { current: true };
+const confirmsAsked = [];
 vi.mock('../lib/notify', () => ({
   toast: { success: vi.fn(), error: vi.fn() },
-  confirmDialog: async () => true,
+  confirmDialog: async (opts) => { confirmsAsked.push(opts); return confirmAnswer.current; },
+}));
+vi.mock('../lib/audit', () => ({
+  logAuditEvent: vi.fn(async () => {}),
+  AUDIT_ACTIONS: { DESK_NOTES_DELETED: 'desk.notes_deleted' },
 }));
 
 const authValue = { current: {} };
@@ -115,6 +139,8 @@ beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   writes.length = 0;
   reads.length = 0;
+  confirmsAsked.length = 0;
+  confirmAnswer.current = true;
   listeners.length = 0;
   for (const k of ['notes', 'users', 'schedulerStudents', 'giftCards',
     'receipts', 'referrals', 'studentOfMonth']) {
@@ -513,5 +539,79 @@ describe('the import panel', () => {
     authValue.current = { ...BASE_AUTH, canSeeCenterSettings: true };
     draw();
     expect(screen.queryByText(/second copy of everything/i)).toBeNull();
+  });
+});
+
+describe('deleting notes — the desk settles, it does not erase', () => {
+  const tidyButton = () => screen.queryByTitle(/Delete notes/i);
+
+  it('a Manager or Host is not offered it — the rules refuse them anyway', () => {
+    snapshots.notes = [note()];
+    authValue.current = { ...HOST_AUTH };
+    draw();
+    expect(screen.getByText(/Card was declined/)).toBeTruthy();       // they're on the desk
+    expect(tidyButton()).toBeNull();                                  // but not this
+  });
+
+  it('the owner tier is', () => {
+    snapshots.notes = [note()];
+    draw();       // BASE_AUTH is a Centre Director
+    expect(tidyButton()).toBeTruthy();
+  });
+
+  it('nothing is deleted until notes are ticked and it is confirmed', async () => {
+    snapshots.notes = [note({ id: 'a' }), note({ id: 'b', subject: 'Second note' })];
+    draw();
+    fireEvent.click(tidyButton());
+    expect(screen.getByText(/Tick the notes to delete/)).toBeTruthy();
+
+    const del = screen.getByRole('button', { name: /^Delete$/ });
+    expect(del.disabled).toBe(true);        // nothing selected yet
+
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    expect(screen.getByText('1 selected')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Delete 1/ }));
+
+    await waitFor(() => expect(writes.some(w => w.op === 'deleteBatch')).toBe(true));
+    const batch = writes.find(w => w.op === 'deleteBatch');
+    expect(batch.ids).toEqual(['centers/langley/notes/a']);
+    // It says how many, and that it cannot be undone.
+    expect(confirmsAsked[0].title).toMatch(/Delete 1 note\?/);
+    expect(confirmsAsked[0].message).toMatch(/no undo/i);
+    expect(confirmsAsked[0].danger).toBe(true);
+  });
+
+  it('answering no deletes nothing', async () => {
+    snapshots.notes = [note({ id: 'a' })];
+    confirmAnswer.current = false;
+    draw();
+    fireEvent.click(tidyButton());
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /Delete 1/ }));
+    await waitFor(() => expect(confirmsAsked).toHaveLength(1));
+    expect(writes.some(w => w.op === 'deleteBatch')).toBe(false);
+  });
+
+  it('clears several in one go — the reason this exists', async () => {
+    snapshots.notes = [note({ id: 'a' }), note({ id: 'b' }), note({ id: 'c' })];
+    draw();
+    fireEvent.click(tidyButton());
+    screen.getAllByRole('checkbox').forEach(box => fireEvent.click(box));
+    fireEvent.click(screen.getByRole('button', { name: /Delete 3/ }));
+    await waitFor(() => expect(writes.some(w => w.op === 'deleteBatch')).toBe(true));
+    expect(writes.find(w => w.op === 'deleteBatch').ids).toHaveLength(3);
+    expect(confirmsAsked[0].title).toMatch(/Delete 3 notes\?/);
+  });
+
+  it('cancel leaves the mode without touching anything', () => {
+    snapshots.notes = [note({ id: 'a' })];
+    draw();
+    fireEvent.click(tidyButton());
+    fireEvent.click(screen.getAllByRole('checkbox')[0]);
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+    expect(screen.queryByText(/selected/)).toBeNull();
+    expect(writes.some(w => w.op === 'deleteBatch')).toBe(false);
+    // And the notes are still there.
+    expect(screen.getByText(/Card was declined/)).toBeTruthy();
   });
 });
