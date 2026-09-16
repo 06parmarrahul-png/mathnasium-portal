@@ -50,6 +50,7 @@ const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
 const Onboarding                = lazy(() => import('./pages/Onboarding'));
 const Inventory                 = lazy(() => import('./pages/Inventory'));
 const AvailabilityLog           = lazy(() => import('./pages/AvailabilityLog'));
+const RatioGames                = lazy(() => import('./pages/RatioGames'));
 
 // Root URL ("/") is dual-purpose:
 //   - Unauthenticated visitor → public marketing Landing page
@@ -121,6 +122,9 @@ function AppRoutes() {
         <Route path="/" element={<RootGate />} />
         <Route path="/announcements" element={<ProtectedRoute><Layout><Announcements /></Layout></ProtectedRoute>} />
         <Route path="/schedule" element={<ProtectedRoute><Layout><Schedule /></Layout></ProtectedRoute>} />
+        {/* Ratio Games is deliberately ungated: every approved account
+            plays, volunteers and trainees included. */}
+        <Route path="/games" element={<ProtectedRoute><Layout><RatioGames /></Layout></ProtectedRoute>} />
         {/* requireShiftTaking covers volunteers AND trainees — neither
             claims or swaps, which is all this page does. */}
         <Route path="/shift-board" element={<ProtectedRoute requireShiftTaking><Layout><ShiftBoard /></Layout></ProtectedRoute>} />

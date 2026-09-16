@@ -18,7 +18,7 @@ import {
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
   UserPlus, FileBarChart, Activity, Package, History, LayoutGrid,
-  StickyNote,
+  StickyNote, Gamepad2,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -206,6 +206,9 @@ export default function Layout({ children }) {
   if (!isOwnerLikeNav && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
+  // Ratio Games. No condition on purpose — this is the one surface in the
+  // portal that every account gets, volunteers and trainees included.
+  general.push({ to: PAGES.ratioGames.path, label: PAGES.ratioGames.name, icon: Gamepad2 });
 
   // ─── OWNER LAYOUT ──────────────────────────────────────────────────
   // Built only when useOwnerLayout is true. Empty arrays otherwise so

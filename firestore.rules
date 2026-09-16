@@ -803,6 +803,57 @@ service cloud.firestore {
         allow update, delete: if isSuperAdmin();
       }
 
+      // ─── Ratio Games ────────────────────────────────────────────────
+      // One row per person per game per day. EVERY account plays —
+      // volunteers and trainees included, who otherwise get the barest
+      // portal in the app — so read is every member of the centre and
+      // there is no title or permission gate on writing your own score.
+      //
+      // WHAT THESE RULES CAN ACTUALLY HOLD, given the maths runs in the
+      // browser and api/ is full (12 of 12), so no server can mark it:
+      //
+      //   • ONE ATTEMPT A DAY. Create only — no update, ever — and the
+      //     document id has to be "{uid}_{gameId}_{date}". A second run
+      //     hits a document that already exists and is refused. The id is
+      //     checked against the fields inside it, or a second run could
+      //     just be filed under a different name.
+      //   • IT IS YOUR OWN SCORE, ON YOUR OWN CENTRE'S BOARD. The uid in the
+      //     row is the signed-in user, and they belong to this centre —
+      //     "everyone plays" means everyone HERE, not everyone anywhere.
+      //   • THE SCORE IS IN RANGE. MAX_POINTS in src/lib/ratioGames.js is
+      //     120; a row claiming 900 never lands.
+      //   • NOBODY REWRITES HISTORY, owners included.
+      //
+      // What they CANNOT do is check that the maths was actually done —
+      // a determined person with the console open can post a plausible
+      // score. That is why every row carries its duration (a 40-correct
+      // run in nine seconds stands out), why the board is visible to all
+      // staff, and why the prize is a modest gift card. The owner tier and
+      // a Manager can delete a bogus row; that is the only way one goes.
+      match /gameScores/{scoreId} {
+        allow read: if isMemberAt(centerId) || isOwnerLike() || isSuperAdmin();
+
+        allow create: if isSignedIn()
+                      && isMemberAt(centerId)
+                      && request.resource.data.uid == request.auth.uid
+                      && scoreId == request.resource.data.uid + '_'
+                                  + request.resource.data.gameId + '_'
+                                  + request.resource.data.date
+                      && request.resource.data.centerId == centerId
+                      && request.resource.data.date is string
+                      && request.resource.data.gameId is string
+                      && request.resource.data.points is int
+                      && request.resource.data.points >= 0
+                      && request.resource.data.points <= 120
+                      && request.resource.data.result is int
+                      && request.resource.data.result >= 0
+                      && request.resource.data.durationMs is int
+                      && request.resource.data.durationMs >= 0;
+
+        allow update: if false;
+        allow delete: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
+      }
+
       // ─── Catchall: read-only, owner-equivalent ──────────────────────
       // The safety net for any subcollection not named above. Read so a
       // missed path degrades to "only owners can see it" rather than

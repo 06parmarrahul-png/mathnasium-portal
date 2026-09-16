@@ -26,6 +26,7 @@ export const PAGES = {
   mySchedule:       { path: '/schedule',              name: 'My Schedule' },
   jobBoard:         { path: '/shift-board',           name: 'Job Board' },
   myPay:            { path: '/my-pay',                name: 'My Pay' },
+  ratioGames:       { path: '/games',                 name: 'Ratio Games' },
   myAccount:        { path: '/account',               name: 'My Account' },
   teamChat:         { path: '/chat',                  name: 'Team Chat' },
   chats:            { path: '/chats',                 name: 'Chats' },

@@ -752,6 +752,41 @@ made in Manage Staff, per centre, without an Enterprise login.
 
 `isAdmin()` / `isAdmin` stay in place until the last admin-role account is gone.
 
+## Ratio Games — the one thing everybody gets
+
+A short maths game a day, a per-centre board, a monthly winner. Phase 1 is
+**Sprint 60** (60 seconds of mental arithmetic); the roster and the plan for the
+rest are in the draft proposal.
+
+**EVERY ACCOUNT PLAYS.** The route carries no permission, the page makes no
+check, and the rules gate on centre membership only — volunteers and trainees
+included, who are turned away from Team Chat and the Job Board and otherwise get
+the barest portal in the app. That is the point of it. Who is eligible for the
+**prize** is deliberately NOT in the code: it is a decision made when the gift
+card is handed over, so it can change without a deploy.
+
+- `src/lib/ratioGames.js` — pure, tested: seeded question generators, scoring,
+  the board. **No `Math.random()`**: questions come from `seedFrom(centre|date)`,
+  so everyone here gets the same ones and nobody can reroll until they like them.
+- **Three caps, each load-bearing.** Best 3 games a day (or the winner is
+  whoever had the quietest shift), best 12 days a month (or the board just ranks
+  hours worked, which is unfair to part-timers and looks it), streak bonus capped
+  at 60. Ties break on FEWER runs — sharper, not longer.
+- **One ranked run a day, enforced by the document id.**
+  `centers/{id}/gameScores/{uid}_{gameId}_{date}`, create-only, and the rules
+  check the id matches the fields inside it — otherwise a second run could just
+  be filed under another name. Practice runs write nothing. `ranked` is decided
+  when a run STARTS and carried to the end, so a good practice run can't be
+  promoted after the fact.
+- **What the rules cannot do** is check the maths was done — it runs in the
+  browser and `api/` is at 12/12, so no server can mark it. Hence: every row
+  carries its duration, the board is visible to all staff, scores are immutable
+  (no update, ever), and a Manager or the owner tier can delete a bogus row.
+  That deletion is the ONLY way a row goes. The prize is a modest gift card, in
+  proportion to the effort of cheating for it.
+- **Never a performance measure.** Optional, on their own time, and the page says
+  so — staff are hourly, and a contest that feels expected is unpaid work.
+
 ## Page names and job titles — one list
 
 Every page's name lives in `src/lib/pageNames.js` (`PAGES`). The sidebar,

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
-import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, PartyPopper } from 'lucide-react';
+import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, PartyPopper, Gamepad2 } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { greeting } from '../../lib/greeting';
@@ -12,6 +12,7 @@ import {
   weekAhead, monthAhead, weekWindow, monthWindow, eventTypeShort,
 } from '../../lib/centreEvents';
 import { funDayOn, funDaysAhead } from '../../lib/funDays';
+import { PAGES } from '../../lib/pageNames';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
@@ -557,6 +558,27 @@ export default function InstructorHome() {
             </Card>
           </div>
         )}
+
+        {/* ── Ratio Games ─────────────────────────────────────────── */}
+        {/* The doorway most people use — the sidebar is behind a hamburger
+            on a phone. One line, no numbers pulled from Firestore: this
+            card should never cost a read to render, and "have I played
+            today" is worth a tap to find out rather than a query on every
+            home load. */}
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <b className="block text-[14.5px]">{PAGES.ratioGames.name}</b>
+              <span className="mt-0.5 block text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
+                A minute of maths. One ranked run a day, gift card at month end.
+              </span>
+            </div>
+            <Btn to={PAGES.ratioGames.path} variant="ghost" size="sm"
+              className="w-full justify-center sm:w-auto">
+              <Gamepad2 size={14} /> Play
+            </Btn>
+          </div>
+        </Card>
 
         {/* ── Open shifts ─────────────────────────────────────────── */}
         {canTakeShifts && eligibleOpen.length > 0 && (
