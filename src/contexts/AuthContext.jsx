@@ -6,7 +6,7 @@ import {
   sendPasswordResetEmail,
   signOut,
 } from 'firebase/auth';
-import { doc, setDoc, onSnapshot, getDoc, getDocs, query, where, collection, limit } from 'firebase/firestore';
+import { doc, setDoc, onSnapshot, getDoc } from 'firebase/firestore';
 import { auth, db } from '../firebase';
 import { DEFAULT_CENTER_ID, getActiveCenterId, setActiveCenterId as persistActiveCenterId, getUserCenters } from '../lib/centers';
 import { DEFAULT_CENTER_CONFIG, mergeCenterConfig } from '../lib/centerConfig';
@@ -348,40 +348,25 @@ export function AuthProvider({ children }) {
     const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
     const centerId = extras.centerId || DEFAULT_CENTER_ID;
 
-    // Auto-promote the FIRST signup at a centre to owner+approved.
-    // Rationale: until now, every signup defaulted to pending-instructor,
-    // requiring a super-admin to promote them manually. That was a hidden
-    // step where new-centre owners got stuck (they'd sign up, see a
-    // "pending approval" screen, and assume the app was broken). For any
-    // centre that already has an approved owner, this branch is skipped
-    // and the legacy pending-instructor flow takes over — so existing
-    // centres are unaffected and only the actual owner gets auto-promoted.
-    let isFirstOwner = false;
-    try {
-      const ownersSnap = await getDocs(query(
-        collection(db, 'users'),
-        where('centerIds', 'array-contains', centerId),
-        where('role', '==', 'owner'),
-        where('approved', '==', true),
-        limit(1),
-      ));
-      isFirstOwner = ownersSnap.empty;
-    } catch {
-      // If the query fails (rare — rules or transient), fall back to the
-      // pending-instructor flow rather than risk auto-granting owner to
-      // someone we couldn't verify.
-      isFirstOwner = false;
-    }
-
-    const role     = isFirstOwner ? 'owner'    : 'instructor';
-    const approved = isFirstOwner;
-    // Operational fields (instructorType, approved, etc.) are
-    // now scoped per-centre via `centerMemberships`. The top-level copies
-    // are kept as the legacy fallback so reads in any code path that
-    // hasn't been migrated yet still produce a sensible value. See
-    // src/lib/centerMembership.js for the full rationale.
+    // EVERY SIGNUP IS A PENDING INSTRUCTOR. No exceptions, and no
+    // self-promotion.
+    //
+    // This used to auto-promote the first account at a centre to
+    // owner+approved, to save a new centre's owner from being stuck on the
+    // pending screen. The cost of that convenience was not visible from
+    // here: the Firestore rules cannot run the "is there an owner yet"
+    // query, so `allow create` had to accept whatever role the client
+    // wrote — and anyone who could reach the signup page could hand
+    // themselves `role: 'owner'` and read the centre's leads. Parent names,
+    // emails and phone numbers.
+    //
+    // So the first owner of a new centre is now made by a person, in
+    // Manage Roles, which is how every other role change already works.
+    // The rules enforce this shape; see isPlainSignup in firestore.rules.
+    const role     = 'instructor';
+    const approved = false;
     const initialMembership = buildInitialMembership({
-      instructorType: isFirstOwner ? 'Owner' : 'Instructor',
+      instructorType: 'Instructor',
       maxDaysPerWeek: 5,
       subRoles:       [],
       guaranteed:     false,
@@ -394,7 +379,7 @@ export function AuthProvider({ children }) {
       role,
       approved,
       // Scheduling fields (set defaults; admin can edit)
-      instructorType: isFirstOwner ? 'Owner' : 'Instructor',
+      instructorType: 'Instructor',
       maxDaysPerWeek: 5,     // Admin can override
       phone: extras.phone || '',
       // Which Cole sits at the top of their sidebar (src/lib/mascots.js).

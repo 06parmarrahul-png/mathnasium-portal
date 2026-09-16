@@ -127,6 +127,57 @@ service cloud.firestore {
                   : beforeTop);
     }
 
+    // ─── A self-created profile is a plain, pending instructor ─────────
+    // Signup writes its own /users/{uid} document, and for a long time the
+    // only check was "is this your own uid" — so anyone who could reach the
+    // signup page could hand themselves `role: 'owner'` and read the leads
+    // (parent names, emails, phone numbers). Proven in the emulator before
+    // this was written; see tests/rules/signup.rules.test.js.
+    //
+    // A new account may therefore only be: the instructor role, not
+    // approved, and carrying no title that grants anything. Approval and
+    // any real title come afterwards from somebody who already has the
+    // standing to give them — Manage Staff, or api/users/create-staff.js
+    // on the Admin SDK, which bypasses these rules entirely.
+    //
+    // THE FIRST OWNER OF A NEW CENTRE IS NOW MADE BY HAND, in Manage Roles.
+    // Signup used to promote the first account at a centre to owner, which
+    // is the flow this closes; rules cannot run that "is there an owner
+    // yet" query, so the promotion moved to a person.
+    function isPlainTitle(t) {
+      return !(t is string) ? false
+        : t.lower().replace('[^a-z]', '') in ['', 'instructor', 'training', 'volunteer'];
+    }
+
+    function rowTitlePlain(rows, centreId) {
+      return !(rows[centreId] is map) ? false
+        : isPlainTitle(rows[centreId].get('instructorType', ''));
+    }
+
+    // The same positional walk as writesDirectorTitle, and the same reasons
+    // for its shape: the rules language cannot loop, and `? :` keeps a
+    // request inside the 1,000-expression budget.
+    function plainRows(rows, centres) {
+      return centres.size() > 5 ? false
+        : (centres.size() > 0 ? rowTitlePlain(rows, centres[0]) : true)
+          && (centres.size() > 1 ? rowTitlePlain(rows, centres[1]) : true)
+          && (centres.size() > 2 ? rowTitlePlain(rows, centres[2]) : true)
+          && (centres.size() > 3 ? rowTitlePlain(rows, centres[3]) : true)
+          && (centres.size() > 4 ? rowTitlePlain(rows, centres[4]) : true);
+    }
+
+    function isPlainSignup() {
+      return plainSignup(request.resource.data,
+                         mapOrEmpty(request.resource.data.get('centerMemberships', {})));
+    }
+
+    function plainSignup(after, rows) {
+      return after.get('role', 'instructor') == 'instructor'
+        && after.get('approved', false) == false
+        && isPlainTitle(after.get('instructorType', ''))
+        && plainRows(rows, rows.keys());
+    }
+
     // Does this write put a director title on the user that wasn't already
     // theirs — at the top level, or in any centerMemberships row?
     //
@@ -931,12 +982,12 @@ service cloud.firestore {
       // Read: any signed-in user can read any user doc.
       allow read: if isSignedIn();
 
-      // Create only your own profile (signup flow writes /users/{auth.uid}).
-      // Never with a director title: nobody creating their own profile is
-      // owner tier yet. The owner tier adds one afterwards, and
-      // api/users/create-staff.js (Admin SDK) checks canCreateTitle.
+      // Create only your own profile (signup flow writes /users/{auth.uid}),
+      // and only as a plain pending instructor — see isPlainSignup above.
+      // Nobody creating their own account is owner tier yet, so no role, no
+      // approval and no title that grants anything can come with it.
       allow create: if isSignedIn() && request.auth.uid == userId
-                    && !writesDirectorTitle();
+                    && isPlainSignup();
 
       // Update:
       //   - Owner / super-admin can update any user.

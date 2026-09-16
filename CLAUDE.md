@@ -717,6 +717,27 @@ Also mock Firestore **by collection**. A mock handing every listener the
 same rows let the availability listener receive shift documents, and a test
 passed for the wrong reason.
 
+## Signup creates a pending instructor, and nothing else
+
+`allow create` on `/users/{uid}` used to be "is this your own uid", so anyone who
+could reach the signup page could write themselves `role: 'owner'` and read
+`centers/{id}/leads` — parent names, emails, phone numbers. Closed 2026-09-16.
+
+- **The rules** (`isPlainSignup`) allow a self-created account only as
+  `role: 'instructor'`, `approved: false`, and with a title that grants nothing
+  (Instructor / Training / Volunteer / none), top-level **and** in every
+  `centerMemberships` row — positional over five rows, same shape and same
+  reasons as `writesDirectorTitle`.
+- **`AuthContext.signup` no longer auto-promotes** the first account at a centre
+  to owner+approved. That convenience is what forced `create` to accept any
+  role: the rules cannot run the "is there an owner yet" query it depended on.
+  **A new centre's first owner is promoted by hand in Manage Roles**, like every
+  other role change. The signup page's own copy always claimed accounts were
+  "always created as plain Instructor" — now that is true.
+- `tests/rules/signup.rules.test.js` opens with the exploit written the way an
+  attacker would (create as owner, then go for the leads). Reverting the rule
+  fails five of its tests — checked.
+
 ## Managers are the admin — the Admin platform role is retired
 
 Decided 2026-09-14. Only two accounts were ever left on `role: 'admin'`: the
