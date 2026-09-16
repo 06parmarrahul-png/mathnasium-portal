@@ -347,6 +347,13 @@ Two deliberate exclusions:
 
 Impact on real data: 49 of 1837 person-day cells (2.7%), worst week 7 cells.
 
+**The composer is closed until asked for.** It used to sit open at the foot of
+every view — on a desk of 121 open notes that is a large empty box and a
+blinking cursor under a list people mostly came to READ. "Add entry" opens it at
+the TOP, where the button is, rather than at the end of a long scroll. Closing
+keeps the draft; only a sent note clears it, so a stray Escape can't bin a
+half-written one.
+
 **Deleting a note** is owner-tier only — `canDeleteNotes()` mirrors the rule's
 `isOwnerLike() || isSuperAdmin()`, so Managers and Hosts run the desk but cannot
 clear it. It lives behind a **tidy-up mode** (the bin next to the search box):

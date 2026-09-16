@@ -175,6 +175,10 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   // Tidy-up mode. Off by default and owner-tier only: the desk settles
   // notes, it does not erase them, and this exists for the other case —
   // test rows and notes typed into the wrong centre.
+  // The composer is CLOSED until asked for. It used to sit open at the
+  // bottom of every view, which put a big empty box and a blinking cursor
+  // under a list people came to read — writing a note is the rarer act.
+  const [composing, setComposing] = useState(false);
   const [tidy, setTidy] = useState(false);
   const [picked, setPicked] = useState(() => new Set());
   const [q, setQ] = useState('');
@@ -323,6 +327,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         replies: [],
       });
       setText('');
+      setComposing(false);
     } catch (e) {
       toast.error(e?.message || 'Could not send that.');
     } finally {
@@ -474,7 +479,18 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
             <Trash2 size={14} />
           </button>
         )}
+        {!tidy && (
+          <button onClick={() => setComposing(c => !c)}
+            className="flex items-center gap-1.5 rounded-lg bg-red-600 px-3 py-2 text-[13px] font-bold text-white hover:bg-red-700">
+            <Plus size={14} /> Add entry
+          </button>
+        )}
       </div>
+
+      {composing && (
+        <Composer text={text} setText={setText} parsed={parsed} onSend={send}
+          sending={sending} me={profile?.displayName} onClose={() => setComposing(false)} />
+      )}
 
       {hiddenSettled > 0 && (
         <button onClick={() => setView('done')}
@@ -508,9 +524,6 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           ))}
         </div>
       )}
-
-      <Composer text={text} setText={setText} parsed={parsed} onSend={send}
-        sending={sending} me={profile?.displayName} />
 
       {canImport && (
         <DeskImport centerId={centerId} members={members} students={students}
@@ -882,15 +895,37 @@ function AboutPicker({ note, students, onPick, onCancel }) {
  * It shows what it understood BEFORE anything is sent, because a wrong
  * guess you do not notice is worse than a form you had to fill in.
  */
-function Composer({ text, setText, parsed, onSend, sending, me }) {
+/**
+ * Writing a note. Opened from "Add entry" and closed again once it is sent.
+ *
+ * It used to sit open at the foot of every view. On a desk of 121 open
+ * notes that is a large empty box and a blinking cursor underneath a list
+ * people mostly came to READ — so it is asked for now, and it opens where
+ * the button is rather than at the bottom of a long scroll.
+ *
+ * Closing keeps whatever was typed. Only a sent note clears the box, so a
+ * stray Escape never loses a half-written one.
+ */
+function Composer({ text, setText, parsed, onSend, sending, me, onClose }) {
   const ready = canSend(parsed);
   const who = addressLabel(parsed);
 
   return (
-    <div className="sticky bottom-0 mt-4 bg-gradient-to-b from-transparent via-gray-50 to-gray-50 pb-2 pt-3">
+    <div className="mb-3">
       <div className="overflow-hidden rounded-2xl border-[1.5px] border-gray-300 bg-white shadow-sm focus-within:border-red-500">
+        <div className="flex items-center justify-between border-b border-gray-100 px-3 py-1.5">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-gray-400">New entry</span>
+          <button onClick={onClose} aria-label="Close the composer"
+            className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600">
+            <X size={14} />
+          </button>
+        </div>
         <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
-          onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onSend(); } }}
+          autoFocus
+          onKeyDown={e => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onSend(); }
+            if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+          }}
           placeholder="NG, can you please complete a care call for…"
           className="w-full resize-none px-4 py-3 text-[15.5px] leading-relaxed focus:outline-none" />
 
@@ -938,7 +973,11 @@ function Composer({ text, setText, parsed, onSend, sending, me }) {
             className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-40">
             {sending ? 'Sending…' : 'Send'}
           </button>
-          <span className="text-[11px] text-gray-400">⌘↵ to send</span>
+          <button onClick={onClose}
+            className="rounded-lg px-3 py-2 text-[13px] font-semibold text-gray-500 hover:bg-gray-100">
+            Cancel
+          </button>
+          <span className="text-[11px] text-gray-400">⌘↵ to send · Esc to close</span>
         </div>
       </div>
     </div>

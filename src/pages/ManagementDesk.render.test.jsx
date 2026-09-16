@@ -377,6 +377,8 @@ describe('writing one', () => {
     snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
     snapshots.schedulerStudents = [{ name: 'Lexie Liu' }];
     draw();
+    // The composer is closed until asked for — writing is the rarer act.
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
     return screen.getByPlaceholderText(/can you please complete a care call/);
   };
 
@@ -613,5 +615,54 @@ describe('deleting notes — the desk settles, it does not erase', () => {
     expect(writes.some(w => w.op === 'deleteBatch')).toBe(false);
     // And the notes are still there.
     expect(screen.getByText(/Card was declined/)).toBeTruthy();
+  });
+});
+
+describe('the composer stays out of the way', () => {
+  it('is closed when the desk opens', () => {
+    snapshots.notes = [note()];
+    draw();
+    expect(screen.queryByPlaceholderText(/care call/)).toBeNull();
+    expect(screen.getByRole('button', { name: /Add entry/ })).toBeTruthy();
+  });
+
+  it('opens on Add entry and closes on Cancel', () => {
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
+    expect(screen.getByPlaceholderText(/care call/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+    expect(screen.queryByPlaceholderText(/care call/)).toBeNull();
+  });
+
+  it('closes on Escape without losing what was typed', () => {
+    // A stray Escape must not bin a half-written note.
+    snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
+    const box = screen.getByPlaceholderText(/care call/);
+    fireEvent.change(box, { target: { value: 'NG, half a thought' } });
+    fireEvent.keyDown(box, { key: 'Escape' });
+    expect(screen.queryByPlaceholderText(/care call/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
+    expect(screen.getByPlaceholderText(/care call/).value).toBe('NG, half a thought');
+  });
+
+  it('closes itself once the note is sent', async () => {
+    snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /Add entry/ }));
+    fireEvent.change(screen.getByPlaceholderText(/care call/), {
+      target: { value: 'NG, please call the Liu family back' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Send$/ }));
+    await waitFor(() => expect(writes.some(w => w.op === 'add')).toBe(true));
+    await waitFor(() => expect(screen.queryByPlaceholderText(/care call/)).toBeNull());
+  });
+
+  it('is not offered while you are deleting — one mode at a time', () => {
+    snapshots.notes = [note()];
+    draw();
+    fireEvent.click(screen.getByTitle(/Delete notes/i));
+    expect(screen.queryByRole('button', { name: /Add entry/ })).toBeNull();
   });
 });
