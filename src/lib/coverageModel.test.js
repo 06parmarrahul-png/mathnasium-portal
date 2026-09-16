@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
-  slotKeysFor, resolveCoverageModel, targetFor, hasTargets, countsOnFloor,
-  coverageForDate, summariseSlots, classifySlot, upcomingDatesFor,
-  setSlotTarget, fillWeekday,
+  slotKeysFor, resolveCoverageModel, targetFor, dayTargetFor, slotOverridesDay,
+  hasTargets, countsOnFloor, coverageForDate, daySupply, summariseSlots,
+  classifySlot, upcomingDatesFor, setDayTarget, setSlotTarget, clearSlotTargets,
+  setAllDayTargets,
 } from './coverageModel';
 import { builtInRoles, resolveRoles } from './roles';
 import { buildTimeOffIndex } from './timeOff';
@@ -29,31 +30,56 @@ describe('slot keys', () => {
 });
 
 describe('the stored model', () => {
-  it('keeps real counts and drops anything unusable', () => {
+  it('keeps real numbers and drops anything unusable', () => {
     const model = resolveCoverageModel({
       coverageModel: {
-        Monday: { '15:00': 4, '15:30': '5', '16:00': 'lots', '16:30': -2, 'teatime': 3 },
-        Tuesday: 'nope',
+        Monday: { day: 12, '15:00': 4, '15:30': '5', '16:00': 'lots', '16:30': -2, 'teatime': 3 },
+        Tuesday: { day: 'heaps' },
+        Wednesday: 'nope',
       },
     });
-    expect(model.Monday).toEqual({ '15:00': 4, '15:30': 5 });
+    expect(model.Monday).toEqual({ day: 12, slots: { '15:00': 4, '15:30': 5 } });
     expect(model.Tuesday).toBeUndefined();
+    expect(model.Wednesday).toBeUndefined();
   });
 
-  it('a slot nobody has set reads as null, never as zero', () => {
-    // "we want nobody at 4pm" and "nobody has said" are different answers,
-    // and a view that renders 0 for the second invents a decision.
-    const model = resolveCoverageModel({ coverageModel: { Monday: { '15:00': 4 } } });
-    expect(targetFor(model, 'Monday', '15:00')).toBe(4);
-    expect(targetFor(model, 'Monday', '16:00')).toBeNull();
+  it('a half hour falls back to the day’s number, and an override beats it', () => {
+    const model = resolveCoverageModel({ coverageModel: { Monday: { day: 12, '16:30': 14 } } });
+    expect(targetFor(model, 'Monday', '15:00')).toBe(12);   // inherits the day
+    expect(targetFor(model, 'Monday', '16:30')).toBe(14);   // its own number
+    expect(dayTargetFor(model, 'Monday')).toBe(12);
+    expect(slotOverridesDay(model, 'Monday', '16:30')).toBe(true);
+    expect(slotOverridesDay(model, 'Monday', '15:00')).toBe(false);
+  });
+
+  it('an override equal to the day’s number is not an override', () => {
+    const model = resolveCoverageModel({ coverageModel: { Monday: { day: 12, '16:30': 12 } } });
+    expect(slotOverridesDay(model, 'Monday', '16:30')).toBe(false);
+  });
+
+  it('a day nobody has set reads as null, never as zero', () => {
+    // "we want nobody on Saturday" and "nobody has said" are different
+    // answers, and a view that renders 0 for the second invents a decision.
+    const model = resolveCoverageModel({ coverageModel: { Monday: { day: 4 } } });
     expect(targetFor(model, 'Friday', '15:00')).toBeNull();
+    expect(dayTargetFor(model, 'Friday')).toBeNull();
     expect(hasTargets(model, 'Monday')).toBe(true);
     expect(hasTargets(model, 'Friday')).toBe(false);
   });
 
   it('a target of zero is a real answer and survives', () => {
-    const model = resolveCoverageModel({ coverageModel: { Saturday: { '09:00': 0 } } });
-    expect(targetFor(model, 'Saturday', '09:00')).toBe(0);
+    const model = resolveCoverageModel({ coverageModel: { Saturday: { day: 0 } } });
+    expect(dayTargetFor(model, 'Saturday')).toBe(0);
+    expect(targetFor(model, 'Saturday', '10:00')).toBe(0);
+  });
+
+  it('reads a model saved before day targets existed', () => {
+    // The first version stored only 'HH:MM' keys. Those slots keep their
+    // numbers; the day simply has no headline yet.
+    const model = resolveCoverageModel({ coverageModel: { Monday: { '15:00': 4 } } });
+    expect(dayTargetFor(model, 'Monday')).toBeNull();
+    expect(targetFor(model, 'Monday', '15:00')).toBe(4);
+    expect(targetFor(model, 'Monday', '15:30')).toBeNull();
   });
 
   it('missing config is an empty model, not a crash', () => {
@@ -221,23 +247,36 @@ describe('the dates a weekday view reads', () => {
 });
 
 describe('editing the model', () => {
-  it('sets, rounds and clears a slot', () => {
-    let model = setSlotTarget({}, 'Monday', '15:00', '4');
-    expect(model.Monday['15:00']).toBe(4);
-    model = setSlotTarget(model, 'Monday', '15:00', '');
-    expect(model.Monday['15:00']).toBeUndefined();
+  it('sets, rounds and clears the day’s number', () => {
+    let stored = setDayTarget({}, 'Monday', '12');
+    expect(stored.Monday.day).toBe(12);
+    stored = setDayTarget(stored, 'Monday', '');
+    expect(stored.Monday.day).toBeUndefined();
+  });
+
+  it('keeps half-hour overrides when the day’s number changes', () => {
+    // The whole point of storing both: re-typing the headline must not
+    // silently wipe the 4:30 you set by hand.
+    let stored = setSlotTarget(setDayTarget({}, 'Monday', 12), 'Monday', '16:30', 14);
+    stored = setDayTarget(stored, 'Monday', 10);
+    expect(stored.Monday).toEqual({ day: 10, '16:30': 14 });
+  });
+
+  it('clears the overrides on request, keeping the day', () => {
+    const stored = clearSlotTargets({ Monday: { day: 10, '16:30': 14 } }, 'Monday');
+    expect(stored.Monday).toEqual({ day: 10 });
   });
 
   it('does not mutate what it was given', () => {
-    const before = { Monday: { '15:00': 4 } };
+    const before = { Monday: { day: 12 } };
     const after = setSlotTarget(before, 'Monday', '15:30', 5);
     expect(before.Monday['15:30']).toBeUndefined();
-    expect(after.Monday).toEqual({ '15:00': 4, '15:30': 5 });
+    expect(after.Monday).toEqual({ day: 12, '15:30': 5 });
   });
 
-  it('fills a whole weekday in one go', () => {
-    const model = fillWeekday({}, 'Tuesday', ['15:00', '15:30'], 3);
-    expect(model.Tuesday).toEqual({ '15:00': 3, '15:30': 3 });
+  it('sets every operating day at once', () => {
+    const stored = setAllDayTargets({}, ['Monday', 'Tuesday'], 12);
+    expect(resolveCoverageModel({ coverageModel: stored }).Tuesday.day).toBe(12);
   });
 });
 
@@ -253,5 +292,54 @@ describe('when nobody has submitted availability', () => {
   it('still counts a real zero as a real zero', () => {
     // Somebody DID submit, and nobody who counts is free.
     expect(classifySlot({ target: 2, available: 0, scheduled: 0 }).status).toBe('unstaffable');
+  });
+});
+
+describe('a day rolled up to one bar', () => {
+  const D = '2026-09-21';
+  const slots = ['15:00', '15:30', '16:00'];
+  const users = [
+    { uid: 'a', displayName: 'Ann', instructorType: 'Instructor' },
+    { uid: 'b', displayName: 'Bea', instructorType: 'Instructor' },
+    { uid: 'h', displayName: 'Hugo', instructorType: 'Host' },
+  ];
+
+  it('counts people, not slots', () => {
+    // Ann is free the whole window. That is ONE instructor, not three.
+    const day = daySupply({
+      date: D, slotKeys: slots, users, roles: ROLES,
+      availability: [avail('a', D, '15:00', '17:00'), avail('b', D, '15:30', '16:00')],
+    });
+    expect(day.available).toBe(2);
+    expect(day.availableNames.sort()).toEqual(['Ann', 'Bea']);
+  });
+
+  it('counts anyone covering any part of the window', () => {
+    const day = daySupply({
+      date: D, slotKeys: slots, users, roles: ROLES,
+      availability: [avail('b', D, '15:30', '16:00')],
+    });
+    expect(day.available).toBe(1);
+  });
+
+  it('knows the difference between nobody free and nobody asked', () => {
+    const asked = daySupply({
+      date: D, slotKeys: slots, users, roles: ROLES,
+      availability: [avail('h', D, '15:00', '17:00')],   // host only — not floor supply
+    });
+    expect(asked.available).toBe(0);
+    expect(asked.hasAvailability).toBe(true);
+
+    const unasked = daySupply({ date: D, slotKeys: slots, users, roles: ROLES, availability: [] });
+    expect(unasked.available).toBe(0);
+    expect(unasked.hasAvailability).toBe(false);
+  });
+
+  it('carries the half-hour rows for the expanded view', () => {
+    const day = daySupply({
+      date: D, slotKeys: slots, users, roles: ROLES,
+      availability: [avail('b', D, '15:30', '16:00')],
+    });
+    expect(day.rows.map(r => r.available)).toEqual([0, 1, 0]);
   });
 });

@@ -44,7 +44,7 @@ import { isTrainingType } from '../lib/staffTypes';
 import { RATIO_FIELD } from '../lib/ratioCount';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
-import CoverageTargetsPanel from '../components/CoverageTargetsPanel';
+import CoverageModelCard from '../components/CoverageModelCard';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -673,9 +673,13 @@ export default function StaffingBoard() {
         </div>
       </div>
 
-      {/* What the centre WANTS per half hour. Read by Centre Analytics →
-          Coverage; nothing on this board is scheduled from it. */}
-      <CoverageTargetsPanel />
+      {/* What the centre WANTS, day by day, and whether availability covers
+          it. The same card Centre Analytics shows — Managers and Hosts can
+          reach this page, and Centre Analytics is owner-tier. Nothing on
+          this board is scheduled from it. */}
+      <div className="mb-5">
+        <CoverageModelCard />
+      </div>
 
       {/* Controls */}
       <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">

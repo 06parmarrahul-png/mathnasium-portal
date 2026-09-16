@@ -10522,7 +10522,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       {/* Target vs availability vs rota, per half hour. Replaced "Average
           Coverage by Day", whose daily average against one number for the
           whole day could not say which HALF HOUR was short. */}
-      <CoverageModelCard users={users} shifts={shifts} />
+      <CoverageModelCard />
 
       {/* ── Average Hourly Coverage By Day (day × hour heatmap) ─────────── */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">

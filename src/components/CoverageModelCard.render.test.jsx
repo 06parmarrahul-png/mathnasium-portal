@@ -1,56 +1,64 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 
 /**
  * The coverage card, rendered.
  *
- * The numbers here are the whole point of the card, so they're asserted
- * off the real DOM rather than from the pure module alone: a row that
- * reads its columns in the wrong order, or an average divided by the
- * wrong number of weeks, looks fine in coverageModel.test.js and wrong on
- * the screen.
+ * The numbers are the whole point, so they're asserted off the real DOM: a
+ * day bar that adds slots up instead of counting people, or an expansion
+ * that reads the wrong weekday's instructional hours, looks fine in
+ * coverageModel.test.js and wrong on the screen.
+ *
+ * Clock is frozen to Monday 21 Sep 2026, so "the next Monday" is that day
+ * and "the next Saturday" is the 26th.
  */
 
-// Four Mondays from the frozen clock: 21 Sep, 28 Sep, 5 Oct, 12 Oct 2026.
-const MONDAYS = ['2026-09-21', '2026-09-28', '2026-10-05', '2026-10-12'];
-
-const availability = MONDAYS.flatMap(date => ([
-  { userId: 'a', date, startTime: '15:00', endTime: '19:00' },
-  { userId: 'b', date, startTime: '15:00', endTime: '19:00' },
-  { userId: 'c', date, startTime: '16:00', endTime: '19:00' },
-  // A host — present, but never ratio supply.
-  { userId: 'h', date, startTime: '15:00', endTime: '19:00' },
-]));
-
-const shifts = MONDAYS.flatMap(date => ([
-  { id: `s1-${date}`, date, userName: 'Ann',  startTime: '15:00', endTime: '19:00', role: 'Instructor' },
-  { id: `s2-${date}`, date, userName: 'Bea',  startTime: '16:00', endTime: '19:00', role: 'Instructor' },
-  { id: `s3-${date}`, date, userName: 'Hugo', startTime: '15:00', endTime: '19:00', role: 'Host' },
-]));
+const MON = '2026-09-21';
+const SAT = '2026-09-26';
 
 const users = [
-  { uid: 'a', id: 'a', displayName: 'Ann',  instructorType: 'Instructor' },
-  { uid: 'b', id: 'b', displayName: 'Bea',  instructorType: 'Instructor' },
-  { uid: 'c', id: 'c', displayName: 'Cal',  instructorType: 'Lead' },
-  { uid: 'h', id: 'h', displayName: 'Hugo', instructorType: 'Host' },
+  { uid: 'a', id: 'a', displayName: 'Ann',  instructorType: 'Instructor', centerIds: ['langley'] },
+  { uid: 'b', id: 'b', displayName: 'Bea',  instructorType: 'Instructor', centerIds: ['langley'] },
+  { uid: 'c', id: 'c', displayName: 'Cal',  instructorType: 'Lead',       centerIds: ['langley'] },
+  { uid: 'h', id: 'h', displayName: 'Hugo', instructorType: 'Host',       centerIds: ['langley'] },
 ];
 
-const snapshots = { availability, timeOffRequests: [] };
+// Monday: Ann + Bea all afternoon, Cal from 4. Hugo is a host — never supply.
+// Saturday: Ann only.
+const availability = [
+  { id: 'r1', userId: 'a', date: MON, startTime: '15:00', endTime: '19:00' },
+  { id: 'r2', userId: 'b', date: MON, startTime: '15:00', endTime: '19:00' },
+  { id: 'r3', userId: 'c', date: MON, startTime: '16:00', endTime: '19:00' },
+  { id: 'r4', userId: 'h', date: MON, startTime: '15:00', endTime: '19:00' },
+  { id: 'r5', userId: 'a', date: SAT, startTime: '10:00', endTime: '14:00' },
+];
+
+const shifts = [
+  { id: 's1', date: MON, userName: 'Ann',  startTime: '15:00', endTime: '19:00', role: 'Instructor' },
+  { id: 's2', date: MON, userName: 'Hugo', startTime: '15:00', endTime: '19:00', role: 'Host' },
+];
+
+const snapshots = { users, availability, shifts, timeOffRequests: [] };
+const writes = [];
 
 vi.mock('../firebase', () => ({ db: {}, auth: {}, storage: {} }));
 vi.mock('firebase/firestore', () => ({
   collection: (...a) => ({ __c: a.slice(1).join('/') }),
+  doc: (...a) => ({ __d: a.slice(1).join('/') }),
   query: (c) => c,
   where: () => ({}),
   orderBy: () => ({}),
   onSnapshot: (q, next) => {
     const rows = snapshots[q?.__c] || [];
-    if (typeof next === 'function') next({ docs: rows.map(r => ({ id: r.id || r.userId + r.date, data: () => r })) });
+    if (typeof next === 'function') next({ docs: rows.map(r => ({ id: r.id, data: () => r })) });
     return () => {};
   },
+  updateDoc: async (ref, payload) => { writes.push(payload); },
+  setDoc: async (ref, payload) => { writes.push(payload); },
 }));
+vi.mock('../lib/notify', () => ({ toast: { success: () => {}, error: () => {} } }));
 
 const current = { auth: {} };
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
@@ -59,132 +67,156 @@ const { default: CoverageModelCard } = await import('./CoverageModelCard');
 const { builtInRoles } = await import('../lib/roles');
 const { DEFAULT_CENTER_CONFIG } = await import('../lib/centerConfig');
 
-function setup(coverageModel, overrides = {}) {
+function setup(coverageModel, { canEdit = true, config = {} } = {}) {
   current.auth = {
     activeCenterId: 'langley',
     centreRoles: builtInRoles(() => '#000'),
-    centerConfig: {
-      ...DEFAULT_CENTER_CONFIG,
-      instructionalHours: { ...DEFAULT_CENTER_CONFIG.instructionalHours, Monday: { start: '15:00', end: '17:00' } },
-      coverageModel,
-      ...overrides,
-    },
+    profile: { uid: 'me', role: 'owner' },
+    isAdmin: false,
+    can: () => canEdit,
+    centerConfig: { ...DEFAULT_CENTER_CONFIG, coverageModel, ...config },
   };
-  return render(<CoverageModelCard users={users} shifts={shifts} />);
+  return render(<CoverageModelCard />);
 }
 
-/** The cells of the row whose label starts with `label`. */
-function rowCells(label) {
-  const cell = screen.getByText((t, node) => node?.tagName === 'TD' && node.textContent.startsWith(label));
-  return [...cell.parentElement.querySelectorAll('td')].slice(1).map(td => td.textContent.trim());
-}
+/** The verdict line under a day ("2 short", "+1 spare", "none on file"). */
+const verdictFor = (day) =>
+  screen.getByRole('button', { name: new RegExp(`^${day}$`) })
+    .parentElement.querySelectorAll('p')[1].textContent.trim();
+
+const targetInput = (day) => screen.getByLabelText(`Instructors wanted on ${day}`);
 
 beforeEach(() => {
-  snapshots.availability = availability;   // tests below mutate it
+  snapshots.availability = availability;
+  writes.length = 0;
   vi.useFakeTimers({ shouldAdvanceTime: true });
-  vi.setSystemTime(new Date(2026, 8, 21, 9, 0, 0));   // Monday 21 Sep 2026, local
+  vi.setSystemTime(new Date(2026, 8, 21, 9, 0, 0));
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-describe('coverage vs target', () => {
-  it('shows a column per half hour of the teaching window', () => {
-    setup({ Monday: { '15:00': 4, '15:30': 4, '16:00': 4, '16:30': 4 } });
-    for (const label of ['3', '3:30', '4', '4:30']) {
-      expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    }
+describe('the day bars', () => {
+  it('counts people once, not once per half hour', () => {
+    setup({ Monday: { day: 3 } });
+    // Ann, Bea, Cal — three people across the afternoon, not twelve
+    // slot-appearances. Hugo the host is not supply.
+    expect(screen.getByTitle(/3 available on Monday/)).toBeTruthy();
+    expect(verdictFor('Mon')).toBe('+0 spare');
   });
 
-  it('counts only staff who fill a ratio slot, on both lines', () => {
-    setup({ Monday: { '15:00': 4, '15:30': 4, '16:00': 4, '16:30': 4 } });
-    // Available: Ann + Bea from 3pm, Cal joins at 4pm. Hugo the host never
-    // counts, though he is available and rostered all afternoon.
-    expect(rowCells('Available')).toEqual(['2', '2', '3', '3']);
-    // Scheduled: Ann from 3, Bea from 4. Hugo's host shift is not cover.
-    expect(rowCells('Scheduled')).toEqual(['1', '1', '2', '2']);
+  it('says how short a day is against its own target', () => {
+    setup({ Monday: { day: 5 }, Saturday: { day: 3 } });
+    expect(verdictFor('Mon')).toBe('2 short');
+    expect(verdictFor('Sat')).toBe('2 short');   // only Ann has Saturday on file
   });
 
-  it('separates a rota gap from a gap no rota can fix', () => {
-    setup({ Monday: { '15:00': 2, '15:30': 4, '16:00': 3, '16:30': 3 } });
-    const statuses = rowCells('Status');
-    // 3:00 wants 2, 2 free, 1 rostered → fixable on the board.
-    expect(statuses[0]).toBe('-1');
-    // 3:30 wants 4 and only 2 people are free → can't be staffed at all.
-    expect(statuses[1]).toBe('-2');
-    // 4:00 wants 3, 3 free, 2 rostered → still a rota gap.
-    expect(statuses[2]).toBe('-1');
-    expect(screen.getByText(/can.t be staffed/i)).toBeTruthy();
-    expect(screen.getByText(/short on the rota but have/i)).toBeTruthy();
+  it('leaves a day with no target unjudged', () => {
+    // Saturday HAS availability on file (Ann), so the missing piece is the
+    // target — "none on file" would be the wrong complaint.
+    setup({ Monday: { day: 3 } });
+    expect(verdictFor('Sat')).toBe('no target');
   });
 
-  it('says OK when the rota meets the target', () => {
-    setup({ Monday: { '16:00': 2, '16:30': 2 } });
-    const statuses = rowCells('Status');
-    expect(statuses[2]).toBe('OK');
-    expect(statuses[3]).toBe('OK');
-    // Slots with no target stay blank rather than reading as zero wanted.
-    expect(statuses[0]).toBe('—');
-    expect(rowCells('Staff wanted')[0]).toBe('—');
+  it('shows a day nobody has filled in as blank, not as zero available', () => {
+    // Tuesday has no availability rows at all — the common live case.
+    setup({ Tuesday: { day: 4 } });
+    expect(verdictFor('Tue')).toBe('none on file');
+    expect(screen.getByTitle(/No availability on file for Tuesday/)).toBeTruthy();
   });
 
-  it('points at the Staffing Board when a weekday has no targets', () => {
-    setup({ Tuesday: { '15:00': 3 } });
-    expect(screen.getByText(/No targets set for Monday yet/i)).toBeTruthy();
-  });
-
-  it('switches weekday without losing the table', () => {
-    setup({ Monday: { '15:00': 4 }, Tuesday: { '15:00': 3 } });
-    fireEvent.click(screen.getByRole('button', { name: 'Tue' }));
-    expect(screen.queryByText(/No targets set for Tuesday/i)).toBeNull();
-    expect(rowCells('Staff wanted')[0]).toBe('3');
-  });
-
-  it('skips a closed day rather than averaging it in as nobody working', () => {
-    setup(
-      { Monday: { '15:00': 2 } },
-      { holidays: [{ date: '2026-09-21', name: 'Closed' }] },
-    );
-    expect(screen.getByText(/1 closed day skipped/i)).toBeTruthy();
-    // The three remaining Mondays still have both instructors free.
-    expect(rowCells('Available')[0]).toBe('2');
-  });
-
-  it('renders the header even with nothing configured at all', () => {
-    setup(undefined);
-    expect(within(screen.getByRole('heading', { name: /Coverage vs target/i })).toString).toBeTruthy();
+  it('totals only the days it can actually speak about', () => {
+    setup({ Monday: { day: 5 }, Tuesday: { day: 4 }, Saturday: { day: 3 } });
+    // Monday 2 short + Saturday 2 short. Tuesday has nothing on file, so it
+    // is not counted as 4 short.
+    expect(screen.getByText('Instructors short').parentElement.textContent).toContain('4');
+    expect(screen.getByText('Days at target').parentElement.textContent).toContain('of 2');
   });
 });
 
-describe('when availability is thin — the normal state of this centre', () => {
-  it('leaves Available blank rather than reporting nobody is free', () => {
-    // Most days at Langley have no availability on file at all. Reading
-    // that as "nobody can work" would paint every slot red.
-    snapshots.availability = [];
-    setup({ Monday: { '15:00': 4, '15:30': 4, '16:00': 4, '16:30': 4 } });
-    expect(rowCells('Available')).toEqual(['—', '—', '—', '—']);
-    expect(screen.getByText(/Nobody has submitted availability for Monday yet/i)).toBeTruthy();
-    // Still says the rota is short, because the rota IS known.
-    expect(rowCells('Status')[0]).toBe('-3');
-    // But never claims it can't be staffed.
-    expect(screen.queryByText(/can.t be staffed/i)).toBeNull();
+describe('opening a day', () => {
+  it('expands into that weekday’s instructional half hours', () => {
+    setup({ Monday: { day: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    // Langley Monday is 3–7pm → eight half hours, and the window is stated.
+    expect(screen.getByText(/instructional hours 3pm–7pm/)).toBeTruthy();
+    expect(screen.getAllByLabelText(/Wanted at .* on Monday/)).toHaveLength(8);
   });
 
-  it('averages availability only over the weeks people filled in', () => {
-    // Only the first Monday has been submitted. Averaging four weeks would
-    // report 0.5 people free and cry wolf; the answer is 2.
-    snapshots.availability = availability.filter(a => a.date === MONDAYS[0]);
-    setup({ Monday: { '15:00': 2, '15:30': 2, '16:00': 2, '16:30': 2 } });
-    expect(rowCells('Available')[0]).toBe('2');
-    expect(screen.getByText(/availability from the 1 with any on file/i)).toBeTruthy();
-    // The rota line still reads all four Mondays.
-    expect(rowCells('Scheduled')[0]).toBe('1');
+  it('reads each weekday’s own hours, not Monday’s', () => {
+    // Saturday is a morning shift in the default config, and shorter.
+    setup({ Saturday: { day: 2 } }, {
+      config: { instructionalHours: { ...DEFAULT_CENTER_CONFIG.instructionalHours, Saturday: { start: '10:00', end: '15:00' } } },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Sat$/ }));
+    expect(screen.getByText(/instructional hours 10am–3pm/)).toBeTruthy();
+    expect(screen.getAllByLabelText(/Wanted at .* on Saturday/)).toHaveLength(10);
   });
 
-  it('a submitted day with nobody free is still a real zero', () => {
-    snapshots.availability = MONDAYS.map(date => (
-      { userId: 'h', date, startTime: '15:00', endTime: '19:00' }   // host only
-    ));
-    setup({ Monday: { '15:00': 2 } });
-    expect(rowCells('Available')[0]).toBe('0');
-    expect(screen.getByText(/can.t be staffed/i)).toBeTruthy();
+  it('shows the half-hour detail: available climbs when Cal arrives at 4', () => {
+    setup({ Monday: { day: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    const availRow = screen.getByText('Available').closest('tr');
+    const cells = [...availRow.querySelectorAll('td')].slice(1).map(td => td.textContent.trim());
+    expect(cells).toEqual(['2', '2', '3', '3', '3', '3', '3', '3']);
+  });
+
+  it('counts the rota separately from availability', () => {
+    setup({ Monday: { day: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    const row = screen.getByText('Scheduled').closest('tr');
+    const cells = [...row.querySelectorAll('td')].slice(1).map(td => td.textContent.trim());
+    // Ann is rostered; Hugo's host shift is not teaching cover.
+    expect(cells.every(c => c === '1')).toBe(true);
+  });
+
+  it('every half hour inherits the day’s number until one is overridden', () => {
+    setup({ Monday: { day: 3, '16:30': 5 } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    const inputs = screen.getAllByLabelText(/Wanted at .* on Monday/);
+    // Inherited slots show the day's number as a placeholder, not a value.
+    expect(inputs[0].value).toBe('');
+    expect(inputs[0].placeholder).toBe('3');
+    // The overridden one carries its own.
+    expect(screen.getByLabelText('Wanted at 16:30 on Monday').value).toBe('5');
+  });
+
+  it('closes again when the same day is clicked', () => {
+    setup({ Monday: { day: 3 } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    expect(screen.queryByText(/instructional hours/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    expect(screen.queryByText(/instructional hours/)).toBeNull();
+  });
+});
+
+describe('editing targets', () => {
+  it('typing a day target offers a save, and writes the whole field', async () => {
+    setup({ Monday: { day: 3 } });
+    fireEvent.change(targetInput('Tuesday'), { target: { value: '6' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save targets/ }));
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0].coverageModel.Tuesday.day).toBe(6);
+    expect(writes[0].coverageModel.Monday.day).toBe(3);
+  });
+
+  it('keeps a half-hour override when the day’s number changes', () => {
+    setup({ Monday: { day: 3, '16:30': 5 } });
+    fireEvent.change(targetInput('Monday'), { target: { value: '4' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Mon$/ }));
+    expect(screen.getByLabelText('Wanted at 16:30 on Monday').value).toBe('5');
+  });
+
+  it('sets every operating day at once', () => {
+    setup(undefined);
+    fireEvent.change(screen.getByLabelText('Target for every operating day'), { target: { value: '12' } });
+    fireEvent.click(screen.getByRole('button', { name: /Set every day to this/ }));
+    expect(targetInput('Monday').value).toBe('12');
+    expect(targetInput('Saturday').value).toBe('12');
+  });
+
+  it('a Host gets the numbers read-only — the rules refuse their write', () => {
+    setup({ Monday: { day: 3 } }, { canEdit: false });
+    expect(targetInput('Monday').disabled).toBe(true);
+    expect(screen.getByText(/Read-only/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Set every day to this/ })).toBeNull();
   });
 });

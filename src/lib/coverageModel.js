@@ -10,12 +10,16 @@
  *   Coverage view could only say "8 instructors today" and never "five at
  *   half four".
  *
- *   The model here is per WEEKDAY and per HALF HOUR:
+ *   The model here is per WEEKDAY, with a per-HALF-HOUR override:
  *
  *     centerConfig.coverageModel = {
- *       Monday: { '15:00': 4, '15:30': 5, '16:00': 5 },
+ *       Monday: { day: 12, '16:30': 14 },
  *       ...
  *     }
+ *
+ *   `day` is the headline — what the whole day wants. The 'HH:MM' keys are
+ *   overrides for the half hours that differ, so the flat case is one
+ *   number and not eight.
  *
  *   It is a WANT, not a promise, and nothing schedules from it — the
  *   auto-scheduler and the Staffing Board still size days from real
@@ -77,42 +81,74 @@ export function slotKeysFor(hours) {
   return keys;
 }
 
+/** Read the stored model for a centre. See normalizeModel for the shape. */
+export function resolveCoverageModel(centerConfig) {
+  return normalizeModel(centerConfig?.coverageModel);
+}
+
 /**
- * Read the stored model into a clean { weekday: { 'HH:MM': count } }.
+ * Clean the stored map into { weekday: { day, slots } }.
+ *
+ *   stored:    { Monday: { day: 12, '16:30': 14 } }
+ *   resolved:  { Monday: { day: 12, slots: { '16:30': 14 } } }
+ *
+ * Both are kept, because "Monday wants 12" and "half four wants 14" are
+ * different statements and the second has to survive an edit to the first.
  *
  * Hand-edited or half-written values are dropped rather than trusted: a
- * target of "lots" or -3 would render as a broken column on every screen
- * that reads this. A slot with no usable number simply has no target,
- * which the views show as "—" rather than as zero — "we want nobody at
- * 4pm" and "nobody has said" are different statements.
+ * target of "lots" or -3 would render as a broken bar on every screen that
+ * reads this. A weekday with no usable number simply has no target, which
+ * the views show as "—" rather than as zero — "we want nobody on Saturday"
+ * and "nobody has said" are different answers.
  */
-export function resolveCoverageModel(centerConfig) {
-  const raw = centerConfig?.coverageModel;
+export function normalizeModel(raw) {
   const out = {};
   if (!raw || typeof raw !== 'object') return out;
-  for (const [day, slots] of Object.entries(raw)) {
-    if (!slots || typeof slots !== 'object') continue;
-    const clean = {};
-    for (const [slot, value] of Object.entries(slots)) {
-      if (!/^\d{2}:\d{2}$/.test(slot)) continue;
+  for (const [weekday, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const slots = {};
+    let day = null;
+    for (const [key, value] of Object.entries(entry)) {
       const n = Number(value);
-      if (!Number.isFinite(n) || n < 0) continue;
-      clean[slot] = Math.round(n);
+      const usable = Number.isFinite(n) && n >= 0;
+      if (key === 'day') { if (usable) day = Math.round(n); continue; }
+      if (!/^\d{2}:\d{2}$/.test(key)) continue;   // anything else is noise
+      if (usable) slots[key] = Math.round(n);
     }
-    if (Object.keys(clean).length > 0) out[day] = clean;
+    if (day !== null || Object.keys(slots).length > 0) out[weekday] = { day, slots };
   }
   return out;
 }
 
-/** The wanted count for one slot, or null when nobody has set one. */
+/**
+ * The wanted count for one slot: its own override, else the day's number,
+ * else null when nobody has set either.
+ */
 export function targetFor(model, weekday, slotKey) {
-  const v = model?.[weekday]?.[slotKey];
+  const entry = model?.[weekday];
+  if (!entry) return null;
+  const slot = entry.slots?.[slotKey];
+  if (Number.isFinite(slot)) return slot;
+  return Number.isFinite(entry.day) ? entry.day : null;
+}
+
+/** What the whole day wants, before any per-slot override. */
+export function dayTargetFor(model, weekday) {
+  const v = model?.[weekday]?.day;
   return Number.isFinite(v) ? v : null;
+}
+
+/** Is this half hour carrying its own number rather than the day's? */
+export function slotOverridesDay(model, weekday, slotKey) {
+  const entry = model?.[weekday];
+  if (!entry || !Number.isFinite(entry.slots?.[slotKey])) return false;
+  return !Number.isFinite(entry.day) || entry.slots[slotKey] !== entry.day;
 }
 
 /** Does the model say anything at all about this weekday? */
 export function hasTargets(model, weekday) {
-  return Object.keys(model?.[weekday] || {}).length > 0;
+  const entry = model?.[weekday];
+  return !!entry && (Number.isFinite(entry.day) || Object.keys(entry.slots || {}).length > 0);
 }
 
 /**
@@ -200,6 +236,41 @@ export function coverageForDate({
       scheduledNames: [...scheduledNames],
     };
   });
+}
+
+/**
+ * One date rolled up to a single number per line — what a day's bar shows.
+ *
+ * DISTINCT PEOPLE, not slot-counts added up: somebody free 3:00–7:00 is one
+ * instructor, and summing the slots would report them as eight. Anyone
+ * covering ANY part of the teaching window counts, because at this zoom the
+ * question is "who could we call on", and the half-hour view underneath is
+ * where "are they there at half four" gets answered.
+ *
+ * `hasAvailability` is the honest-empty flag: false means nobody submitted
+ * anything for this date, which is NOT the same as nobody being free. Most
+ * days at this centre have none on file, so callers must show that as blank
+ * rather than as a bar of zero.
+ */
+export function daySupply({
+  date, slotKeys, users = [], availability = [], shifts = [], timeOffIndex = null, roles = [],
+}) {
+  const rows = coverageForDate({ date, slotKeys, users, availability, shifts, timeOffIndex, roles });
+  const available = new Set();
+  const scheduled = new Set();
+  for (const row of rows) {
+    for (const n of row.availableNames) available.add(n);
+    for (const n of row.scheduledNames) scheduled.add(n);
+  }
+  return {
+    date,
+    rows,
+    available: available.size,
+    scheduled: scheduled.size,
+    availableNames: [...available],
+    scheduledNames: [...scheduled],
+    hasAvailability: availability.some(a => a?.date === date),
+  };
 }
 
 /**
@@ -295,22 +366,50 @@ export function upcomingDatesFor(weekday, weeks, from, weekdayNames) {
 }
 
 /**
- * Write one slot into the model, or clear it when `value` is blank.
- * Returns a NEW model — callers persist it with a merge write.
+ * The editing helpers below take and return the STORED shape — a draft in
+ * a component is a pending write, and resolving it for display is
+ * normalizeModel's job.
  */
-export function setSlotTarget(model, weekday, slotKey, value) {
-  const next = { ...(model || {}) };
-  const day = { ...(next[weekday] || {}) };
+
+const cleanNumber = (value) => {
   const n = Number(value);
-  if (value === '' || value == null || !Number.isFinite(n) || n < 0) delete day[slotKey];
-  else day[slotKey] = Math.round(n);
-  next[weekday] = day;
+  return value === '' || value == null || !Number.isFinite(n) || n < 0 ? null : Math.round(n);
+};
+
+/** Set the day's headline number, or clear it when `value` is blank. */
+export function setDayTarget(stored, weekday, value) {
+  const next = { ...(stored || {}) };
+  const entry = { ...(next[weekday] || {}) };
+  const n = cleanNumber(value);
+  if (n === null) delete entry.day;
+  else entry.day = n;
+  next[weekday] = entry;
   return next;
 }
 
-/** Apply one count to every slot of a weekday — the "same all afternoon" case. */
-export function fillWeekday(model, weekday, slotKeys, value) {
-  let next = model || {};
-  for (const slot of slotKeys) next = setSlotTarget(next, weekday, slot, value);
+/** Set one half-hour override, or clear it back to the day's number. */
+export function setSlotTarget(stored, weekday, slotKey, value) {
+  const next = { ...(stored || {}) };
+  const entry = { ...(next[weekday] || {}) };
+  const n = cleanNumber(value);
+  if (n === null) delete entry[slotKey];
+  else entry[slotKey] = n;
+  next[weekday] = entry;
+  return next;
+}
+
+/** Drop every override for a weekday, so it follows its headline number again. */
+export function clearSlotTargets(stored, weekday) {
+  const next = { ...(stored || {}) };
+  const entry = next[weekday];
+  if (!entry) return next;
+  next[weekday] = Number.isFinite(Number(entry.day)) ? { day: Number(entry.day) } : {};
+  return next;
+}
+
+/** Put the same number on every operating day — the "twelve everywhere" case. */
+export function setAllDayTargets(stored, weekdays, value) {
+  let next = stored || {};
+  for (const weekday of weekdays) next = setDayTarget(next, weekday, value);
   return next;
 }
