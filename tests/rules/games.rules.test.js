@@ -92,6 +92,57 @@ describe('everybody plays', () => {
   });
 });
 
+describe('the centre switch', () => {
+  // Turning Ratio Games on starts a contest with a prize, so it is the
+  // owner's and Enterprise's alone — narrower than the rest of the centre
+  // config, which several roles can write.
+  const config = (extra = {}) => ({ name: 'Langley', operatingDays: ['Monday'], ...extra });
+
+  beforeEach(async () => {
+    await testEnv.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'centers', CENTRE, 'config', 'main'), config({ gamesEnabled: false }));
+      await setDoc(doc(ctx.firestore(), 'users', 'aa'), {
+        approved: true, role: 'admin_assistant', centerId: CENTRE, centerIds: [CENTRE],
+        instructorType: 'Admin', centerMemberships: { [CENTRE]: { instructorType: 'Admin' } },
+      });
+      await setDoc(doc(ctx.firestore(), 'users', 'ent'), {
+        approved: true, role: 'super_admin', centerId: CENTRE, centerIds: [CENTRE],
+        instructorType: 'Instructor', centerMemberships: { [CENTRE]: { instructorType: 'Instructor' } },
+      });
+    });
+  });
+
+  it('the owner and Enterprise can switch it on and off', async () => {
+    for (const uid of ['owner', 'ent']) {
+      await assertSucceeds(setDoc(doc(as(uid), 'centers', CENTRE, 'config', 'main'), { gamesEnabled: true }, { merge: true }));
+      await assertSucceeds(setDoc(doc(as(uid), 'centers', CENTRE, 'config', 'main'), { gamesEnabled: false }, { merge: true }));
+    }
+  });
+
+  it('a Manager or the Admin Assistant cannot', async () => {
+    for (const uid of ['mgr', 'aa']) {
+      await assertFails(setDoc(doc(as(uid), 'centers', CENTRE, 'config', 'main'), { gamesEnabled: true }, { merge: true }));
+    }
+  });
+
+  it('but they can still save every other setting', async () => {
+    // The Centre Settings tab writes the whole config back on every save,
+    // so an unchanged gamesEnabled has to pass or it would lock them out
+    // of the page entirely.
+    for (const uid of ['mgr', 'aa']) {
+      await assertSucceeds(setDoc(
+        doc(as(uid), 'centers', CENTRE, 'config', 'main'),
+        config({ gamesEnabled: false, defaultMinPerDay: 9 }),
+        { merge: true },
+      ));
+    }
+  });
+
+  it('and an instructor still cannot write the config at all', async () => {
+    await assertFails(setDoc(doc(as('inst'), 'centers', CENTRE, 'config', 'main'), { gamesEnabled: true }, { merge: true }));
+  });
+});
+
 describe('one run a day', () => {
   it('a second run at the same game today is refused', async () => {
     await assertSucceeds(setDoc(doc(as('inst'), 'centers', CENTRE, 'gameScores', id('inst')), row('inst')));

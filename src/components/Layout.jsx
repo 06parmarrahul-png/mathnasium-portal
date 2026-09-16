@@ -9,6 +9,7 @@ import MigrationBanner from './MigrationBanner';
 import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
 import { myOpenCount, canUseDesk } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
+import { gamesEnabled } from '../lib/ratioGames';
 import { roleLabelFor } from '../lib/roleLabel';
 import { isCentreManager } from '../lib/managementTier';
 import { PAGES, PORTAL_NAME, PORTAL_SUBTITLE, documentTitleFor } from '../lib/pageNames';
@@ -206,9 +207,12 @@ export default function Layout({ children }) {
   if (!isOwnerLikeNav && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
-  // Ratio Games. No condition on purpose — this is the one surface in the
-  // portal that every account gets, volunteers and trainees included.
-  general.push({ to: PAGES.ratioGames.path, label: PAGES.ratioGames.name, icon: Gamepad2 });
+  // Ratio Games. Off until the owner switches it on for the centre; once
+  // it is on, EVERY account gets it — volunteers and trainees included,
+  // which is the whole point of it.
+  if (gamesEnabled(auth.centerConfig)) {
+    general.push({ to: PAGES.ratioGames.path, label: PAGES.ratioGames.name, icon: Gamepad2 });
+  }
 
   // ─── OWNER LAYOUT ──────────────────────────────────────────────────
   // Built only when useOwnerLayout is true. Empty arrays otherwise so

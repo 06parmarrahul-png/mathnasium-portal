@@ -13,6 +13,7 @@ import {
 } from '../../lib/centreEvents';
 import { funDayOn, funDaysAhead } from '../../lib/funDays';
 import { PAGES } from '../../lib/pageNames';
+import { gamesEnabled } from '../../lib/ratioGames';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
@@ -565,6 +566,7 @@ export default function InstructorHome() {
             card should never cost a read to render, and "have I played
             today" is worth a tap to find out rather than a query on every
             home load. */}
+        {gamesEnabled(centerConfig) && (
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
@@ -579,6 +581,7 @@ export default function InstructorHome() {
             </Btn>
           </div>
         </Card>
+        )}
 
         {/* ── Open shifts ─────────────────────────────────────────── */}
         {canTakeShifts && eligibleOpen.length > 0 && (

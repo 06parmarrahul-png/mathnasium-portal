@@ -758,12 +758,21 @@ A short maths game a day, a per-centre board, a monthly winner. Phase 1 is
 **Sprint 60** (60 seconds of mental arithmetic); the roster and the plan for the
 rest are in the draft proposal.
 
-**EVERY ACCOUNT PLAYS.** The route carries no permission, the page makes no
-check, and the rules gate on centre membership only — volunteers and trainees
-included, who are turned away from Team Chat and the Job Board and otherwise get
-the barest portal in the app. That is the point of it. Who is eligible for the
-**prize** is deliberately NOT in the code: it is a decision made when the gift
-card is handed over, so it can change without a deploy.
+**OFF UNTIL THE OWNER TURNS IT ON**, per centre: `gamesEnabled` on
+`centers/{id}/config/main`, read through `gamesEnabled(centerConfig)` — a
+missing value is OFF. Off hides the page, the sidebar link and the home card,
+and deletes nothing. The switch lives in Centre Settings and **only the owner
+and Enterprise can move it**: the rules let every other config writer (Admin
+Assistant, Director, Manager, a role granted `centre.settings`) save the
+document as long as `gamesEnabled` is unchanged, so they keep the rest of the
+page without being able to start or stop a contest with a prize attached.
+
+**ONCE ON, EVERY ACCOUNT PLAYS.** The route carries no permission, the page
+makes no check, and the rules gate on centre membership only — volunteers and
+trainees included, who are turned away from Team Chat and the Job Board and
+otherwise get the barest portal in the app. That is the point of it. Who is
+eligible for the **prize** is deliberately NOT in the code: it is a decision
+made when the gift card is handed over, so it can change without a deploy.
 
 - `src/lib/ratioGames.js` — pure, tested: seeded question generators, scoring,
   the board. **No `Math.random()`**: questions come from `seedFrom(centre|date)`,

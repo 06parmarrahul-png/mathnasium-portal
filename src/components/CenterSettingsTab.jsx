@@ -2,7 +2,10 @@ import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DAY_NAMES, isSummerOverrideActive } from '../lib/centerConfig';
-import { Settings, Save, X, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Sun } from 'lucide-react';
+import { Settings, Save, X, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Sun, Gamepad2 } from 'lucide-react';
+import { useAuth } from '../contexts/AuthContext';
+import { gamesEnabled } from '../lib/ratioGames';
+import { PAGES } from '../lib/pageNames';
 
 /**
  * Edit per-center settings: identity, instructional + operating hours,
@@ -19,6 +22,13 @@ import { Settings, Save, X, AlertTriangle, CheckCircle2, Building2, Clock, BookO
  */
 
 export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
+  // The page itself is open to anyone with `centre.settings` — the Admin
+  // Assistant, a Director, a custom role. Ratio Games is narrower: it runs
+  // a contest with a prize, so starting and stopping it is the owner's and
+  // Enterprise's alone. The Firestore rules enforce the same thing, so
+  // this isn't the only thing standing in the way.
+  const { isOwner, isSuperAdmin } = useAuth();
+  const canSwitchGames = isOwner || isSuperAdmin;
   // Local form state — initialized from the live config but allows uncommitted edits.
   const [form, setForm] = useState(centerConfig);
   const [saving, setSaving] = useState(false);
@@ -124,6 +134,34 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
           </Field>
         </div>
       </Section>
+
+      {/* Ratio Games — owner and Enterprise only */}
+      {canSwitchGames && (
+        <Section
+          title={PAGES.ratioGames.name}
+          icon={Gamepad2}
+          hint="A maths game a day and a monthly leaderboard, for every account at this centre — volunteers and trainees included."
+        >
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={gamesEnabled(form)}
+              onChange={e => setField('gamesEnabled', e.target.checked)}
+              className="mt-0.5 h-4 w-4 accent-purple-600"
+            />
+            <span className="text-sm">
+              <b className="block text-gray-900">
+                {gamesEnabled(form) ? 'On — staff can play' : 'Off — hidden from everyone'}
+              </b>
+              <span className="mt-0.5 block text-gray-500">
+                Off hides the page, the sidebar link and the card on staff home. Nothing is deleted:
+                scores stay where they are and the board comes back whole when you switch it on again.
+                Only you and Enterprise can change this.
+              </span>
+            </span>
+          </label>
+        </Section>
+      )}
 
       {/* Instructional hours */}
       <Section

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   GAMES, MAX_POINTS, gameById, dayKey, monthKey, daysElapsed, nextDay, scoreDocId,
   pointsFor, dayTotal, playedRuns, streakBonus, longestStreak, standings, rankOf,
-  seedFrom, makeRng, sprintLevel, sprintQuestion, buildScoreRow,
+  seedFrom, makeRng, sprintLevel, sprintQuestion, buildScoreRow, gamesEnabled,
 } from './ratioGames';
 
 const run = (uid, date, points, extra = {}) => ({
@@ -255,5 +255,22 @@ describe('the registry', () => {
     expect(gameById('sprint60')).toBe(GAMES.sprint60);
     expect(gameById('nope')).toBeNull();
     expect(GAMES.sprint60.par).toBeGreaterThan(0);
+  });
+});
+
+describe('the centre switch', () => {
+  it('is off until somebody turns it on', () => {
+    // A deploy must not put a competition in everyone's sidebar.
+    expect(gamesEnabled(undefined)).toBe(false);
+    expect(gamesEnabled(null)).toBe(false);
+    expect(gamesEnabled({})).toBe(false);
+    expect(gamesEnabled({ gamesEnabled: false })).toBe(false);
+  });
+
+  it('only a real boolean true counts', () => {
+    // A half-written config value shouldn't quietly start it.
+    expect(gamesEnabled({ gamesEnabled: true })).toBe(true);
+    expect(gamesEnabled({ gamesEnabled: 'true' })).toBe(false);
+    expect(gamesEnabled({ gamesEnabled: 1 })).toBe(false);
   });
 });

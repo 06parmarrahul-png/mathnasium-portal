@@ -8,7 +8,7 @@ import { Card, Pill, Btn, Lbl, Stat } from '../components/newlook/ui';
 import {
   GAMES, DAYS_PER_MONTH, GAMES_PER_DAY,
   dayKey, monthKey, scoreDocId, buildScoreRow, standings, rankOf,
-  seedFrom, makeRng, sprintQuestion, sprintLevel, pointsFor,
+  seedFrom, makeRng, sprintQuestion, sprintLevel, pointsFor, gamesEnabled,
 } from '../lib/ratioGames';
 
 /**
@@ -40,7 +40,7 @@ function clock(seconds) {
 }
 
 export default function RatioGames() {
-  const { profile, activeCenterId } = useAuth();
+  const { profile, activeCenterId, centerConfig } = useAuth();
   const uid = profile?.uid;
   const today = dayKey(new Date());
   const month = monthKey(today);
@@ -164,6 +164,23 @@ export default function RatioGames() {
 
   const live = run && !run.over;
   const livePoints = run ? pointsFor(run.correct, SPRINT.par) : 0;
+
+  // Switched off for this centre. The sidebar link and the home card are
+  // already gone; this is what a typed URL or an old bookmark meets. Every
+  // hook above has run, so the early return can't change hook order.
+  if (!gamesEnabled(centerConfig)) {
+    return (
+      <div className="nl mx-auto w-full max-w-lg pb-6">
+        <Card>
+          <b className="block text-[15px]">Ratio Games isn’t switched on yet</b>
+          <p className="mt-1.5 text-[13.5px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
+            The centre owner turns it on in Centre Settings. Nothing is lost while it&rsquo;s off —
+            any scores already played are still here, and the board picks up where it left off.
+          </p>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="nl mx-auto w-full max-w-3xl space-y-3.5 pb-28 lg:pb-6">

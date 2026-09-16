@@ -549,8 +549,18 @@ service cloud.firestore {
         // and it cannot escalate to platform power: `roles.manage` is on
         // the PLATFORM_ONLY list in src/lib/roles.js and is stripped on
         // read, on write and again at resolution.
-        allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
-                     || hasPermAt(centerId, 'centre.settings');
+        //
+        // ONE FIELD IS NARROWER THAN THE REST: `gamesEnabled` starts and
+        // stops Ratio Games, which runs a monthly contest with a prize
+        // attached, so it belongs to the owner and Enterprise alone. Every
+        // other holder of this document — the Admin Assistant, a Director,
+        // a Manager, a custom role granted centre.settings — can still save
+        // every other setting, because an unchanged value passes.
+        allow write: if (isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
+                         || hasPermAt(centerId, 'centre.settings'))
+                     && (isOwner() || isSuperAdmin()
+                         || request.resource.data.get('gamesEnabled', null)
+                            == (resource == null ? null : resource.data.get('gamesEnabled', null)));
       }
 
       // ─── Student Scheduler working data ─────────────────────────────

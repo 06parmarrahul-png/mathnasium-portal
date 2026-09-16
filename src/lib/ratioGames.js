@@ -33,6 +33,29 @@
  * discipline as scheduler.js and coverageModel.js.
  */
 
+/**
+ * Is Ratio Games switched on at this centre?
+ *
+ * OFF UNTIL SOMEBODY TURNS IT ON, per centre. A feature that appears in
+ * everyone's sidebar because a deploy landed is the thing the new-look
+ * home was careful not to do; this is the same courtesy one level up. It
+ * also means the code can ship well before the centre is ready to run a
+ * competition — which is exactly why the switch exists.
+ *
+ * The switch is `gamesEnabled` on centers/{id}/config/main, and the
+ * Firestore rules let only the OWNER and Enterprise change it: everyone
+ * else who can write the centre config (the Admin Assistant, a Director, a
+ * Manager, a role granted centre.settings) can save every other setting
+ * without being able to start or stop a contest with a prize attached.
+ *
+ * Turning it off hides the page, the sidebar link and the home card. It
+ * deletes nothing — scores keep sitting where they are, and the board is
+ * whole again the moment it comes back on.
+ */
+export function gamesEnabled(centerConfig) {
+  return centerConfig?.gamesEnabled === true;
+}
+
 /** The ceiling on a single run. The Firestore rules refuse anything above it. */
 export const MAX_POINTS = 120;
 

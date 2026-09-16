@@ -43,10 +43,11 @@ const row = (uid, date, points, extra = {}) => ({
   uid, userName: uid === 'me' ? 'Sam Lee' : uid, gameId: 'sprint60', date, points, ...extra,
 });
 
-function setup() {
+function setup({ enabled = true } = {}) {
   current.auth = {
     profile: { uid: 'me', displayName: 'Sam Lee' },
     activeCenterId: 'langley',
+    centerConfig: { gamesEnabled: enabled },
   };
   return render(<MemoryRouter><RatioGames /></MemoryRouter>);
 }
@@ -203,5 +204,25 @@ describe('the board', () => {
     setup();
     expect(screen.getByText(/best 12 days in the month/i)).toBeTruthy();
     expect(screen.getByText(/never part of how anyone’s work is judged/i)).toBeTruthy();
+  });
+});
+
+describe('when the centre has it switched off', () => {
+  it('a typed URL meets an explanation, not a game', () => {
+    setup({ enabled: false });
+    expect(screen.getByText(/isn’t switched on yet/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Start today’s run/ })).toBeNull();
+    expect(screen.queryByText(/The board/)).toBeNull();
+  });
+
+  it('says nothing is lost, because nothing is', () => {
+    setup({ enabled: false });
+    expect(screen.getByText(/scores already played are still here/i)).toBeTruthy();
+  });
+
+  it('off is the default — a missing setting is not on', () => {
+    current.auth = { profile: { uid: 'me', displayName: 'Sam Lee' }, activeCenterId: 'langley', centerConfig: {} };
+    render(<MemoryRouter><RatioGames /></MemoryRouter>);
+    expect(screen.getByText(/isn’t switched on yet/)).toBeTruthy();
   });
 });

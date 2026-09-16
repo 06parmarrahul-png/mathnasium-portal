@@ -98,6 +98,31 @@ afterEach(() => { cleanup(); });
 
 const NAMES = new Set(Object.values(PAGES).map(p => p.name));
 
+describe('Ratio Games follows the centre switch', () => {
+  // Off by default: a deploy must not drop a competition into eighteen
+  // sidebars. On, it is for EVERY account — the volunteer included, who
+  // has no Chat and no Job Board.
+  const sidebarFor = (who, config) => {
+    current.auth = { ...authFor(PEOPLE[who]), centerConfig: config };
+    const { container } = render(
+      <MemoryRouter><Layout><div /></Layout></MemoryRouter>,
+    );
+    return container.textContent;
+  };
+
+  it('is absent until the centre turns it on', () => {
+    expect(sidebarFor('instructor', LANGLEY)).not.toContain(PAGES.ratioGames.name);
+    expect(sidebarFor('owner', LANGLEY)).not.toContain(PAGES.ratioGames.name);
+  });
+
+  it('appears for everyone once it is on, volunteers included', () => {
+    const on = { ...LANGLEY, gamesEnabled: true };
+    for (const who of ['owner', 'director', 'aa', 'manager', 'host', 'lead', 'instructor', 'trainee', 'volunteer']) {
+      expect(sidebarFor(who, on)).toContain(PAGES.ratioGames.name);
+    }
+  });
+});
+
 describe('one name per page', () => {
   it.each(Object.keys(PEOPLE))('every sidebar link for %s uses its page name', (who) => {
     const { sidebar } = draw(who);
