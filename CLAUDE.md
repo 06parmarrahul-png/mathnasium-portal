@@ -190,9 +190,22 @@ and `HS` — so every snapshot saved since was written as zeros, and the
 auto-scheduler's "typical Monday" learnt nothing. All three live snapshots were
 zeros. Per-side saving restores the shape the file always documented.
 
+**Demand reads the scheduler's own three sources** through
+`src/lib/slotDemand.js` (`demandBySide`): the bookings cache fanned across each
+booking's length, minus anyone marked no-show or cancelled, plus walk-ins and
+call-ins. The page previously read TWO PATHS THAT DO NOT EXIST —
+`walkIns/{date}/entries`, and a `schedulerCheckIns/{date}/students`
+sub-collection when check-ins are a single document — so both returned nothing:
+no walk-in ever reached the chart and no no-show ever came off it. Subscriptions
+now go through `scheduler-data.js`'s own `watchCheckIns` / `watchWalkIns`, so the
+two screens read the same documents by construction.
+
 Checked against live days before shipping: 15 Sept and 16 Sept 2026. The split
 found High School one instructor short at 3:00pm on the 16th (4 students, 1
-instructor) where the combined chart said "matched".
+instructor) where the combined chart said "matched". On the 16th, Rahul read the
+Student Scheduler's sixteen half hours aloud: supply matched on all sixteen, and
+demand matched on all sixteen ONLY after walk-ins were counted (four that day —
+two of them the students Acuity files as "Unknown", which staff add by hand).
 
 ### Coverage targets — what we want, day by day
 

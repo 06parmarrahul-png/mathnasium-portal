@@ -10,6 +10,8 @@ import {
 import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
 import { watchFeedDay, requestFeedRefresh, describeAge } from '../lib/schedulerFeed';
+import { watchCheckIns, watchWalkIns } from '../lib/scheduler-data';
+import { demandBySide } from '../lib/slotDemand';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 import { DEFAULT_TARGET_RATIO } from '../lib/subRoles';
@@ -166,35 +168,24 @@ export default function SupplyDemand() {
     return onSnapshot(q, snap => setShifts(snap.docs.map(d => d.data())));
   }, [activeCenterId, date]);
 
-  // Live check-ins for real-time demand — Student Scheduler stamps
-  // status='noshow' / 'cancel' when a student doesn't turn up, and
-  // status='in' / 'late' when they arrive. We subtract no-shows and
-  // cancellations from the base Acuity demand so the numbers reflect
-  // what actually happened, not just what was booked.
+  // Check-ins and walk-ins come through the Student Scheduler's OWN
+  // watchers. This page used to read two paths that don't exist —
+  // `walkIns/{date}/entries` and a `schedulerCheckIns/{date}/students`
+  // sub-collection — so every walk-in was missing from the bars and no
+  // no-show ever came off them. Reading through scheduler-data.js means
+  // the two screens can't drift apart again.
   const [checkIns, setCheckIns] = useState({});
   useEffect(() => {
-    if (!activeCenterId || !date) return;
-    return onSnapshot(
-      collection(db, 'centers', activeCenterId, 'schedulerCheckIns', date, 'students'),
-      snap => {
-        const map = {};
-        snap.forEach(d => { map[d.id] = d.data(); });
-        setCheckIns(map);
-      },
-      () => setCheckIns({}),
-    );
+    if (!activeCenterId || !date) return undefined;
+    return watchCheckIns(activeCenterId, date, setCheckIns);
   }, [activeCenterId, date]);
 
-  // Live walk-ins — students added on the day who don't have an
-  // Acuity appointment. Same source the Student Scheduler reads.
-  const [walkIns, setWalkIns] = useState([]);
+  // Walk-ins and call-ins: centers/{id}/scheduleAddOns/{date}, keyed
+  // "<side>|<HH:MM>" — the people staff add on the day.
+  const [addOns, setAddOns] = useState({});
   useEffect(() => {
-    if (!activeCenterId || !date) return;
-    return onSnapshot(
-      collection(db, 'centers', activeCenterId, 'walkIns', date, 'entries'),
-      snap => setWalkIns(snap.docs.map(d => d.data())),
-      () => setWalkIns([]),
-    );
+    if (!activeCenterId || !date) return undefined;
+    return watchWalkIns(activeCenterId, date, setAddOns);
   }, [activeCenterId, date]);
 
   // Fetch the appointments for the selected date. Same endpoint the
@@ -364,75 +355,23 @@ export default function SupplyDemand() {
   const sideData = useMemo(() => {
     if (!apptData) return null;
     const out = {};
-    // Compute demand per slot CLIENT-SIDE from each student's
-    // duration, not from the API's per-slot count field. A 60-min
-    // booking counts for 2 slots (start + start+30), a 90-min for 3,
-    // etc. The API only puts each student's card in its FIRST slot,
-    // so per-slot counts alone would miss rollover. Client-side we
-    // fan each card out to every slot its duration covers.
-    //
-    // Tracks EM/HS separately even though the top-level render
-    // aggregates them — the expand-slot-detail panel needs the
-    // breakdown so an owner can eyeball which category a number
-    // came from when cross-checking Acuity.
-    const bookedBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
-    const noShowsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
-    const walkInsBySide = { EM: new Array(SLOT_COUNT).fill(0), HS: new Array(SLOT_COUNT).fill(0) };
-    // Fan out each student (from any source slot's students bucket)
-    // to every dayWindow slot it overlaps. Uses the student's `start`
-    // ISO datetime to anchor, and `duration` (minutes) to fan.
-    // Default duration = 60 min if unset (Acuity's typical booking).
-    for (const row of (apptData.slots || [])) {
-      for (const sideKey of ['EM', 'HS']) {
-        const bucket = row?.students?.[sideKey];
-        if (!bucket) continue;
-        const all = [...(bucket.onHour || []), ...(bucket.halfHour || [])];
-        for (const student of all) {
-          const dur = Number(student.duration) > 0 ? Number(student.duration) : 60;
-          const slotsSpan = Math.max(1, Math.round(dur / SLOT_MIN));
-          // First slot idx = position of the source row's `row.slot`
-          // key in dayWindow's slotKeys. If the source slot starts
-          // before the day window (e.g. 9am booking on a 10-slot day),
-          // fall back to using the first covered slot inside the window.
-          const [rowH, rowM] = row.slot.split(':').map(Number);
-          const rowStartMin = rowH * 60 + rowM;
-          for (let k = 0; k < slotsSpan; k++) {
-            const covered = rowStartMin + k * SLOT_MIN;
-            const idx = Math.round((covered - dayWindow.startMin) / SLOT_MIN);
-            if (idx < 0 || idx >= SLOT_COUNT) continue;
-            bookedBySide[sideKey][idx]++;
-            const sKey = student.id || student.uniqueId;
-            const status = checkIns[sKey]?.status;
-            if (status === 'noshow' || status === 'cancel') noShowsBySide[sideKey][idx]++;
-          }
-        }
-      }
-    }
-    for (const w of walkIns) {
-      if (!w?.slot || !w?.side) continue;
-      const [wh, wm] = w.slot.split(':').map(Number);
-      const slotIdx = ((wh * 60 + wm) - dayWindow.startMin) / SLOT_MIN;
-      if (slotIdx < 0 || slotIdx >= SLOT_COUNT) continue;
-      if (w.side === 'HS' || w.side === 'EM') walkInsBySide[w.side][slotIdx]++;
-    }
-    // Aggregate — one side that captures every EM + HS student and
-    // every on-floor instructor. We still compute per-side arrays
-    // above so the expand view can render the breakdown, but the
-    // top-level side rendered here uses the sums.
+
+    // Demand: bookings fanned across their full length, no-shows and
+    // cancellations taken off, walk-ins and call-ins added — the same
+    // three sources the Student Scheduler shows (src/lib/slotDemand.js).
+    const demandSource = demandBySide({
+      slots: apptData.slots || [],
+      checkIns,
+      addOns,
+      dayWindow,
+    });
+
     // Supply: the sides Neeru set in the Student Scheduler for this day,
     // falling back to the posted shifts for a day nobody has filled in yet.
     const supplySource = floorSupply({ assignments, shifts, dayWindow, skip: skipFromRatio });
 
     for (const side of SIDES) {
-      // Demand for THIS side only: booked, less no-shows and cancellations,
-      // plus walk-ins added on the day.
-      const baseDemand = new Array(SLOT_COUNT).fill(0);
-      for (let i = 0; i < SLOT_COUNT; i++) {
-        const booked = bookedBySide[side.key][i] || 0;
-        const noShow = noShowsBySide[side.key][i] || 0;
-        const walkIn = walkInsBySide[side.key][i] || 0;
-        baseDemand[i] = Math.max(0, booked - noShow + walkIn);
-      }
+      const baseDemand = demandSource[side.key].counts;
       const sideOv = overrides[side.key] || { demand: {}, supply: {} };
       const demandOv = sideOv.demand || {};
       const supplyOv = sideOv.supply || {};
@@ -457,6 +396,7 @@ export default function SupplyDemand() {
       };
       out[side.key] = {
         baseDemand, demand, supply, supplyNames, rows, stats,
+        students: demandSource[side.key].students,
         supplySource: supplySource.source,
         skippedFromRatio: supplySource.skipped,
         outsideWindow: supplySource.outsideWindow,
@@ -468,8 +408,9 @@ export default function SupplyDemand() {
     // Everyone on the floor that day, once each — someone who works both
     // sides is one person, not two.
     out._uniqueOnFloor = uniqueOnFloor(supplySource);
+    out._walkIns = demandSource.walkIns;
     return out;
-  }, [apptData, shifts, assignments, skipFromRatio, overrides, ratios, checkIns, walkIns, dayWindow, SLOT_COUNT]);
+  }, [apptData, shifts, assignments, skipFromRatio, overrides, ratios, checkIns, addOns, dayWindow]);
 
   // Match Demand: for each slot, fill Staff to the minimum needed to
   // hit the target ratio — i.e. staff = ceil(demand ÷ target ratio).
@@ -630,9 +571,6 @@ export default function SupplyDemand() {
           onSupplyChange={(idx, v) => setOverride(side.key, 'supply', idx, v)}
           onResetOverrides={() => resetOverrides(side.key)}
           onMatchDemand={() => matchDemand(side.key)}
-          apptData={apptData}
-          checkIns={checkIns}
-          walkIns={walkIns}
         />
       ))}
 
@@ -640,61 +578,26 @@ export default function SupplyDemand() {
   );
 }
 
-function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand, apptData, checkIns = {}, walkIns = [] }) {
+function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand }) {
   const startMin = dayWindow?.startMin || 15 * 60;
   const slotLabel = (i) => slotLabelForIndex(startMin, i);
   const slotCount = dayWindow?.slotCount || data?.demand?.length || 10;
   const { demand, supply, rows, stats, hasOverrides, demandOverriddenSlots, supplyOverriddenSlots } = data;
 
-  // Expand-slot-detail — per-slot breakdown of exactly who's in each
-  // Demand and Supply number, split into EM / HS so the owner can
-  // spot-check against Acuity and the schedule. Same math the top-
-  // level demand uses (duration fan-out) so a 60-min booking shows
-  // up in every slot it covers.
+  // Who is in each number, for this side: the students (already counted
+  // once, in slotDemand.js) and the instructors the Student Scheduler put
+  // on this side.
   const [expanded, setExpanded] = useState(false);
-  // Who is in each number, for this side: the students booked into the
-  // half hour (fanned across the length of their booking, same maths as
-  // the bars) and the instructors the Student Scheduler put on this side.
   const slotRoster = useMemo(() => {
     if (!expanded) return null;
-    const bySlot = new Map();
-    const push = (slotKey, entry) => {
-      if (!bySlot.has(slotKey)) bySlot.set(slotKey, []);
-      bySlot.get(slotKey).push(entry);
-    };
-    for (const row of (apptData?.slots || [])) {
-      const bucket = row?.students?.[side.key];
-      if (!bucket) continue;
-      for (const student of [...(bucket.onHour || []), ...(bucket.halfHour || [])]) {
-        const dur = Number(student.duration) > 0 ? Number(student.duration) : 60;
-        const slotsSpan = Math.max(1, Math.round(dur / 30));
-        const [rowH, rowM] = row.slot.split(':').map(Number);
-        const rowStartMin = rowH * 60 + rowM;
-        const key = student.id || student.uniqueId;
-        const status = checkIns[key]?.status || null;
-        for (let k = 0; k < slotsSpan; k++) {
-          const idx = Math.round((rowStartMin + k * 30 - startMin) / 30);
-          if (idx < 0 || idx >= (dayWindow?.slotCount || 0)) continue;
-          push(dayWindow.slotKeys[idx], {
-            name: student.name || student.displayName || 'Unknown',
-            source: k === 0 ? 'Acuity' : `Acuity (rollover · ${dur}min)`,
-            status,
-          });
-        }
-      }
-    }
-    for (const w of walkIns) {
-      if (!w?.slot || w?.side !== side.key) continue;
-      push(w.slot, { name: w.name || 'Walk-in', source: 'Walk-in', status: null });
-    }
     return (dayWindow?.slotKeys || []).map((slotKey, i) => ({
       slotKey,
       label: slotLabel(i),
-      students: (bySlot.get(slotKey) || []),
-      staff: (data.supplyNames?.[i] || []),
+      students: data.students?.[i] || [],
+      staff: data.supplyNames?.[i] || [],
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, apptData, checkIns, walkIns, dayWindow, startMin, side.key, data.supplyNames]);
+  }, [expanded, dayWindow, data.students, data.supplyNames]);
   const maxY = Math.max(1, ...demand, ...supply.map(s => s * forecastRatio)) * 1.1;
   const typicalDemand = typical?.demand || null;
   const typicalSamples = typical?.samples || 0;

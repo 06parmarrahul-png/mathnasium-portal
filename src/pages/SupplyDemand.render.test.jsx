@@ -44,6 +44,13 @@ vi.mock('../lib/schedulerFeed', () => ({
   describeAge: () => 'just now',
 }));
 vi.mock('../lib/notify', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The Student Scheduler's own watchers — the page reads check-ins and
+// walk-ins through these, so the test hands them the document shapes the
+// scheduler really writes.
+vi.mock('../lib/scheduler-data', () => ({
+  watchCheckIns: (c, d, cb) => { cb(globalThis.__checkIns || {}); return () => {}; },
+  watchWalkIns: (c, d, cb) => { cb(globalThis.__addOns || {}); return () => {}; },
+}));
 
 const authValue = { current: {} };
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
@@ -79,8 +86,8 @@ beforeEach(() => {
     }],
   };
   collections[`shifts`] = [];
-  collections[`centers/${CENTRE}/schedulerCheckIns/${TODAY}/students`] = [];
-  collections[`centers/${CENTRE}/walkIns/${TODAY}/entries`] = [];
+  globalThis.__checkIns = {};
+  globalThis.__addOns = {};
   collections['users'] = [
     { id: 'u1', uid: 'u1', displayName: 'Ann Park', centerMemberships: { [CENTRE]: { instructorType: 'Instructor' } } },
     { id: 'u2', uid: 'u2', displayName: 'Trainee Tom', centerMemberships: { [CENTRE]: { instructorType: 'Training' } } },
@@ -90,7 +97,7 @@ beforeEach(() => {
     'HS|15:00': ['Cy Diaz', 'Trainee Tom'],
   };
 });
-afterEach(() => { cleanup(); delete globalThis.__feed; });
+afterEach(() => { cleanup(); delete globalThis.__feed; delete globalThis.__checkIns; delete globalThis.__addOns; });
 
 const cardFor = (title) => screen.getByRole('heading', { name: new RegExp(title) }).closest('div.rounded-2xl');
 
@@ -144,5 +151,22 @@ describe('a day with no sides set', () => {
     const em = within(cardFor('Elementary / Middle'));
     expect(em.getByText(/Sides aren’t set for this day yet/)).toBeTruthy();
     expect(em.getByText('on shift')).toBeTruthy();
+  });
+});
+
+describe('the sources the Student Scheduler writes', () => {
+  it('counts a walk-in nobody booked on Acuity', () => {
+    // 16 Sept 2026: Kabir Cheema walked in at 3:00 and never reached the
+    // chart, because the page read a collection that doesn't exist.
+    globalThis.__addOns = { 'EM|15:00': [{ id: 'wi_k', name: 'Kabir Cheema', duration: 60 }] };
+    render(<SupplyDemand />);
+    // Two booked + one walk-in.
+    expect(within(cardFor('Elementary / Middle')).getAllByDisplayValue('3').length).toBeGreaterThan(0);
+  });
+
+  it('takes a no-show off the count', () => {
+    globalThis.__checkIns = { 'Sample EM One-15:00': { status: 'noshow' } };
+    render(<SupplyDemand />);
+    expect(within(cardFor('Elementary / Middle')).getAllByDisplayValue('1').length).toBeGreaterThan(0);
   });
 });
