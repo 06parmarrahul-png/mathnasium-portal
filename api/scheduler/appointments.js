@@ -283,11 +283,25 @@ function categorizeAll(appts, students, aliases) {
 const CENTER_TZ = 'America/Vancouver';
 
 // Decompose a UTC Date into its wall-clock parts in the centre's TZ.
+// Constructing an Intl.DateTimeFormat is expensive and this is the hottest
+// function in the file — a refresh calls it hundreds of thousands of times.
+// Built once per timezone instead of once per call; measured, this and the
+// per-date bucketing below took a refresh from 184s of parsing to seconds.
+const TZ_FORMATTERS = new Map();
+function tzFormatter(tz) {
+  let f = TZ_FORMATTERS.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat('en-US', {
+      timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+    });
+    TZ_FORMATTERS.set(tz, f);
+  }
+  return f;
+}
+
 function tzParts(utcDate, tz = CENTER_TZ) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).formatToParts(utcDate);
+  const parts = tzFormatter(tz).formatToParts(utcDate);
   const get = (t) => +parts.find(p => p.type === t).value;
   return {
     year: get('year'), month: get('month'), day: get('day'),
@@ -583,6 +597,190 @@ async function handleStudentSync(req, res) {
   });
 }
 
+
+// ───── Feed cache ───────────────────────────────────────────────────────
+//
+// WHY THIS EXISTS
+//   Acuity's iCal export is all-or-nothing: 6.8 MB and 16,000 events for a
+//   centre with one year of history, and it takes 26-53 seconds to generate.
+//   Measured 2026-09-15: it ignores minDate/maxDate/start/end/after, and
+//   sends no ETag or Last-Modified (`cache-control: no-cache`), so the feed
+//   can be neither narrowed nor conditionally fetched. Every page load was
+//   paying that, plus 449 Firestore doc reads for students and aliases.
+//
+//   So the feed is parsed ONCE into one small document per date, and pages
+//   read the single date they need. A day doc is ~10-17 KB; the busiest day
+//   in the feed is 125 events (~27 KB), comfortably inside Firestore's 1 MB
+//   limit.
+//
+// STAYING LIVE
+//   The pages subscribe to their date's document, so when a refresh writes a
+//   new version the screen updates by itself — no reload, no waiting. A page
+//   also asks for a refresh when what it has is older than FEED_TTL_MS. The
+//   result is instant render plus live correction, instead of a 45-second
+//   wait for data that usually hasn't changed.
+//
+// ONLY CHANGED DAYS ARE WRITTEN
+//   A meta document holds a hash per date. A refresh rewrites just the dates
+//   whose contents actually moved, which on a normal refresh is none or one —
+//   so a refresh costs 1 read and a handful of writes, not 242 writes.
+
+const CACHE_COL = 'schedulerDays';
+const CACHE_META = 'schedulerCache/meta';
+
+// How old cached data may be before a page asks for a refresh behind itself.
+const FEED_TTL_MS = 60 * 1000;
+// A refresh takes the better part of a minute; inside this window, another
+// one is already on its way and a second would just duplicate the work.
+const REFRESH_LOCK_MS = 3 * 60 * 1000;
+
+// Cheap, stable string hash — only ever compared against itself.
+function hashOf(str) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+}
+
+function emptyDay(d) {
+  return { day: d, slots: [], totals: { HS: 0, EM: 0, Online: 0, Unknown: 0, all: 0 }, unknownList: [] };
+}
+
+/**
+ * Fetch every feed, parse it, and write the dates whose contents changed.
+ * Slow by nature — this is the path nobody waits on.
+ */
+async function refreshFeedCache(fs, centerId) {
+  const started = Date.now();
+  const metaRef = fs.doc(`centers/${centerId}/${CACHE_META}`);
+
+  const [settingsSnap, studentsSnap, aliasesSnap, metaSnap] = await Promise.all([
+    fs.doc(`centers/${centerId}/schedulerSettings/main`).get(),
+    fs.collection(`centers/${centerId}/schedulerStudents`).get(),
+    fs.collection(`centers/${centerId}/schedulerAliases`).get(),
+    metaRef.get(),
+  ]);
+
+  const settings = settingsSnap.exists ? settingsSnap.data() : {};
+  const icalUrls = (settings.icalUrls || []).filter(Boolean);
+  if (icalUrls.length === 0) {
+    return { ok: false, reason: 'No iCal URLs configured. Add one in the Setup tab.' };
+  }
+
+  const prev = metaSnap.exists ? (metaSnap.data() || {}) : {};
+  // Don't pile refreshes on top of each other.
+  const inFlight = prev.refreshStartedAt
+    && (Date.now() - new Date(prev.refreshStartedAt).getTime()) < REFRESH_LOCK_MS;
+  if (inFlight) return { ok: true, skipped: 'already refreshing' };
+
+  await metaRef.set({ refreshStartedAt: new Date().toISOString() }, { merge: true });
+
+  const students = studentsSnap.docs.map(d => d.data());
+  const aliases = aliasesSnap.docs.map(d => d.data());
+
+  const feeds = await Promise.all(icalUrls.map(async (url) => {
+    const r = await fetch(url, { headers: { Accept: 'text/calendar' } });
+    if (!r.ok) {
+      const short = url.length > 80 ? `${url.slice(0, 80)}…` : url;
+      throw new Error(`iCal fetch failed (${r.status}) for ${short}`);
+    }
+    return r.text();
+  }));
+
+  const allAppts = [];
+  for (const body of feeds) {
+    for (const ev of parseEvents(body)) {
+      const a = toAppointment(ev);
+      if (!a) continue;
+      if (!a.firstName && !a.lastName) continue;
+      allAppts.push(a);
+    }
+  }
+  const categorized = categorizeAll(allAppts, students, aliases);
+
+  // Bucket by centre-local date in ONE pass, then group each date against
+  // only its own appointments.
+  //
+  // groupSchedule filters the array it's handed, so passing it all 16,090
+  // appointments once per date meant 233 x 16,090 timezone conversions — and
+  // that, not the 27-second download, was the bulk of a 211-second refresh.
+  const byDate = new Map();
+  for (const a of categorized) {
+    const d = tzYMD(new Date(a.datetime));
+    if (!d) continue;
+    let bucket = byDate.get(d);
+    if (!bucket) { bucket = []; byDate.set(d, bucket); }
+    bucket.push(a);
+  }
+  const dates = new Set(byDate.keys());
+
+  const refreshedAt = new Date().toISOString();
+  const hashes = { ...(prev.hashes || {}) };
+  const changed = [];
+
+  for (const date of dates) {
+    const grouped = groupSchedule(byDate.get(date) || [], date);
+    const payload = JSON.stringify(grouped);
+    const h = hashOf(payload);
+    if (hashes[date] === h) continue;
+    hashes[date] = h;
+    changed.push({ date, grouped });
+  }
+
+  // Dates that had bookings and no longer do — a whole day cancelled or
+  // moved. Without this they'd keep serving yesterday's students forever.
+  // Compare against the empty hash first: once a date has been emptied it
+  // stays absent from the feed, so an unconditional rewrite here would
+  // re-clear it on every refresh for the life of the centre.
+  const emptyHashFor = (date) => hashOf(JSON.stringify(emptyDay(date)));
+  for (const date of Object.keys(prev.hashes || {})) {
+    if (dates.has(date)) continue;
+    const h = emptyHashFor(date);
+    if (hashes[date] === h) continue;
+    hashes[date] = h;
+    changed.push({ date, grouped: emptyDay(date) });
+  }
+
+  // Firestore caps a batch at 500 operations.
+  for (let i = 0; i < changed.length; i += 400) {
+    const batch = fs.batch();
+    for (const { date, grouped } of changed.slice(i, i + 400)) {
+      batch.set(fs.doc(`centers/${centerId}/${CACHE_COL}/${date}`),
+        { ...grouped, refreshedAt });
+    }
+    await batch.commit();
+  }
+
+  await metaRef.set({
+    refreshedAt,
+    refreshStartedAt: null,
+    hashes,
+    lastDurationMs: Date.now() - started,
+    lastEventCount: allAppts.length,
+  }, { merge: true });
+
+  return {
+    ok: true,
+    refreshedAt,
+    datesChanged: changed.length,
+    datesTotal: dates.size,
+    events: allAppts.length,
+    durationMs: Date.now() - started,
+  };
+}
+
+/** Read cached dates. Missing dates come back empty rather than absent. */
+async function readCachedDays(fs, centerId, dates) {
+  if (dates.length === 0) return [];
+  const refs = dates.map(d => fs.doc(`centers/${centerId}/${CACHE_COL}/${d}`));
+  const snaps = await fs.getAll(...refs);
+  return snaps.map((snap, i) => {
+    if (!snap.exists) return emptyDay(dates[i]);
+    const { refreshedAt: _r, ...grouped } = snap.data();
+    void _r;
+    return grouped;
+  });
+}
+
 // ───── Handler ──────────────────────────────────────────────────────────
 export default async function handler(req, res) {
   // Method + action routing. Keeps both the appointments GET and the
@@ -593,6 +791,23 @@ export default async function handler(req, res) {
       return await handleStudentSync(req, res);
     } catch (e) {
       return res.status(500).json({ error: e.message || 'sync failed' });
+    }
+  }
+
+  // Re-read Acuity into the day cache. The slow path — 26-53s — which is
+  // exactly why no page load waits on it. Pages fire this and forget; the
+  // Firestore listener on the day document delivers the result when it
+  // lands. Also safe to call from a cron.
+  if (req.method === 'POST' && req.query.action === 'refresh-feed') {
+    try {
+      const auth = await authenticateRequest(req);
+      if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+      const { centerId } = req.query;
+      if (!centerId) return res.status(400).json({ error: 'centerId required' });
+      const result = await refreshFeedCache(getFirestore(), centerId);
+      return res.status(result.ok ? 200 : 400).json(result);
+    } catch (e) {
+      return res.status(500).json({ error: e.message || 'refresh failed' });
     }
   }
   if (req.method !== 'GET') return res.status(405).json({ error: 'GET only' });
@@ -651,78 +866,67 @@ export default async function handler(req, res) {
 
     const fs = getFirestore();
 
-    // Load settings, students, aliases for this centre.
-    let settingsSnap, studentsSnap, aliasesSnap;
+    // Only the settings doc. Students and aliases are needed to CATEGORIZE
+    // appointments, and that now happens once per refresh rather than once
+    // per page load — 449 document reads a load became 1.
+    let settingsSnap;
     try {
-      [settingsSnap, studentsSnap, aliasesSnap] = await Promise.all([
-        fs.doc(`centers/${centerId}/schedulerSettings/main`).get(),
-        fs.collection(`centers/${centerId}/schedulerStudents`).get(),
-        fs.collection(`centers/${centerId}/schedulerAliases`).get(),
-      ]);
+      settingsSnap = await fs.doc(`centers/${centerId}/schedulerSettings/main`).get();
     } catch (e) {
       return res.status(500).json({ error: `Firestore read failed: ${e.message}` });
     }
 
     const settings = settingsSnap.exists ? settingsSnap.data() : {};
-    const students = studentsSnap.docs.map(d => d.data());
-    const aliases = aliasesSnap.docs.map(d => d.data());
-
     const icalUrls = (settings.icalUrls || []).filter(Boolean);
     if (icalUrls.length === 0) {
-      const empty = (d) => ({
-        day: d, slots: [], totals: { HS:0,EM:0,Online:0,Unknown:0,all:0 }, unknownList: [],
-      });
       const warning = 'No iCal URLs configured. Add one in the Setup tab.';
       return res.status(200).json(
         rangeDates
-          ? { start, end, days: rangeDates.map(empty), warning }
-          : { ...empty(day), warning }
+          ? { start, end, days: rangeDates.map(emptyDay), warning }
+          : { ...emptyDay(day), warning }
       );
     }
 
-    // Fetch every feed in parallel. Per-feed errors surface their URL
-    // (truncated) and status so the actual broken URL is visible.
-    let feeds;
-    try {
-      feeds = await Promise.all(icalUrls.map(async (url) => {
-        const r = await fetch(url, { headers: { Accept: 'text/calendar' } });
-        if (!r.ok) {
-          const short = url.length > 80 ? `${url.slice(0, 80)}…` : url;
-          throw new Error(`iCal fetch failed (${r.status}) for ${short}`);
-        }
-        return r.text();
-      }));
-    } catch (e) {
-      return res.status(502).json({ error: e.message });
-    }
+    // Serve from the day cache. Building it is the slow part and it happens
+    // out of band, so this is a handful of document reads instead of a 6.8 MB
+    // download and 449 Firestore reads.
+    const metaSnap = await fs.doc(`centers/${centerId}/${CACHE_META}`).get();
+    const meta = metaSnap.exists ? (metaSnap.data() || {}) : {};
+    const refreshedAt = meta.refreshedAt || null;
+    const ageMs = refreshedAt ? Date.now() - new Date(refreshedAt).getTime() : Infinity;
 
-    // Don't filter to `day` here — let groupSchedule handle the filtering in
-    // the centre's timezone. Filtering in UTC would drop e.g. a Saturday
-    // evening appointment that's already Sunday in UTC.
-    const allAppts = [];
-    for (const body of feeds) {
-      for (const ev of parseEvents(body)) {
-        const a = toAppointment(ev); if (!a) continue;
-        // Skip group-block events with no real client name (e.g. Acuity
-        // appointment-type rows like "High School Grades Only" that surface
-        // as standalone iCal events with no associated student).
-        if (!a.firstName && !a.lastName) continue;
-        allAppts.push(a);
+    // Cold cache — nothing has ever been written. Build it now rather than
+    // hand back an empty day, so the first load after deploy is correct even
+    // though it's slow. Every load after this one is fast.
+    if (!refreshedAt) {
+      try {
+        await refreshFeedCache(fs, centerId);
+      } catch (e) {
+        return res.status(502).json({ error: e.message });
       }
     }
 
-    const categorized = categorizeAll(allAppts, students, aliases);
+    // A cold cache just built itself above, so re-read the stamp rather than
+    // reporting the Infinity age we came in with.
+    const builtAt = refreshedAt
+      || (await fs.doc(`centers/${centerId}/${CACHE_META}`).get()).data()?.refreshedAt
+      || null;
+    const builtAgeMs = refreshedAt ? ageMs : 0;
+
+    const cachedDays = await readCachedDays(fs, centerId, rangeDates || [day]);
+    const cacheInfo = {
+      refreshedAt: builtAt,
+      ageMs: builtAgeMs,
+      // The page uses this to decide whether to kick off a refresh behind
+      // itself. It never waits on the answer.
+      stale: builtAgeMs > FEED_TTL_MS,
+    };
 
     if (rangeDates) {
-      return res.status(200).json({
-        start, end,
-        days: rangeDates.map(d => groupSchedule(categorized, d)),
-      });
+      return res.status(200).json({ start, end, days: cachedDays, cache: cacheInfo });
     }
+    return res.status(200).json({ ...cachedDays[0], cache: cacheInfo });
 
-    const grouped = groupSchedule(categorized, day);
-
-    return res.status(200).json(grouped);
   } catch (e) {
     // Outer catch-all — anything that wasn't trapped by a more specific
     // handler still returns JSON so the frontend can show the message

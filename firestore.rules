@@ -566,6 +566,25 @@ service cloud.firestore {
         allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);
       }
 
+      // Acuity's feed, parsed into one document per date. Read-only to every
+      // client: it is written solely by api/scheduler/appointments.js through
+      // the Admin SDK, which bypasses rules. Same read tier as the students it
+      // is derived from — it holds the same names.
+      //
+      // The cache is what makes the Student Scheduler and Supply & Demand
+      // instant, and clients SUBSCRIBE to it, so a write path here would let
+      // one person put wrong students on everybody's screen.
+      match /schedulerDays/{dateId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if false;
+      }
+
+      // Refresh bookkeeping — last refreshed, per-date hashes. Server-written.
+      match /schedulerCache/{docId} {
+        allow read:  if canRunFloor(centerId);
+        allow write: if false;
+      }
+
       match /schedulerAliases/{aliasId} {
         allow read:  if canRunFloor(centerId);
         allow write: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId);

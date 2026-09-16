@@ -67,6 +67,7 @@ const STANDARD_ALIASES = [
   { parentName: 'Claire and Julia Eddy', replacements: ['Claire Eddy', 'Julia Eddy'] },
 ];
 import { toast } from '../lib/notify';
+import { watchFeedDay, requestFeedRefresh, describeAge } from '../lib/schedulerFeed';
 import { isFlexRole } from '../lib/subRoles';
 import {
   HIGHLIGHTS, highlightFor, highlightStyle, legendEntries, serializeLegend, highlightsInUse,
@@ -356,22 +357,28 @@ function TodayTab({ centerId }) {
   const [walkIns, setWalkIns] = useState({});
   useEffect(() => watchWalkIns(centerId, date, setWalkIns), [centerId, date]);
 
-  // Fetch the schedule from the server (which reads iCal + categorizes).
-  async function loadSchedule() {
+  // The day's bookings, from the parsed cache rather than a live Acuity
+  // fetch. Acuity's export is 6.8 MB and takes 26-53 seconds to generate,
+  // which every load of this page used to wait for. This is a subscription,
+  // so it paints straight away and then updates itself when a refresh lands.
+  const [refreshedAt, setRefreshedAt] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  useEffect(() => {
     setLoading(true); setError(null);
-    try {
-      const token = await auth.currentUser?.getIdToken();
-      const r = await fetch(`/api/scheduler/appointments?centerId=${encodeURIComponent(centerId)}&date=${encodeURIComponent(date)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      setData(j);
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { loadSchedule(); }, [centerId, date]);
+    return watchFeedDay(centerId, date, ({ grouped, refreshedAt: at, loading: l }) => {
+      setData(grouped);
+      setRefreshedAt(at);
+      setLoading(l);
+    });
+  }, [centerId, date]);
+
+  // Explicit "check Acuity now", for when someone knows a booking just
+  // changed and doesn't want to wait for the next automatic refresh.
+  const loadSchedule = async () => {
+    setRefreshing(true);
+    try { await requestFeedRefresh(centerId); }
+    finally { setRefreshing(false); }
+  };
 
   const ratio = settings?.studentsPerInstructor || 4;
   // Pool = live Firestore staff list, plus any custom names from Setup
@@ -491,10 +498,17 @@ function TodayTab({ centerId }) {
           <input type="date" value={date} onChange={e => setDate(e.target.value)}
             className="ml-2 rounded border border-gray-300 px-2 py-1 text-sm" />
         </label>
-        <button onClick={loadSchedule}
-          className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200">
-          <RefreshCw size={14} /> Refresh
+        <button onClick={loadSchedule} disabled={refreshing}
+          title="Re-read Acuity now. The page updates by itself when it lands."
+          className="flex items-center gap-1 rounded bg-gray-100 px-3 py-1 text-sm hover:bg-gray-200 disabled:opacity-60">
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+          {refreshing ? 'Checking Acuity…' : 'Refresh'}
         </button>
+        {/* The page reads a cache, so say how old it is. Acuity's feed takes
+            the better part of a minute to generate and nobody waits on it. */}
+        <span className="text-xs text-gray-400" title={refreshedAt || ''}>
+          Bookings updated {describeAge(refreshedAt)}
+        </span>
         {isToday && data && (
           <span
             className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-sm font-bold text-emerald-800"

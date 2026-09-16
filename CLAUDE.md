@@ -754,6 +754,51 @@ Use `api/_lib/centreDate.js` — `centreToday()`, `centreYMD(d)`,
 `centreOffsetYMD(n)`, honouring `CENTER_TZ` and DST. `_lib/` isn't routed,
 so it costs nothing against the 12-function cap.
 
+## Acuity feed cache — why the scheduler pages are fast
+
+Measured 2026-09-15 for Langley: Acuity's iCal export is **6.8 MB, 16,093
+events, 26-53 seconds** to generate. It **ignores** `minDate`/`maxDate`/
+`start`/`end`/`after` and sends **no ETag or Last-Modified**
+(`cache-control: no-cache`), so it can be neither narrowed nor conditionally
+fetched. Student Scheduler and Supply & Demand paid that on every load, plus
+449 Firestore reads (settings + 361 students + 87 aliases).
+
+Now the feed is parsed **once** into `centers/{id}/schedulerDays/{YYYY-MM-DD}`
+— one small document per date (~10-17 KB; the biggest day in a year of data is
+48.7 KB, well inside the 1 MB limit). Pages **subscribe** to the one date they
+need via `src/lib/schedulerFeed.js` (`watchFeedDay`), so they paint from
+Firestore's local cache and then update themselves when a refresh lands. **Per
+load: 45s → ~0.1s, 449 reads → 1.**
+
+- Refresh: `POST /api/scheduler/appointments?action=refresh-feed&centerId=`.
+  Fire-and-forget — `requestFeedRefresh()` never blocks a page. A page asks for
+  one when what it has is older than `FEED_TTL_MS` (60s), and there's a manual
+  Refresh button on both pages next to "Bookings updated N min ago".
+- `maxDuration: 60` is set for that function in `vercel.json`. The default 10s
+  would kill every refresh — the download alone is ~27s.
+- **Only changed dates are written.** A hash per date lives in
+  `schedulerCache/meta`; a normal refresh rewrites none or one. Dates that lose
+  all bookings are emptied once, compared against the empty hash so they aren't
+  re-cleared on every refresh forever.
+- `REFRESH_LOCK_MS` (3 min) stops concurrent refreshes stampeding.
+- Rules: `schedulerDays` and `schedulerCache` are **read-only to every client**
+  (`allow write: if false`) — written solely by the Admin SDK. Clients subscribe
+  to them, so a write path would let one person put wrong students on everyone's
+  screen.
+- Cold cache (nothing ever written) builds synchronously on first GET, so the
+  first load after deploy is correct though slow. Every load after is fast.
+
+**Two performance traps in this file, both fixed, both easy to reintroduce:**
+`tzParts` now builds its `Intl.DateTimeFormat` **once per timezone**, not once
+per call; and a refresh **buckets appointments by date in one pass** instead of
+handing all 16,090 to `groupSchedule` for each of 233 dates. Together those were
+**200.9s of parsing, now 0.9s — 228x** — verified byte-for-byte identical output
+on all 233 dates. Don't reintroduce a per-call formatter or an unbucketed
+`groupSchedule(allAppts, date)` loop.
+
+Check-ins, walk-ins and instructor assignments were always separate live
+Firestore listeners and are untouched by any of this.
+
 ## Inspecting live data (read-only)
 
 Service account at `../Pricing and Codes/mathnasium-langley-firebase-adminsdk-*.json`.

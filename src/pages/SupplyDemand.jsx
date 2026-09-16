@@ -6,10 +6,11 @@ import { roleDisplayName } from '../lib/roleLabel';
 import { PAGES } from '../lib/pageNames';
 import {
   Activity, ChevronLeft, ChevronRight, Loader2, AlertTriangle, RotateCcw, Sparkles,
-  Save, Check, TrendingUp,
+  Save, Check, TrendingUp, RefreshCw,
 } from 'lucide-react';
 import { format, addDays, subDays } from 'date-fns';
 import { getSnapshot, saveSnapshot, computeTypicalDemand } from '../lib/demand-snapshots';
+import { watchFeedDay, requestFeedRefresh, describeAge } from '../lib/schedulerFeed';
 import { resolveInstructionalHours, stateColorHex } from '../lib/centerConfig';
 import { toast } from '../lib/notify';
 import { isFlexRole, DEFAULT_TARGET_RATIO } from '../lib/subRoles';
@@ -217,6 +218,8 @@ export default function SupplyDemand() {
   const { activeCenterId, centerConfig, canSeeCenterSettings } = useAuth();
   const [date, setDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
   const [apptData, setApptData] = useState(null);
+  const [feedRefreshedAt, setFeedRefreshedAt] = useState(null);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [apiError, setApiError] = useState(null);
 
@@ -280,26 +283,16 @@ export default function SupplyDemand() {
   // Fetch the appointments for the selected date. Same endpoint the
   // Student Scheduler uses — categorizes into HS/EM/Online per slot.
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!activeCenterId || !date) return;
-      setLoading(true); setApiError(null);
-      try {
-        const token = await auth.currentUser?.getIdToken();
-        const r = await fetch(
-          `/api/scheduler/appointments?centerId=${encodeURIComponent(activeCenterId)}&date=${encodeURIComponent(date)}`,
-          { headers: { Authorization: `Bearer ${token}` } },
-        );
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-        if (alive) setApptData(j);
-      } catch (e) {
-        if (alive) setApiError(e.message);
-      } finally {
-        if (alive) setLoading(false);
-      }
-    })();
-    return () => { alive = false; };
+    // Subscribed to the parsed day cache, not fetched from Acuity. The feed
+    // itself is 6.8 MB and takes 26-53 seconds; this paints immediately and
+    // updates itself when a refresh writes a new version.
+    if (!activeCenterId || !date) return undefined;
+    setLoading(true); setApiError(null);
+    return watchFeedDay(activeCenterId, date, ({ grouped, refreshedAt: at, loading: l }) => {
+      setApptData(grouped);
+      setFeedRefreshedAt(at);
+      setLoading(l);
+    });
   }, [activeCenterId, date]);
 
   // Per-side manual overrides — TWO tracks now: demand and supply.
@@ -596,6 +589,20 @@ export default function SupplyDemand() {
             onChange={e => setDate(e.target.value)}
             className="rounded-lg border border-gray-300 px-3 py-1.5 text-sm focus:border-emerald-500 focus:outline-none"
           />
+          {/* Bookings come from a parsed cache — Acuity's own feed takes
+              26-53 seconds to generate, so no page load waits for it. This
+              says how fresh the numbers are and lets someone force a check. */}
+          <button
+            onClick={async () => { setFeedRefreshing(true); try { await requestFeedRefresh(activeCenterId); } finally { setFeedRefreshing(false); } }}
+            disabled={feedRefreshing}
+            title="Re-read Acuity now. The page updates by itself when it lands."
+            className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:opacity-60"
+          >
+            <RefreshCw size={15} className={feedRefreshing ? 'animate-spin' : ''} />
+          </button>
+          <span className="text-xs text-gray-400" title={feedRefreshedAt || ''}>
+            updated {describeAge(feedRefreshedAt)}
+          </span>
           <button
             onClick={() => setDate(d => format(addDays(new Date(d + 'T00:00:00'), 1), 'yyyy-MM-dd'))}
             className="rounded-md p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-900"
