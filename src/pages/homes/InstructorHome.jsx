@@ -13,6 +13,7 @@ import {
 } from '../../lib/centreEvents';
 import { funDayOn, funDaysAhead } from '../../lib/funDays';
 import { PAGES } from '../../lib/pageNames';
+import DeskHomeCard from '../../components/DeskHomeCard';
 import { gamesEnabled } from '../../lib/ratioGames';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
@@ -559,6 +560,11 @@ export default function InstructorHome() {
             </Card>
           </div>
         )}
+
+        {/* ── The Management Desk ─────────────────────────────────── */}
+        {/* Renders nothing for anyone who can't open the desk, which is
+            most of this page's readers. */}
+        <DeskHomeCard variant="nl" />
 
         {/* ── Ratio Games ─────────────────────────────────────────── */}
         {/* The doorway most people use — the sidebar is behind a hamburger

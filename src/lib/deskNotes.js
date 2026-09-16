@@ -101,15 +101,72 @@ export function deskMembers(users, centerId, centreRoles) {
     .sort((a, b) => String(a?.displayName || '').localeCompare(String(b?.displayName || '')));
 }
 
-/** Anything that isn't recognisably closed is open — including blank. */
+/**
+ * The four states a note can be in.
+ *
+ * It used to be two — open or closed — and the other two are SUB-STATES OF
+ * OPEN, not new top-level things. `isOpen()` still means "not settled", so
+ * the sidebar badge, the "for me" inbox, the settled archive and all 1,853
+ * imported rows carry on working without knowing these exist.
+ *
+ * `waiting` earns its place by saying something the desk could not say
+ * before: this is not neglected, it is blocked on somebody outside the
+ * room. The amber rail on the card already meant "somebody else's" — this
+ * is that, written down, so a note nobody can move stops reading as a note
+ * nobody has touched.
+ */
+export const NOTE_STATUSES = [
+  { key: 'open',        label: 'Open',        short: 'Open' },
+  { key: 'in_progress', label: 'In progress', short: 'In progress' },
+  { key: 'waiting',     label: 'Waiting on someone', short: 'Waiting' },
+  { key: 'closed',      label: 'Settled',     short: 'Settled' },
+];
+
+/**
+ * The statuses the live listener asks Firestore for.
+ *
+ * THE QUERY IS AN EXACT MATCH, and it used to be `status == 'open'`. A note
+ * moved to "in progress" under that query simply disappeared off the desk —
+ * so this list and the query that reads it have to stay in step. Firestore
+ * `in` takes up to 30 values; there are three.
+ */
+export const LIVE_STATUSES = ['open', 'in_progress', 'waiting'];
+
+/**
+ * Anything that isn't recognisably one of the others is open — including
+ * blank, which is what the oldest imported rows have.
+ */
 export function normaliseStatus(v) {
-  const s = String(v ?? '').trim().toLowerCase();
+  const s = String(v ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (s === 'closed' || s === 'settled' || s === 'complete') return 'closed';
+  if (s === 'in_progress' || s === 'inprogress' || s === 'doing') return 'in_progress';
+  if (s === 'waiting' || s === 'blocked' || s === 'on_hold') return 'waiting';
   return 'open';
 }
 
+/** Not settled. In progress and waiting are still open work. */
 export function isOpen(note) {
-  return normaliseStatus(note?.status) === 'open';
+  return normaliseStatus(note?.status) !== 'closed';
+}
+
+export function statusLabel(note) {
+  const key = normaliseStatus(note?.status);
+  return (NOTE_STATUSES.find(s => s.key === key) || NOTE_STATUSES[0]).short;
+}
+
+/**
+ * The fields a status change writes.
+ *
+ * Settling stamps who and when, because the archive is sorted by it.
+ * Moving back out of settled CLEARS both — a note that was reopened and
+ * settled again would otherwise keep the first date and sort to the wrong
+ * place in an archive of 1,730.
+ */
+export function statusFields(status, who) {
+  const key = normaliseStatus(status);
+  return key === 'closed'
+    ? { status: key, settledAt: new Date().toISOString(), settledByName: who || 'Someone' }
+    : { status: key, settledAt: null, settledByName: null };
 }
 
 /** "Rahul Parmar" → "RP". Falls back to one letter, then to nothing. */
@@ -219,11 +276,149 @@ export function applyToArchive(archive, note, fields) {
   return isOpen(merged) ? rest : [merged, ...rest];
 }
 
+// ─── Due dates ───────────────────────────────────────────────────────────
+//
+// Optional, and deliberately quiet. A note without one behaves exactly as
+// it always has. An overdue one turns red and floats to the top of your
+// own list — it does not email anybody and it does not close itself. A due
+// date here is a promise made to a parent, not an alarm.
+//
+// 'YYYY-MM-DD', centre-local, parsed at noon: `new Date('2026-09-17')` is
+// the 16th in Pacific, which is the same trap shift.date documents.
+
+/** Days from `today` until the due date. Negative means it has passed. */
+export function daysUntilDue(note, today) {
+  const due = String(note?.dueDate || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(due)) return null;
+  const at = (ymd) => {
+    const [y, m, d] = ymd.split('-').map(Number);
+    return new Date(y, m - 1, d, 12, 0, 0).getTime();
+  };
+  const now = typeof today === 'string' ? at(today) : at(ymdOf(today || new Date()));
+  return Math.round((at(due) - now) / 86400000);
+}
+
+/** 'YYYY-MM-DD' for a Date, in local time. */
+export function ymdOf(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+/**
+ * How a due date should read: null when there isn't one, and never
+ * 'overdue' on a settled note — a thing that is done cannot be late.
+ */
+export function dueState(note, today) {
+  if (!isOpen(note)) return note?.dueDate ? 'settled' : null;
+  const days = daysUntilDue(note, today);
+  if (days === null) return null;
+  if (days < 0) return 'overdue';
+  if (days === 0) return 'today';
+  if (days <= 6) return 'soon';
+  return 'later';
+}
+
+/** The words on the chip. */
+export function dueLabel(note, today) {
+  const state = dueState(note, today);
+  if (!state) return '';
+  const days = daysUntilDue(note, today);
+  if (state === 'settled') return `Was due ${shortDate(note.dueDate)}`;
+  if (state === 'overdue') {
+    const late = Math.abs(days);
+    return late === 1 ? 'Overdue by a day' : `Overdue by ${late} days`;
+  }
+  if (state === 'today') return 'Due today';
+  if (days === 1) return 'Due tomorrow';
+  return `Due ${shortDate(note.dueDate)}`;
+}
+
+/** '2026-09-19' → 'Fri 19 Sep'. */
+export function shortDate(ymd) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(ymd || ''))) return '';
+  const [y, m, d] = ymd.split('-').map(Number);
+  return new Date(y, m - 1, d, 12).toLocaleDateString(undefined, {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+}
+
+/** The quick picks on the due-date control, as offsets in days. */
+export function dueSuggestions(today) {
+  const base = typeof today === 'string' ? today : ymdOf(today || new Date());
+  const [y, m, d] = base.split('-').map(Number);
+  const plus = (n) => {
+    const date = new Date(y, m - 1, d, 12);
+    date.setDate(date.getDate() + n);
+    return ymdOf(date);
+  };
+  return [
+    { label: 'Today', date: plus(0) },
+    { label: 'Tomorrow', date: plus(1) },
+    { label: shortDate(plus(3)), date: plus(3) },
+    { label: 'Next week', date: plus(7) },
+  ];
+}
+
+/**
+ * Your own list, ordered by what is actually pressing: overdue first
+ * (most overdue at the top), then today, then the rest by due date, then
+ * everything undated in the order the desk already uses.
+ *
+ * Undated notes go LAST rather than first. They are not less important —
+ * but a list that puts "no idea when" above "late since Tuesday" is a list
+ * that gets skimmed instead of worked.
+ */
+export function sortByDue(notes, today) {
+  const rank = (n) => {
+    const days = daysUntilDue(n, today);
+    return days === null ? 1 : 0;
+  };
+  return [...(notes || [])].sort((a, b) => {
+    const ra = rank(a); const rb = rank(b);
+    if (ra !== rb) return ra - rb;
+    if (ra === 0) {
+      const da = daysUntilDue(a, today); const db = daysUntilDue(b, today);
+      if (da !== db) return da - db;
+    }
+    const ad = String(a?.loggedAt || ''); const bd = String(b?.loggedAt || '');
+    if (ad !== bd) return ad < bd ? 1 : -1;
+    return String(b?.createdAt || '').localeCompare(String(a?.createdAt || ''));
+  });
+}
+
+/** How old an open note is, in days. The desk shows it as "day 11". */
+export function ageInDays(note, today) {
+  const logged = String(note?.loggedAt || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(logged)) return null;
+  return -daysUntilDue({ dueDate: logged }, today);
+}
+
+/**
+ * The four figures above the list, and the same ones the home card reads.
+ * Counts only what is waiting on THIS person: a desk-wide number is not
+ * something anybody can act on.
+ */
+export function deskSummary(notes, uid, today) {
+  const mine = (notes || []).filter(n => isOpen(n) && isForMe(n, uid));
+  const overdue = mine.filter(n => dueState(n, today) === 'overdue');
+  const thisWeek = mine.filter(n => ['today', 'soon'].includes(dueState(n, today)));
+  const ages = mine.map(n => ageInDays(n, today)).filter(n => Number.isFinite(n));
+  return {
+    onYou: mine.length,
+    overdue: overdue.length,
+    dueThisWeek: thisWeek.length,
+    oldestDays: ages.length > 0 ? Math.max(...ages) : 0,
+    items: sortByDue(mine, today),
+  };
+}
+
 export const NOTE_VIEWS = {
-  mine:   { key: 'mine',   label: 'For me' },
-  open:   { key: 'open',   label: 'All open' },
-  sent:   { key: 'sent',   label: 'I sent' },
-  closed: { key: 'closed', label: 'Settled' },
+  mine:     { key: 'mine',     label: 'For me' },
+  open:     { key: 'open',     label: 'All open' },
+  progress: { key: 'progress', label: 'In progress' },
+  waiting:  { key: 'waiting',  label: 'Waiting' },
+  sent:     { key: 'sent',     label: 'I sent' },
+  closed:   { key: 'closed',   label: 'Settled' },
 };
 
 /**
@@ -232,14 +427,19 @@ export const NOTE_VIEWS = {
  * "For me" is open notes only — a settled note is not a thing you have
  * to do, and leaving them in the list is how an inbox stops being read.
  */
-export function filterNotes(notes, { view = 'mine', uid = null, q = '' } = {}) {
+export function filterNotes(notes, { view = 'mine', uid = null, q = '', today = null } = {}) {
   const rows = (notes || []).filter(n => matchesQuery(n, q));
   const byView = {
-    mine:   rows.filter(n => isOpen(n) && isForMe(n, uid)),
-    open:   rows.filter(isOpen),
-    sent:   rows.filter(n => isFromMe(n, uid)),
-    closed: rows.filter(n => !isOpen(n)),
+    mine:     rows.filter(n => isOpen(n) && isForMe(n, uid)),
+    open:     rows.filter(isOpen),
+    progress: rows.filter(n => normaliseStatus(n.status) === 'in_progress'),
+    waiting:  rows.filter(n => normaliseStatus(n.status) === 'waiting'),
+    sent:     rows.filter(n => isFromMe(n, uid)),
+    closed:   rows.filter(n => !isOpen(n)),
   };
+  // Your own list leads with what is late; every other view keeps the
+  // desk's existing order.
+  if (view === 'mine') return sortByDue(byView.mine, today);
   return sortNotes(byView[view] || byView.mine);
 }
 
@@ -255,6 +455,13 @@ export function validateNote(draft) {
   if (!draft?.toAll && (draft?.toUids || []).length === 0) return 'Pick who it’s for.';
   if (!draft?.loggedAt) return 'Pick the date.';
   return null;
+}
+
+/** Who sent it, in as few words as read naturally. */
+export function firstNameOrLabel(note) {
+  const name = String(note?.fromName || '').trim();
+  if (name) return name.split(/\s+/)[0];
+  return note?.fromInitials || 'someone';
 }
 
 /**

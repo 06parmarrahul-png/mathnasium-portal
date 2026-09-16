@@ -7,7 +7,7 @@ import Mascot from './Mascot';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
 import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
-import { myOpenCount, canUseDesk } from '../lib/deskNotes';
+import { myOpenCount, canUseDesk, LIVE_STATUSES } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { gamesEnabled } from '../lib/ratioGames';
 import { roleLabelFor } from '../lib/roleLabel';
@@ -95,12 +95,16 @@ export default function Layout({ children }) {
   // the read would be refused by the rules anyway.
   useEffect(() => {
     if (!canOpenDesk || !activeCenterId) return undefined;
-    // Open notes only. The settled archive runs to 1,730 documents and
+    // Live notes only. The settled archive runs to 1,730 documents and
     // none of them can be waiting on anybody.
+    //
+    // `in`, not `== 'open'`: In progress and Waiting are still work on
+    // somebody's desk, and an exact match on 'open' dropped them off the
+    // badge the moment anyone moved one.
     return onSnapshot(
       query(
         collection(db, 'centers', activeCenterId, 'notes'),
-        where('status', '==', 'open'),
+        where('status', 'in', LIVE_STATUSES),
       ),
       snap => setDeskNotes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setDeskNotes([]),

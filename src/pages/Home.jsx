@@ -8,6 +8,7 @@ import { PAGES } from '../lib/pageNames';
 import { greeting } from '../lib/greeting';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
 import TodaysSnapshot from '../components/TodaysSnapshot';
+import DeskHomeCard from '../components/DeskHomeCard';
 import CareerPlanModal from '../components/CareerPlanModal';
 import OwnerWelcome, { useOwnerWelcomeState } from '../components/OwnerWelcome';
 import {
@@ -324,6 +325,12 @@ export default function Home() {
           </Link>
         )
       )}
+
+      {/* ── The Management Desk ── */}
+      {/* Above announcements: a note addressed to you is something to do,
+          an announcement is something to know. Renders nothing for anyone
+          who can't open the desk. */}
+      <DeskHomeCard variant="classic" />
 
       {/* ── Latest Announcement ── */}
       {latestAnnouncement && (

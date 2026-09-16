@@ -4,7 +4,7 @@ import {
 } from 'firebase/firestore';
 import {
   StickyNote, Gift, Receipt, Users, Star, Plus, Search, Check,
-  RotateCcw, X, Pencil, Send, ArrowRight,
+  RotateCcw, X, Pencil, Send, ArrowRight, ChevronDown, Flag,
 } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -13,6 +13,8 @@ import { resolveRoles } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import {
   isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery, sortSettled, applyToArchive,
+  LIVE_STATUSES, NOTE_STATUSES, normaliseStatus, statusFields, statusLabel,
+  dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays,
 } from '../lib/deskNotes';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
 import { suggestStudents } from '../lib/deskLink';
@@ -157,6 +159,8 @@ export default function ManagementDesk() {
  */
 const VIEWS = [
   { key: 'open', label: 'Open' },
+  { key: 'progress', label: 'In progress' },
+  { key: 'waiting', label: 'Waiting' },
   { key: 'done', label: 'Settled' },
 ];
 
@@ -166,6 +170,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const [people, setPeople] = useState([]);
   const [students, setStudents] = useState([]);
   const [view, setView] = useState('open');
+  const today = ymdOf(new Date());
   const [q, setQ] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -174,7 +179,10 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   useEffect(() => {
     if (!centerId) return undefined;
     return onSnapshot(
-      query(collection(db, 'centers', centerId, 'notes'), where('status', '==', 'open')),
+      // `in`, not `== 'open'`: a note moved to In progress or Waiting is
+      // still live work and must not vanish off the desk. LIVE_STATUSES and
+      // this query have to stay in step — see deskNotes.js.
+      query(collection(db, 'centers', centerId, 'notes'), where('status', 'in', LIVE_STATUSES)),
       snap => setOpen(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setOpen([]),
     );
@@ -246,14 +254,18 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     const kept = all.filter(n => matchesQuery(n, q)).filter(n =>
       view === 'mine' ? (forMe(n) && isOpen(n))
       : view === 'done' ? !isOpen(n)
+      : view === 'progress' ? normaliseStatus(n.status) === 'in_progress'
+      : view === 'waiting' ? normaliseStatus(n.status) === 'waiting'
       : isOpen(n));
     // Settled is an archive you look back through: the one just dealt
     // with belongs at the top.
     if (view === 'done') return sortSettled(kept);
-    // Oldest first: a chain reads downwards, and the composer is at the end.
+    // Your own list leads with what is late; the shared views keep reading
+    // downwards like a chain, with the composer at the end.
+    if (view === 'mine') return sortByDue(kept, today);
     return kept.sort((a, b) =>
       String(a.createdAt || a.loggedAt || '').localeCompare(String(b.createdAt || b.loggedAt || '')));
-  }, [all, view, q, uid]);        // eslint-disable-line react-hooks/exhaustive-deps
+  }, [all, view, q, uid, today]);        // eslint-disable-line react-hooks/exhaustive-deps
 
   // Searching from Open would otherwise hide the answer: the thing you are
   // looking up is usually SETTLED — that is what settled means. Rather than
@@ -264,9 +276,16 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     return (archive || []).filter(n => matchesQuery(n, q)).length;
   }, [archive, q, view]);
 
+  const summary = useMemo(
+    () => deskSummary(open || [], uid, today),
+    [open, uid, today],
+  );
+
   const counts = useMemo(() => ({
     mine: (open || []).filter(forMe).length,
     open: (open || []).length,
+    progress: (open || []).filter(n => normaliseStatus(n.status) === 'in_progress').length,
+    waiting: (open || []).filter(n => normaliseStatus(n.status) === 'waiting').length,
     // Unknown until the archive has been fetched, and it is not fetched
     // until somebody asks. A count nobody needed is not worth 1,730 reads.
     done: archive ? archive.length : null,
@@ -341,15 +360,30 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   };
 
   const setStatus = async (note, status) => {
-    await write(note, {
-      status,
-      settledAt: status === 'closed' ? new Date().toISOString() : null,
-      settledByName: status === 'closed' ? (profile?.displayName || 'Someone') : null,
-    });
+    await write(note, statusFields(status, profile?.displayName));
+  };
+
+  /** A due date, or null to take one off. Anyone on the desk can set it —
+      the person doing the work usually knows the real deadline. */
+  const setDue = async (note, dueDate) => {
+    await write(note, { dueDate: dueDate || null });
   };
 
   return (
     <div>
+      {/* What is on YOU — a desk-wide number is not something anybody can
+          act on. Hidden until there is something to say. */}
+      {summary.onYou > 0 && (
+        <div className="mb-3 grid grid-cols-2 gap-px overflow-hidden rounded-xl border bg-gray-200 sm:grid-cols-4">
+          <DeskStat k="On you" v={summary.onYou} s="Open + in progress" />
+          <DeskStat k="Overdue" v={summary.overdue} s="Past its due date"
+            tone={summary.overdue > 0 ? 'text-red-600' : undefined} />
+          <DeskStat k="Due this week" v={summary.dueThisWeek} s="Today or sooner than Sat"
+            tone={summary.dueThisWeek > 0 ? 'text-amber-600' : undefined} />
+          <DeskStat k="Oldest open" v={summary.oldestDays} s="days" />
+        </div>
+      )}
+
       <div className="mb-3 flex flex-wrap items-center gap-2">
         {VIEWS.map(v => (
           <Chip key={v.key} on={view === v.key} onClick={() => setView(v.key)}
@@ -381,6 +415,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
             {q ? 'Nothing matches that.'
               : view === 'mine' ? 'Nothing is waiting on you.'
               : view === 'done' ? 'Nothing settled yet.'
+              : view === 'progress' ? 'Nothing is being worked on right now.'
+              : view === 'waiting' ? 'Nothing is blocked on anybody else.'
               : 'Nothing open. Everything has been dealt with.'}
           </p>
         </div>
@@ -389,7 +425,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           {rows.map(n => (
             <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid}
               students={students} onReply={reply} onStatus={setStatus}
-              onSetAbout={setAbout} />
+              onSetAbout={setAbout} onSetDue={setDue} today={today} />
           ))}
         </div>
       )}
@@ -415,7 +451,7 @@ function toLine(note, nameByUid) {
   return note.toLabel || 'Unassigned';
 }
 
-function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) {
+function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, onSetDue, today }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -447,13 +483,17 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) 
           <b className="text-[13.5px] text-gray-900">{firstNameOf(note.fromName) || note.fromInitials || '—'}</b>
           <ArrowRight size={11} className="text-gray-400" />
           <b className="text-[13.5px] text-gray-900">{toLine(note, nameByUid)}</b>
-          <span className="ml-auto whitespace-nowrap text-[11.5px]">{fmtDate(note.loggedAt)}</span>
+          <span className="whitespace-nowrap text-[11.5px]">{fmtDate(note.loggedAt)}</span>
+          {/* The state, where the eye lands: top right, and the control
+              for changing it is the thing itself. */}
+          <StatusPill note={note} onStatus={onStatus} />
         </div>
 
         <p className={`mt-1 whitespace-pre-line text-[14.5px] leading-relaxed ${
           live ? 'text-gray-700' : 'text-gray-500'}`}>{note.body}</p>
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <DueChip note={note} today={today} onSetDue={onSetDue} />
             {note.about ? (
               <button onClick={() => setEditing(true)} title="Change who this is about"
                 className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${
@@ -502,10 +542,6 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) 
         )}
 
         <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          <span className={`text-[11px] font-bold uppercase tracking-wide ${
-            live ? 'text-amber-600' : 'text-emerald-700'}`}>
-            {live ? 'Open' : '✓ Settled'}
-          </span>
           {live ? (
             <button onClick={() => onStatus(note, 'closed')}
               className="rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-bold text-emerald-700 hover:bg-emerald-100">
@@ -516,6 +552,10 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) 
               className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-100">
               <RotateCcw size={12} /> Reopen
             </button>
+          )}
+          {/* How old it is, the way the spreadsheet's readers counted it. */}
+          {live && Number.isFinite(ageInDays(note, today)) && (
+            <span className="text-[11px] text-gray-400">day {ageInDays(note, today)}</span>
           )}
           {/* Settled is ordered by this, so say it. Imported notes have no
               settle date — the spreadsheet never kept one. */}
@@ -553,6 +593,148 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout }) 
  * Ratio holds no parent list — refusing the name because there is no
  * record to point at would throw away the thing worth keeping.
  */
+/** One figure above the list. */
+function DeskStat({ k, v, s, tone }) {
+  return (
+    <div className="bg-white px-3 py-2">
+      <p className="text-[9.5px] font-bold uppercase tracking-[0.1em] text-gray-400">{k}</p>
+      <p className={`mt-0.5 text-[21px] font-bold tabular-nums ${tone || 'text-gray-900'}`}>{v}</p>
+      <p className="text-[10px] text-gray-400">{s}</p>
+    </div>
+  );
+}
+
+const PILL_TONE = {
+  open:        'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
+  in_progress: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100',
+  waiting:     'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200',
+  closed:      'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
+};
+
+const DOT_TONE = {
+  open: 'bg-amber-400', in_progress: 'bg-indigo-600',
+  waiting: 'bg-gray-400', closed: 'bg-emerald-600',
+};
+
+/**
+ * The state, and the way to change it, in one control.
+ *
+ * A separate "change status" button would be a second thing to find; the
+ * pill says what it is and opens the four choices when pressed.
+ */
+function StatusPill({ note, onStatus }) {
+  const [open, setOpen] = useState(false);
+  const key = normaliseStatus(note.status);
+  const choose = async (next) => {
+    setOpen(false);
+    if (next === key) return;
+    try { await onStatus(note, next); }
+    catch (e) { toast.error(e?.message || 'Could not change that.'); }
+  };
+  return (
+    <span className="relative ml-auto">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`Status: ${statusLabel(note)}. Change it.`}
+        className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[10.5px] font-extrabold uppercase tracking-wide ${PILL_TONE[key]}`}
+      >
+        {key === 'closed' && '✓ '}{statusLabel(note)}
+        <ChevronDown size={10} className="opacity-60" />
+      </button>
+      {open && (
+        <>
+          {/* Clicking anywhere else closes it — a menu that traps you is
+              worse than one that is easy to dismiss. */}
+          <button className="fixed inset-0 z-10 cursor-default" aria-hidden="true" onClick={() => setOpen(false)} />
+          <span role="listbox" className="absolute right-0 top-7 z-20 w-44 rounded-xl border bg-white p-1 shadow-lg">
+            {NOTE_STATUSES.map(st => (
+              <button key={st.key} role="option" aria-selected={st.key === key}
+                onClick={() => choose(st.key)}
+                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-[12.5px] font-semibold text-gray-700 hover:bg-gray-50 ${
+                  st.key === key ? 'bg-gray-100' : ''}`}>
+                <span className={`h-2 w-2 shrink-0 rounded-full ${DOT_TONE[st.key]}`} />
+                {st.label}
+              </button>
+            ))}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
+const DUE_TONE = {
+  overdue:  'bg-red-50 text-red-700 border-red-200',
+  today:    'bg-amber-50 text-amber-700 border-amber-200',
+  soon:     'bg-white text-gray-600 border-gray-300',
+  later:    'bg-white text-gray-600 border-gray-300',
+  settled:  'bg-white text-gray-400 border-gray-200',
+};
+
+/**
+ * The due date: a chip when there is one, a dashed invitation when there
+ * isn't. Quiet by design — overdue turns it red and floats the note to the
+ * top of your own list, and that is the whole of the pressure it applies.
+ * Nothing is emailed and nothing closes itself; a due date is a promise
+ * made to a parent, not an alarm.
+ */
+function DueChip({ note, today, onSetDue }) {
+  const [open, setOpen] = useState(false);
+  const state = dueState(note, today);
+  const set = async (date) => {
+    setOpen(false);
+    try { await onSetDue(note, date); }
+    catch (e) { toast.error(e?.message || 'Could not set that date.'); }
+  };
+  return (
+    <span className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        aria-label={state ? `Due date: ${dueLabel(note, today)}. Change it.` : 'Add a due date'}
+        className={state
+          ? `inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11.5px] font-bold ${DUE_TONE[state]}`
+          : 'rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[11.5px] font-medium text-gray-400 hover:border-gray-400 hover:text-gray-600'}
+      >
+        {state === 'overdue' && <Flag size={10} />}
+        {state ? dueLabel(note, today) : '+ due date'}
+      </button>
+      {open && (
+        <>
+          <button className="fixed inset-0 z-10 cursor-default" aria-hidden="true" onClick={() => setOpen(false)} />
+          <span className="absolute left-0 top-7 z-20 w-56 rounded-xl border bg-white p-2 shadow-lg">
+            <span className="mb-1 block px-1 text-[10px] font-bold uppercase tracking-wide text-gray-400">
+              Due date
+            </span>
+            <span className="flex flex-wrap gap-1">
+              {dueSuggestions(today).map(pick => (
+                <button key={pick.date} onClick={() => set(pick.date)}
+                  className="rounded-lg border border-gray-200 px-2 py-1 text-[12px] font-semibold text-gray-700 hover:bg-gray-50">
+                  {pick.label}
+                </button>
+              ))}
+            </span>
+            <input
+              type="date"
+              value={note.dueDate || ''}
+              onChange={e => set(e.target.value)}
+              aria-label="Pick a due date"
+              className="mt-1.5 w-full rounded-lg border border-gray-300 px-2 py-1 text-[12.5px]"
+            />
+            {note.dueDate && (
+              <button onClick={() => set(null)}
+                className="mt-1.5 w-full rounded-lg px-2 py-1 text-left text-[12px] font-semibold text-gray-500 hover:bg-gray-50">
+                Remove the due date
+              </button>
+            )}
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
+
 function AboutPicker({ note, students, onPick, onCancel }) {
   const [q, setQ] = useState(note.about || '');
   const hits = useMemo(() => suggestStudents(q, students), [q, students]);

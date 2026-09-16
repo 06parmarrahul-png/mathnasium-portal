@@ -347,6 +347,34 @@ Two deliberate exclusions:
 
 Impact on real data: 49 of 1837 person-day cells (2.7%), worst week 7 cells.
 
+### The desk: four statuses, and due dates
+
+A note is **Open · In progress · Waiting · Settled**. The middle two are
+**sub-states of open**: `isOpen()` still means "not settled", so the sidebar
+badge, the "for me" inbox, the settled archive and all 1,853 imported rows work
+without knowing they exist. `normaliseStatus()` reads the spreadsheet's
+hand-typed values as before.
+
+**THE TRAP, and it bit twice:** the live listeners asked
+`where('status', '==', 'open')` — an exact match. Under that query a note moved
+to In progress **disappears off the desk** (and off the sidebar badge). Both now
+use `where('status', 'in', LIVE_STATUSES)`. If you add a status, add it there.
+
+`dueDate` is optional, `'YYYY-MM-DD'`, parsed at local noon (`new Date('2026-09-17')`
+is the 16th in Pacific). It is **quiet by design**: overdue turns the chip red
+and floats the note to the top of your own list, and that is all it does —
+nothing is emailed, nothing auto-closes. A due date is a promise made to a
+parent, not an alarm. A settled note is never "overdue"; a thing that is done
+cannot be late. Anyone on the desk can set one, because the person doing the
+work usually knows the real deadline.
+
+`DeskHomeCard` puts what is waiting on you on **both** homes — Managers and
+Hosts are on the phone-first one, the owner, directors and the admin assistant
+on the classic one. It renders nothing for anyone who can't open the desk and
+doesn't even run the query for them; `canUseDesk()` is asked exactly the way the
+rules ask it. **No rules change was needed** — `status` and `dueDate` are just
+fields on a note the desk tier could already write.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk

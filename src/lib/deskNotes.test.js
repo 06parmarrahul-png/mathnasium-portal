@@ -1,8 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  normaliseStatus, isOpen, initialsOf, isForMe, isFromMe, matchesQuery,
-  sortNotes, sortSettled, applyToArchive, filterNotes, myOpenCount, validateNote,
-  recipientNames, deskMembers,
+  normaliseStatus, isOpen, initialsOf, isForMe, isFromMe, matchesQuery, sortNotes, sortSettled, applyToArchive, filterNotes, myOpenCount, validateNote, recipientNames, deskMembers, LIVE_STATUSES, statusFields, dueState, dueLabel, daysUntilDue, dueSuggestions, sortByDue, deskSummary,
 } from './deskNotes';
 
 /**
@@ -384,5 +382,150 @@ describe('deskMembers — who can be sent a note', () => {
   it('copes with no users at all', () => {
     expect(deskMembers(null, 'c1', roles)).toEqual([]);
     expect(deskMembers([], 'c1', roles)).toEqual([]);
+  });
+});
+
+// ── Statuses: two became four, and the other two are sub-states of open ──
+
+describe('the four statuses', () => {
+  it('in progress and waiting are still OPEN work', () => {
+    // isOpen means "not settled". The badge, the inbox and the archive
+    // split all hang off it, so this is the load-bearing line.
+    expect(isOpen({ status: 'open' })).toBe(true);
+    expect(isOpen({ status: 'in_progress' })).toBe(true);
+    expect(isOpen({ status: 'waiting' })).toBe(true);
+    expect(isOpen({ status: 'closed' })).toBe(false);
+  });
+
+  it('still reads the spreadsheet’s hand-typed values', () => {
+    // 1,853 imported rows, with 'Closed', 'closed' and 'CLOSED' all in them.
+    expect(normaliseStatus('CLOSED')).toBe('closed');
+    expect(normaliseStatus('Settled')).toBe('closed');
+    expect(normaliseStatus('')).toBe('open');
+    expect(normaliseStatus(undefined)).toBe('open');
+    expect(normaliseStatus('In Progress')).toBe('in_progress');
+    expect(normaliseStatus('in-progress')).toBe('in_progress');
+    expect(normaliseStatus('blocked')).toBe('waiting');
+    expect(normaliseStatus('anything else')).toBe('open');
+  });
+
+  it('the live query asks for exactly the open-ish ones', () => {
+    // If these drift apart, a note changed to "in progress" vanishes off
+    // the desk — which is what the old `status == "open"` query did.
+    expect(LIVE_STATUSES).toEqual(['open', 'in_progress', 'waiting']);
+    expect(LIVE_STATUSES.every(s => isOpen({ status: s }))).toBe(true);
+    expect(LIVE_STATUSES).not.toContain('closed');
+  });
+
+  it('settling stamps who and when; moving back out clears it', () => {
+    const closed = statusFields('closed', 'Neeru Gupta');
+    expect(closed.status).toBe('closed');
+    expect(closed.settledByName).toBe('Neeru Gupta');
+    expect(closed.settledAt).toBeTruthy();
+    // A reopened note must not keep the old settle date — the archive is
+    // sorted by it.
+    const reopened = statusFields('in_progress', 'Neeru Gupta');
+    expect(reopened.settledAt).toBeNull();
+    expect(reopened.settledByName).toBeNull();
+  });
+});
+
+describe('due dates', () => {
+  const TODAY = '2026-09-16';
+  const due = (dueDate, extra = {}) => ({ status: 'open', dueDate, ...extra });
+
+  it('says how it stands', () => {
+    expect(dueState(due('2026-09-14'), TODAY)).toBe('overdue');
+    expect(dueState(due('2026-09-16'), TODAY)).toBe('today');
+    expect(dueState(due('2026-09-19'), TODAY)).toBe('soon');
+    expect(dueState(due('2026-10-30'), TODAY)).toBe('later');
+    expect(dueState(due(null), TODAY)).toBeNull();
+    expect(dueState(due('nonsense'), TODAY)).toBeNull();
+  });
+
+  it('a settled note is never overdue — a thing that is done cannot be late', () => {
+    expect(dueState(due('2026-09-01', { status: 'closed' }), TODAY)).toBe('settled');
+  });
+
+  it('counts days in centre-local time, not UTC', () => {
+    // new Date('2026-09-17') is the 16th in Pacific; parsing at noon avoids it.
+    expect(daysUntilDue(due('2026-09-17'), TODAY)).toBe(1);
+    expect(daysUntilDue(due('2026-09-15'), TODAY)).toBe(-1);
+    expect(daysUntilDue(due('2026-09-16'), TODAY)).toBe(0);
+  });
+
+  it('crosses a month end and a DST change without slipping a day', () => {
+    expect(daysUntilDue(due('2026-10-01'), '2026-09-30')).toBe(1);
+    // Pacific DST ends 2026-11-01.
+    expect(daysUntilDue(due('2026-11-02'), '2026-10-31')).toBe(2);
+  });
+
+  it('reads in words', () => {
+    expect(dueLabel(due('2026-09-15'), TODAY)).toBe('Overdue by a day');
+    expect(dueLabel(due('2026-09-14'), TODAY)).toBe('Overdue by 2 days');
+    expect(dueLabel(due('2026-09-16'), TODAY)).toBe('Due today');
+    expect(dueLabel(due('2026-09-17'), TODAY)).toBe('Due tomorrow');
+    expect(dueLabel(due(null), TODAY)).toBe('');
+  });
+
+  it('offers quick picks that are real dates', () => {
+    const picks = dueSuggestions(TODAY);
+    expect(picks.map(p => p.date)).toEqual(['2026-09-16', '2026-09-17', '2026-09-19', '2026-09-23']);
+    expect(picks[0].label).toBe('Today');
+  });
+});
+
+describe('your own list, ordered by what is pressing', () => {
+  const TODAY = '2026-09-16';
+  const n = (id, dueDate, loggedAt = '2026-09-10') => ({ id, status: 'open', dueDate, loggedAt });
+
+  it('late first, then today, then the rest — undated last', () => {
+    const rows = sortByDue([
+      n('later', '2026-09-30'), n('undated', null), n('late', '2026-09-10'),
+      n('today', '2026-09-16'), n('later-still', null, '2026-09-01'),
+    ], TODAY);
+    expect(rows.map(r => r.id)).toEqual(['late', 'today', 'later', 'undated', 'later-still']);
+  });
+
+  it('most overdue at the top', () => {
+    const rows = sortByDue([n('a', '2026-09-14'), n('b', '2026-09-02')], TODAY);
+    expect(rows.map(r => r.id)).toEqual(['b', 'a']);
+  });
+});
+
+describe('the summary both the desk and the home card read', () => {
+  const TODAY = '2026-09-16';
+  const mine = (id, dueDate, extra = {}) => ({
+    id, status: 'open', toUids: ['me'], loggedAt: '2026-09-05', dueDate, ...extra,
+  });
+
+  it('counts only what is waiting on you', () => {
+    const s = deskSummary([
+      mine('a', '2026-09-10'),                       // overdue
+      mine('b', '2026-09-16'),                       // today
+      mine('c', null),                               // no date
+      mine('d', '2026-09-01', { status: 'closed' }), // settled — not yours to do
+      { id: 'e', status: 'open', toUids: ['someone-else'], dueDate: '2026-09-10' },
+    ], 'me', TODAY);
+    expect(s.onYou).toBe(3);
+    expect(s.overdue).toBe(1);
+    expect(s.dueThisWeek).toBe(1);
+    expect(s.items.map(i => i.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('counts a note addressed to everyone as yours', () => {
+    const s = deskSummary([{ id: 'all', status: 'open', toAll: true, loggedAt: '2026-09-15' }], 'me', TODAY);
+    expect(s.onYou).toBe(1);
+  });
+
+  it('reports the oldest thing on your desk, in days', () => {
+    const s = deskSummary([mine('a', null, { loggedAt: '2026-09-05' })], 'me', TODAY);
+    expect(s.oldestDays).toBe(11);
+  });
+
+  it('is all zeroes when you are clear', () => {
+    const s = deskSummary([], 'me', TODAY);
+    expect(s).toMatchObject({ onYou: 0, overdue: 0, dueThisWeek: 0, oldestDays: 0 });
+    expect(s.items).toEqual([]);
   });
 });
