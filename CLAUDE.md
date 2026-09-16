@@ -349,6 +349,25 @@ Three different things are called "role". Confusing them breaks access:
   (platform role x title x volunteer) combination against the original
   formulas, so that refactor granted and removed nothing.
 
+- **A director title is the owner tier's to give.** It IS owner-level access
+  (`isDirector()`), so `writesDirectorTitle()` in `firestore.rules` refuses one
+  — any spelling, top-level or in any membership row, on create or update —
+  from anyone but `isOwnerLike() || isSuperAdmin()`. A title already held is
+  not a write, so Manage Staff can still save a director's other fields.
+  Self-update also locks the top-level `instructorType` (setting your own to
+  "Manager" used to make you one). Manage Staff hides the options via
+  `canGrantDirectorTitle()` / `isDirectorTitle()` in `roles.js`. Tests:
+  `tests/rules/directorTitles.rules.test.js`.
+
+**Rules-language limits, measured in the emulator:** there is no
+`exists()`/`all()` over a list or map — `isManagerAnywhere` /
+`isHostAnywhere` call `.keys().exists(...)` and it errors, so today they only
+work through a legacy top-level title (or `role: 'admin'`). Membership rows are
+therefore checked by position (first five). A request also gets **1,000
+evaluated expressions**, and running out denies: a `let` is re-evaluated at
+each use, and `&&`/`||` operands all get evaluated when a denial is explained,
+while `? :` evaluates one branch. Eight positions wrongly refused a Host.
+
 Rules tests run against the emulator: `npm run test:rules` (needs Java).
 
 ### Budget

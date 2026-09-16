@@ -29,6 +29,10 @@ rules_version = '2';
 //   profile must not be able to flip their own approval, instructorType,
 //   or any other field inside that map — admin / owner / super-admin
 //   only.
+//
+//   A DIRECTOR TITLE (top-level instructorType or any membership row) is
+//   owner-level access, so only the owner tier may write one — see
+//   writesDirectorTitle().
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -85,6 +89,98 @@ service cloud.firestore {
     // strictly isOwner() || isSuperAdmin().
     function isOwnerLike() {
       return isOwner() || isAdminAssistant() || isDirector();
+    }
+
+    // ─── Director titles are handed out by the owner tier only ─────────
+    // A director title IS owner-level access — isDirector() above matches
+    // it, and so do canUseDeskAt, canRunFunDaysAt and the client's
+    // permission set — so writing one onto a user is an owner-tier act.
+    // The users rules let Managers and Hosts edit other staff, and let
+    // everyone edit their own top-level fields; without this, any of them
+    // could type "Center Director" onto a record (their own included) and
+    // make it an owner.
+    //
+    // Folded the way roleKey() in src/lib/roles.js folds — lower case,
+    // everything but letters dropped — so "centre director" or a custom
+    // role named "Director-of-Education" can't slip past here while the
+    // client reads it as the real title. Deliberately wider than
+    // isDirector()'s exact match: this one refuses, that one grants.
+    function isDirectorTitle(t) {
+      return !(t is string) ? false
+        : t.lower().replace('[^a-z]', '') in
+            ['centerdirector', 'centredirector', 'dirofeducation', 'directorofeducation'];
+    }
+
+    // One centre's membership row: does it now carry a director title the
+    // user didn't already have there? "Already had" is what titleAt() would
+    // have resolved before the write — the row's own title, else the
+    // top-level one — so saving other fields on a director's record, or
+    // seeding a new row from a legacy top-level title when approving
+    // someone, is not a grant.
+    function grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centreId) {
+      return afterRows[centreId] == beforeRows.get(centreId, null) ? false
+        : !(afterRows[centreId] is map) ? false
+        : !isDirectorTitle(afterRows[centreId].get('instructorType', '')) ? false
+        : afterRows[centreId].get('instructorType', '')
+            != ((centreId in beforeRows && beforeRows[centreId] is map)
+                  ? beforeRows[centreId].get('instructorType', beforeTop)
+                  : beforeTop);
+    }
+
+    // Does this write put a director title on the user that wasn't already
+    // theirs — at the top level, or in any centerMemberships row?
+    //
+    // THE RULES LANGUAGE CANNOT LOOP: there is no exists() or all() over a
+    // list or map. (isManagerAnywhere below calls `.keys().exists(...)`,
+    // and in the emulator that fails with "Function not found: exists".)
+    // So rows are checked by position, the first five; a write that leaves
+    // more than five rows counts as a grant. The cost is that only the
+    // owner tier can change the memberships of someone who belongs to more
+    // than five centres.
+    //
+    // FIVE, AND THE SHAPE OF THIS CODE, ARE SET BY THE RULES' LIMIT OF 1,000
+    // EVALUATED EXPRESSIONS PER REQUEST — reaching it denies. Measured in
+    // the emulator: a Host rewriting every row at once passes with six rows
+    // and is wrongly refused with eight (the Host path already pays for
+    // isManagerAnywhere's failing exists()). Hence:
+    //   • arguments, not `let` — a `let` is re-evaluated at every use, and
+    //     with it an allowed write to a ten-row user went over;
+    //   • `? :`, not `&&` — the emulator evaluates every operand of && / ||
+    //     when it explains a denial, but a conditional only the branch it
+    //     takes, so a missing row, an unchanged row or a title that isn't a
+    //     director's costs a few expressions instead of the whole check.
+    // If you add to the users rules, re-run directorTitles.rules.test.js —
+    // it writes to a five-row user as a Host.
+    function writesDirectorTitle() {
+      return directorTitleWrite(request.resource.data, resource == null ? {} : resource.data);
+    }
+
+    function directorTitleWrite(after, before) {
+      return (isDirectorTitle(after.get('instructorType', ''))
+                ? after.get('instructorType', '') != before.get('instructorType', '')
+                : false)
+        || membershipDirectorTitleWrite(
+             mapOrEmpty(after.get('centerMemberships', {})),
+             mapOrEmpty(before.get('centerMemberships', {})),
+             before.get('instructorType', ''));
+    }
+
+    function mapOrEmpty(v) {
+      return v is map ? v : {};
+    }
+
+    function membershipDirectorTitleWrite(afterRows, beforeRows, beforeTop) {
+      return afterRows == beforeRows ? false
+        : rowsGrantDirectorTitle(afterRows, beforeRows, beforeTop, afterRows.keys());
+    }
+
+    function rowsGrantDirectorTitle(afterRows, beforeRows, beforeTop, centres) {
+      return centres.size() > 5
+        || (centres.size() > 0 ? grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centres[0]) : false)
+        || (centres.size() > 1 ? grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centres[1]) : false)
+        || (centres.size() > 2 ? grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centres[2]) : false)
+        || (centres.size() > 3 ? grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centres[3]) : false)
+        || (centres.size() > 4 ? grantsDirectorTitleIn(afterRows, beforeRows, beforeTop, centres[4]) : false);
     }
 
     function isAdmin() {
@@ -756,7 +852,11 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       // Create only your own profile (signup flow writes /users/{auth.uid}).
-      allow create: if isSignedIn() && request.auth.uid == userId;
+      // Never with a director title: nobody creating their own profile is
+      // owner tier yet. The owner tier adds one afterwards, and
+      // api/users/create-staff.js (Admin SDK) checks canCreateTitle.
+      allow create: if isSignedIn() && request.auth.uid == userId
+                    && !writesDirectorTitle();
 
       // Update:
       //   - Owner / super-admin can update any user.
@@ -768,30 +868,42 @@ service cloud.firestore {
       //     isManagerAnywhere()/isHostAnywhere() since this collection
       //     has no single centerId to check a per-centre title against.
       //   - Each user can update their own profile EXCEPT privilege fields
-      //     (role, approved, centerId, centerIds, guaranteed stay locked).
+      //     (role, approved, centerId, centerIds, guaranteed, the title and
+      //     centerMemberships stay locked).
+      //   - Only the owner tier may put a director title on anyone —
+      //     writesDirectorTitle() above. Every other title is still open
+      //     to Admin / Manager / Host.
       allow update: if isSignedIn() && (
         isOwnerLike() ||
         isSuperAdmin() ||
-        ((isAdmin() || isManagerAnywhere() || isHostAnywhere())
-         && resource.data.role != 'owner'
-         && resource.data.role != 'super_admin'
-         && resource.data.role != 'admin_assistant'
-         && request.resource.data.role      == resource.data.role
-         && request.resource.data.centerId  == resource.data.centerId
-         && request.resource.data.centerIds == resource.data.centerIds) ||
-        (request.auth.uid == userId
-         && request.resource.data.role         == resource.data.role
-         && request.resource.data.approved     == resource.data.approved
-         && request.resource.data.centerId     == resource.data.centerId
-         && request.resource.data.centerIds    == resource.data.centerIds
-         && (!('guaranteed' in request.resource.data) ||
-              request.resource.data.guaranteed  == resource.data.guaranteed)
-         // Lock per-centre membership state — a user must not be able
-         // to self-approve, give themselves priority 1, or flip
-         // instructorType in their own membership map. Uses get() so
-         // the comparison works whether or not the field is set.
-         && request.resource.data.get('centerMemberships', null)
-            == resource.data.get('centerMemberships', null))
+        (!writesDirectorTitle() && (
+          ((isAdmin() || isManagerAnywhere() || isHostAnywhere())
+           && resource.data.role != 'owner'
+           && resource.data.role != 'super_admin'
+           && resource.data.role != 'admin_assistant'
+           && request.resource.data.role      == resource.data.role
+           && request.resource.data.centerId  == resource.data.centerId
+           && request.resource.data.centerIds == resource.data.centerIds) ||
+          (request.auth.uid == userId
+           && request.resource.data.role         == resource.data.role
+           && request.resource.data.approved     == resource.data.approved
+           && request.resource.data.centerId     == resource.data.centerId
+           && request.resource.data.centerIds    == resource.data.centerIds
+           && (!('guaranteed' in request.resource.data) ||
+                request.resource.data.guaranteed  == resource.data.guaranteed)
+           // The legacy top-level title. isManagerAt / isHostAt / isLeadAt
+           // still honour it at every centre, so setting your own to
+           // "Manager" made you one — nothing in the app writes it for
+           // yourself.
+           && request.resource.data.get('instructorType', null)
+              == resource.data.get('instructorType', null)
+           // Lock per-centre membership state — a user must not be able
+           // to self-approve, give themselves priority 1, or flip
+           // instructorType in their own membership map. Uses get() so
+           // the comparison works whether or not the field is set.
+           && request.resource.data.get('centerMemberships', null)
+              == resource.data.get('centerMemberships', null))
+        ))
       );
 
       // Delete: owner / super-admin freely. Admins, Managers, and Hosts
