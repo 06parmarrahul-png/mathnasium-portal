@@ -775,11 +775,17 @@ Two rules the page follows throughout:
   money that actually arrives, and people budget against this.
 
 Pay periods are 11th–25th and 26th–10th (`periodFor`), matching the Manage
-Payroll default. Sick leave and probation reuse the settled figures (5 days,
-90 days); a missing hire date counts as ELIGIBLE exactly as the payroll page
-treats it, and the UI says the date is missing rather than hiding the
-assumption. Stat pay comes from `statPay.js` — the page shows the 15-of-30
-qualifying-day progress, not just yes/no.
+Payroll default.
+
+**Sick leave standing and the stat-pay forecast were REMOVED from this page
+(2026-09-16), at the owners' request.** The portal was quoting BC Employment
+Standards entitlements — five days, ninety days' probation, 15-of-30 qualifying
+days — at staff on a self-serve page, and that is the centre's conversation to
+have. What replaced both is the plain fact people wanted: **`sickDaysThisYear()`
+— how many days you called in sick, resetting 1 January.** Distinct dates, so a
+split shift counts once, and `profile.externalSickDates` covers a sick day with
+nothing scheduled. Manage Payroll keeps its own sick and stat tabs untouched;
+those are for the people running payroll, and `statPay.js` still serves them.
 
 **Who sees it:** `isHourlyPaid()` excludes volunteers (unpaid) and anyone in
 `centerConfig.salaryStaff` (paid outside the hourly sheet). Both would get a

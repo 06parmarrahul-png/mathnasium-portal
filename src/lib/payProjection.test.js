@@ -2,8 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   periodFor, stepPeriod, periodLabel, isInPeriod, payDateFor, upcomingPayroll,
   scheduledHours, payHours, isAdjusted, summarisePeriod,
-  sickStatus, statsInPeriod, grossPay, isPlausibleRate, money,
-  SICK_DAYS_PER_YEAR, PROBATION_DAYS, isHourlyPaid,
+  sickDaysThisYear, grossPay, isPlausibleRate, money, isHourlyPaid,
 } from './payProjection';
 
 /**
@@ -227,120 +226,64 @@ describe('summarisePeriod', () => {
   });
 });
 
-describe('sick leave — the BC ESA minimum', () => {
-  it('gives five days a year once probation is served', () => {
-    const s = sickStatus({ hireDate: '2020-01-01', asOf: '2026-09-15' });
-    expect(s.entitlement).toBe(SICK_DAYS_PER_YEAR);
-    expect(s.remaining).toBe(5);
-    expect(s.onProbation).toBe(false);
-  });
+describe('sick days this year — a count, not an entitlement', () => {
+  // The paid-leave standing and the stat-pay forecast came off this page:
+  // quoting employment-standards minimums at staff is the centre's
+  // conversation, not a self-serve number. What is left is the plain fact.
+  const sickShift = (date) => ({ date, sickPay: true, startTime: '15:00', endTime: '19:00' });
 
-  it('withholds nothing but says so during the first ninety days', () => {
-    const s = sickStatus({ hireDate: '2026-08-01', asOf: '2026-09-15' });
-    expect(s.onProbation).toBe(true);
-    expect(s.remaining).toBe(0);
-    expect(s.eligibleFrom).toBe('2026-10-30');   // 90 days after hire
-    expect(s.daysIn).toBe(45);
-  });
-
-  it('turns eligible exactly on day ninety', () => {
-    const hire = '2026-06-01';
-    expect(sickStatus({ hireDate: hire, asOf: '2026-08-29' }).onProbation).toBe(true);
-    expect(sickStatus({ hireDate: hire, asOf: '2026-08-30' }).onProbation).toBe(false);
-  });
-
-  it('counts days taken this year only', () => {
-    const s = sickStatus({
-      hireDate: '2020-01-01', asOf: '2026-09-15',
-      sickDates: ['2026-02-03', '2026-05-10', '2025-11-01'],
+  it('counts the days they called in sick', () => {
+    const s = sickDaysThisYear({
+      shifts: [sickShift('2026-01-06'), sickShift('2026-03-02'), { date: '2026-04-01' }],
+      asOf: '2026-09-15',
     });
-    expect(s.used).toBe(2);
-    expect(s.remaining).toBe(3);
+    expect(s.count).toBe(2);
+    expect(s.dates).toEqual(['2026-01-06', '2026-03-02']);
+    expect(s.year).toBe('2026');
   });
 
-  it('counts days recorded outside Ratio against the same allowance', () => {
-    const s = sickStatus({
-      hireDate: '2020-01-01', asOf: '2026-09-15',
-      sickDates: ['2026-02-03'], externalSickDates: ['2026-03-04', '2026-04-05'],
+  it('resets on 1 January — last year’s days are last year’s', () => {
+    const s = sickDaysThisYear({
+      shifts: [sickShift('2025-12-31'), sickShift('2026-01-01')],
+      asOf: '2026-01-01',
     });
-    expect(s.used).toBe(3);
-    expect(s.remaining).toBe(2);
+    expect(s.count).toBe(1);
+    expect(s.dates).toEqual(['2026-01-01']);
   });
 
-  it('never counts the same date twice', () => {
-    const s = sickStatus({
-      hireDate: '2020-01-01', asOf: '2026-09-15',
-      sickDates: ['2026-02-03'], externalSickDates: ['2026-02-03'],
+  it('counts a day once, however many rows it has', () => {
+    // A split shift is two rows on one date. Somebody was off sick once.
+    const s = sickDaysThisYear({
+      shifts: [sickShift('2026-02-10'), sickShift('2026-02-10')],
+      externalSickDates: ['2026-02-10'],
+      asOf: '2026-09-15',
     });
-    expect(s.used).toBe(1);
+    expect(s.count).toBe(1);
   });
 
-  it('never goes negative when more were taken than allowed', () => {
-    const s = sickStatus({
-      hireDate: '2020-01-01', asOf: '2026-09-15',
-      sickDates: ['2026-01-01', '2026-01-02', '2026-01-03', '2026-01-04', '2026-01-05', '2026-01-06'],
+  it('includes a sick day with nothing scheduled', () => {
+    // No shift to carry it, so it sits on the person instead.
+    const s = sickDaysThisYear({
+      shifts: [],
+      externalSickDates: ['2026-05-04', '2025-05-04'],
+      asOf: '2026-09-15',
     });
-    expect(s.remaining).toBe(0);
+    expect(s.count).toBe(1);
+    expect(s.dates).toEqual(['2026-05-04']);
   });
 
-  it('treats a missing hire date as eligible, and says the date is missing', () => {
-    // Same call the payroll page makes: withholding leave because nobody
-    // filled in a form is the worse failure.
-    const s = sickStatus({ asOf: '2026-09-15' });
-    expect(s.hireDateMissing).toBe(true);
-    expect(s.onProbation).toBe(false);
-    expect(s.remaining).toBe(5);
+  it('is zero, not broken, for somebody who has never been off', () => {
+    expect(sickDaysThisYear({ asOf: '2026-09-15' })).toEqual({ year: '2026', count: 0, dates: [] });
+    expect(sickDaysThisYear({ shifts: null, externalSickDates: null, asOf: '2026-09-15' }).count).toBe(0);
   });
 
-  it('uses the settled ninety-day figure', () => {
-    expect(PROBATION_DAYS).toBe(90);
-  });
-});
-
-describe('statutory holidays in a period', () => {
-  const period = { start: '2026-08-26', end: '2026-09-10' };
-  // Labour Day 2026 is Monday 7 September.
-  const holidays = [
-    { date: '2026-09-07', name: 'Labour Day' },
-    { date: '2026-09-05', name: 'Team day' },          // not statutory
-    { date: '2026-12-25', name: 'Christmas Day' },     // not in this period
-  ];
-
-  const workDays = (from, count) => {
-    const out = [];
-    const d = new Date(2026, 7, from, 12);
-    for (let i = 0; i < count; i++) {
-      out.push(shift({
-        id: `w${i}`,
-        date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`,
-      }));
-      d.setDate(d.getDate() + 1);
-    }
-    return out;
-  };
-
-  it('finds only the real statutory day inside the period', () => {
-    const stats = statsInPeriod(holidays, period, workDays(10, 20));
-    expect(stats.map(s => s.name)).toEqual(['Labour Day']);
-  });
-
-  it('qualifies somebody with fifteen days in the previous thirty', () => {
-    const stats = statsInPeriod(holidays, period, workDays(10, 20));
-    expect(stats[0].qualifies).toBe(true);
-    expect(stats[0].daysWorked).toBeGreaterThanOrEqual(15);
-    expect(stats[0].hours).toBeGreaterThan(0);
-  });
-
-  it('does not qualify somebody with too few, and pays zero', () => {
-    const stats = statsInPeriod(holidays, period, workDays(25, 5));
-    expect(stats[0].qualifies).toBe(false);
-    expect(stats[0].hours).toBe(0);
-    expect(stats[0].daysWorked).toBeLessThan(15);
-  });
-
-  it('is empty when the centre has no holidays configured', () => {
-    expect(statsInPeriod(null, period, [])).toEqual([]);
-    expect(statsInPeriod([], period, [])).toEqual([]);
+  it('ignores rows with no date and junk in the list', () => {
+    const s = sickDaysThisYear({
+      shifts: [{ sickPay: true }, null, sickShift('2026-06-01')],
+      externalSickDates: [null, '', '2026-06-02'],
+      asOf: '2026-09-15',
+    });
+    expect(s.dates).toEqual(['2026-06-01', '2026-06-02']);
   });
 });
 

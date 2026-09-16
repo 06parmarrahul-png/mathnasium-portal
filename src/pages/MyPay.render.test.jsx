@@ -187,29 +187,51 @@ describe('the rate box tells you who can see it', () => {
   });
 });
 
-describe('sick leave', () => {
-  it('shows what is left for somebody past probation', () => {
+describe('sick days this year', () => {
+  // The owners asked for paid-leave standing and the stat-pay forecast to
+  // come off this page. What staff wanted was the plain count.
+  it('counts the days marked sick, and says nothing about entitlement', () => {
+    snapshots.shifts = [
+      shift({ id: 'a', date: '2026-02-03', sickPay: true }),
+      shift({ id: 'b', date: '2026-07-21', sickPay: true }),
+      shift({ id: 'c', date: '2026-09-12' }),
+    ];
     draw();
-    expect(screen.getByText(/days left for 2026/)).toBeTruthy();
+    expect(screen.getByText('Sick days this year')).toBeTruthy();
+    expect(screen.getByText('2')).toBeTruthy();
+    expect(screen.getByText(/Feb 3, Jul 21/)).toBeTruthy();   // en-CA, as the page formats
+    expect(screen.getByText(/Resets 1 January/)).toBeTruthy();
+    // None of the old language survives.
+    expect(screen.queryByText(/days left for/)).toBeNull();
+    expect(screen.queryByText(/probation/i)).toBeNull();
+    expect(screen.queryByText(/Employment Standards/i)).toBeNull();
   });
 
-  it('explains probation rather than showing zero days left', () => {
-    authValue.current = {
-      ...BASE_AUTH,
-      profile: { ...BASE_AUTH.profile, hireDate: '2026-08-20' },
-    };
+  it('says so plainly when they have not been off', () => {
+    snapshots.shifts = [shift({ date: '2026-09-12' })];
     draw();
-    expect(screen.getByText(/first 90 days/)).toBeTruthy();
-    expect(screen.getByText(/you'll have 5 paid days/i)).toBeTruthy();
+    expect(screen.getByText(/haven't called in sick in 2026/)).toBeTruthy();
   });
 
-  it('flags a missing start date instead of hiding the assumption', () => {
+  it('leaves last year’s days out of it', () => {
+    snapshots.shifts = [
+      shift({ id: 'a', date: '2025-11-04', sickPay: true }),
+      shift({ id: 'b', date: '2026-01-09', sickPay: true }),
+    ];
+    draw();
+    expect(screen.getByText(/Jan 9/)).toBeTruthy();
+    expect(screen.queryByText(/Nov 4/)).toBeNull();
+  });
+
+  it('no longer forecasts stat pay for a holiday in the period', () => {
     authValue.current = {
       ...BASE_AUTH,
-      profile: { uid: 'u1', displayName: 'Kaitlyn MacDonald' },
+      centerConfig: { salaryStaff: [], holidays: [{ date: '2026-09-15', name: 'Test Holiday' }] },
     };
+    snapshots.shifts = [shift({ date: '2026-09-12' })];
     draw();
-    expect(screen.getByText(/start date isn't on file/)).toBeTruthy();
+    expect(screen.queryByText('Test Holiday')).toBeNull();
+    expect(screen.queryByText(/stat pay/i)).toBeNull();
   });
 });
 

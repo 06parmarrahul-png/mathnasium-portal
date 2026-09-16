@@ -24,13 +24,9 @@
  *   worse than showing them nothing — they would budget against it.
  */
 
-import { statPayForHoliday, isPaidStatHoliday, STAT_MIN_QUALIFYING_DAYS } from './statPay';
 
 // Re-exported so the page has one place to import pay rules from.
-export { STAT_MIN_QUALIFYING_DAYS };
 
-export const SICK_DAYS_PER_YEAR = 5;   // BC ESA minimum
-export const PROBATION_DAYS = 90;      // before paid sick leave is available
 
 // ─── Pay periods ────────────────────────────────────────────────────────
 // The centre runs 11th–25th and 26th–10th. Same cycle the Manage Payroll
@@ -202,71 +198,38 @@ export function summarisePeriod(shifts, period, asOf) {
   };
 }
 
-// ─── Sick leave (BC ESA minimum) ────────────────────────────────────────
+// ─── Sick days ──────────────────────────────────────────────────────────
 
 /**
- * Where someone stands on paid sick leave for a calendar year.
+ * How many days they called in sick this calendar year.
  *
- * Mirrors Admin.jsx: five days a year, available once ninety days are
- * served, entitlement consumed chronologically across the whole year.
+ * A COUNT, NOT AN ENTITLEMENT. This page used to show paid-sick-leave
+ * standing (five days, ninety days' probation, BC ESA minimums) and a
+ * stat-pay forecast for each holiday in the period. The owners asked for
+ * both to go: the portal was quoting employment-standards entitlements at
+ * staff, and that is the centre's conversation to have rather than a
+ * number on a self-serve page. What people actually wanted was the plain
+ * fact — how many days have I been off sick this year.
  *
- * A MISSING HIRE DATE COUNTS AS ELIGIBLE, exactly as the payroll page
- * treats it — withholding somebody's leave because nobody filled in a form
- * is the worse failure. The UI says the date is missing rather than hiding
- * the assumption.
+ * Distinct DATES, so two rows on one day (a split shift, or a shift plus
+ * an admin-recorded day) count once. `externalSickDates` sit on the person
+ * rather than a shift, which is how a sick day with nothing scheduled gets
+ * onto the record at all.
+ *
+ * Resets on 1 January by construction: it only ever counts dates whose
+ * year matches the year of `asOf`.
  */
-export function sickStatus({ hireDate, sickDates = [], externalSickDates = [], asOf } = {}) {
+export function sickDaysThisYear({ shifts = [], externalSickDates = [], asOf } = {}) {
   const today = asOf || todayISO();
   const year = String(today).slice(0, 4);
   const inYear = (d) => typeof d === 'string' && d.slice(0, 4) === year;
 
-  const used = new Set([...sickDates, ...externalSickDates].filter(inYear));
+  const fromShifts = (shifts || [])
+    .filter(s => s?.sickPay === true && inYear(s.date))
+    .map(s => s.date);
 
-  let daysIn = null;
-  let onProbation = false;
-  let eligibleFrom = null;
-  if (hireDate) {
-    daysIn = Math.floor((parse(today) - parse(hireDate)) / 86400000);
-    onProbation = daysIn < PROBATION_DAYS;
-    const d = parse(hireDate);
-    d.setDate(d.getDate() + PROBATION_DAYS);
-    eligibleFrom = iso(d.getFullYear(), d.getMonth() + 1, d.getDate());
-  }
-
-  return {
-    year,
-    hireDate: hireDate || null,
-    hireDateMissing: !hireDate,
-    daysIn,
-    onProbation,
-    eligibleFrom,
-    used: used.size,
-    entitlement: SICK_DAYS_PER_YEAR,
-    remaining: onProbation ? 0 : Math.max(0, SICK_DAYS_PER_YEAR - used.size),
-    dates: [...used].sort(),
-  };
-}
-
-// ─── Statutory holidays ─────────────────────────────────────────────────
-
-/**
- * Stat holidays falling in this period, with the person's entitlement
- * against each — using the same engine the payroll page uses.
- *
- * @param holidays  the centre's configured holidays
- * @param allShifts every shift of theirs (the 30-day window reaches back
- *                  BEFORE the period, so passing only period rows would
- *                  under-count qualifying days and wrongly say "no")
- */
-export function statsInPeriod(holidays, period, allShifts) {
-  return (holidays || [])
-    .filter(h => h?.date && isInPeriod(h.date, period) && isPaidStatHoliday(h))
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map(h => ({
-      date: h.date,
-      name: h.name || 'Statutory holiday',
-      ...statPayForHoliday(allShifts || [], h.date, scheduledHours),
-    }));
+  const dates = [...new Set([...fromShifts, ...(externalSickDates || []).filter(inYear)])].sort();
+  return { year, count: dates.length, dates };
 }
 
 // ─── Money ──────────────────────────────────────────────────────────────

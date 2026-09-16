@@ -8,9 +8,8 @@ import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { watchOwnRate, saveOwnRate } from '../lib/payRate';
 import {
-  periodFor, stepPeriod, periodLabel, summarisePeriod, sickStatus,
-  statsInPeriod, grossPay, isPlausibleRate, money, todayISO, isHourlyPaid,
-  SICK_DAYS_PER_YEAR, PROBATION_DAYS, STAT_MIN_QUALIFYING_DAYS,
+  periodFor, stepPeriod, periodLabel, summarisePeriod, sickDaysThisYear,
+  grossPay, isPlausibleRate, money, todayISO, isHourlyPaid,
 } from '../lib/payProjection';
 import { Card, Pill, Btn, Lbl, Loading } from '../components/newlook/ui';
 import { fmtTime, fmtDay } from '../components/newlook/format';
@@ -63,17 +62,14 @@ export default function MyPay() {
   const summary = useMemo(
     () => summarisePeriod(shifts || [], period, today), [shifts, period, today]);
 
-  const sick = useMemo(() => sickStatus({
-    hireDate: profile?.hireDate || profile?.startDate || null,
-    // Sick days come off their own rows, which is all this page can see.
-    sickDates: (shifts || []).filter(s => s.sickPay === true).map(s => s.date),
+  // Every shift of theirs is already on the page, so the year's count
+  // costs no extra read. externalSickDates covers a day off sick with
+  // nothing scheduled, which has no shift row to carry it.
+  const sick = useMemo(() => sickDaysThisYear({
+    shifts: shifts || [],
     externalSickDates: Array.isArray(profile?.externalSickDates) ? profile.externalSickDates : [],
     asOf: today,
   }), [profile, shifts, today]);
-
-  const stats = useMemo(
-    () => statsInPeriod(centerConfig?.holidays, period, shifts || []),
-    [centerConfig?.holidays, period, shifts]);
 
   const isCurrent = period.start === periodFor(today).start;
   const gross = grossPay(summary.pay, rate);
@@ -251,7 +247,11 @@ export default function MyPay() {
         )}
       </div>
 
-      {/* ── Sick leave ─────────────────────────────────────────── */}
+      {/* ── Sick days ──────────────────────────────────────────── */}
+      {/* A count, not an entitlement. The owners asked for the paid-leave
+          standing and the stat-pay forecast to come off this page: quoting
+          employment-standards minimums at staff is the centre's
+          conversation, not a self-serve number. */}
       <Card>
         <div className="flex items-start gap-3">
           <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
@@ -259,95 +259,18 @@ export default function MyPay() {
             <Stethoscope size={17} />
           </span>
           <div className="min-w-0 flex-1">
-            <b className="block text-[14.5px]">Paid sick leave</b>
-            {sick.onProbation ? (
-              <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-                You&apos;re in your first {PROBATION_DAYS} days
-                {sick.daysIn != null && ` (day ${sick.daysIn})`}. BC&apos;s minimum
-                starts after that — you&apos;ll have {SICK_DAYS_PER_YEAR} paid days
-                from <b>{fmtDay(sick.eligibleFrom, { month: 'long', day: 'numeric' })}</b>.
-              </p>
-            ) : (
-              <>
-                <p className="mt-1 text-[13px]" style={{ color: 'var(--nl-ink2)' }}>
-                  <b className="tabular-nums">{sick.remaining} of {sick.entitlement}</b> days
-                  left for {sick.year}.
-                </p>
-                <div className="mt-2 flex gap-1.5">
-                  {Array.from({ length: sick.entitlement }, (_, i) => (
-                    <span key={i} className="h-2 flex-1 rounded-full"
-                      style={{ background: i < sick.used ? 'var(--nl-note)' : 'var(--nl-raised)' }} />
-                  ))}
-                </div>
-                <p className="mt-2 text-[12px]" style={{ color: 'var(--nl-muted)' }}>
-                  {sick.used === 0
-                    ? "You haven't taken any this year."
-                    : `${sick.used} taken: ${sick.dates.map(d => fmtDay(d, { month: 'short', day: 'numeric' })).join(', ')}.`}
-                </p>
-              </>
-            )}
-            {sick.hireDateMissing && (
-              <p className="mt-2 text-[12px]" style={{ color: 'var(--nl-warn)' }}>
-                Your start date isn&apos;t on file, so this assumes you&apos;re past
-                probation. Worth asking the centre to add it.
-              </p>
-            )}
+            <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+              <b className="text-[14.5px]">Sick days this year</b>
+              <span className="nl-display text-[22px] font-bold tabular-nums">{sick.count}</span>
+            </div>
+            <p className="mt-0.5 text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
+              {sick.count === 0
+                ? `You haven't called in sick in ${sick.year}.`
+                : `${sick.dates.map(d => fmtDay(d, { month: 'short', day: 'numeric' })).join(', ')}. Resets 1 January.`}
+            </p>
           </div>
         </div>
       </Card>
-
-      {/* ── Statutory holidays ─────────────────────────────────── */}
-      {stats.length > 0 && stats.map(st => (
-        <Card key={st.date}>
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-              style={{
-                background: st.qualifies ? 'var(--nl-okw)' : 'var(--nl-raised)',
-                color: st.qualifies ? 'var(--nl-ok)' : 'var(--nl-muted)',
-              }}>
-              <CalendarClock size={17} />
-            </span>
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-                <b className="text-[14.5px]">{st.name}</b>
-                <span className="text-[12px]" style={{ color: 'var(--nl-muted)' }}>
-                  {fmtDay(st.date, { weekday: 'long', month: 'long', day: 'numeric' })}
-                </span>
-              </div>
-
-              {st.qualifies ? (
-                <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-                  You qualify for stat pay — about{' '}
-                  <b className="tabular-nums">{st.hours}h</b>
-                  {rate != null && <> ({money(grossPay(st.hours, rate))})</>}, the average
-                  of your {st.daysWorked} qualifying days.
-                </p>
-              ) : (
-                <p className="mt-1 text-[13px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
-                  You worked <b className="tabular-nums">{st.daysWorked}</b> of the{' '}
-                  {STAT_MIN_QUALIFYING_DAYS} days needed in the 30 days before it,
-                  so this one isn&apos;t paid.
-                </p>
-              )}
-
-              <div className="mt-2 flex gap-[3px]">
-                {Array.from({ length: STAT_MIN_QUALIFYING_DAYS }, (_, i) => (
-                  <span key={i} className="h-2 flex-1 rounded-full"
-                    style={{
-                      background: i < st.daysWorked
-                        ? (st.qualifies ? 'var(--nl-ok)' : 'var(--nl-warn)')
-                        : 'var(--nl-raised)',
-                    }} />
-                ))}
-              </div>
-              <p className="mt-1.5 text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
-                {Math.min(st.daysWorked, STAT_MIN_QUALIFYING_DAYS)} of {STAT_MIN_QUALIFYING_DAYS} qualifying
-                days in the 30 before {fmtDay(st.date, { month: 'short', day: 'numeric' })}
-              </p>
-            </div>
-          </div>
-        </Card>
-      ))}
 
       {/* ── The closing caveat, in full ────────────────────────── */}
       <Card>
@@ -358,9 +281,9 @@ export default function MyPay() {
           <div className="text-[12.5px] leading-relaxed" style={{ color: 'var(--nl-muted)' }}>
             <b style={{ color: 'var(--nl-ink2)' }}>Where these numbers come from.</b>{' '}
             Hours are your own scheduled shifts, with any adjustment payroll has
-            already made. Sick leave and stat pay follow BC Employment Standards
-            minimums. This feature is new and still being checked against the real
-            sheet, so treat it as a guide — if something looks wrong, it probably is,
+            already made, and sick days are the ones marked on your shifts. This
+            feature is new and still being checked against the real sheet, so
+            treat it as a guide — if something looks wrong, it probably is,
             and the centre would like to know.
           </div>
         </div>
