@@ -666,3 +666,61 @@ describe('the composer stays out of the way', () => {
     expect(screen.queryByRole('button', { name: /Add entry/ })).toBeNull();
   });
 });
+
+describe('who a note is for, on the card', () => {
+  it('names the recipient in a chip, and the sender in plain text', () => {
+    snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
+    snapshots.notes = [note({ toUids: ['neeru'], toLabel: 'NG', fromName: 'Vin Bhatia' })];
+    draw();
+    expect(screen.getByText('Neeru')).toBeTruthy();       // the chip
+    expect(screen.getByText('Vin')).toBeTruthy();         // the sender
+    expect(screen.getByText(/^from$/)).toBeTruthy();
+  });
+
+  it('says You, in the red that means yours', () => {
+    // BASE_AUTH is Vin, uid 'vin'.
+    snapshots.notes = [note({ toUids: ['vin'], toLabel: 'VB' })];
+    draw();
+    const chip = screen.getByText('You');
+    expect(chip).toBeTruthy();
+    expect(chip.closest('span').getAttribute('style')).toContain('#dc2626');
+  });
+
+  it('shows Everyone as its own chip', () => {
+    snapshots.notes = [note({ toAll: true, toLabel: 'ALL' })];
+    draw();
+    expect(screen.getByText('Everyone')).toBeTruthy();
+  });
+
+  it('renders one chip per recipient', () => {
+    snapshots.users = [
+      user('neeru', 'Neeru Gill', { role: 'director' }),
+      user('sabrina', 'Sabrina Kaur', { role: 'director' }),
+    ];
+    snapshots.notes = [note({ toUids: ['neeru', 'sabrina'], toLabel: 'NG/SK' })];
+    draw();
+    expect(screen.getByText('Neeru')).toBeTruthy();
+    expect(screen.getByText('Sabrina')).toBeTruthy();
+  });
+
+  it('keeps an imported note’s initials when the person has no account', () => {
+    // MY, JW and VS are in the history with nobody behind them.
+    snapshots.notes = [note({ toUids: [], toLabel: 'MY' })];
+    draw();
+    expect(screen.getByText('MY')).toBeTruthy();
+  });
+
+  it('gives two different people two different colours', () => {
+    snapshots.users = [
+      user('neeru', 'Neeru Gill', { role: 'director' }),
+      user('sabrina', 'Sabrina Kaur', { role: 'director' }),
+    ];
+    snapshots.notes = [
+      note({ id: 'n1', toUids: ['neeru'], toLabel: 'NG' }),
+      note({ id: 'n2', toUids: ['sabrina'], toLabel: 'SK' }),
+    ];
+    draw();
+    const colourOf = (label) => screen.getByText(label).closest('span').getAttribute('style');
+    expect(colourOf('Neeru')).not.toBe(colourOf('Sabrina'));
+  });
+});

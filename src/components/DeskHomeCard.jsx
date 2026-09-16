@@ -9,6 +9,7 @@ import {
   canUseDesk, deskSummary, dueState, dueLabel, initialsOf, firstNameOrLabel,
   LIVE_STATUSES, ymdOf,
 } from '../lib/deskNotes';
+import { personColor } from '../lib/personColor';
 
 /**
  * What's waiting on you at the Management Desk, on your home page.
@@ -127,8 +128,11 @@ export default function DeskHomeCard({ variant = 'nl' }) {
         return (
           <div key={note.id} className="mt-2 flex items-center gap-2.5 border-t pt-2"
             style={{ borderColor: 'var(--nl-rule)' }}>
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
-              style={{ background: 'var(--nl-raised)', color: 'var(--nl-muted)' }}>
+            {/* Everything on this card is addressed to YOU, so the useful
+                face is the sender's — in the same colour they carry on the
+                desk, so a person looks like themselves on both surfaces. */}
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white"
+              style={{ background: personColor(note.fromUid) }}>
               {note.fromInitials || initialsOf(note.fromName) || '—'}
             </span>
             <span className="min-w-0 flex-1">

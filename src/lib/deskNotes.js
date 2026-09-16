@@ -29,6 +29,7 @@
  */
 
 import { resolvePermissions, isDirectorTitle } from './roles';
+import { personColor, YOU_COLOR, EVERYONE_COLOR, UNKNOWN_COLOR } from './personColor';
 import { resolveUserForCenter } from './centerMembership';
 
 /**
@@ -484,6 +485,70 @@ export function firstNameOrLabel(note) {
   const name = String(note?.fromName || '').trim();
   if (name) return name.split(/\s+/)[0];
   return note?.fromInitials || 'someone';
+}
+
+/**
+ * Who a note is for, as chips to render.
+ *
+ * Every shape the data takes, because all of them are in the 1,853 rows:
+ *
+ *   toAll              82 notes addressed to ALL — everybody's business.
+ *   toUids             live accounts. The colour comes from the uid, so a
+ *                      rename does not repaint anybody.
+ *   toLabel only       imported initials — MY, JW, VS, DP — for people who
+ *                      have left. They get grey rather than a colour,
+ *                      because a colour implies an account you can open.
+ *   neither            unassigned. Said plainly instead of left blank.
+ *
+ * `You` is its own case and wins over the person's own colour: the one
+ * thing worth spotting from across a list is the note that is yours.
+ *
+ * The chip always carries initials and a name as well, so the colour is a
+ * shortcut and never the only thing saying who it is for.
+ */
+export function recipientChips(note, { nameByUid = {}, uid = null } = {}) {
+  if (note?.toAll) {
+    return [{ key: 'all', label: 'Everyone', initials: '∀', color: EVERYONE_COLOR, isEveryone: true }];
+  }
+
+  const uids = note?.toUids || [];
+  if (uids.length > 0) {
+    return uids.map(to => {
+      const name = nameByUid[to];
+      if (to === uid) {
+        return {
+          key: to, label: 'You', initials: initialsOf(name) || '—',
+          color: YOU_COLOR, isYou: true,
+        };
+      }
+      if (!name) {
+        // On the note but not on the roster any more.
+        return {
+          key: to, label: note?.toLabel || 'Unknown', initials: initialsOf(note?.toLabel) || '?',
+          color: UNKNOWN_COLOR, isUnknown: true,
+        };
+      }
+      return {
+        key: to, label: firstNameOf(name), initials: initialsOf(name),
+        color: personColor(to), full: name,
+      };
+    });
+  }
+
+  const label = String(note?.toLabel || '').trim();
+  if (!label) {
+    return [{ key: 'none', label: 'Unassigned', initials: '?', color: UNKNOWN_COLOR, isUnknown: true }];
+  }
+  // Imported initials, sometimes several: "VB/NG".
+  return label.split(/[/,]/).map(part => part.trim()).filter(Boolean).map(part => ({
+    key: part, label: part, initials: part.slice(0, 2).toUpperCase(),
+    color: UNKNOWN_COLOR, isUnknown: true,
+  }));
+}
+
+/** "Rahul Parmar" → "Rahul". The desk is on first-name terms. */
+export function firstNameOf(name) {
+  return String(name ?? '').trim().split(/\s+/)[0] || '';
 }
 
 /**

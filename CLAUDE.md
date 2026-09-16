@@ -347,6 +347,25 @@ Two deliberate exclusions:
 
 Impact on real data: 49 of 1837 person-day cells (2.7%), worst week 7 cells.
 
+**Who a note is for carries a colour.** `recipientChips()` turns any shape the
+data takes — `toAll`, live `toUids`, imported initials like "MY", or nothing —
+into chips, and `src/lib/personColor.js` gives each person one stable colour
+hashed from their **uid** (so a rename doesn't repaint them, and no field, admin
+screen or migration is needed).
+
+Two rules keep it legible:
+- **Solid means a person, pale means a state.** The card's pale pills are
+  statuses (amber Open, indigo In progress, emerald Settled, red Overdue), so
+  people are solid. Don't blur the two.
+- **Red is reserved.** `YOU_COLOR` is the same red as the "this one is yours"
+  rail, and `PERSON_COLORS` deliberately excludes it, so no colleague is ever
+  handed the colour that means *you*.
+
+The chip always carries initials and a name too — colour is a shortcut to
+recognition, never the only thing saying who it's for. The home card tints the
+SENDER's circle with the same function, so a person looks like themselves on
+both surfaces.
+
 **The composer is closed until asked for.** It used to sit open at the foot of
 every view — on a desk of 121 open notes that is a large empty box and a
 blinking cursor under a list people mostly came to READ. "Add entry" opens it at

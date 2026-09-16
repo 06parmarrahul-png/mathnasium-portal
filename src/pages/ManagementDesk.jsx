@@ -16,6 +16,7 @@ import {
   isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery, sortSettled, applyToArchive,
   LIVE_STATUSES, NOTE_STATUSES, normaliseStatus, statusFields, statusLabel,
   dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays, canDeleteNotes,
+  recipientChips,
 } from '../lib/deskNotes';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
 import { suggestStudents } from '../lib/deskLink';
@@ -533,15 +534,6 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   );
 }
 
-/** Who a note is for, whatever shape it arrived in. */
-function toLine(note, nameByUid) {
-  if (note.toAll) return 'Everyone';
-  const named = (note.toUids || []).map(u => nameByUid[u]).filter(Boolean).map(firstNameOf);
-  const codes = note.unknownCodes || [];
-  const words = [...named, ...codes];
-  if (words.length) return words.join(', ');
-  return note.toLabel || 'Unassigned';
-}
 
 function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, onSetDue, today,
   tidy = false, picked = false, onPick }) {
@@ -584,10 +576,16 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, on
       )}
       <div className={`min-w-0 flex-1 rounded-r-xl rounded-bl-xl border border-l-[3px] p-3 ${rail} ${
         live ? 'bg-white' : 'border-dashed bg-gray-50/70'}`}>
-        <div className="flex flex-wrap items-baseline gap-1.5 text-xs text-gray-500">
-          <b className="text-[13.5px] text-gray-900">{firstNameOf(note.fromName) || note.fromInitials || '—'}</b>
+        <div className="flex flex-wrap items-center gap-1.5 text-xs text-gray-500">
+          {/* Who wrote it stays plain text; WHO IT IS FOR is the thing
+              people scan a list of 121 for, so it carries the colour. */}
+          <span className="text-[12.5px]">
+            from <b className="text-[13px] text-gray-900">{firstNameOf(note.fromName) || note.fromInitials || '—'}</b>
+          </span>
           <ArrowRight size={11} className="text-gray-400" />
-          <b className="text-[13.5px] text-gray-900">{toLine(note, nameByUid)}</b>
+          {recipientChips(note, { nameByUid, uid }).map(chip => (
+            <PersonChip key={chip.key} chip={chip} />
+          ))}
           <span className="whitespace-nowrap text-[11.5px]">{fmtDate(note.loggedAt)}</span>
           {/* The state, where the eye lands: top right, and the control
               for changing it is the thing itself. */}
@@ -698,6 +696,44 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, on
  * Ratio holds no parent list — refusing the name because there is no
  * record to point at would throw away the thing worth keeping.
  */
+/**
+ * Who a note is for.
+ *
+ * SOLID, not a pale pill. The pale ones on this card mean a state — amber
+ * Open, indigo In progress, emerald Settled, red Overdue — so people are
+ * given the other half of the vocabulary and the two never blur.
+ *
+ * The colour is a shortcut, never the message: the initials and the name
+ * are both in the chip, so it reads the same to somebody who cannot tell
+ * teal from green.
+ */
+function PersonChip({ chip }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full py-0.5 pr-2.5 text-[12.5px] font-bold text-white ${
+        chip.initials && chip.initials !== chip.label ? 'pl-0.5' : 'pl-2.5'}`}
+      style={{
+        background: chip.color,
+        // Yours gets a ring as well as the red, because it is the one
+        // worth catching from the other side of the room.
+        outline: chip.isYou ? '2px solid #dc2626' : 'none',
+        outlineOffset: chip.isYou ? '1px' : '0',
+      }}
+      title={chip.full || chip.label}
+    >
+      {/* An imported note is addressed to initials — "MY" — and those ARE
+          the label, so showing the circle too reads as "MY MY". */}
+      {chip.initials && chip.initials !== chip.label && (
+        <span className="flex h-[19px] w-[19px] items-center justify-center rounded-full text-[9.5px] font-extrabold"
+          style={{ background: 'rgba(255,255,255,.28)' }}>
+          {chip.initials}
+        </span>
+      )}
+      {chip.label}
+    </span>
+  );
+}
+
 /** One figure above the list. */
 function DeskStat({ k, v, s, tone }) {
   return (

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { PERSON_COLORS, YOU_COLOR, UNKNOWN_COLOR } from './personColor';
 import {
   normaliseStatus,
   isOpen,
@@ -23,6 +24,7 @@ import {
   sortByDue,
   deskSummary,
   canDeleteNotes,
+  recipientChips,
 } from './deskNotes';
 
 /**
@@ -572,5 +574,75 @@ describe('who may erase a note rather than settle it', () => {
     }
     expect(canDeleteNotes({ platformRole: 'admin', instructorType: 'Manager' })).toBe(false);
     expect(canDeleteNotes({})).toBe(false);
+  });
+});
+
+describe('who a note is for, as chips', () => {
+  const names = { rahul: 'Rahul Parmar', neeru: 'Neeru Gill', vin: 'Vin Bhatia' };
+  const chips = (note, uid = 'rahul') => recipientChips(note, { nameByUid: names, uid });
+
+  it('names a colleague, on first-name terms, in their own colour', () => {
+    const [c] = chips({ toUids: ['neeru'] });
+    expect(c.label).toBe('Neeru');
+    expect(c.initials).toBe('NG');
+    expect(PERSON_COLORS).toContain(c.color);
+    expect(c.isYou).toBeUndefined();
+  });
+
+  it('says You, in the red that means yours, when it is', () => {
+    const [c] = chips({ toUids: ['rahul'] });
+    expect(c.label).toBe('You');
+    expect(c.color).toBe(YOU_COLOR);
+    expect(c.isYou).toBe(true);
+  });
+
+  it('a colleague never gets the You red', () => {
+    const [c] = chips({ toUids: ['neeru'] });
+    expect(c.color).not.toBe(YOU_COLOR);
+  });
+
+  it('Everyone is its own thing, not a person', () => {
+    const [c] = chips({ toAll: true, toUids: ['neeru'] });
+    expect(c.label).toBe('Everyone');
+    expect(c.isEveryone).toBe(true);
+    expect(PERSON_COLORS).not.toContain(c.color);
+  });
+
+  it('two recipients are two chips — the desk writes "VB/NG"', () => {
+    const two = chips({ toUids: ['neeru', 'vin'] });
+    expect(two.map(c => c.label)).toEqual(['Neeru', 'Vin']);
+    expect(two[0].color).not.toBe(two[1].color);
+  });
+
+  it('imported initials stay grey — a colour implies an account to open', () => {
+    // MY, JW, VS and DP appear in the history with nobody behind them.
+    const [c] = chips({ toLabel: 'MY' });
+    expect(c.label).toBe('MY');
+    expect(c.color).toBe(UNKNOWN_COLOR);
+    expect(c.isUnknown).toBe(true);
+  });
+
+  it('splits an imported pair', () => {
+    const two = chips({ toLabel: 'VB/NG' });
+    expect(two.map(c => c.label)).toEqual(['VB', 'NG']);
+  });
+
+  it('a uid with nobody behind it falls back to what the note said', () => {
+    const [c] = chips({ toUids: ['someone-who-left'], toLabel: 'JW' });
+    expect(c.label).toBe('JW');
+    expect(c.isUnknown).toBe(true);
+  });
+
+  it('says Unassigned rather than going blank', () => {
+    const [c] = chips({});
+    expect(c.label).toBe('Unassigned');
+    expect(c.initials).toBe('?');
+  });
+
+  it('keeps a person’s colour when they are renamed — it comes off the uid', () => {
+    const before = recipientChips({ toUids: ['neeru'] }, { nameByUid: { neeru: 'Neeru Gill' }, uid: 'x' });
+    const after = recipientChips({ toUids: ['neeru'] }, { nameByUid: { neeru: 'Neeru Gupta' }, uid: 'x' });
+    expect(after[0].color).toBe(before[0].color);
+    expect(after[0].label).toBe('Neeru');
   });
 });
