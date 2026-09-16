@@ -788,6 +788,16 @@ load: 45s → ~0.1s, 449 reads → 1.**
 - Cold cache (nothing ever written) builds synchronously on first GET, so the
   first load after deploy is correct though slow. Every load after is fast.
 
+**If a new /centers subcollection works on an owner account and not on anyone
+else's, you forgot to deploy the rules.** There is a catch-all at the bottom of
+`match /centers/{centerId}` granting read to `isOwnerLike() || isSuperAdmin()`,
+so an undeployed path still works for owners and fails for Leads, Managers and
+Hosts. That is deliberate — a missed path degrades to "only owners can see it" —
+but it makes a missing deploy look like a role bug. `npx firebase deploy --only
+firestore:rules` is a SEPARATE step from `git push`. This cost an afternoon on
+`schedulerDays`; `watchFeedDay` now surfaces `permission-denied` in plain words
+instead of rendering an empty day.
+
 **Two performance traps in this file, both fixed, both easy to reintroduce:**
 `tzParts` now builds its `Intl.DateTimeFormat` **once per timezone**, not once
 per call; and a refresh **buckets appointments by date in one pass** instead of

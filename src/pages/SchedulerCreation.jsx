@@ -365,10 +365,11 @@ function TodayTab({ centerId }) {
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
     setLoading(true); setError(null);
-    return watchFeedDay(centerId, date, ({ grouped, refreshedAt: at, loading: l }) => {
+    return watchFeedDay(centerId, date, ({ grouped, refreshedAt: at, loading: l, error: e }) => {
       setData(grouped);
       setRefreshedAt(at);
       setLoading(l);
+      setError(e || null);
     });
   }, [centerId, date]);
 

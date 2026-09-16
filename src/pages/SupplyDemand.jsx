@@ -288,10 +288,11 @@ export default function SupplyDemand() {
     // updates itself when a refresh writes a new version.
     if (!activeCenterId || !date) return undefined;
     setLoading(true); setApiError(null);
-    return watchFeedDay(activeCenterId, date, ({ grouped, refreshedAt: at, loading: l }) => {
+    return watchFeedDay(activeCenterId, date, ({ grouped, refreshedAt: at, loading: l, error: e }) => {
       setApptData(grouped);
       setFeedRefreshedAt(at);
       setLoading(l);
+      setApiError(e || null);
     });
   }, [activeCenterId, date]);
 

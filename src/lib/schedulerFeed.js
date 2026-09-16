@@ -78,16 +78,33 @@ export function watchFeedDay(centerId, date, onData, opts = {}) {
         // then, or the cache has never been built. Ask once and show empty
         // meanwhile rather than an error.
         if (!asked) { asked = true; requestFeedRefresh(centerId); }
-        onData({ grouped: emptyDay(date), refreshedAt: null, loading: !asked });
+        onData({ grouped: emptyDay(date), refreshedAt: null, loading: !asked, error: null });
         return;
       }
       const { refreshedAt = null, ...grouped } = snap.data() || {};
-      onData({ grouped, refreshedAt, loading: false });
+      onData({ grouped, refreshedAt, loading: false, error: null });
 
       const age = refreshedAt ? Date.now() - new Date(refreshedAt).getTime() : Infinity;
       if (!asked && age > ttlMs) { asked = true; requestFeedRefresh(centerId); }
     },
-    () => onData({ grouped: emptyDay(date), refreshedAt: null, loading: false }),
+    (err) => {
+      // SAY SO. Swallowing this rendered a denial as "No appointments for
+      // today", which is a lie and an expensive one — it cost an afternoon
+      // working out why one account saw the day and another saw an empty
+      // centre. `permission-denied` here almost always means firestore.rules
+      // hasn't been deployed since schedulerDays was added: owners still read
+      // it through the catch-all at the bottom of /centers/{centerId}, so it
+      // looks fine on an owner account and broken on everyone else's.
+      const denied = err?.code === 'permission-denied';
+      onData({
+        grouped: emptyDay(date),
+        refreshedAt: null,
+        loading: false,
+        error: denied
+          ? "You don't have permission to read the bookings cache. If this is new, firestore.rules needs deploying."
+          : (err?.message || 'Could not read the bookings cache.'),
+      });
+    },
   );
 }
 
