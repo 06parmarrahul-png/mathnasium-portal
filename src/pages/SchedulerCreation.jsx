@@ -204,6 +204,13 @@ function TodayTab({ centerId }) {
   const [instructorClipboard, setInstructorClipboard] = useState(null);
   useEffect(() => setInstructorClipboard(null), [date]);
 
+  // The Student Assessment Tracker roster, so "+ student" can offer real
+  // students instead of a blank box. Typing a name by hand is error-prone —
+  // a typo creates a walk-in that never matches the tracker, so the student
+  // stays uncategorised and silently skews the ratio.
+  const [roster, setRoster] = useState([]);
+  useEffect(() => watchStudents(centerId, setRoster), [centerId]);
+
   // Pull the centre's per-day fixed staff so the Today tab knows about
   // staff who don't have Firebase accounts (Sabrina, Neeru, Rachel).
   //
@@ -604,7 +611,7 @@ function TodayTab({ centerId }) {
                 nameAliases={staffNameAliases}
                 timezone={data?.timezone}
                 scheduledTodayNames={scheduledTodayNames}
-                walkIns={walkIns} profile={profile} />
+                walkIns={walkIns} profile={profile} roster={roster} />
             </div>
           )}
           {(!printOnly || printOnly === 'HS' || printOnly === 'BOTH') && (
@@ -618,7 +625,7 @@ function TodayTab({ centerId }) {
                 nameAliases={staffNameAliases}
                 timezone={data?.timezone}
                 scheduledTodayNames={scheduledTodayNames}
-                walkIns={walkIns} profile={profile} />
+                walkIns={walkIns} profile={profile} roster={roster} />
             </div>
           )}
         </div>
@@ -697,7 +704,7 @@ function TodayTab({ centerId }) {
 // the ones whose [start, start+duration) window overlaps the row's
 // slot, so 90-min walk-ins carry over the extra slot correctly.)
 
-function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile }) {
+function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, roster }) {
   const title = side === 'HS' ? 'High School' : 'Elementary';
   const color = side === 'HS' ? 'bg-blue-900' : 'bg-emerald-800';
   const otherSide = side === 'HS' ? 'EM' : 'HS';
@@ -941,7 +948,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
               nameAliases={nameAliases}
               timezone={timezone}
               scheduledTodayNames={scheduledTodayNames}
-              walkIns={walkIns} profile={profile}
+              walkIns={walkIns} profile={profile} roster={roster}
               slotPickerOptions={slotPickerOptions}
               onMoveStudent={handleMoveStudent}
               presence={presenceByRow.get(row.slot)} />
@@ -952,7 +959,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
   );
 }
 
-function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, slotPickerOptions, onMoveStudent, presence }) {
+function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, roster, slotPickerOptions, onMoveStudent, presence }) {
   // Two-tier dropdown. By default we show only staff scheduled today
   // (from the `shifts` collection + fixed-staff schedule). A "+ More"
   // option at the bottom expands the picker to the full pool — useful
@@ -1186,7 +1193,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           currentSlot={row.slot} />
         {!slotIsHalfHour && (
           addingWalkIn === 'short' ? (
-            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
+            <WalkInForm roster={roster} side={side} onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
           ) : (
             <button onClick={() => setAddingWalkIn('short')}
               className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
@@ -1211,7 +1218,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
           currentSlot={row.slot} />
         {slotIsHalfHour && (
           addingWalkIn === 'short' ? (
-            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
+            <WalkInForm roster={roster} side={side} onSave={(payload) => handleAddWalkIn(payload, 60)} onCancel={() => setAddingWalkIn(null)} />
           ) : (
             <button onClick={() => setAddingWalkIn('short')}
               className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
@@ -1237,7 +1244,7 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
             onMoveStudent={onMoveStudent}
             currentSlot={row.slot} />
           {addingWalkIn === 'long' ? (
-            <WalkInForm onSave={(payload) => handleAddWalkIn(payload, 90)} onCancel={() => setAddingWalkIn(null)} />
+            <WalkInForm roster={roster} side={side} onSave={(payload) => handleAddWalkIn(payload, 90)} onCancel={() => setAddingWalkIn(null)} />
           ) : (
             <button onClick={() => setAddingWalkIn('long')}
               className="mt-1 inline-flex items-center gap-0.5 rounded text-[10px] text-gray-400 hover:text-emerald-700 print:hidden">
@@ -1700,37 +1707,134 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
 }
 
 // Inline walk-in entry form — appears below the on-hour student list
-// when staff clicks "+ student" on a slot. Just a name + assessment
-// toggle; the slot/side/date are implicit from where it was clicked.
-function WalkInForm({ onSave, onCancel }) {
-  const [name, setName] = useState('');
+// when staff clicks "+ student" on a slot. The slot/side/date are implicit
+// from where it was clicked.
+//
+// It's a filter-as-you-type picker over the Student Assessment Tracker
+// rather than a blank box. Typing a name by hand is quietly destructive: a
+// typo, a nickname or a different spelling produces a walk-in that never
+// matches a tracker student, so they stay uncategorised and skew the ratio
+// for that slot. Picking from the roster keeps the name byte-identical.
+//
+// Free text still works. Genuinely new students turn up before anyone has
+// added them to the tracker, and refusing to book them would be worse than
+// an unmatched name.
+function WalkInForm({ onSave, onCancel, roster = [], side }) {
+  const [query, setQuery] = useState('');
+  const [picked, setPicked] = useState(null);
   const [isAssessment, setIsAssessment] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
+  // Suggest this side's students first — an EM slot almost always wants an
+  // EM student — but never hide the rest, because hybrids and mis-tagged
+  // students are exactly the ones staff need to find by hand.
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const scored = [];
+    for (const st of roster) {
+      const name = st?.name || '';
+      const i = name.toLowerCase().indexOf(q);
+      if (i < 0) continue;
+      scored.push({
+        st,
+        // Name-start beats mid-name; matching side beats the other.
+        rank: (i === 0 ? 0 : 1) + (st.category === side ? 0 : 2),
+      });
+    }
+    scored.sort((a, b) => a.rank - b.rank || a.st.name.localeCompare(b.st.name));
+    return scored.slice(0, 8).map(x => x.st);
+  }, [query, roster, side]);
+
+  useEffect(() => setHighlight(0), [query]);
+
+  // Exactly what gets written: a picked student's stored name, or the raw
+  // text when they're not in the tracker yet.
+  const nameToSave = picked?.name || query.trim();
+  const isFreeText = !picked && !!query.trim()
+    && !roster.some(st => (st.name || '').toLowerCase() === query.trim().toLowerCase());
+
+  const choose = (st) => { setPicked(st); setQuery(st.name); };
+
   const submit = async (e) => {
     e?.preventDefault?.();
-    if (!name.trim()) return;
+    if (!nameToSave) return;
     setSaving(true);
-    try { await onSave({ name: name.trim(), isAssessment }); }
+    try { await onSave({ name: nameToSave, isAssessment }); }
     finally { setSaving(false); }
   };
+
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') { onCancel(); return; }
+    if (!matches.length) return;
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHighlight(h => (h + 1) % matches.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight(h => (h - 1 + matches.length) % matches.length); }
+    else if (e.key === 'Enter' && !picked) { e.preventDefault(); choose(matches[highlight]); }
+  };
+
   return (
     <form onSubmit={submit}
       className="mt-1 rounded-md border border-emerald-300 bg-emerald-50 p-1.5 print:hidden">
-      <input
-        autoFocus
-        type="text" value={name}
-        onChange={e => setName(e.target.value)}
-        placeholder="Student name"
-        className="w-full rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-[11px] focus:border-emerald-500 focus:outline-none"
-        onKeyDown={e => { if (e.key === 'Escape') onCancel(); }}
-      />
+      <div className="relative">
+        <input
+          autoFocus
+          type="text" value={query}
+          onChange={e => { setQuery(e.target.value); setPicked(null); }}
+          onKeyDown={onKeyDown}
+          placeholder={roster.length ? 'Type to find a student…' : 'Student name'}
+          className="w-full rounded border border-emerald-300 bg-white px-1.5 py-0.5 text-[11px] focus:border-emerald-500 focus:outline-none"
+        />
+
+        {matches.length > 0 && !picked && (
+          <ul className="absolute left-0 right-0 top-full z-20 mt-0.5 max-h-44 overflow-y-auto rounded border border-emerald-300 bg-white shadow-lg">
+            {matches.map((st, i) => (
+              <li key={st.id || st.name}>
+                <button
+                  type="button"
+                  onMouseEnter={() => setHighlight(i)}
+                  onClick={() => choose(st)}
+                  className={`flex w-full items-center gap-1 px-1.5 py-1 text-left text-[11px] ${
+                    i === highlight ? 'bg-emerald-100' : 'hover:bg-gray-50'}`}
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium text-gray-900">{st.name}</span>
+                  {st.grade && <span className="shrink-0 text-[9px] text-gray-400">Gr {st.grade}</span>}
+                  <span className={`shrink-0 rounded px-1 text-[9px] font-bold ${
+                    st.category === 'HS' ? 'bg-blue-100 text-blue-700'
+                      : st.category === 'Online' ? 'bg-purple-100 text-purple-700'
+                      : 'bg-emerald-100 text-emerald-700'}`}>
+                    {st.category || '?'}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {picked && (
+        <p className="mt-0.5 flex items-center gap-1 text-[9.5px] text-emerald-800">
+          <span className="font-semibold">{picked.name}</span>
+          {picked.grade && <span className="text-gray-500">· Gr {picked.grade}</span>}
+          <span className="text-gray-500">· {picked.category || 'uncategorised'}</span>
+          <button type="button" onClick={() => { setPicked(null); setQuery(''); }}
+            className="ml-auto text-gray-400 underline hover:text-gray-700">change</button>
+        </p>
+      )}
+
+      {isFreeText && (
+        <p className="mt-0.5 text-[9.5px] text-amber-700">
+          Not in the tracker — will be added as typed.
+        </p>
+      )}
+
       <label className="mt-1 flex items-center gap-1 text-[10px] text-gray-700">
         <input type="checkbox" checked={isAssessment}
           onChange={e => setIsAssessment(e.target.checked)} />
         Assessment
       </label>
       <div className="mt-1 flex gap-1">
-        <button type="submit" disabled={saving || !name.trim()}
+        <button type="submit" disabled={saving || !nameToSave}
           className="flex-1 rounded bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50">
           {saving ? '…' : 'Add'}
         </button>

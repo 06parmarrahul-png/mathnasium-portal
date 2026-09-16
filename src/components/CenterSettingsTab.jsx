@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { DAY_NAMES, isSummerOverrideActive } from '../lib/centerConfig';
-import { Settings, Save, X, Plus, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Users, Sun, UserCheck } from 'lucide-react';
+import { Settings, Save, X, AlertTriangle, CheckCircle2, Building2, Clock, BookOpen, Sun } from 'lucide-react';
 
 /**
  * Edit per-center settings: identity, instructional + operating hours,
@@ -40,18 +40,6 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
       [day]: { ...(p[kind]?.[day] || {}), [side]: value },
     },
   }));
-
-  const addToList = (key, value) => {
-    const v = (value || '').trim();
-    if (!v) return;
-    const current = Array.isArray(form[key]) ? form[key] : [];
-    if (current.includes(v)) return;
-    setForm(p => ({ ...p, [key]: [...current, v] }));
-  };
-  const removeFromList = (key, value) => {
-    const current = Array.isArray(form[key]) ? form[key] : [];
-    setForm(p => ({ ...p, [key]: current.filter(x => x !== value) }));
-  };
 
   const handleSave = async () => {
     if (!activeCenterId) return;
@@ -164,34 +152,6 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
         />
       </Section>
 
-      {/* Designated host. Previously config-only with no UI at all: when
-          autoHostNames matched nobody, the auto-scheduler's host block
-          quietly rotated on fairness and there was no way to see or fix
-          it. */}
-      <Section
-        title="Designated Host"
-        icon={UserCheck}
-        hint="Who covers front of house. The auto-scheduler gives them the host shift on every open day they're available, ahead of fairness; it only falls to another host-capable person when they're not."
-      >
-        <Field label="Host name (must match their staff account exactly)">
-          <input
-            type="text"
-            value={(form?.autoHostNames || []).join(', ')}
-            onChange={(e) => setField(
-              'autoHostNames',
-              e.target.value.split(',').map(v => v.trim()).filter(Boolean),
-            )}
-            placeholder="Rahul Parmar"
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-          />
-        </Field>
-        <p className="mt-1 text-xs text-gray-500">
-          Comma-separate to name more than one. Leave blank and the host shift goes to whoever
-          can host. The name is matched against the staff member&rsquo;s display name, so it has to
-          match what shows in Manage Staff.
-        </p>
-      </Section>
-
       {/* Operating hours */}
       <Section
         title="Operating Hours"
@@ -204,23 +164,13 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
         />
       </Section>
 
-      {/* Salary staff — kept here because it's a one-time configuration
-          step ("which staff are salaried?") that affects payroll output.
-          Guaranteed-shift management is on the per-user toggle in Manage
-          Staff; fixed-staff editing isn't surfaced here yet. */}
-      <Section
-        title="Salaried Staff — Excluded from Hourly Payroll"
-        icon={Users}
-        hint="Full names. People listed here are paid a salary, so their shifts won't appear in the Payroll tab's hourly summary."
-      >
-        <ListEditor
-          items={form?.salaryStaff || []}
-          onAdd={v => addToList('salaryStaff', v)}
-          onRemove={v => removeFromList('salaryStaff', v)}
-          placeholder="Full name (e.g., Neeru Gill)"
-          chipColor="amber"
-        />
-      </Section>
+      {/* The Designated Host and Salaried Staff editors used to sit here.
+          Removed because they're configured once and never revisited, while
+          cluttering the settings owners open every week. The VALUES are
+          untouched: `form` is the whole config object and the save is
+          {merge:true}, so `autoHostNames` and `salaryStaff` round-trip
+          unedited and every feature reading them still works. Change them in
+          the Firebase console. */}
 
       {/* Save bar */}
       <div className="sticky bottom-0 -mx-4 px-4 py-3 bg-white/80 backdrop-blur border-t border-gray-200 flex items-center justify-between gap-3 flex-wrap rounded-b-xl">
@@ -324,63 +274,6 @@ function DayHoursTable({ hours, onChange }) {
           ))}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-function ListEditor({ items, onAdd, onRemove, placeholder, chipColor = 'gray' }) {
-  const [input, setInput] = useState('');
-  const palette = {
-    emerald: { bg: 'bg-emerald-100', text: 'text-emerald-800', border: 'border-emerald-200' },
-    amber:   { bg: 'bg-amber-100',   text: 'text-amber-800',   border: 'border-amber-200'   },
-    gray:    { bg: 'bg-gray-100',    text: 'text-gray-800',    border: 'border-gray-200'    },
-  }[chipColor] || { bg: 'bg-gray-100', text: 'text-gray-800', border: 'border-gray-200' };
-
-  const submit = (e) => {
-    e?.preventDefault();
-    if (!input.trim()) return;
-    onAdd(input);
-    setInput('');
-  };
-
-  return (
-    <div>
-      <div className="flex flex-wrap gap-2 mb-3">
-        {items.length === 0 ? (
-          <span className="text-sm text-gray-400 italic">No entries yet.</span>
-        ) : items.map(item => (
-          <span
-            key={item}
-            className={`flex items-center gap-1.5 rounded-full ${palette.bg} ${palette.text} px-3 py-1 text-xs font-semibold border ${palette.border}`}
-          >
-            {item}
-            <button
-              onClick={() => onRemove(item)}
-              className="rounded-full hover:bg-black/10 w-4 h-4 flex items-center justify-center transition-colors"
-              aria-label={`Remove ${item}`}
-            >
-              <X size={11} />
-            </button>
-          </span>
-        ))}
-      </div>
-      <form onSubmit={submit} className="flex gap-2">
-        <input
-          type="text"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          placeholder={placeholder}
-          className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-purple-500 focus:outline-none focus:ring-2 focus:ring-purple-500/20"
-        />
-        <button
-          type="submit"
-          disabled={!input.trim()}
-          className="flex items-center gap-1 rounded-lg bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-700 disabled:opacity-30 transition-colors"
-        >
-          <Plus size={14} />
-          Add
-        </button>
-      </form>
     </div>
   );
 }
