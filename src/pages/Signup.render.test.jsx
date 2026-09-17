@@ -26,12 +26,13 @@ beforeEach(() => { signup.mockClear(); });
 afterEach(() => { cleanup(); });
 
 describe('picking a character at sign-up', () => {
-  it('offers all four, with the original already chosen', () => {
+  it('offers all six, with the original already chosen', () => {
     draw();
     const radios = screen.getAllByRole('radio');
-    expect(radios.map(r => r.value)).toEqual(['classic', 'coach', 'cool', 'bot']);
+    expect(radios.map(r => r.value))
+      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee']);
     expect(radios.find(r => r.checked).value).toBe('classic');
-    for (const name of ['Cole', 'Coach Cole', 'Cool Cole', 'Cole-bot']) {
+    for (const name of ['Cole', 'Coach Cole', 'Cool Cole', 'Cole-bot', 'Gamer Cole', 'Cole-feine']) {
       expect(screen.getByText(name)).toBeTruthy();
     }
   });

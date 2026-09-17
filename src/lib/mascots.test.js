@@ -7,8 +7,9 @@ import {
 const parse = (svg) => new DOMParser().parseFromString(svg, 'image/svg+xml');
 
 describe('choosing a mascot', () => {
-  it('has the four Coles', () => {
-    expect(MASCOTS.map(m => m.id)).toEqual(['classic', 'coach', 'cool', 'bot']);
+  it('has the six Coles', () => {
+    expect(MASCOTS.map(m => m.id))
+      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee']);
   });
 
   it('gives anyone who never picked the original', () => {
@@ -64,11 +65,29 @@ describe('the artwork', () => {
     expect(mascotSvg('classic', 'stand')).toContain('viewBox="0 0 200 264"');
   });
 
-  it('gives each Cole its signature, so they are not four copies', () => {
+  it('gives each Cole its signature, so they are not six copies', () => {
     expect(mascotSvg('coach', 'coach')).toContain('1:4');       // the clipboard
     expect(mascotSvg('bot')).toContain('#20232B');               // the visor
     expect(mascotSvg('cool')).toContain('M60 77 H140');           // the shades
     expect(mascotSvg('classic')).toContain('M92 38 Q84 14');     // the cowlick
+    expect(mascotSvg('gamer')).toContain('M50 112 Q48 136');     // the boom mic
+    expect(mascotSvg('coffee')).toContain('#8A5F4B');            // the eye bags
+  });
+
+  it('hands a prop to the pose that holds it, and to no other', () => {
+    expect(mascotSvg('gamer', 'game')).toContain('M64 172 Q52 176');
+    expect(mascotSvg('gamer', 'stand')).not.toContain('M64 172 Q52 176');
+    expect(mascotSvg('coffee', 'sip')).toContain('M150 106 H182');
+    expect(mascotSvg('coffee', 'stand')).not.toContain('M150 106 H182');
+  });
+
+  it('keeps every Cole apart in the 40px icon, which draws the head standing', () => {
+    // Nothing held is in frame there, so a Cole whose only signature is a
+    // prop would be an exact copy of the original in the sidebar. Compared
+    // with the clip ids normalised, since those carry the name already.
+    const icons = MASCOTS.map(m => mascotSvg(m.id, 'stand', { crop: 'head' })
+      .replaceAll(`${m.id}-stand-`, 'x-'));
+    expect(new Set(icons).size).toBe(MASCOTS.length);
   });
 
   it('falls back to standing for a pose it does not have', () => {

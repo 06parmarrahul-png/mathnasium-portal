@@ -1,12 +1,18 @@
 /**
- * Cole — Ratio's mascot, in four outfits. Each person picks one when they
+ * Cole — Ratio's mascot, in six outfits. Each person picks one when they
  * sign up (and can change it on Account); it replaces the A+ at the top of
  * their own sidebar and phone header.
  *
  * Cole is the ratio sign as a character: a head floating just above a
  * body, like the colon in 1:4. Every outfit shares that silhouette and one
  * rig (outline, shaded ball, face, gloves), and adds one signature thing,
- * so all four read as the same character at 40px.
+ * so all six read as the same character at 40px.
+ *
+ * That signature has to live at HEAD height, because the 40px icon in the
+ * sidebar draws the head crop in the neutral 'stand' pose — anything held
+ * in a hand is out of frame there. Hence the headset on Gamer Cole and the
+ * wired eyes on Cole-feine: the controller and the cup are for the big
+ * views only.
  *
  * The artwork is built as SVG markup here, in plain strings, and shown
  * through an <img> data URL (components/Mascot.jsx). Two reasons:
@@ -21,6 +27,8 @@ export const MASCOTS = [
   { id: 'coach', name: 'Coach Cole', tagline: 'Runs the floor', hero: 'coach' },
   { id: 'cool', name: 'Cool Cole', tagline: 'Too cool for the desk', hero: 'peace' },
   { id: 'bot', name: 'Cole-bot', tagline: 'Ratio’s software side', hero: 'wave' },
+  { id: 'gamer', name: 'Gamer Cole', tagline: 'One more round', hero: 'game' },
+  { id: 'coffee', name: 'Cole-feine', tagline: 'Three cups deep', hero: 'sip' },
 ];
 
 /** Everyone who signed up before there was a choice gets the original. */
@@ -40,6 +48,7 @@ export function mascotFor(id) {
 // ── palette ─────────────────────────────────────────────────────────────
 const INK = '#1B1216', RED = '#E31E24', SHADE = '#B0121A', WHITE = '#FFFFFF';
 const BLUSH = '#FF7F8E', GOLD = '#FFC83D', STEEL = '#C9CED6', VISOR = '#20232B', CAPEDGE = '#3D3136';
+const SLEEVE = '#A9713F', STAIN = '#7A4A22', BAG = '#8A5F4B';
 const OUT = 4;
 
 const n = (v) => Math.round(v * 100) / 100;
@@ -158,15 +167,46 @@ function thruster(x, y) {
     + `<path d="M-11 -6 H11 L8 8 H-8 Z" fill="${STEEL}" ${S()}/></g>`;
 }
 
-function clipboard() {
+function clipboard(fill) {
   return `<g transform="rotate(-10 48 196)">`
     + `<rect x="22" y="166" width="48" height="58" rx="5" fill="#9A6440" ${S()}/>`
     + `<rect x="27" y="175" width="38" height="44" rx="2" fill="#fff"/>`
     + `<text x="46" y="197" text-anchor="middle" font-family="system-ui, -apple-system, Segoe UI, sans-serif" font-weight="800" font-size="15" fill="${INK}">1:4</text>`
     + `<path d="M33 206 H59 M33 212 H52" stroke="#9AA0AA" stroke-width="2.5" stroke-linecap="round"/>`
     + `<rect x="37" y="161" width="18" height="10" rx="3" fill="${STEEL}" ${S(3)}/></g>`
-    + glove('fist', 68, 202, 4, true);
+    + glove('fist', 68, 202, 4, true, fill);
 }
+
+/** A gamepad across the belly, gripped with both hands. */
+function controller(fill) {
+  return `<path d="M64 172 Q52 176 56 196 Q60 210 72 206 Q80 202 84 194 H116 Q120 202 128 206 Q140 210 144 196 Q148 176 136 172 Q120 166 100 167 Q80 166 64 172 Z" fill="${STEEL}" ${S()}/>`
+    + `<rect x="72" y="182" width="18" height="6" rx="2.5" fill="${INK}"/>`
+    + `<rect x="78" y="176" width="6" height="18" rx="2.5" fill="${INK}"/>`
+    + `<circle cx="112" cy="180" r="4" fill="${RED}"/><circle cx="122" cy="188" r="4" fill="${RED}"/>`
+    + glove('fist', 58, 196, -16, true, fill)
+    + glove('fist', 142, 196, 16, false, fill);
+}
+
+/**
+ * A takeaway cup, held up by the face rather than down at the hip — held
+ * low it would fall outside the head crop, and half the point of the cup
+ * is that you can see it. The sleeve wears the colon, like the chest
+ * emblem does.
+ */
+function cup(fill) {
+  return `<path d="M159 88 Q152 79 159 70 M177 88 Q184 79 177 70" stroke="${INK}" stroke-width="3" fill="none" stroke-linecap="round" opacity=".55"/>`
+    + `<rect x="146" y="96" width="40" height="10" rx="5" fill="${INK}" ${S(3)}/>`
+    + `<path d="M150 106 H182 L177 150 Q166 155 155 150 Z" fill="#fff" ${S(3.5)}/>`
+    + `<rect x="152" y="117" width="28" height="18" rx="4" fill="${SLEEVE}" ${S(3)}/>`
+    + `<circle cx="166" cy="122" r="2.8" fill="#fff"/><circle cx="166" cy="130" r="2.8" fill="#fff"/>`
+    + glove('fist', 146, 138, -10, false, fill);
+}
+
+/**
+ * Things a pose can hold. Each draws its own glove(s), so a pose naming
+ * one leaves that hand — and for the controller, both — empty.
+ */
+const PROPS = { clipboard, controller, cup };
 
 // ── poses & outfits ─────────────────────────────────────────────────────
 const POSES = {
@@ -177,6 +217,10 @@ const POSES = {
   think:  { L: ['fist', 44, 198, -8], R: ['fist', 128, 146, -8], eyes: 'look', brows: 'raised', mouth: 'o' },
   peace:  { L: ['fist', 44, 198, -8], R: ['peace', 160, 126, 12], eyes: 'open', brows: 'raised', mouth: 'smirk' },
   coach:  { L: 'clipboard', R: ['thumb', 158, 178, 6], eyes: 'open', brows: 'determined', mouth: 'grin' },
+  // The controller fills both hands, so the right one is empty rather than
+  // a fist that would land on top of it.
+  game:   { L: 'controller', R: null, eyes: 'open', brows: 'determined', mouth: 'smirk' },
+  sip:    { L: ['fist', 44, 198, -8], R: 'cup', eyes: 'open', brows: 'up', mouth: 'o' },
 };
 export const MASCOT_POSES = Object.keys(POSES);
 
@@ -242,6 +286,59 @@ const OUTFITS = {
     gloveFill: '#E6E9EE',
     noBrows: true, noCheeks: true, mouthDrop: 10,
   },
+  gamer: {
+    // A headset. Cool Cole already owns "something on the ears", so the
+    // telling detail is the boom mic swung down across the jaw — a hood
+    // has no arm reaching for your mouth. The band also hugs the crown
+    // where the hood stands well clear of it.
+    hat: () => `<path d="M52 88 Q50 30 100 30 Q150 30 148 88" stroke="${INK}" stroke-width="11" fill="none" stroke-linecap="round"/>`
+      + `<path d="M64 60 Q72 42 100 40 Q128 42 136 60" stroke="${RED}" stroke-width="4.5" fill="none" stroke-linecap="round"/>`
+      + `<circle cx="50" cy="94" r="17" fill="${INK}" ${S(3.5)}/><circle cx="50" cy="94" r="7.5" fill="${RED}"/>`
+      + `<circle cx="150" cy="94" r="17" fill="${INK}" ${S(3.5)}/><circle cx="150" cy="94" r="7.5" fill="${RED}"/>`
+      + `<path d="M50 112 Q48 136 68 135" stroke="${INK}" stroke-width="5" fill="none" stroke-linecap="round"/>`
+      + `<ellipse cx="71" cy="134" rx="7.5" ry="6" transform="rotate(-14 71 134)" fill="${INK}" ${S(2.5)}/>`,
+    // The 8-bit health heart, where the original wears the colon. Hidden
+    // behind the controller in his own pose; there for every other one.
+    // Seven cells across, not five: five reads as a plus sign.
+    body: () => ['.XX.XX.', 'XXXXXXX', 'XXXXXXX', '.XXXXX.', '..XXX..', '...X...']
+      .map((row, y) => [...row].map((c, x) => (c === 'X'
+        // 5.2 rather than 5 so the cells overlap and leave no hairlines.
+        ? `<rect x="${82 + x * 5}" y="${173 + y * 5}" width="5.2" height="5.2" fill="#fff"/>`
+        : '')).join('')).join(''),
+  },
+  coffee: {
+    // Wired. The eyes carry him: huge whites, pinprick pupils, and the
+    // bags underneath. They are the signature because they are the part
+    // still on screen at 40px, where the cup is out of frame.
+    // A ring he put down on himself. Tilted and splattered, because a true
+    // circle reads as a logo rather than a spill.
+    body: () => `<g transform="rotate(-12 102 190)">`
+      + `<ellipse cx="102" cy="190" rx="15" ry="12.5" fill="none" stroke="#fff" stroke-width="7" opacity=".85"/>`
+      + `<ellipse cx="102" cy="190" rx="15" ry="12.5" fill="none" stroke="${STAIN}" stroke-width="3.5"/></g>`
+      + `<circle cx="82" cy="204" r="4.5" fill="#fff" opacity=".85"/><circle cx="82" cy="204" r="2.6" fill="${STAIN}"/>`
+      + `<circle cx="120" cy="174" r="3" fill="#fff" opacity=".8"/><circle cx="120" cy="174" r="1.7" fill="${STAIN}"/>`,
+    eyes: (kind) => {
+      // Drawn first, so the lower lid sits over the top of them and only
+      // the crescent below shows — which is how a bag reads. They have to
+      // clear y=100 to show at all, which is what sets the eye's ry.
+      const bag = (x, side) => {
+        const a = x + side * -12, b = x + side * 8;
+        return `<path d="M${a} ${EYE_Y + 19} Q${(a + b) / 2} ${EYE_Y + 26} ${b} ${EYE_Y + 18}" stroke="${BAG}" stroke-width="3.5" fill="none" stroke-linecap="round" opacity=".85"/>`;
+      };
+      const bags = bag(EYE_L, 1) + bag(EYE_R, -1);
+      const wide = (x, [lx, ly] = [0, 0]) =>
+        `<ellipse cx="${x}" cy="${EYE_Y}" rx="14" ry="16.5" fill="#fff" ${S(3)}/>`
+        + `<circle cx="${x + lx}" cy="${EYE_Y + ly + 1}" r="4" fill="${INK}"/>`
+        + `<circle cx="${x + lx + 1.8}" cy="${EYE_Y + ly - 2}" r="1.7" fill="#fff"/>`;
+      if (kind === 'wink') return bags + wide(EYE_L) + eyeShut(EYE_R, EYE_Y);
+      if (kind === 'closed') return bags + eyeShut(EYE_L, EYE_Y) + eyeShut(EYE_R, EYE_Y);
+      if (kind === 'look') return bags + wide(EYE_L, [4, -6]) + wide(EYE_R, [4, -6]);
+      return bags + wide(EYE_L) + wide(EYE_R);
+    },
+    // Blush would fight the eye whites for the same few pixels, and a
+    // person three cups deep is not rosy.
+    noCheeks: true,
+  },
 };
 
 /**
@@ -279,8 +376,9 @@ export function mascotSvg(id, pose = 'stand', { crop = 'full' } = {}) {
   s += o.mouthDrop
     ? `<g transform="translate(0 ${o.mouthDrop})">${mouth(p.mouth, d)}</g>`
     : mouth(p.mouth, d);
-  s += p.L === 'clipboard' ? clipboard() : hand(p.L, true);
-  s += hand(p.R, false);
+  const held = (k) => (PROPS[k] ? PROPS[k](o.gloveFill) : '');
+  s += typeof p.L === 'string' ? held(p.L) : hand(p.L, true);
+  s += typeof p.R === 'string' ? held(p.R) : hand(p.R, false);
   if (p.marks) {
     s += `<path d="M180 98 Q186 110 181 122 M189 92 Q197 110 190 128" stroke="${INK}" stroke-width="3" fill="none" stroke-linecap="round" opacity=".55"/>`;
   }

@@ -6,12 +6,13 @@ import Mascot from './Mascot';
  * screen readers all work without anything hand-rolled.
  *
  * Used on sign-up (two across, in the narrow card) and on Account (`wide`,
- * four across). `disabled` is for the moment a save is in flight.
+ * three across — six Coles make two tidy rows of three, where four across
+ * left a row of two). `disabled` is for the moment a save is in flight.
  */
 export default function MascotPicker({ value, onChange, name = 'mascot', disabled = false, wide = false }) {
   const current = resolveMascotId(value);
   return (
-    <div role="radiogroup" aria-label="Your character" className={`grid grid-cols-2 gap-2.5 ${wide ? 'sm:grid-cols-4' : ''}`}>
+    <div role="radiogroup" aria-label="Your character" className={`grid grid-cols-2 gap-2.5 ${wide ? 'sm:grid-cols-3' : ''}`}>
       {MASCOTS.map(m => {
         const on = m.id === current;
         return (
