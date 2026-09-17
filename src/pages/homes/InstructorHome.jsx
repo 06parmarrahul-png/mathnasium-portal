@@ -14,6 +14,8 @@ import {
 import { funDayOn, funDaysAhead } from '../../lib/funDays';
 import { PAGES } from '../../lib/pageNames';
 import DeskHomeCard from '../../components/DeskHomeCard';
+import Mascot from '../../components/Mascot';
+import { mascotFor } from '../../lib/mascots';
 import { gamesEnabled } from '../../lib/ratioGames';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
 import {
@@ -276,9 +278,18 @@ export default function InstructorHome() {
       <div className="mb-3.5">
 
         <div className="flex items-start justify-between gap-3">
-          <h1 className="nl-display text-[26px] font-semibold leading-tight">
-            {greeting()}, {first}
-          </h1>
+          {/* The Cole they picked — the same character that is 40px in the
+              sidebar, here full height and in whichever pose is his. He
+              stands on the greeting rather than beside it, so the two read
+              as one line. Decorative: the greeting is the text. */}
+          <div className="flex min-w-0 items-end gap-2.5">
+            <Mascot id={profile?.mascot} pose={mascotFor(profile?.mascot).hero}
+              crop="full" size={48} alt=""
+              className="-mb-0.5 h-[63px] w-12 shrink-0 sm:h-[84px] sm:w-16" />
+            <h1 className="nl-display text-[26px] font-semibold leading-tight">
+              {greeting()}, {first}
+            </h1>
+          </div>
           <button
             type="button"
             onClick={() => { setNewLook(profile?.uid, false); window.location.reload(); }}
