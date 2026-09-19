@@ -72,6 +72,7 @@ import {
   isPerCentreField,
   buildInitialMembership,
 } from '../lib/centerMembership';
+import { shiftsToRelabel, batches as chunked } from '../lib/roleBackfill';
 
 /**
  * Why a shift must end after it starts.
@@ -2997,6 +2998,48 @@ export default function Admin() {
     }
   };
 
+  /**
+   * The same repair for a JOB TITLE, which is copied onto shifts the same
+   * way a name is — and, until this existed, went just as stale: someone
+   * promoted to Lead kept showing as HS on the snapshot grid, because the
+   * grid reads the shift's `role`, not the account's.
+   *
+   * Two differences from the rename above, both deliberate:
+   *
+   *   • Only shifts from TODAY forward. A worked shift records the job
+   *     that was done; rewriting it would quietly rewrite history, and
+   *     payroll reads the same field.
+   *   • Only shifts still carrying the title they are leaving. A future
+   *     shift deliberately scheduled as another role — the LEAD 11-3 /
+   *     HOST 3-7 day the grid is built around — is real, and stays.
+   *
+   * See src/lib/roleBackfill.js; the one-off script shares that rule.
+   */
+  const propagateRole = async (uid, oldTitle, newTitle) => {
+    try {
+      // Queried on userId alone, like the rename, so this needs no
+      // composite index; the centre and date filters run in memory over
+      // one person's shifts.
+      const snap = await getDocs(query(collection(db, 'shifts'), where('userId', '==', uid)));
+      const stale = shiftsToRelabel(
+        snap.docs.map(d => ({ id: d.id, ref: d.ref, ...d.data() })),
+        { oldTitle, newTitle, centerId: activeCenterId, from: localTodayISO() },
+      );
+      if (!stale.length) return;
+      for (const group of chunked(stale)) {
+        const batch = writeBatch(db);
+        for (const d of group) batch.update(d.ref, { role: newTitle });
+        await batch.commit();
+      }
+      toast.success(
+        `Now ${roleDisplayName(newTitle)}. Updated ${stale.length} upcoming shift${stale.length === 1 ? '' : 's'}.`,
+      );
+    } catch (err) {
+      console.error('[role] shift backfill failed:', err);
+      toast.error('Title saved, but their upcoming shifts still show the old one. Tell Enterprise.');
+    }
+  };
+
   const handleUpdateUserField = async (uid, field, value) => {
     if (!isPerCentreField(field)) {
       const before = field === 'displayName'
@@ -3018,28 +3061,41 @@ export default function Admin() {
     }
     const target = users.find(u => u.uid === uid || u.id === uid);
     const hasMembership = !!target?.centerMemberships?.[activeCenterId];
+    // Read the title they hold RIGHT NOW, before the write lands — it is
+    // the only thing that says which upcoming shifts are theirs to move.
+    const beforeTitle = field === 'instructorType'
+      ? resolveUserForCenter(target, activeCenterId)?.instructorType
+      : null;
+
     if (hasMembership) {
       await updateDoc(doc(db, 'users', uid), {
         [membershipFieldPath(activeCenterId, field)]: value,
       });
-      return;
+    } else {
+      // No row for this centre yet — seed it with sensible defaults
+      // (carried over from the legacy top-level values so the user
+      // doesn't appear to reset when an admin clicks one field) and
+      // overlay the new value for the field being edited.
+      const seeded = buildInitialMembership({
+        instructorType: target?.instructorType,
+        maxDaysPerWeek: target?.maxDaysPerWeek,
+        subRoles:       target?.subRoles,
+        guaranteed:     target?.guaranteed,
+        approved:       target?.approved,
+        isVolunteer:    target?.isVolunteer,
+      });
+      seeded[field] = value;
+      await updateDoc(doc(db, 'users', uid), {
+        [`centerMemberships.${activeCenterId}`]: seeded,
+      });
     }
-    // No row for this centre yet — seed it with sensible defaults
-    // (carried over from the legacy top-level values so the user
-    // doesn't appear to reset when an admin clicks one field) and
-    // overlay the new value for the field being edited.
-    const seeded = buildInitialMembership({
-      instructorType: target?.instructorType,
-      maxDaysPerWeek: target?.maxDaysPerWeek,
-      subRoles:       target?.subRoles,
-      guaranteed:     target?.guaranteed,
-      approved:       target?.approved,
-      isVolunteer:    target?.isVolunteer,
-    });
-    seeded[field] = value;
-    await updateDoc(doc(db, 'users', uid), {
-      [`centerMemberships.${activeCenterId}`]: seeded,
-    });
+
+    // Only after the write lands — never relabel shifts toward a title
+    // that didn't save. A no-op (one indexed query, no writes) when the
+    // title is unchanged or nothing upcoming still carries the old one.
+    if (field === 'instructorType' && value) {
+      await propagateRole(uid, beforeTitle, value);
+    }
   };
 
   // Shift CRUD
