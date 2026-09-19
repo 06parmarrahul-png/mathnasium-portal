@@ -6,15 +6,16 @@
 // Mirrors the Apptoto flow the centre used previously:
 //   - Mathnasium-red branded header
 //   - Headline + sub copy (centre-configurable)
-//   - Week-view slot grid (yellow highlight = available, dim = closed/taken)
+//   - Week-view slot grid (tinted = available, solid = picked, dim = taken)
 //   - Selected slot detail card
 //   - Form: email, phone, guardian name, child name, child grade,
 //           SMS opt-in checkbox with the exact Mathnasium compliance text
 //   - Confirmation screen on success
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { scrollToElement } from '../lib/smoothScroll';
 
 const GRADE_OPTIONS = [
   'Pre-K', 'Kindergarten',
@@ -117,6 +118,21 @@ export default function PublicBook() {
     return [...seen.entries()].sort((a, b) => a[1] - b[1]).map(([label]) => label);
   }, [data]);
 
+  // Picking a slot reveals the form below the fold, and going back
+  // hides it again. Both moves are the page changing under someone who
+  // is looking somewhere else, so both get walked rather than jumped.
+  // Skipped on first paint: nobody has picked anything yet.
+  const gridRef = useRef(null);
+  const formRef = useRef(null);
+  const settled = useRef(false);
+  useEffect(() => {
+    if (!settled.current) { settled.current = true; return undefined; }
+    const el = selectedSlot ? formRef.current : gridRef.current;
+    // Returned so a second pick mid-flight cancels the first trip
+    // instead of two animations fighting over the scroll position.
+    return scrollToElement(el);
+  }, [selectedSlot]);
+
   if (confirmed) {
     return <ConfirmationScreen confirmed={confirmed} centre={data?.centre} timezone={data?.centre?.timezone} />;
   }
@@ -171,24 +187,28 @@ export default function PublicBook() {
                 Showing the earliest week with available times.
               </p>
             )}
-            <SlotGrid
-              data={data}
-              timeRows={timeRows}
-              weekStart={weekStart}
-              onWeekStart={(d) => { setAutoAdvanced(false); setWeekStart(d); }}
-              selectedSlot={selectedSlot}
-              onSelectSlot={setSelectedSlot}
-            />
+            <div ref={gridRef}>
+              <SlotGrid
+                data={data}
+                timeRows={timeRows}
+                weekStart={weekStart}
+                onWeekStart={(d) => { setAutoAdvanced(false); setWeekStart(d); }}
+                selectedSlot={selectedSlot}
+                onSelectSlot={setSelectedSlot}
+              />
+            </div>
 
             {selectedSlot && (
-              <BookingForm
-                centerId={centerId}
-                slot={selectedSlot}
-                durationMin={data.settings.slotDurationMin}
-                timezone={data.centre.timezone}
-                onCancel={() => setSelectedSlot(null)}
-                onConfirmed={(payload) => setConfirmed(payload)}
-              />
+              <div ref={formRef}>
+                <BookingForm
+                  centerId={centerId}
+                  slot={selectedSlot}
+                  durationMin={data.settings.slotDurationMin}
+                  timezone={data.centre.timezone}
+                  onChangeSlot={() => setSelectedSlot(null)}
+                  onConfirmed={(payload) => setConfirmed(payload)}
+                />
+              </div>
             )}
           </>
         )}
@@ -268,9 +288,9 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
                         className={[
                           'w-full rounded px-2 py-1.5 text-xs font-medium transition-colors',
                           isSel
-                            ? 'bg-red-600 text-white'
+                            ? 'bg-red-600 text-white shadow-sm'
                             : canPick
-                              ? 'bg-yellow-300 text-gray-900 hover:bg-yellow-400'
+                              ? 'border border-red-300 bg-red-100 text-red-800 hover:border-red-500 hover:bg-red-200'
                               : 'text-gray-300 cursor-not-allowed',
                         ].join(' ')}
                       >
@@ -291,7 +311,7 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
   );
 }
 
-function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfirmed }) {
+function BookingForm({ centerId, slot, durationMin, timezone, onChangeSlot, onConfirmed }) {
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [guardianName, setGuardianName] = useState('');
@@ -333,36 +353,46 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
 
   return (
     <form onSubmit={submit} className="mt-6 rounded-2xl bg-white shadow-lg p-5 sm:p-8 space-y-4">
-      <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm">
-        <p className="text-gray-500">Selected slot</p>
-        <p className="font-semibold text-gray-900">{fmtConfirmTime(slot, timezone)}</p>
-        <p className="text-xs text-gray-500 mt-0.5">{durationMin} minutes · {timezone}</p>
+      {/* The way back rides WITH the time it changes, at the top of the
+          form where a reader checking "is this the right slot?" is
+          already looking. There is a second one down by Book Now, for
+          anyone who only notices the wrong time on their way out. */}
+      <div className="rounded-lg bg-gray-50 border border-gray-200 p-3 text-sm flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-gray-500">Selected slot</p>
+          <p className="font-semibold text-gray-900">{fmtConfirmTime(slot, timezone)}</p>
+          <p className="text-xs text-gray-500 mt-0.5">{durationMin} minutes · {timezone}</p>
+        </div>
+        <button type="button" onClick={onChangeSlot}
+          className="inline-flex shrink-0 items-center gap-1 rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:border-gray-400 hover:bg-gray-50">
+          <ChevronUp size={13} /> Change time slot
+        </button>
       </div>
 
       <Field label="Email" required>
         <input type="email" value={email} onChange={e => setEmail(e.target.value)}
           required autoComplete="email"
-          className="w-full rounded border border-red-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
       </Field>
       <Field label="Phone Number" required>
         <input type="tel" value={phone} onChange={e => setPhone(e.target.value)}
           required autoComplete="tel"
-          className="w-full rounded border border-red-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
       </Field>
       <Field label="Guardian's Name" required>
         <input type="text" value={guardianName} onChange={e => setGuardianName(e.target.value)}
           required autoComplete="name"
-          className="w-full rounded border border-red-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
       </Field>
       <Field label="Child's Name" required>
         <input type="text" value={childName} onChange={e => setChildName(e.target.value)}
           required
-          className="w-full rounded border border-red-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200" />
       </Field>
       <Field label="Child's Grade" required>
         <select value={childGrade} onChange={e => setChildGrade(e.target.value)}
           required
-          className="w-full rounded border border-red-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200">
+          className="w-full rounded border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-2 focus:ring-red-200">
           <option value="">Select grade…</option>
           {GRADE_OPTIONS.map(g => <option key={g} value={g}>{g}</option>)}
         </select>
@@ -390,9 +420,9 @@ function BookingForm({ centerId, slot, durationMin, timezone, onCancel, onConfir
       )}
 
       <div className="flex items-center justify-end gap-2 pt-2">
-        <button type="button" onClick={onCancel} disabled={submitting}
-          className="text-sm text-gray-500 hover:text-gray-700 px-3 py-2">
-          Cancel
+        <button type="button" onClick={onChangeSlot} disabled={submitting}
+          className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700">
+          Change time slot
         </button>
         <button type="submit" disabled={!ready || submitting}
           className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
