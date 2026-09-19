@@ -6,7 +6,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Mascot from './Mascot';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
-import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
+import { isNewLookOn, setNewLook } from '../lib/newLook';
 import { myOpenCount, canUseDesk, LIVE_STATUSES } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { gamesEnabled } from '../lib/ratioGames';
@@ -44,11 +44,11 @@ function todayStr() {
 export default function Layout({ children }) {
   const auth = useAuth();
   const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = auth;
-  // The phone-first home is for people whose job is working shifts.
-  // Leadership keeps the classic pages, whose numbers are known-good.
-  const newLookEligible = canUseNewLook(auth);
+  // Everyone has a new home now — floor staff get the phone-first one,
+  // leadership get the board. Which is newLookHomeFor(), in HomeSwitch;
+  // all this needs to know is that the toggle is offered to all of them.
   const isOwnerLikeNav = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
-  const newLookOn = newLookEligible && isNewLookOn(profile?.uid);
+  const newLookOn = isNewLookOn(profile?.uid);
   // Volunteers are unpaid and salaried staff aren't paid from the hourly
   // sheet, so a pay projection would be wrong for both.
   const showPay = isHourlyPaid({ displayName: profile?.displayName, isVolunteer }, auth.centerConfig);
@@ -516,7 +516,7 @@ export default function Layout({ children }) {
               in the nav: it changes ONE page (Home), and dressing it up as a
               destination would oversell it. Off by default for everybody —
               nobody meets a redesigned portal because a deploy landed. */}
-          {newLookEligible && (
+          {(
             <button
               onClick={() => { setNewLook(profile?.uid, !newLookOn); window.location.reload(); }}
               className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"

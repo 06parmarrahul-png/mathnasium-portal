@@ -8,19 +8,20 @@
  *   the classic Home answers it through a sidebar built for an owner's
  *   eighteen links behind a hamburger menu.
  *
- * WHAT IT USED TO BE, AND WHY IT ISN'T
- *   It started as four doors — owner, director, host, instructor. The
- *   owner, director and host boards were removed after review: their
- *   figures depend on live Radius reads and cross-collection queries this
- *   app cannot yet do quickly or completely, so the numbers they showed
- *   were not trustworthy. A dashboard that is confidently wrong is worse
- *   than no dashboard, and leadership already has pages whose numbers are
- *   known-good. Only the instructor door survives, because everything on
- *   it is a direct read of that person's own shifts.
+ * TWO DOORS, AND THE RULE THAT DECIDES WHAT GOES ON THEM
+ *   It started as four — owner, director, host, instructor. Three were
+ *   removed after review: their figures depended on live Radius reads and
+ *   cross-collection maths this app cannot do quickly or completely, so
+ *   the numbers were not trustworthy. A dashboard that is confidently
+ *   wrong is worse than no dashboard.
  *
- *   If the Radius API in Ratio_Radius_API_Request_Brief.docx is ever
- *   approved, the other three become worth revisiting — with real data
- *   behind them.
+ *   Leadership has a door again, but under that finding rather than
+ *   around it: EVERY FIGURE ON IT IS A DIRECT READ of one collection this
+ *   app owns — today's shifts, unclaimed open shifts, accounts awaiting
+ *   approval, time-off requests, booked assessments, the leads funnel,
+ *   centre events. Ratio coverage, hours against budget, enrolment and
+ *   revenue are deliberately absent, and stay absent until the Radius API
+ *   in Ratio_Radius_API_Request_Brief.docx exists to make them true.
  *
  * OFF BY DEFAULT, PER PERSON
  *   Nobody meets a redesigned portal because a deploy landed. The
@@ -54,29 +55,34 @@ export function setNewLook(uid, on) {
 }
 
 /**
- * Who this is for: people whose job is working shifts.
+ * Which of the two homes this person gets.
  *
- * `isOwnerLike` already means owner / admin-assistant / super-admin /
- * director, and plain `admin` runs centre operations — all of them open the
- * portal to run the centre, not to find out when they are next in, and all
- * of them have pages whose numbers are known-good. Everyone else is floor
- * staff: instructors, leads, managers, trainees, volunteers.
+ * 'leadership' is for people who open the portal to RUN the centre —
+ * owners, directors, the admin assistant, plain admins, and Managers, who
+ * became the admin tier in their own right on 2026-09-14. Their question
+ * is "is the floor covered and what needs me".
  *
- * Read as "not leadership" rather than a list of job titles, so a custom
- * centre role invented in Manage Roles lands on the right side without
- * anyone editing this file.
+ * 'floor' is for everyone whose job is working shifts: instructors, leads,
+ * hosts, trainees, volunteers. Their question is "am I on today".
+ *
+ * Asked as "is this leadership" rather than as a list of job titles, so a
+ * custom centre role invented in Manage Roles lands on the right side
+ * without anyone editing this file. A Host carries admin.panel at some
+ * centres and is still floor staff — the title is not what decides it.
  */
-export function canUseNewLook(auth = {}) {
-  const { isOwnerLike, isAdmin, isSuperAdmin, isOwner, isDirector, isAdminAssistant } = auth;
+export function newLookHomeFor(auth = {}) {
+  const {
+    isOwnerLike, isAdmin, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isManager,
+  } = auth;
   const leadership = isOwnerLike
-    || isSuperAdmin || isOwner || isDirector || isAdminAssistant || isAdmin;
-  return !leadership;
+    || isSuperAdmin || isOwner || isDirector || isAdminAssistant || isAdmin || isManager;
+  return leadership ? 'leadership' : 'floor';
 }
 
 /**
- * Should this person actually be shown it right now?
- * Both eligible AND opted in — the check every caller wants.
+ * Should this person be shown their new home right now? Everyone has one,
+ * so this is only ever about whether they opted in.
  */
 export function newLookActive(auth = {}) {
-  return canUseNewLook(auth) && isNewLookOn(auth?.profile?.uid);
+  return isNewLookOn(auth?.profile?.uid);
 }

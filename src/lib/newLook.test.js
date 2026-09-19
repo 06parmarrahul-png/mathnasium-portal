@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
-  isNewLookOn, setNewLook, newLookKey, canUseNewLook, newLookActive,
+  isNewLookOn, setNewLook, newLookKey, newLookHomeFor, newLookActive,
 } from './newLook';
 
 const store = new Map();
@@ -46,44 +46,49 @@ describe('the opt-in switch', () => {
   });
 });
 
-describe('canUseNewLook — floor staff only', () => {
-  it('includes the people it is built for', () => {
-    expect(canUseNewLook({ isInstructor: true })).toBe(true);
-    expect(canUseNewLook({ isTraining: true })).toBe(true);
-    expect(canUseNewLook({ isVolunteer: true })).toBe(true);
-    expect(canUseNewLook({ isLead: true })).toBe(true);
-    expect(canUseNewLook({ isManager: true })).toBe(true);
-    expect(canUseNewLook({ isHost: true })).toBe(true);   // a host is an instructor
+describe('newLookHomeFor — which of the two doors', () => {
+  it('sends the people who work shifts to the floor home', () => {
+    expect(newLookHomeFor({ isInstructor: true })).toBe('floor');
+    expect(newLookHomeFor({ isTraining: true })).toBe('floor');
+    expect(newLookHomeFor({ isVolunteer: true })).toBe('floor');
+    expect(newLookHomeFor({ isLead: true })).toBe('floor');
+    expect(newLookHomeFor({ isHost: true })).toBe('floor');   // a host is an instructor
   });
 
-  it('excludes everyone who opens the portal to run the centre', () => {
-    // Their figures need data this app cannot yet read quickly or fully,
-    // so they keep the pages whose numbers are known-good.
-    expect(canUseNewLook({ isOwner: true })).toBe(false);
-    expect(canUseNewLook({ isSuperAdmin: true })).toBe(false);
-    expect(canUseNewLook({ isDirector: true })).toBe(false);
-    expect(canUseNewLook({ isAdminAssistant: true })).toBe(false);
-    expect(canUseNewLook({ isAdmin: true })).toBe(false);
-    expect(canUseNewLook({ isOwnerLike: true })).toBe(false);
+  it('sends the people who run the centre to the board', () => {
+    expect(newLookHomeFor({ isOwner: true })).toBe('leadership');
+    expect(newLookHomeFor({ isSuperAdmin: true })).toBe('leadership');
+    expect(newLookHomeFor({ isDirector: true })).toBe('leadership');
+    expect(newLookHomeFor({ isAdminAssistant: true })).toBe('leadership');
+    expect(newLookHomeFor({ isAdmin: true })).toBe('leadership');
+    expect(newLookHomeFor({ isOwnerLike: true })).toBe('leadership');
   });
 
-  it('excludes an instructor-flagged account that is also leadership', () => {
-    // Belt and braces: the leadership flag wins, whatever else is set.
-    expect(canUseNewLook({ isInstructor: true, isDirector: true })).toBe(false);
-    expect(canUseNewLook({ isLead: true, isOwnerLike: true })).toBe(false);
+  it('moves Managers onto the board, where they were floor staff before', () => {
+    // Managers became the admin tier in their own right on 2026-09-14,
+    // and they carry most of the desk. This is the one role whose home
+    // changes hands.
+    expect(newLookHomeFor({ isManager: true })).toBe('leadership');
   });
 
-  it('treats an empty auth object as floor staff, not leadership', () => {
-    // Fails toward the safer of the two: a plain instructor view.
-    expect(canUseNewLook({})).toBe(true);
+  it('lets leadership win over an instructor flag that is also set', () => {
+    expect(newLookHomeFor({ isInstructor: true, isDirector: true })).toBe('leadership');
+    expect(newLookHomeFor({ isLead: true, isOwnerLike: true })).toBe('leadership');
+  });
+
+  it('treats an empty auth object as floor staff', () => {
+    // Fails toward the page that shows one person their own shifts,
+    // rather than one that shows a stranger the whole centre.
+    expect(newLookHomeFor({})).toBe('floor');
+    expect(newLookHomeFor()).toBe('floor');
   });
 });
 
-describe('newLookActive — eligible AND opted in', () => {
+describe('newLookActive — opted in', () => {
   const instructor = { profile: { uid: 'u1' }, isInstructor: true };
   const director = { profile: { uid: 'u2' }, isDirector: true };
 
-  it('is false for an instructor who has not opted in', () => {
+  it('is false for someone who has not opted in', () => {
     expect(newLookActive(instructor)).toBe(false);
   });
 
@@ -92,11 +97,10 @@ describe('newLookActive — eligible AND opted in', () => {
     expect(newLookActive(instructor)).toBe(true);
   });
 
-  it('stays false for a director even with the flag set', () => {
-    // The important one: a leftover localStorage value from before the
-    // owner/director/host boards were removed must not resurrect anything.
+  it('is true for a director too, now that they have a home of their own', () => {
     setNewLook('u2', true);
-    expect(newLookActive(director)).toBe(false);
+    expect(newLookActive(director)).toBe(true);
+    expect(newLookHomeFor(director)).toBe('leadership');
   });
 
   it('survives a missing profile', () => {

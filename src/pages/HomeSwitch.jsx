@@ -1,13 +1,16 @@
 import { Component, Suspense, lazy } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { canUseNewLook, isNewLookOn, setNewLook } from '../lib/newLook';
+import { newLookHomeFor, isNewLookOn, setNewLook } from '../lib/newLook';
 import Home from './Home';
 
 const InstructorHome = lazy(() => import('./homes/InstructorHome'));
+const LeadershipHome = lazy(() => import('./homes/LeadershipHome'));
 
 /**
- * HomeSwitch — classic Home, or the phone-first one for floor staff, with a
- * floor under it.
+ * HomeSwitch — the classic Home, or one of the two new ones, with a floor
+ * under it. Which new one is newLookHomeFor(): leadership run the centre,
+ * everyone else works shifts, and they open the portal to ask different
+ * questions.
  *
  * WHY THE LOCAL BOUNDARY MATTERS MORE THAN IT LOOKS
  *   The app-wide ErrorBoundary (App.jsx) replaces the ENTIRE UI with an
@@ -34,7 +37,7 @@ class NewHomeBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('[InstructorHome] fell back to the classic home:', error, info);
+    console.error(`[${this.props.which} home] fell back to the classic home:`, error, info);
     try { setNewLook(this.props.uid, false); } catch { /* storage blocked */ }
   }
 
@@ -58,13 +61,15 @@ export default function HomeSwitch() {
   const auth = useAuth();
   const uid = auth.profile?.uid;
 
-  // Leadership never gets it, whatever their stored preference says.
-  if (!canUseNewLook(auth) || !isNewLookOn(uid)) return <Home />;
+  if (!isNewLookOn(uid)) return <Home />;
+
+  const which = newLookHomeFor(auth);
+  const NewHome = which === 'leadership' ? LeadershipHome : InstructorHome;
 
   return (
-    <NewHomeBoundary uid={uid}>
+    <NewHomeBoundary uid={uid} which={which}>
       <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>
-        <InstructorHome />
+        <NewHome />
       </Suspense>
     </NewHomeBoundary>
   );

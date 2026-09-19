@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { canUseNewLook } from './newLook';
+import { newLookHomeFor } from './newLook';
 import { resolveRoles, resolvePermissions } from './roles';
 import { resolveUserForCenter } from './centerMembership';
 
@@ -41,36 +41,43 @@ function authFor(user) {
   const isAdminAssistant = role === 'admin_assistant';
   const isSuperAdmin = role === 'super_admin';
   const isAdmin = role === 'admin';
+  // Same per-centre-then-legacy pattern AuthContext uses for the title.
+  const isManager = user.instructorType === 'Manager' || at?.instructorType === 'Manager';
   return {
-    profile: user, role, isOwner, isAdminAssistant, isSuperAdmin, isAdmin, isDirector,
+    profile: user, role, isOwner, isAdminAssistant, isSuperAdmin, isAdmin, isDirector, isManager,
     isOwnerLike: isOwner || isAdminAssistant || isSuperAdmin || isDirector,
     permissions,
     canSeeAdminPanel: permissions.has('admin.panel'),
   };
 }
 
-describe('a Host and the new home', () => {
-  it('is eligible — a Host is floor staff, not leadership', () => {
-    expect(canUseNewLook(authFor(RAHUL))).toBe(true);
+describe('a Host and the two homes', () => {
+  it('sends a Host to the floor home — a Host is floor staff', () => {
+    expect(newLookHomeFor(authFor(RAHUL))).toBe('floor');
   });
 
-  it('stays eligible even though Langley grants Host the admin panel', () => {
+  it('still does, though Langley grants Host the admin panel', () => {
     // The trap: Host carries admin.panel at this centre, so anything
-    // reading canSeeAdminPanel as "is leadership" would shut him out of
-    // his own home page.
+    // reading canSeeAdminPanel as "is leadership" would hand him the
+    // board instead of his own shifts.
     const auth = authFor(RAHUL);
     expect(auth.canSeeAdminPanel).toBe(true);
-    expect(canUseNewLook(auth)).toBe(true);
+    expect(newLookHomeFor(auth)).toBe('floor');
   });
 
-  it('is eligible for a Manager and a Lead too', () => {
-    for (const title of ['Manager', 'Lead', 'Instructor', 'Training']) {
+  it('sends a Lead, an Instructor and a Trainee to the floor home too', () => {
+    for (const title of ['Lead', 'Instructor', 'Training']) {
       const u = { ...RAHUL, centerMemberships: { langley: { instructorType: title } } };
-      expect(canUseNewLook(authFor(u)), title).toBe(true);
+      expect(newLookHomeFor(authFor(u)), title).toBe('floor');
     }
   });
 
-  it('is NOT eligible for the people who run the centre', () => {
+  it('sends a Manager to the board, on the title alone', () => {
+    const u = { ...RAHUL, centerMemberships: { langley: { instructorType: 'Manager' } } };
+    expect(newLookHomeFor(authFor(u))).toBe('leadership');
+  });
+
+  it('sends everyone who runs the centre to the board', () => {
     const cases = [
       { ...RAHUL, role: 'owner' },
       { ...RAHUL, role: 'admin' },
@@ -79,6 +86,6 @@ describe('a Host and the new home', () => {
       { ...RAHUL, role: 'super_admin' },
       { ...RAHUL, centerMemberships: { langley: { instructorType: 'Center Director' } } },
     ];
-    for (const u of cases) expect(canUseNewLook(authFor(u))).toBe(false);
+    for (const u of cases) expect(newLookHomeFor(authFor(u))).toBe('leadership');
   });
 });
