@@ -29,8 +29,8 @@ export const MASCOTS = [
   { id: 'bot', name: 'Cole-bot', tagline: 'Ratio’s software side', hero: 'wave' },
   { id: 'gamer', name: 'Gamer Cole', tagline: 'One more round', hero: 'game' },
   { id: 'coffee', name: 'Cole-feine', tagline: 'Three cups deep', hero: 'sip' },
-  { id: 'dog', name: 'Cole-9', tagline: 'Good boy', hero: 'fetch' },
-  { id: 'corgi', name: 'Cole-gi', tagline: 'Committed to the bit', hero: 'thumbs' },
+  { id: 'corgi', name: 'Cole-gi', tagline: 'Committed to the bit', hero: 'fetch' },
+  { id: 'sleepy', name: 'Sleepy Cole', tagline: 'Five more minutes', hero: 'yawn' },
 ];
 
 /** Everyone who signed up before there was a choice gets the original. */
@@ -51,8 +51,8 @@ export function mascotFor(id) {
 const INK = '#1B1216', RED = '#E31E24', SHADE = '#B0121A', WHITE = '#FFFFFF';
 const BLUSH = '#FF7F8E', GOLD = '#FFC83D', STEEL = '#C9CED6', VISOR = '#20232B', CAPEDGE = '#3D3136';
 const SLEEVE = '#A9713F', STAIN = '#7A4A22', BAG = '#8A5F4B';
-const FUR = '#9C6239', FURIN = '#E0998C', MUZZLE = '#F6E3CE';
 const CORGI = '#E0954A', CREAM = '#FCEBD6';
+const NIGHT = '#6C63A6', ROBE = '#8E86C4', ROBETRIM = '#4E477E';
 const OUT = 4;
 
 const n = (v) => Math.round(v * 100) / 100;
@@ -244,6 +244,7 @@ const POSES = {
   game:   { L: 'controller', R: null, eyes: 'open', brows: 'determined', mouth: 'smirk' },
   sip:    { L: ['fist', 44, 198, -8], R: 'cup', eyes: 'open', brows: 'up', mouth: 'o' },
   fetch:  { L: ['fist', 44, 198, -8], R: 'bone', eyes: 'open', brows: 'up', mouth: 'big' },
+  yawn:   { L: ['fist', 44, 198, -8], R: ['open', 160, 124, 22], eyes: 'open', brows: 'up', mouth: 'big' },
 };
 export const MASCOT_POSES = Object.keys(POSES);
 
@@ -362,49 +363,61 @@ const OUTFITS = {
     // person three cups deep is not rosy.
     noCheeks: true,
   },
-  dog: {
-    // Cole AS a dog, not Cole holding one. A companion at his feet would
-    // be out of frame in the 40px icon — which draws the head crop — and
-    // leave him identical to the original there. Ears, a patch and a
-    // muzzle are all head height, so they survive the crop. The floating
-    // head over the body, which is the colon in 1:4, is untouched.
-    // The tail has to stay clear of TWO things: the fists at y~186, which
-    // it passes above, and y=148 — the bottom of the head crop, which it
-    // was poking into as a stray brown mark beside the 40px icon. Its
-    // stroke, not its path, is what has to clear that line.
+  sleepy: {
+    // Dressing gown, sleep mask shoved up onto the forehead, and the zs
+    // still going. The mask is up rather than over the eyes on purpose:
+    // Cool Cole already owns "you cannot see his eyes", and a second one
+    // would read as the same Cole at 40px. Up on the brow it is its own
+    // shape AND it leaves the droopy eyes doing the talking.
     back: () => {
-      const d = 'M130 186 Q166 182 172 162';
-      const wag = (col, w) => `<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;
-      return wag(INK, 19) + wag(FUR, 11);
+      // Three zs drifting up and to the right. They have to stay inside
+      // the head crop (x 30..178), so the biggest one stops at 176.
+      const z = (x, y, k) => `<g transform="translate(${x} ${y}) scale(${k})">`
+        + `<path d="M0 0 H11 L0 13 H11" stroke="${INK}" stroke-width="3.6" fill="none"`
+        + ` stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></g>`;
+      return z(142, 36, 0.65) + z(153, 21, 0.85) + z(165, 4, 1.05);
     },
-    // A collar, and the colon hanging off it as the tag — the same emblem
-    // the original wears on its chest, worn the way a dog would.
-    body: () => `<path d="M74 159 Q100 176 126 159" stroke="${INK}" stroke-width="9" fill="none" stroke-linecap="round"/>`
-      + `<circle cx="100" cy="182" r="9.5" fill="${GOLD}" ${S(3)}/>`
-      + `<circle cx="100" cy="178.5" r="2.3" fill="${INK}"/><circle cx="100" cy="185.5" r="2.3" fill="${INK}"/>`,
-    hat: () => {
-      const ear = (d, inner) => `<path d="${d}" fill="${FUR}" ${S()}/>`
-        + `<path d="${inner}" stroke="${FURIN}" stroke-width="7" fill="none" stroke-linecap="round"/>`;
-      return (
-        // Patch first: it has to sit UNDER the eye that lands on it.
-        `<ellipse cx="124" cy="80" rx="27" ry="25" transform="rotate(14 124 80)" fill="${FUR}" ${S(3)}/>`
-        + `<ellipse cx="100" cy="116" rx="30" ry="20" fill="${MUZZLE}" ${S(3)}/>`
-        + `<ellipse cx="100" cy="101" rx="10" ry="7.5" fill="${INK}"/>`
-        + `<ellipse cx="96.5" cy="98" rx="2.8" ry="1.9" transform="rotate(-25 96.5 98)" fill="#fff" opacity=".5"/>`
-        // Ears last, over everything, because they hang in front.
-        + ear('M62 48 Q34 54 32 92 Q31 118 46 122 Q61 122 65 100 Q70 70 62 48 Z',
-              'M56 63 Q45 71 44 92 Q43 109 50 113')
-        + ear('M138 48 Q166 54 168 92 Q169 118 154 122 Q139 122 135 100 Q130 70 138 48 Z',
-              'M144 63 Q155 71 156 92 Q157 109 150 113')
-      );
+    // The gown, as two broad lapels meeting in a V over a tied belt.
+    // Drawn as thick strokes over thicker ink ones, which outlines the
+    // pair in a single pass; filled triangles read as an arrow instead.
+    // The collar can only be 42 wide — that is all the body ball has at
+    // y=156.
+    body: () => {
+      const lapel = (d, col, w) => `<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;
+      const L = 'M81 156 L100 193', R = 'M119 156 L100 193';
+      return lapel(L, INK, 18) + lapel(R, INK, 18)
+        + lapel(L, ROBE, 12.5) + lapel(R, ROBETRIM, 12.5)
+        + `<rect x="70" y="196" width="60" height="11" rx="5.5" fill="${NIGHT}" ${S(3)}/>`
+        + `<circle cx="100" cy="201.5" r="4.5" fill="${ROBE}" ${S(2.5)}/>`;
     },
-    // The nose needs the room between the eyes and the mouth.
-    mouthDrop: 8,
+    // The mask, and the two things that stop it reading as a beanie: a
+    // notch bitten out of the bottom edge where a nose would go, and the
+    // elastic carrying on past both sides to go round the head.
+    hat: () => `<path d="M50 40 Q38 44 36 58" stroke="${ROBETRIM}" stroke-width="5.5" fill="none" stroke-linecap="round"/>`
+      + `<path d="M150 40 Q162 44 164 58" stroke="${ROBETRIM}" stroke-width="5.5" fill="none" stroke-linecap="round"/>`
+      + `<path d="M62 18 H138 Q152 18 152 30 V36 Q152 47 139 47 Q117 47 108 41 Q100 36 92 41`
+      + ` Q83 47 61 47 Q48 47 48 36 V30 Q48 18 62 18 Z" fill="${NIGHT}" ${S()}/>`
+      + `<path d="M66 27 Q100 21 134 27" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round" opacity=".28"/>`,
+    // Half-shut. The lid is a plain ellipse in the head's own red drawn
+    // OVER the eye — it covers the white, the pupil and the eye's own
+    // outline in one go, and where it spills past the eye it lands on
+    // red anyway. The ink line under it is the lid's edge.
+    eyes: (kind) => {
+      if (kind === 'closed') return eyeShut(EYE_L, EYE_Y) + eyeShut(EYE_R, EYE_Y);
+      const droop = (x) =>
+        `<ellipse cx="${x}" cy="${EYE_Y}" rx="11" ry="14" fill="#fff" ${S(3)}/>`
+        + `<ellipse cx="${x}" cy="${EYE_Y + 4}" rx="6" ry="7.5" fill="${INK}"/>`
+        + `<circle cx="${x + 2.5}" cy="${EYE_Y + 1}" r="2.4" fill="#fff"/>`
+        + `<ellipse cx="${x}" cy="${EYE_Y - 13}" rx="14" ry="13" fill="${RED}"/>`
+        + `<path d="M${x - 11} ${EYE_Y - 3} Q${x} ${EYE_Y + 5} ${x + 11} ${EYE_Y - 3}"`
+        + ` stroke="${INK}" stroke-width="3.8" fill="none" stroke-linecap="round"/>`;
+      return droop(EYE_L) + droop(EYE_R);
+    },
   },
   corgi: {
-    // The other way round from Cole-9: that one IS a dog, this one is Cole
-    // in a corgi hood with his own face out — the costume's head sits on
-    // the crown and its little face looks out over his forehead.
+    // Cole in a corgi hood with his own face out — the costume's head
+    // sits on the crown and its little face looks out over his forehead,
+    // the way a costume Pikachu wears one.
     //
     // The whole costume has to fit between the top of the drawing and
     // y=48, where his brows start, so the hood is a band across the

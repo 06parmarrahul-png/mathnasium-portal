@@ -14,7 +14,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { ChevronLeft, ChevronRight, ChevronUp, CheckCircle2, Loader2, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronUp, CheckCircle2, Loader2, AlertTriangle, MapPin } from 'lucide-react';
 import { scrollToElement } from '../lib/smoothScroll';
 
 const GRADE_OPTIONS = [
@@ -151,7 +151,8 @@ export default function PublicBook() {
   }, [selectedSlot]);
 
   if (confirmed) {
-    return <ConfirmationScreen confirmed={confirmed} centre={data?.centre} timezone={data?.centre?.timezone} />;
+    return <ConfirmationScreen confirmed={confirmed} centre={data?.centre}
+      timezone={data?.centre?.timezone} address={data?.settings?.address} />;
   }
 
   return (
@@ -168,6 +169,21 @@ export default function PublicBook() {
             <p className="mt-4 text-sm sm:text-base text-white/85 leading-relaxed">
               {data.settings.subheadline}
             </p>
+          )}
+          {/* The assessment is in person. Said here, before they pick a
+              time, rather than left for a parent to discover on the day —
+              and said even with no address saved, because "come to us" is
+              the part they have to know. */}
+          {data?.settings?.enabled && (
+            <div className="mx-auto mt-5 flex max-w-md items-start gap-2.5 rounded-xl bg-white/10 px-4 py-3 text-left">
+              <MapPin size={16} className="mt-0.5 shrink-0 text-white/70" />
+              <div className="min-w-0 text-sm">
+                <p className="font-semibold">This assessment happens in person, at our centre.</p>
+                {data.settings.address
+                  ? <p className="mt-0.5 text-white/80">{data.settings.address}</p>
+                  : <p className="mt-0.5 text-white/60">We&apos;ll send the address in your confirmation email.</p>}
+              </div>
+            </div>
           )}
         </div>
 
@@ -483,7 +499,7 @@ function Field({ label, required, children }) {
   );
 }
 
-function ConfirmationScreen({ confirmed, centre, timezone }) {
+function ConfirmationScreen({ confirmed, centre, timezone, address }) {
   return (
     <div className={`min-h-screen ${PAGE_BG} flex items-center justify-center px-4 py-12`}>
       <div className="max-w-md w-full rounded-2xl bg-white shadow-xl p-8 text-center">
@@ -498,6 +514,17 @@ function ConfirmationScreen({ confirmed, centre, timezone }) {
           <p className="text-xs text-gray-500">Appointment</p>
           <p className="font-semibold text-gray-900 mt-0.5">{fmtConfirmTime(confirmed.slot, timezone)}</p>
           <p className="text-xs text-gray-500 mt-0.5">{confirmed.durationMin} minutes</p>
+          {/* This screen is the one that gets screenshotted, so the place
+              to go belongs on it. */}
+          <div className="mt-3 flex items-start gap-2 border-t border-gray-200 pt-3">
+            <MapPin size={14} className="mt-0.5 shrink-0 text-gray-400" />
+            <div className="min-w-0">
+              <p className="text-xs text-gray-500">In person, at the centre</p>
+              <p className="mt-0.5 text-sm font-semibold text-gray-900">
+                {address || centre?.name || 'Mathnasium'}
+              </p>
+            </div>
+          </div>
         </div>
         <p className="mt-5 text-xs text-gray-400">
           Need to reschedule? Just reply to the confirmation email.

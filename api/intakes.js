@@ -106,6 +106,7 @@ async function handleAvailability(req, res) {
       slotDurationMin: settings.slotDurationMin,
       headline:    settings.headline,
       subheadline: settings.subheadline,
+      address:     settings.address || '',
     },
     days,
   });

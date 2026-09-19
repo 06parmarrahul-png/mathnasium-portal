@@ -30,9 +30,9 @@ describe('picking a character at sign-up', () => {
     draw();
     const radios = screen.getAllByRole('radio');
     expect(radios.map(r => r.value))
-      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee', 'dog', 'corgi']);
+      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee', 'corgi', 'sleepy']);
     expect(radios.find(r => r.checked).value).toBe('classic');
-    for (const name of ['Cole', 'Coach Cole', 'Cool Cole', 'Cole-bot', 'Gamer Cole', 'Cole-feine', 'Cole-9', 'Cole-gi']) {
+    for (const name of ['Cole', 'Coach Cole', 'Cool Cole', 'Cole-bot', 'Gamer Cole', 'Cole-feine', 'Cole-gi', 'Sleepy Cole']) {
       expect(screen.getByText(name)).toBeTruthy();
     }
   });

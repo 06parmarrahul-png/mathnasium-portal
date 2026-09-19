@@ -9,7 +9,14 @@ const parse = (svg) => new DOMParser().parseFromString(svg, 'image/svg+xml');
 describe('choosing a mascot', () => {
   it('has the eight Coles', () => {
     expect(MASCOTS.map(m => m.id))
-      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee', 'dog', 'corgi']);
+      .toEqual(['classic', 'coach', 'cool', 'bot', 'gamer', 'coffee', 'corgi', 'sleepy']);
+  });
+
+  it('sends a retired Cole back to the original rather than a broken icon', () => {
+    // Cole-9 was on the roster for a day. Nobody had picked him, but the
+    // fallback is what makes removing one safe at all.
+    expect(resolveMascotId('dog')).toBe('classic');
+    expect(mascotFor('dog').name).toBe('Cole');
   });
 
   it('gives anyone who never picked the original', () => {
@@ -72,22 +79,23 @@ describe('the artwork', () => {
     expect(mascotSvg('classic')).toContain('M92 38 Q84 14');     // the cowlick
     expect(mascotSvg('gamer')).toContain('M50 112 Q48 136');     // the boom mic
     expect(mascotSvg('coffee')).toContain('#8A5F4B');            // the eye bags
-    expect(mascotSvg('dog')).toContain('M62 48 Q34 54');          // ears down
-    expect(mascotSvg('corgi')).toContain('M52 46 Q44 6');          // ears up
+    expect(mascotSvg('corgi')).toContain('M52 46 Q44 6');           // the hood's ears
+    expect(mascotSvg('sleepy')).toContain('Q83 47 61 47');          // the mask's nose notch
   });
 
-  it('tells the two dogs apart by which way the ears go', () => {
-    // Cole-9 IS a dog and Cole-gi is Cole in a dog hood, so they share
-    // a theme and have to differ where it is readable at 40px: one set
-    // of ears hangs, the other stands up.
-    const dog = mascotSvg('dog', 'stand', { crop: 'head' });
-    const corgi = mascotSvg('corgi', 'stand', { crop: 'head' });
-    expect(dog).toContain('M62 48 Q34 54');
-    expect(corgi).not.toContain('M62 48 Q34 54');
-    // ...and only the hood leaves Cole's own face and blush in place.
-    expect(corgi).toContain('#FF7F8E');
-    expect(dog).toContain('#F6E3CE');   // the muzzle Cole-9 wears instead
-    expect(corgi).not.toContain('#F6E3CE');
+  it('keeps Sleepy Cole apart from Cool Cole, who also covers his face', () => {
+    // Both wear something across the eyes. Cool's is over them; Sleepy's
+    // is shoved up on his forehead, which is the whole reason his eyes
+    // still show — two Coles with hidden eyes would read the same small.
+    const sleepy = mascotSvg('sleepy', 'stand', { crop: 'head' });
+    expect(sleepy).toContain('#6C63A6');            // the mask
+    expect(sleepy).not.toContain('M60 77 H140');    // not Cool's shades
+    expect(sleepy).toContain('#FFFFFF');            // an eye white is still drawn
+  });
+
+  it('gives the bone to the Cole whose pose calls for it', () => {
+    expect(mascotSvg('corgi', 'fetch')).toContain('translate(172 146)');
+    expect(mascotSvg('corgi', 'stand')).not.toContain('translate(172 146)');
   });
 
   it('hands a prop to the pose that holds it, and to no other', () => {
@@ -95,23 +103,6 @@ describe('the artwork', () => {
     expect(mascotSvg('gamer', 'stand')).not.toContain('M64 172 Q52 176');
     expect(mascotSvg('coffee', 'sip')).toContain('M150 106 H182');
     expect(mascotSvg('coffee', 'stand')).not.toContain('M150 106 H182');
-    expect(mascotSvg('dog', 'fetch')).toContain('translate(172 146)');
-    expect(mascotSvg('dog', 'stand')).not.toContain('translate(172 146)');
-  });
-
-  it('keeps the dog\'s tail below the head crop', () => {
-    // The crop is the top 148 units of the drawing, and the tail lives
-    // under it. Its STROKE is what has to clear that line, not its path:
-    // at 19 wide the tail reached past it and drew a stray brown mark
-    // beside the 40px icon. Cropping only swaps the viewBox, so this has
-    // to be checked as geometry rather than as markup that went away.
-    const tail = mascotSvg('dog', 'stand')
-      .match(/<path d="(M130 [^"]+)" stroke="[^"]+" stroke-width="(\d+)"/);
-    expect(tail).toBeTruthy();
-    const ys = [...tail[1].matchAll(/-?[\d.]+\s+(-?[\d.]+)/g)].map(m => Number(m[1]));
-    // A quadratic stays inside the hull of its three points, so the
-    // smallest y written down bounds the curve itself.
-    expect(Math.min(...ys) - Number(tail[2]) / 2).toBeGreaterThanOrEqual(148);
   });
 
   it('keeps every Cole apart in the 40px icon, which draws the head standing', () => {

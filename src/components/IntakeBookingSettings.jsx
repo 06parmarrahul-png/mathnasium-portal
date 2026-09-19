@@ -32,6 +32,7 @@ const DEFAULTS = {
     Sunday: '', Monday: '', Tuesday: '', Wednesday: '',
     Thursday: '', Friday: '', Saturday: '',
   },
+  address:     '',
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
 };
@@ -148,6 +149,17 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
         <Field label="Sub-headline / description">
           <textarea rows={3} value={s.subheadline} onChange={e => setField('subheadline', e.target.value)}
             className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+        </Field>
+        <Field label="Centre address">
+          <input type="text" value={s.address || ''}
+            placeholder="e.g. 20159 88 Ave #102, Langley Twp, BC V1M 0A4"
+            onChange={e => setField('address', e.target.value)}
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+          <p className="mt-1 text-xs text-gray-500">
+            Shown on the booking page and in the confirmation, under a note that the
+            assessment is in person. Leave blank and the note still appears, without a
+            street address.
+          </p>
         </Field>
       </Card>
 

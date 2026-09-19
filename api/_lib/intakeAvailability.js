@@ -38,6 +38,10 @@ export const DEFAULT_INTAKE_SETTINGS = {
     Sunday: null, Monday: null, Tuesday: null, Wednesday: null,
     Thursday: null, Friday: null, Saturday: null,
   },
+  // Where the family actually has to turn up. Shown on the booking page
+  // and again on the confirmation, because an assessment is in person and
+  // a parent who assumed otherwise finds out on the day.
+  address: '',
   // Marketing copy on the public booking page. Centre-overridable.
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
