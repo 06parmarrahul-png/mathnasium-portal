@@ -377,18 +377,19 @@ const OUTFITS = {
         + ` stroke-linecap="round" stroke-linejoin="round" opacity=".55"/></g>`;
       return z(142, 36, 0.65) + z(153, 21, 0.85) + z(165, 4, 1.05);
     },
-    // The gown, as two broad lapels meeting in a V over a tied belt.
-    // Drawn as thick strokes over thicker ink ones, which outlines the
-    // pair in a single pass; filled triangles read as an arrow instead.
-    // The collar can only be 42 wide — that is all the body ball has at
-    // y=156.
+    // Pyjama stripes, clipped to the ball so they wrap it instead of
+    // sitting on top of it. An earlier version dressed him in a gown with
+    // lapels and a belt, which read as a purple arrow stuck to a sphere:
+    // the body is a BALL, and garment shapes with corners fight that.
+    // Stripes have no corners, so they just follow it.
+    //
+    // The clip id is fixed rather than counted. Every drawing is its own
+    // <img> document, so it cannot collide with another Cole's, and
+    // within this one nothing else claims the name.
     body: () => {
-      const lapel = (d, col, w) => `<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;
-      const L = 'M81 156 L100 193', R = 'M119 156 L100 193';
-      return lapel(L, INK, 18) + lapel(R, INK, 18)
-        + lapel(L, ROBE, 12.5) + lapel(R, ROBETRIM, 12.5)
-        + `<rect x="70" y="196" width="60" height="11" rx="5.5" fill="${NIGHT}" ${S(3)}/>`
-        + `<circle cx="100" cy="201.5" r="4.5" fill="${ROBE}" ${S(2.5)}/>`;
+      const band = (y) => `<path d="M56 ${y} Q100 ${y + 8} 144 ${y} L144 ${y + 10} Q100 ${y + 18} 56 ${y + 10} Z" fill="${NIGHT}"/>`;
+      return `<defs><clipPath id="sleepy-pj"><circle cx="100" cy="188" r="36"/></clipPath></defs>`
+        + `<g clip-path="url(#sleepy-pj)" opacity=".92">${band(160)}${band(186)}${band(212)}</g>`;
     },
     // The mask, and the two things that stop it reading as a beanie: a
     // notch bitten out of the bottom edge where a nose would go, and the
