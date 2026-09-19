@@ -29,6 +29,8 @@ export const MASCOTS = [
   { id: 'bot', name: 'Cole-bot', tagline: 'Ratio’s software side', hero: 'wave' },
   { id: 'gamer', name: 'Gamer Cole', tagline: 'One more round', hero: 'game' },
   { id: 'coffee', name: 'Cole-feine', tagline: 'Three cups deep', hero: 'sip' },
+  { id: 'dog', name: 'Cole-9', tagline: 'Good boy', hero: 'fetch' },
+  { id: 'corgi', name: 'Cole-gi', tagline: 'Committed to the bit', hero: 'thumbs' },
 ];
 
 /** Everyone who signed up before there was a choice gets the original. */
@@ -49,6 +51,8 @@ export function mascotFor(id) {
 const INK = '#1B1216', RED = '#E31E24', SHADE = '#B0121A', WHITE = '#FFFFFF';
 const BLUSH = '#FF7F8E', GOLD = '#FFC83D', STEEL = '#C9CED6', VISOR = '#20232B', CAPEDGE = '#3D3136';
 const SLEEVE = '#A9713F', STAIN = '#7A4A22', BAG = '#8A5F4B';
+const FUR = '#9C6239', FURIN = '#E0998C', MUZZLE = '#F6E3CE';
+const CORGI = '#E0954A', CREAM = '#FCEBD6';
 const OUT = 4;
 
 const n = (v) => Math.round(v * 100) / 100;
@@ -202,11 +206,29 @@ function cup(fill) {
     + glove('fist', 146, 138, -10, false, fill);
 }
 
+/** A bone, held up. */
+function bone(fill) {
+  const parts = (col, stroke) =>
+    `<rect x="-17" y="-7" width="34" height="14" rx="4" fill="${col}" ${stroke}/>`
+    + `<circle cx="-17" cy="-8" r="8" fill="${col}" ${stroke}/>`
+    + `<circle cx="-17" cy="8" r="8" fill="${col}" ${stroke}/>`
+    + `<circle cx="17" cy="-8" r="8" fill="${col}" ${stroke}/>`
+    + `<circle cx="17" cy="8" r="8" fill="${col}" ${stroke}/>`;
+  // Drawn twice: once fat in ink, for one clean outline around the whole
+  // shape, then again in white on top for the interior. Outlining each
+  // piece on its own would leave the seams between them showing.
+  return `<g transform="translate(172 146) rotate(-18)">`
+    + parts(INK, `stroke="${INK}" stroke-width="7" stroke-linejoin="round"`)
+    + parts('#fff', 'stroke="none"')
+    + `</g>`
+    + glove('fist', 154, 164, -6, false, fill);
+}
+
 /**
  * Things a pose can hold. Each draws its own glove(s), so a pose naming
  * one leaves that hand — and for the controller, both — empty.
  */
-const PROPS = { clipboard, controller, cup };
+const PROPS = { clipboard, controller, cup, bone };
 
 // ── poses & outfits ─────────────────────────────────────────────────────
 const POSES = {
@@ -221,6 +243,7 @@ const POSES = {
   // a fist that would land on top of it.
   game:   { L: 'controller', R: null, eyes: 'open', brows: 'determined', mouth: 'smirk' },
   sip:    { L: ['fist', 44, 198, -8], R: 'cup', eyes: 'open', brows: 'up', mouth: 'o' },
+  fetch:  { L: ['fist', 44, 198, -8], R: 'bone', eyes: 'open', brows: 'up', mouth: 'big' },
 };
 export const MASCOT_POSES = Object.keys(POSES);
 
@@ -338,6 +361,77 @@ const OUTFITS = {
     // Blush would fight the eye whites for the same few pixels, and a
     // person three cups deep is not rosy.
     noCheeks: true,
+  },
+  dog: {
+    // Cole AS a dog, not Cole holding one. A companion at his feet would
+    // be out of frame in the 40px icon — which draws the head crop — and
+    // leave him identical to the original there. Ears, a patch and a
+    // muzzle are all head height, so they survive the crop. The floating
+    // head over the body, which is the colon in 1:4, is untouched.
+    // The tail has to stay clear of TWO things: the fists at y~186, which
+    // it passes above, and y=148 — the bottom of the head crop, which it
+    // was poking into as a stray brown mark beside the 40px icon. Its
+    // stroke, not its path, is what has to clear that line.
+    back: () => {
+      const d = 'M130 186 Q166 182 172 162';
+      const wag = (col, w) => `<path d="${d}" stroke="${col}" stroke-width="${w}" fill="none" stroke-linecap="round"/>`;
+      return wag(INK, 19) + wag(FUR, 11);
+    },
+    // A collar, and the colon hanging off it as the tag — the same emblem
+    // the original wears on its chest, worn the way a dog would.
+    body: () => `<path d="M74 159 Q100 176 126 159" stroke="${INK}" stroke-width="9" fill="none" stroke-linecap="round"/>`
+      + `<circle cx="100" cy="182" r="9.5" fill="${GOLD}" ${S(3)}/>`
+      + `<circle cx="100" cy="178.5" r="2.3" fill="${INK}"/><circle cx="100" cy="185.5" r="2.3" fill="${INK}"/>`,
+    hat: () => {
+      const ear = (d, inner) => `<path d="${d}" fill="${FUR}" ${S()}/>`
+        + `<path d="${inner}" stroke="${FURIN}" stroke-width="7" fill="none" stroke-linecap="round"/>`;
+      return (
+        // Patch first: it has to sit UNDER the eye that lands on it.
+        `<ellipse cx="124" cy="80" rx="27" ry="25" transform="rotate(14 124 80)" fill="${FUR}" ${S(3)}/>`
+        + `<ellipse cx="100" cy="116" rx="30" ry="20" fill="${MUZZLE}" ${S(3)}/>`
+        + `<ellipse cx="100" cy="101" rx="10" ry="7.5" fill="${INK}"/>`
+        + `<ellipse cx="96.5" cy="98" rx="2.8" ry="1.9" transform="rotate(-25 96.5 98)" fill="#fff" opacity=".5"/>`
+        // Ears last, over everything, because they hang in front.
+        + ear('M62 48 Q34 54 32 92 Q31 118 46 122 Q61 122 65 100 Q70 70 62 48 Z',
+              'M56 63 Q45 71 44 92 Q43 109 50 113')
+        + ear('M138 48 Q166 54 168 92 Q169 118 154 122 Q139 122 135 100 Q130 70 138 48 Z',
+              'M144 63 Q155 71 156 92 Q157 109 150 113')
+      );
+    },
+    // The nose needs the room between the eyes and the mouth.
+    mouthDrop: 8,
+  },
+  corgi: {
+    // The other way round from Cole-9: that one IS a dog, this one is Cole
+    // in a corgi hood with his own face out — the costume's head sits on
+    // the crown and its little face looks out over his forehead.
+    //
+    // The whole costume has to fit between the top of the drawing and
+    // y=48, where his brows start, so the hood is a band across the
+    // forehead rather than a shell around the head. What carries it at
+    // 40px is the EARS: upright and pointed, where Cole-9's hang down and
+    // Cool Cole's hood has none at all.
+    hat: () => {
+      const ear = (outer, inner) => `<path d="${outer}" fill="${CORGI}" ${S()}/>`
+        + `<path d="${inner}" fill="${CREAM}" ${S(2.5)}/>`;
+      return (
+        // Ears first, so the band crosses their base and they read as
+        // part of the hood rather than stuck on top of it.
+        ear('M52 46 Q44 6 64 2 Q76 6 82 36 Z', 'M59 38 Q53 15 65 12 Q72 15 75 33 Z')
+        + ear('M148 46 Q156 6 136 2 Q124 6 118 36 Z', 'M141 38 Q147 15 135 12 Q128 15 125 33 Z')
+        + `<path d="M44 100 Q36 22 100 16 Q164 22 156 100 Q150 52 100 44 Q50 52 44 100 Z" fill="${CORGI}" ${S()}/>`
+        // The white blaze every corgi has. It widens toward the snout —
+        // a stripe of even width reads as a headband, not a face.
+        + `<path d="M95 17 Q90 31 84 46 H116 Q110 31 105 17 Z" fill="${CREAM}" ${S(2.5)}/>`
+        // ...and the costume's own face, looking out over his forehead.
+        + `<circle cx="78" cy="29" r="4.2" fill="${INK}"/><circle cx="122" cy="29" r="4.2" fill="${INK}"/>`
+        + `<ellipse cx="100" cy="38" rx="7.5" ry="5.5" fill="${INK}"/>`
+      );
+    },
+    // He is still Cole under the costume, so he still wears the colon —
+    // on the cream belly the costume gives him.
+    body: () => `<ellipse cx="100" cy="194" rx="19" ry="22" fill="${CREAM}" ${S(3)}/>`
+      + `<circle cx="100" cy="187" r="3.4" fill="${RED}"/><circle cx="100" cy="201" r="3.4" fill="${RED}"/>`,
   },
 };
 
