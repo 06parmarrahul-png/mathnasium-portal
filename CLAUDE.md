@@ -578,39 +578,75 @@ scheduled elsewhere. The `steam` / `summerCamp` buckets are **retired**
 (`ACTIVE_BUCKETS` excludes them) but the keys survive so past periods and the 58
 historical flex shifts still report.
 
-## The new look (opt-in phone-first home for floor staff)
+## The new look — two opt-in homes
 
-One alternative Home for the people who work shifts — instructors, leads,
-trainees, volunteers. Their question is "am I on today, and does anyone
-need anything from me?", they ask it on a phone, and the classic Home
-answers it through a sidebar built for an owner's eighteen links behind a
-hamburger.
+Two alternative Homes, because two groups open the portal to ask different
+questions. **Floor staff** — instructors, leads, hosts, trainees,
+volunteers — ask "am I on today, and does anyone need anything from me?",
+on a phone. **Leadership** — owners, directors, the admin assistant,
+admins and Managers — ask "is the floor covered, and what is waiting on
+me". The classic Home answers neither, through a sidebar built for an
+owner's eighteen links behind a hamburger.
 
-**It started as four doors** — owner, director, host, instructor — and the
-other three were **removed after review**: their figures depend on live
-Radius reads and cross-collection maths this app cannot yet do quickly or
-completely, so the numbers they showed were not trustworthy. A dashboard
-that is confidently wrong is worse than no dashboard, and leadership
-already has pages whose numbers are known-good. Only the instructor door
-survived, because every figure on it is a direct read of that person's own
-shifts, the open-shift board, or announcements.
+### THE RULE BOTH OF THEM LIVE UNDER — read this before adding a card
 
-If the Radius API in `Ratio_Radius_API_Request_Brief.docx` is ever
-approved, the other three become worth revisiting — with real data.
+It started as four doors — owner, director, host, instructor — and three
+were **removed after review**: their figures depended on live Radius reads
+and cross-collection maths this app cannot do quickly or completely, so the
+numbers were not trustworthy. **A dashboard that is confidently wrong is
+worse than no dashboard.** The deleted owner board led with "hours against
+budget" and "people on ratio, every open day this month". Both were
+derived. Both are why it went.
 
-### Who gets it
+Leadership has a door again (2026-09-19), under that finding rather than
+around it: **every figure on either home is a DIRECT READ of one
+collection.** Today's shifts, unclaimed open shifts, accounts awaiting
+approval, time-off requests, booked assessments, the leads funnel,
+availability rows, centre events, announcements.
 
-`canUseNewLook()` in `src/lib/newLook.js` reads as **"not leadership"**
-rather than a list of job titles, so a custom centre role invented in
-Manage Roles lands on the right side without a code change. `isOwnerLike`
-(owner / admin-assistant / super-admin / director) and plain `admin` are
-excluded; everyone else is floor staff. `newLookActive()` is the check
-callers want: eligible AND opted in — a leftover localStorage value from
-when the other doors existed cannot resurrect anything.
+**Deliberately absent, and staying absent: ratio coverage, hours against
+budget, enrolment, attendance, revenue.** If you are about to add one, you
+are rebuilding the version that got deleted — wait for the Radius API in
+`Ratio_Radius_API_Request_Brief.docx`. A test in
+`LeadershipHome.render.test.jsx` asserts none of those words reach the
+page. ("enrolled" is exempt: it is a leads status a human sets in this app.)
+
+### Who gets which
+
+`newLookHomeFor(auth)` in `src/lib/newLook.js` returns `'leadership'` or
+`'floor'`. It asks **"is this leadership"** rather than listing job titles,
+so a custom centre role invented in Manage Roles lands on the right side
+without a code change. A Host carries `admin.panel` at Langley and is still
+floor staff — the permission is not what decides it. **Managers are on the
+leadership home** (they became the admin tier on 2026-09-14 and carry most
+of the desk); they were on the floor home before.
+
+`newLookActive()` is only about opting in now, since everybody has a home.
 
 **OFF by default, per uid.** Nobody meets a redesigned portal because a
 deploy landed, and signing out of one account into another does not carry
 the setting across.
+
+### The leadership home
+
+`src/pages/homes/LeadershipHome.jsx` — **one page, not three.** A Manager
+and a Director carry the same permissions apart from `centre.settings`, so
+the differences are gated cards rather than separate files: Directors and
+above get the Centre settings shortcut and the availability count.
+
+Two traps it hit in the building, both worth knowing:
+
+- **There is no "submitted availability" flag on a person.** Availability
+  is one row per person per DAY, so the only honest answer is how many
+  distinct `userId`s have a row dated today or later. A first pass read an
+  invented `availabilitySubmittedFor` field and would have reported nobody,
+  forever, confidently — inside the page built to prevent exactly that.
+- **`min-w-0` on the grid columns is load-bearing.** `truncate` sets
+  `white-space: nowrap`, whose min-content is the whole string, and a grid
+  item's `min-width` defaults to `auto` — so the track could not shrink
+  below 408px on a 390px phone and the cards ran off the edge. Measured
+  before and after. `InstructorHome` has the same shape and `truncate` in
+  three places inside its grid; it has not been checked.
 
 ### Three ways back
 
@@ -632,7 +668,11 @@ the setting across.
 Shifts / Chat — on phones only (`lg:hidden`, where the sidebar returns),
 and only when the new look is on. Shifts is hidden without `canTakeShifts`;
 Chat is hidden for volunteers, who get no team messaging. Targets are
-`min-h-[56px]`, past the 44px minimum. `.nl-tabbar` carries
+`min-h-[56px]`, past the 44px minimum. **Loose end:** those tabs were
+drawn for floor staff, and leadership now reach the new look too — a
+director on a phone gets Today / Schedule / Shifts / Chat, where Schedule
+means their own shifts. It works; it is not necessarily what they want.
+`.nl-tabbar` carries
 `env(safe-area-inset-bottom)` for the iOS home indicator, and the page ends
 in `pb-28` so nothing hides behind the bar.
 
@@ -932,6 +972,68 @@ made when the gift card is handed over, so it can change without a deploy.
 - **Never a performance measure.** Optional, on their own time, and the page says
   so — staff are hourly, and a contest that feels expected is unpaid work.
 
+## The public booking page (`/book/:centerId`)
+
+Parent-facing, no login, no auth: a week-view slot grid plus the intake
+form. `src/pages/PublicBook.jsx`, availability engine in
+`api/_lib/intakeAvailability.js`, settings in
+`components/IntakeBookingSettings.jsx` (Centre Settings).
+
+- **Free slots are GREEN**, the picked one solid green, taken ones dim,
+  with a legend. They were red, and a red cell reads as *unavailable* to
+  everybody. Required fields have NEUTRAL borders for the same reason — red
+  ones made an untouched form look like a rejected one.
+- **Picking a slot walks the page down to the form** over ~900ms and stops
+  **72px short**, so the grid still shows and the reader can see there is
+  something above. It aborts the moment they touch the wheel, screen or a
+  key; `prefers-reduced-motion` gets a plain jump. `src/lib/smoothScroll.js`.
+  **"Change time slot"** rides in the selected-slot card (a "Cancel" button
+  existed, buried under the SMS disclaimer, named as though it abandoned
+  the booking).
+- **`maxIntakesPerDay` + `maxIntakesPerWeekday`** cap assessments per day —
+  "three a day, but two on Fridays". Blank = no limit, so an untouched
+  centre is unchanged. Enforced in `computeWeekSlots` (the whole day closes,
+  marked FULL) **and** in `validateSlot`, which reports the DAY as full
+  rather than the time as taken — that sends a parent to another day
+  instead of another time on the same full day.
+- **`intakeSettings.address`** appears under "This assessment happens in
+  person, at our centre", on the page and the confirmation. The note shows
+  **even with no address saved** — turning up is the part a parent has to
+  know.
+
+Two traps, both caught by tests:
+
+- **`Number(null)` is `0`.** A cap of `null` coerced to zero would have
+  closed online booking at every centre on deploy. Check for blank BEFORE
+  `Number()`.
+- **A slot is a wall-clock string with no zone** (`2026-09-25T17:00:00`),
+  and `validateSlot` parsed it as local then read **UTC** getters off it.
+  Correct only because Vercel runs UTC; on any other runtime a Friday
+  evening booking validated as Saturday. Now read straight off the string.
+  The engine's tests pass under UTC, Vancouver and Sydney.
+
+## A job title is copied onto shifts, like a name
+
+A shift stores the person's `instructorType` at the moment it is created,
+and the coverage grid reads that copy — so promoting someone to Lead left
+every shift already on the calendar showing the old title (this is why Luke
+still drew as HS after his promotion).
+
+`propagateRole` in `Admin.jsx` mirrors `propagateRename` next to it, with
+two differences: **only shifts from today forward** (a worked shift records
+the job that was done, and payroll reads the same field), and **only shifts
+still carrying the title they are leaving** — a future shift deliberately
+scheduled as another role is real data, not staleness. The grid is built
+for "LEAD 11-3 covering for the owner, HOST 3-7".
+
+The rule lives in `src/lib/roleBackfill.js`, shared with
+`scripts/backfill-shift-roles.js` (dry run unless `--apply`) so the one-off
+repair cannot drift from the live path. The script **reports and makes a
+person name the stale title** rather than guessing: a run against live data
+found fifteen people with `Training` shifts on one date, which was a real
+all-staff training day, and two Leads with deliberate `Host` shifts. A
+blanket "make shifts match titles" would have wiped all of them.
+
 ## Page names and job titles — one list
 
 Every page's name lives in `src/lib/pageNames.js` (`PAGES`). The sidebar,
@@ -966,9 +1068,10 @@ right title.
 ## Cole — the mascot each person picks
 
 The A+ at the top of the sidebar (and the phone header, and sign-up) is now
-**Cole**, Ratio's mascot, in one of four outfits: `classic` (Cole),
-`coach` (Coach Cole), `cool` (Cool Cole), `bot` (Cole-bot). Each person picks
-one at sign-up and can change it on Account → "Your character"; it's stored as
+**Cole**, Ratio's mascot, in one of eight outfits: `classic` (Cole),
+`coach` (Coach Cole), `cool` (Cool Cole), `bot` (Cole-bot), `gamer` (Gamer
+Cole), `coffee` (Cole-feine), `corgi` (Cole-gi) and `sleepy` (Sleepy Cole).
+Each person picks one at sign-up and can change it on Account → "Your character"; it's stored as
 `users/{uid}.mascot` and read through `resolveMascotId()`, so a missing or
 unknown value draws the original. No rules change was needed — self-update
 already allows any field except role / approval / centre ones.
@@ -976,11 +1079,38 @@ already allows any field except role / approval / centre ones.
 `src/lib/mascots.js` builds every drawing as SVG markup from one rig
 (shaded balls, face, gloves, poses) and `components/Mascot.jsx` shows it as an
 `<img>` data URL — its own document, so clip-path ids can't collide, and no
-markup is injected. Poses (`stand`, `thumbs`, `wave`, `cheer`, `think`,
-`peace`, `coach`) exist for empty states and celebrations; only the head
-crop is used so far. `mascots.test.js` parses all 56 combinations, because a
-typo in one pose would be a broken image for exactly the people who picked it.
-The old Mathnasium `Logo.jsx` was deleted with its last use.
+markup is injected. `mascots.test.js` parses every outfit x pose x crop,
+because a typo in one pose would be a broken image for exactly the people who
+picked it. The old Mathnasium `Logo.jsx` was deleted with its last use.
+
+**THE ONE RULE FOR A NEW COLE: its signature must be at HEAD height.** The
+40px sidebar icon draws the head crop in the neutral `stand` pose, so
+anything held in a hand is out of frame there and that Cole is an exact
+copy of the original where people see it most. Hence the headset on Gamer
+Cole, the wired eyes on Cole-feine and the hood on Cole-gi; the controller,
+the cup and the bone are for the full-body views only. A test renders all
+eight head icons and asserts they are distinct markup.
+
+Two more things learned by getting them wrong:
+
+- **The body is a BALL.** Garment shapes with corners fight it — Sleepy
+  Cole wore a gown with lapels and a belt, and it read as a purple arrow
+  stuck to a sphere. What works is a chest emblem (the original's colon,
+  Gamer's pixel heart) or something wrapping the ball (his pyjama stripes,
+  clipped to it).
+- **A stroke's width is part of its geometry.** Cole-9's tail path cleared
+  the head crop; its 19px stroke did not, and drew a stray brown mark
+  beside the 40px icon.
+
+Poses: `stand`, `thumbs`, `wave`, `cheer`, `think`, `peace`, `coach`,
+`game`, `sip`, `fetch`, `yawn`. A pose can name a PROP (`clipboard`,
+`controller`, `cup`, `bone`) instead of a glove; a prop draws its own
+glove(s), so that hand is left empty in the pose. Full body is used on the
+new home's greeting, head crop everywhere else.
+
+Cole-9, a dog Cole, was added and retired the same day — `resolveMascotId()`
+sends a retired id back to the original, which is what makes removing one
+safe. Check Firestore before deleting another (nobody had picked him).
 
 ## Server-side dates: never use UTC
 
