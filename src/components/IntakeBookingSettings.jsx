@@ -25,15 +25,32 @@ const DEFAULTS = {
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [],
   },
+  // Blank = as many as the hours allow, which is how it behaved before
+  // this setting existed.
+  maxIntakesPerDay: '',
+  maxIntakesPerWeekday: {
+    Sunday: '', Monday: '', Tuesday: '', Wednesday: '',
+    Thursday: '', Friday: '', Saturday: '',
+  },
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
 };
 
 export default function IntakeBookingSettings({ activeCenterId, centerConfig }) {
   const initial = useMemo(
-    () => ({ ...DEFAULTS, ...(centerConfig?.intakeSettings || {}), availability: {
-      ...DEFAULTS.availability, ...((centerConfig?.intakeSettings || {}).availability || {}),
-    } }),
+    () => ({
+      ...DEFAULTS,
+      ...(centerConfig?.intakeSettings || {}),
+      availability: {
+        ...DEFAULTS.availability, ...((centerConfig?.intakeSettings || {}).availability || {}),
+      },
+      // Stored nulls become '' so the number inputs stay controlled.
+      maxIntakesPerDay: centerConfig?.intakeSettings?.maxIntakesPerDay ?? '',
+      maxIntakesPerWeekday: WEEKDAYS.reduce((acc, d) => ({
+        ...acc,
+        [d]: centerConfig?.intakeSettings?.maxIntakesPerWeekday?.[d] ?? '',
+      }), {}),
+    }),
     [centerConfig],
   );
   const [s, setS] = useState(initial);
@@ -160,6 +177,41 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
         </div>
       </Card>
 
+      {/* How many a day the centre will actually take. Separate from the
+          hours above: the hours say when you COULD book, this says how
+          many the floor can absorb. */}
+      <Card title="How many assessments a day">
+        <p className="mb-3 text-xs text-gray-500">
+          Once a day hits its number, the whole day closes on the booking page —
+          even if there are still open times on it. Leave blank for no limit.
+        </p>
+        <div className="max-w-xs">
+          <Field label="Most days">
+            <input type="number" min={0} max={50} value={s.maxIntakesPerDay}
+              placeholder="No limit"
+              onChange={e => setField('maxIntakesPerDay', capValue(e.target.value))}
+              className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+          </Field>
+        </div>
+        <p className="mt-4 mb-2 text-xs font-medium text-gray-600">
+          Different on certain days? Set just those — the rest follow the number above.
+        </p>
+        <div className="grid gap-2 sm:grid-cols-4">
+          {WEEKDAYS.map(day => (
+            <label key={day} className="block">
+              <span className="mb-1 block text-xs text-gray-500">{day}</span>
+              <input type="number" min={0} max={50}
+                value={s.maxIntakesPerWeekday?.[day] ?? ''}
+                placeholder={s.maxIntakesPerDay === '' ? 'No limit' : String(s.maxIntakesPerDay)}
+                onChange={e => setField('maxIntakesPerWeekday', {
+                  ...(s.maxIntakesPerWeekday || {}), [day]: capValue(e.target.value),
+                })}
+                className="w-full rounded border border-gray-300 px-2 py-1.5 text-sm" />
+            </label>
+          ))}
+        </div>
+      </Card>
+
       {/* Per-day availability — defaults to mirroring instructional hours
           so booking hours stay in sync with the centre's teaching window.
           Owner can flip the toggle to set custom intake-only hours. */}
@@ -221,6 +273,18 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
       </Card>
     </div>
   );
+}
+
+/**
+ * An emptied box must stay empty — it means "no limit", and coercing it
+ * to a number would turn it into 0, which closes the day. Anything else
+ * is clamped to a sane whole number.
+ */
+function capValue(raw) {
+  if (raw === '' || raw === null || raw === undefined) return '';
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n)) return '';
+  return Math.min(50, Math.max(0, n));
 }
 
 function Card({ title, children }) {

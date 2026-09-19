@@ -26,10 +26,60 @@ export const DEFAULT_INTAKE_SETTINGS = {
     Sunday: [], Monday: [], Tuesday: [], Wednesday: [],
     Thursday: [], Friday: [], Saturday: [],
   },
+  // How many assessments the centre will take in one day. null = as many
+  // as the hours allow, which is how every centre behaved before this
+  // existed — so an untouched config keeps its old behaviour.
+  //
+  // Two fields rather than one, because the ask is "three a day, but two
+  // on Fridays": the first is the everyday number, the second overrides
+  // it on named days only. A weekday left null follows the everyday one.
+  maxIntakesPerDay: null,
+  maxIntakesPerWeekday: {
+    Sunday: null, Monday: null, Tuesday: null, Wednesday: null,
+    Thursday: null, Friday: null, Saturday: null,
+  },
   // Marketing copy on the public booking page. Centre-overridable.
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
 };
+
+/**
+ * How many assessments this weekday will take. null means no limit.
+ *
+ * A per-weekday entry wins over the everyday number; blank, null or
+ * undefined there means "no opinion, use the everyday one". 0 is a real
+ * answer and means the day is closed to booking — which is why this
+ * cannot just test for falsiness.
+ */
+export function intakeCapFor(settings, weekday) {
+  const s = settings || {};
+  const override = (s.maxIntakesPerWeekday || {})[weekday];
+  const blank = (v) => v === null || v === undefined || v === '';
+  const raw = blank(override) ? s.maxIntakesPerDay : override;
+  // Checked BEFORE Number(), because Number(null) is 0 and 0 is a real
+  // cap here — "no cap set" would have closed booking at every centre.
+  if (blank(raw)) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Assessments already booked on one local date.
+ *
+ * `startISO` is a wall-clock string in the centre's own day ("2026-09-26
+ * T11:00:00", no zone) — that is what the grid builds and what the create
+ * path stores — so the first ten characters ARE the centre's date. Going
+ * through Date here would reinterpret it in the server's zone and push
+ * evening bookings onto the next day.
+ */
+export function countIntakesOn(bookedSlots, ymd) {
+  let n = 0;
+  for (const b of (bookedSlots || [])) {
+    if (!b || b.status === 'cancelled') continue;
+    if (typeof b.startISO === 'string' && b.startISO.slice(0, 10) === ymd) n += 1;
+  }
+  return n;
+}
 
 // Translate centerConfig.instructionalHours ({ Monday: { start, end }, ... })
 // into the per-day windows shape this module uses (each day → array of
@@ -172,6 +222,11 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
       const hoursForDate = effectiveInstructionalHoursForDate(instructionalHours, summerOverride, ymd);
       windows = instructionalHoursToWindows(hoursForDate)[weekday] || [];
     }
+    // A day at its cap closes entirely, even though the hours are open
+    // and the individual times are free.
+    const cap = intakeCapFor(s, weekday);
+    const dayFull = cap !== null && countIntakesOn(active, ymd) >= cap;
+
     const slots = [];
     for (const minutes of slotStartsForDay(windows, slotDur, slotInt)) {
       const iso = buildISO(ymd, minutes);
@@ -185,10 +240,11 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
         taken,
         inPast,
         tooFuture,
-        available: !taken && !inPast && !tooFuture,
+        dayFull,
+        available: !taken && !inPast && !tooFuture && !dayFull,
       });
     }
-    out.push({ date: ymd, weekday, slots });
+    out.push({ date: ymd, weekday, dayFull, slots });
   }
   return out;
 }
@@ -217,9 +273,18 @@ export function validateSlot({ slotISO, settings, bookedSlots, instructionalHour
 
   // Day-of-week window check, resolved per-date so a summer-window
   // booking is validated against the override (not the year-round hours).
-  const d = new Date(tMs);
-  const weekday = WEEKDAYS[d.getUTCDay()];
-  const ymd     = dateToYmd(d);
+  //
+  // The date, weekday and time are read STRAIGHT OFF THE STRING rather
+  // than through Date. A slot is a wall-clock time in the centre's own
+  // day with no zone on it ("2026-09-25T17:00:00"), so Date parses it in
+  // the server's zone — and the UTC getters below then shifted the day,
+  // the weekday and the hour by that offset. It matched only because
+  // Vercel runs in UTC; on any other runtime a Friday evening booking
+  // validated as Saturday. Off the string it is right on both.
+  const parts = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(String(slotISO));
+  if (!parts) return { ok: false, error: 'Invalid slot time.' };
+  const ymd     = `${parts[1]}-${parts[2]}-${parts[3]}`;
+  const weekday = WEEKDAYS[new Date(`${ymd}T00:00:00Z`).getUTCDay()];
   let windows;
   if (s.useCustomAvailability && s.availability) {
     windows = (s.availability[weekday] || []);
@@ -228,15 +293,25 @@ export function validateSlot({ slotISO, settings, bookedSlots, instructionalHour
     windows = instructionalHoursToWindows(hoursForDate)[weekday] || [];
   }
   if (windows.length === 0) return { ok: false, error: 'The centre is closed that day.' };
-  const minutes = d.getUTCHours() * 60 + d.getUTCMinutes();
+  const minutes = Number(parts[4]) * 60 + Number(parts[5]);
   const inAnyWindow = windows.some(w => {
     const ws = hmToMin(w.start); const we = hmToMin(w.end);
     return minutes >= ws && minutes + slotDur <= we;
   });
   if (!inAnyWindow) return { ok: false, error: 'Slot is outside the centre\'s booking window.' };
 
-  // Collision check.
   const active = (bookedSlots || []).filter(b => b.status !== 'cancelled');
+
+  // Day cap, checked BEFORE the collision below: when a day is full every
+  // time on it is unbookable, and "that day is full" sends a parent to
+  // another day, where "that time was taken" would send them to another
+  // time on the same full day.
+  const cap = intakeCapFor(s, weekday);
+  if (cap !== null && countIntakesOn(active, ymd) >= cap) {
+    return { ok: false, error: 'That day is fully booked. Please pick another day.' };
+  }
+
+  // Collision check.
   if (isSlotTaken(slotISO, slotDur, active)) {
     return { ok: false, error: 'That slot was just booked by someone else. Please pick another time.' };
   }

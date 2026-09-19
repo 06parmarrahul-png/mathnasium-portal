@@ -6,7 +6,7 @@
 // Mirrors the Apptoto flow the centre used previously:
 //   - Mathnasium-red branded header
 //   - Headline + sub copy (centre-configurable)
-//   - Week-view slot grid (tinted = available, solid = picked, dim = taken)
+//   - Week-view slot grid (green = free, solid green = picked, dim = taken)
 //   - Selected slot detail card
 //   - Form: email, phone, guardian name, child name, child grade,
 //           SMS opt-in checkbox with the exact Mathnasium compliance text
@@ -28,6 +28,23 @@ const GRADE_OPTIONS = [
 // Mathnasium's standard SMS opt-in disclaimer — pulled verbatim from
 // their Apptoto flow so we keep the same compliance posture.
 const SMS_DISCLAIMER = `By checking this box, you agree to receive recurring advertising text messages from Mathnasium about promotions and our learning center offerings to the phone number provided above, including texts placed using an automatic telephone dialing system. Consent to receive advertising text messages is not required to purchase goods or services. Message frequency varies. Message and data rates may apply. Reply "STOP" to no longer receive messages. Email SMS@mathnasium.com, or text "HELP", for assistance. Information you provide will be held in accordance with our Privacy Policy.`;
+
+/**
+ * Mathnasium red, deepening toward the foot of the page.
+ *
+ * This replaced a flat `bg-red-600`, which is Tailwind's red — brighter
+ * and more orange than the brand red the rest of the app uses for
+ * identity (`--nl-brand` in index.css). Held at full saturation across a
+ * whole viewport it made every white card edge buzz against it.
+ *
+ * The darkening is doing a second job: this page is a stack of white
+ * cards on a coloured field, and a field that shifts underneath them
+ * gives the stack somewhere to sit instead of floating on one flat wall.
+ */
+const PAGE_BG = 'bg-gradient-to-b from-[#C8102E] via-[#9B0C22] to-[#5E0714]';
+
+/** The same red for the things you press, so the page holds one red. */
+const BRAND_BTN = 'bg-[#C8102E] hover:bg-[#A80D26]';
 
 function ymdLocal(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -138,7 +155,7 @@ export default function PublicBook() {
   }
 
   return (
-    <div className="min-h-screen bg-red-600">
+    <div className={`min-h-screen ${PAGE_BG}`}>
       <div className="mx-auto max-w-4xl px-4 py-8 sm:py-12">
         <div className="rounded-2xl bg-black p-6 sm:p-10 text-white text-center mb-6">
           <h1 className="text-2xl sm:text-3xl font-bold">
@@ -258,6 +275,14 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
                   <th key={d.date} className="px-2 py-3 text-center font-semibold text-gray-700">
                     <div className="text-xs">{h.wd}</div>
                     <div className="text-xs text-gray-500">{h.md}</div>
+                    {/* A day at the centre's daily limit has open hours and
+                        no open slots, which otherwise looks exactly like a
+                        day the centre is shut. Say which it is. */}
+                    {d.dayFull && (
+                      <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                        Full
+                      </div>
+                    )}
                   </th>
                 );
               })}
@@ -288,9 +313,9 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
                         className={[
                           'w-full rounded px-2 py-1.5 text-xs font-medium transition-colors',
                           isSel
-                            ? 'bg-red-600 text-white shadow-sm'
+                            ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-600/25'
                             : canPick
-                              ? 'border border-red-300 bg-red-100 text-red-800 hover:border-red-500 hover:bg-red-200'
+                              ? 'border border-emerald-300 bg-emerald-50 text-emerald-800 hover:border-emerald-500 hover:bg-emerald-100'
                               : 'text-gray-300 cursor-not-allowed',
                         ].join(' ')}
                       >
@@ -304,9 +329,22 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
           </tbody>
         </table>
       </div>
-      <p className="px-4 py-2 text-[11px] text-gray-400 text-center">
-        Times shown in {data.centre.timezone || 'your local time'}.
-      </p>
+      <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1 border-t border-gray-100 px-4 py-2.5 text-[11px] text-gray-500">
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-4 rounded border border-emerald-300 bg-emerald-50" />
+          Available
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-4 rounded bg-emerald-600" />
+          Your pick
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-gray-300">—</span> Not available
+        </span>
+        <span className="text-gray-400">
+          Times shown in {data.centre.timezone || 'your local time'}.
+        </span>
+      </div>
     </div>
   );
 }
@@ -425,7 +463,7 @@ function BookingForm({ centerId, slot, durationMin, timezone, onChangeSlot, onCo
           Change time slot
         </button>
         <button type="submit" disabled={!ready || submitting}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-5 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+          className={`inline-flex items-center gap-1.5 rounded-lg ${BRAND_BTN} px-5 py-2 text-sm font-semibold text-white disabled:opacity-50`}>
           {submitting && <Loader2 size={14} className="animate-spin" />}
           Book Now
         </button>
@@ -447,7 +485,7 @@ function Field({ label, required, children }) {
 
 function ConfirmationScreen({ confirmed, centre, timezone }) {
   return (
-    <div className="min-h-screen bg-red-600 flex items-center justify-center px-4 py-12">
+    <div className={`min-h-screen ${PAGE_BG} flex items-center justify-center px-4 py-12`}>
       <div className="max-w-md w-full rounded-2xl bg-white shadow-xl p-8 text-center">
         <div className="mx-auto rounded-full bg-emerald-100 p-3 w-fit mb-4">
           <CheckCircle2 size={36} className="text-emerald-600" />
