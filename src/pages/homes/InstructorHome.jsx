@@ -4,6 +4,7 @@ import { Mail, ArrowRight, Megaphone, CalendarDays, MoveRight, ChevronDown, Part
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { greeting } from '../../lib/greeting';
+import { shiftOnDate } from '../../lib/doubleBooking';
 import { setNewLook } from '../../lib/newLook';
 import {
   watchLastSeen, markSeen, newestDate, unreadCount, unreadLabel,
@@ -203,11 +204,15 @@ export default function InstructorHome() {
   const pending = useMemo(() => (shifts || []).filter(s =>
     s.signOutRequestSentAt && !s.signOutConfirmedTime), [shifts]);
 
+  // "You can cover all of them" has to stay true. A day already worked is
+  // a day that can't be picked up — the board locks those — so counting
+  // them here would send someone to a card they can't press.
   const eligibleOpen = useMemo(() => {
     const mine = mySubRoles || [];
     if (mine.length === 0) return [];
-    return openShifts.filter(s => !s.subRole || mine.includes(s.subRole));
-  }, [openShifts, mySubRoles]);
+    return openShifts.filter(s => (!s.subRole || mine.includes(s.subRole))
+      && !shiftOnDate(shifts || [], profile?.uid, s.date));
+  }, [openShifts, mySubRoles, shifts, profile?.uid]);
 
   const sideMap = sides.date === next?.date ? sides.map : null;
   const myName = profile?.displayName || '';

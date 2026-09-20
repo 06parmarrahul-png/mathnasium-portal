@@ -12,11 +12,12 @@ import { styleFor as subRoleStyleFor, requiredCapabilityForShift, hasCapability 
 import { notifyShiftClaimed } from '../lib/emailService';
 import {
   ArrowRightLeft, Clock, CheckCircle, AlertTriangle, Lock,
-  CalendarDays, Briefcase, Pencil, Trash2, X, RotateCcw,
+  CalendarDays, CalendarCheck, Briefcase, Pencil, Trash2, X, RotateCcw,
 } from 'lucide-react';
 import { toast, confirmDialog } from '../lib/notify';
 import { SUB_ROLES } from '../lib/subRoles';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
+import { shiftOnDate, conflictLabel, conflictReason } from '../lib/doubleBooking';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -82,9 +83,9 @@ function CardShell({ children, eligible, isMine }) {
   );
 }
 
-function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete }) {
+function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete, clash }) {
   const [busy, setBusy] = useState(false);
-  const eligible = canTake(requiredCapabilityForShift(shift), mySubRoles);
+  const eligible = canTake(requiredCapabilityForShift(shift), mySubRoles) && !clash;
   const handleClick = async () => {
     setBusy(true);
     try { await onClaim(shift); }
@@ -137,6 +138,17 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete 
         >
           {busy ? 'Claiming…' : 'Claim Shift'}
         </button>
+      ) : clash ? (
+        /* Already working that day. Said plainly, with the shift that's in
+           the way, so nobody has to guess why the button won't press. */
+        <button
+          disabled
+          title={conflictReason(clash)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed"
+        >
+          <CalendarCheck size={13} />
+          {conflictLabel(clash)}
+        </button>
       ) : (
         <button
           disabled
@@ -151,10 +163,10 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete 
   );
 }
 
-function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRetract }) {
+function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRetract, clash }) {
   const [busy, setBusy] = useState(false);
   const isMine = swap.userId === profile?.uid;
-  const eligible = !isMine && canTake(swap.shiftSubRole, mySubRoles);
+  const eligible = !isMine && canTake(swap.shiftSubRole, mySubRoles) && !clash;
   const handleClick = async () => {
     setBusy(true);
     try { await onTake(swap); }
@@ -213,6 +225,15 @@ function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRet
           className="w-full rounded-lg bg-green-600 px-3 py-2 text-sm font-bold text-white hover:bg-green-700 disabled:opacity-50 transition-colors"
         >
           {busy ? 'Taking…' : 'Take This Shift'}
+        </button>
+      ) : clash ? (
+        <button
+          disabled
+          title={conflictReason(clash)}
+          className="w-full flex items-center justify-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed"
+        >
+          <CalendarCheck size={13} />
+          {conflictLabel(clash)}
         </button>
       ) : (
         <button
@@ -294,6 +315,11 @@ export default function ShiftBoard() {
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
+  // This person's own shifts at the active centre. The board had no idea
+  // what its reader already worked, which is how somebody already on the
+  // Monday could claim Monday's open shift as well. Equality-only filters,
+  // same shape Home uses, so no composite index is needed.
+  const [myShifts, setMyShifts] = useState([]);
   const [hideIneligible, setHideIneligible] = useState(() => {
     try { return localStorage.getItem(HIDE_INELIGIBLE_KEY) === '1'; }
     catch { return false; }
@@ -313,6 +339,18 @@ export default function ShiftBoard() {
     ),
     snap => setOpenShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
   ), [activeCenterId]);
+
+  useEffect(() => {
+    if (!profile?.uid) return;
+    return onSnapshot(
+      query(
+        collection(db, 'shifts'),
+        where('centerId', '==', activeCenterId),
+        where('userId', '==', profile.uid),
+      ),
+      snap => setMyShifts(snap.docs.map(d => ({ id: d.id, ...d.data() })))
+    );
+  }, [profile?.uid, activeCenterId]);
 
   // Subscribe: most recent chat docs at the active center (we'll filter to
   // shift_swap status === 'open' below)
@@ -346,17 +384,23 @@ export default function ShiftBoard() {
   }, [chatDocs, todayStr]);
 
   // Apply "hide ineligible" toggle
+  // A day you already work is a day you can't take, so the toggle hides
+  // those too — otherwise it would promise "only what I can take" and still
+  // show a row of locked cards.
   const filteredOpen = useMemo(() => (
     hideIneligible
-      ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), mySubRoles))
+      ? visibleOpen.filter(s => canTake(requiredCapabilityForShift(s), mySubRoles)
+                             && !shiftOnDate(myShifts, profile?.uid, s.date))
       : visibleOpen
-  ), [visibleOpen, hideIneligible, mySubRoles]);
+  ), [visibleOpen, hideIneligible, mySubRoles, myShifts, profile]);
 
   const filteredSwaps = useMemo(() => (
     hideIneligible
-      ? visibleSwaps.filter(s => s.userId === profile?.uid || canTake(s.shiftSubRole, mySubRoles))
+      ? visibleSwaps.filter(s => s.userId === profile?.uid
+                             || (canTake(s.shiftSubRole, mySubRoles)
+                                 && !shiftOnDate(myShifts, profile?.uid, s.shiftDate)))
       : visibleSwaps
-  ), [visibleSwaps, hideIneligible, profile, mySubRoles]);
+  ), [visibleSwaps, hideIneligible, profile, mySubRoles, myShifts]);
 
   // Counters for the empty / hidden states
   const hiddenOpenCount  = visibleOpen.length  - filteredOpen.length;
@@ -373,6 +417,14 @@ export default function ShiftBoard() {
     }
     if (!canTake(openShift.subRole, mySubRoles)) {
       toast.error('You don\'t have the right teaching sub-role to claim this shift.');
+      return;
+    }
+    // One shift a day. The card is already locked when this is true; this
+    // catches the stale-snapshot case, where the claim lands a moment after
+    // somebody else rostered them onto that day.
+    const clash = shiftOnDate(myShifts, profile?.uid, openShift.date);
+    if (clash) {
+      toast.error(conflictReason(clash));
       return;
     }
     try {
@@ -464,6 +516,14 @@ export default function ShiftBoard() {
       toast.error(swap.shiftSubRole === 'Host'
         ? 'Only staff who can host can take this shift.'
         : 'You don\'t have the required sub-role to take this shift.');
+      return;
+    }
+    // Taking a swap hands you the shift itself, so the same one-a-day rule
+    // applies — otherwise the board's front door is shut and its side door
+    // is still open.
+    const swapClash = shiftOnDate(myShifts, profile?.uid, swap.shiftDate);
+    if (swapClash) {
+      toast.error(conflictReason(swapClash));
       return;
     }
     // 15-minute grace period so the poster has time to take it back
@@ -678,6 +738,7 @@ export default function ShiftBoard() {
                 key={s.id}
                 shift={s}
                 mySubRoles={mySubRoles}
+                clash={shiftOnDate(myShifts, profile?.uid, s.date)}
                 onClaim={handleClaim}
                 canAdmin={canSeeAdminPanel}
                 onEdit={setEditingOpenShift}
@@ -718,6 +779,7 @@ export default function ShiftBoard() {
                 swap={s}
                 profile={profile}
                 mySubRoles={mySubRoles}
+                clash={shiftOnDate(myShifts, profile?.uid, s.shiftDate)}
                 onTake={handleTakeSwap}
                 canAdmin={canSeeAdminPanel}
                 onDelete={handleAdminDeleteSwap}

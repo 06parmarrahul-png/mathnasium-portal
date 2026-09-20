@@ -25,6 +25,7 @@ import { toast, confirmDialog } from '../lib/notify';
 import { logAvailabilityChange, logAvailabilityBatch } from '../lib/availabilityLog';
 import { getWeekOfMonth } from '../lib/scheduler';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
+import { shiftOnDate, blockingShift, conflictLabel, conflictReason } from '../lib/doubleBooking';
 import { SWAP_TYPE, isOpenSwap, openSwapFor } from '../lib/shiftSwaps';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -348,7 +349,12 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-widest px-1">Open Shifts</p>
                   {openShifts.map(s => {
                     const required = requiredCapabilityForShift(s);
-                    const canClaim = !required || mySubRoles.includes(required);
+                    // myShift is this person's shift on the day the modal is
+                    // showing, so it IS the clash — once it's a shift that
+                    // actually blocks (a cancelled one doesn't). One shift a
+                    // day; the Shift Board enforces the same rule.
+                    const clash = blockingShift(myShift);
+                    const canClaim = (!required || mySubRoles.includes(required)) && !clash;
                     return (
                     <div key={s.id} className="rounded-xl bg-orange-50 border border-orange-200 p-3">
                       <div className="flex items-center justify-between">
@@ -363,6 +369,13 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                           >
                             Claim
                           </button>
+                        ) : clash ? (
+                          <span
+                            className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-500"
+                            title={conflictReason(clash)}
+                          >
+                            {conflictLabel(clash)}
+                          </span>
                         ) : (
                           <span
                             className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-400"
@@ -1616,6 +1629,14 @@ export default function Schedule() {
       toast.error(required === 'Host'
         ? 'Only staff who can host can claim this shift.'
         : `This shift requires the ${required} sub-role — you don't have it.`);
+      return;
+    }
+    // One shift a day. The Claim button is already locked when this is
+    // true, so reaching here means the roster changed under them between
+    // opening the modal and pressing it.
+    const clash = shiftOnDate(shifts, profile?.uid, openShift.date);
+    if (clash) {
+      toast.error(conflictReason(clash));
       return;
     }
     try {

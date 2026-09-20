@@ -72,13 +72,25 @@ const swap = (over = {}) => ({
   ...over,
 });
 
+const openShift = (over = {}) => ({
+  id: 'o1', centerId: 'langley', status: 'open',
+  date: '2099-09-20', startTime: '15:00', endTime: '19:00',
+  subRole: 'Elementary', role: 'Instructor', ...over,
+});
+
+const myShift = (over = {}) => ({
+  id: 'm1', centerId: 'langley', userId: 'sarah', userName: 'Sarah Ghazi',
+  date: '2099-09-20', startTime: '15:00', endTime: '19:00',
+  status: 'published', ...over,
+});
+
 const draw = () => render(<MemoryRouter><ShiftBoard /></MemoryRouter>);
 
 beforeEach(() => {
   authValue.current = { ...BASE_AUTH };
   confirmAnswer.current = true;
   deleted.length = 0;
-  for (const k of ['openShifts', 'chat']) snapshots[k] = [];
+  for (const k of ['openShifts', 'chat', 'shifts']) snapshots[k] = [];
 });
 afterEach(() => { cleanup(); });
 
@@ -155,5 +167,70 @@ describe('taking your own request back', () => {
     draw();
     expect(screen.queryByText('Take it back')).toBeNull();
     expect(screen.getByText(/No active swap requests/)).toBeTruthy();
+  });
+});
+
+describe('one shift a day', () => {
+  it('offers the claim when the day is free', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift({ date: '2099-09-21' })];
+    draw();
+    expect(screen.getByText('Claim Shift')).toBeTruthy();
+  });
+
+  it('locks the claim on a day they already work, and says which shift', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift()];
+    draw();
+    expect(screen.queryByText('Claim Shift')).toBeNull();
+    expect(screen.getByText('Already on 3:00 PM – 7:00 PM')).toBeTruthy();
+  });
+
+  it('locks it even when the hours do not collide', () => {
+    // Same day is the rule, not same clock — a 9–12 and a 3–7 is still two
+    // shifts in one day for one person.
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift({ startTime: '09:00', endTime: '12:00' })];
+    draw();
+    expect(screen.queryByText('Claim Shift')).toBeNull();
+    expect(screen.getByText('Already on 9:00 AM – 12:00 PM')).toBeTruthy();
+  });
+
+  it('locks taking a swap on that day too', () => {
+    snapshots.chat = [swap({ userId: 'jason', userName: 'Jason Soo' })];
+    snapshots.shifts = [myShift()];
+    draw();
+    expect(screen.queryByText('Take This Shift')).toBeNull();
+    expect(screen.getByText('Already on 3:00 PM – 7:00 PM')).toBeTruthy();
+  });
+
+  it('is not tripped by somebody else working that day', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift({ userId: 'jason' })];
+    draw();
+    expect(screen.getByText('Claim Shift')).toBeTruthy();
+  });
+
+  it('is not tripped by a draft they cannot even see', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift({ status: 'draft' })];
+    draw();
+    expect(screen.getByText('Claim Shift')).toBeTruthy();
+  });
+
+  it('is not tripped by a shift that was cancelled', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift({ status: 'cancelled' })];
+    draw();
+    expect(screen.getByText('Claim Shift')).toBeTruthy();
+  });
+
+  it('hides the clash entirely under "hide ones I can\'t take"', () => {
+    snapshots.openShifts = [openShift()];
+    snapshots.shifts = [myShift()];
+    draw();
+    fireEvent.click(screen.getByLabelText(/Hide ones I can/));
+    expect(screen.queryByText('Already on 3:00 PM – 7:00 PM')).toBeNull();
+    expect(screen.getByText(/1 hidden/)).toBeTruthy();
   });
 });
