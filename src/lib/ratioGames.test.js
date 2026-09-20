@@ -3,6 +3,7 @@ import {
   GAMES, MAX_POINTS, gameById, dayKey, monthKey, daysElapsed, nextDay, scoreDocId,
   pointsFor, dayTotal, playedRuns, streakBonus, longestStreak, standings, rankOf,
   seedFrom, makeRng, sprintLevel, sprintQuestion, buildScoreRow, gamesEnabled,
+  GAME_LIST, ROTATION, featuredGameId,
 } from './ratioGames';
 
 const run = (uid, date, points, extra = {}) => ({
@@ -226,27 +227,112 @@ describe('Sprint 60 questions', () => {
 });
 
 describe('the row a run writes', () => {
-  it('scores itself from the game’s par', () => {
+  it('asks the game to score its own outcome', () => {
     const row = buildScoreRow({
       uid: 'u1', userName: 'Ann', centerId: 'langley', gameId: 'sprint60',
-      date: '2026-09-16', result: 9, durationMs: 60000, seed: 'langley|2026-09-16',
+      date: '2026-09-20', outcome: { correct: 9 }, durationMs: 60000, seed: 'langley|2026-09-20',
     });
     expect(row.points).toBe(50);          // 9 of par 18
     expect(row.result).toBe(9);
     expect(row.uid).toBe('u1');
-    expect(row.date).toBe('2026-09-16');
+    expect(row.date).toBe('2026-09-20');
   });
 
-  it('cannot be talked into a score above the cap', () => {
-    const row = buildScoreRow({ uid: 'u1', centerId: 'langley', gameId: 'sprint60', date: '2026-09-16', result: 500 });
-    expect(row.points).toBe(MAX_POINTS);
+  it('scores each game by its own idea of better', () => {
+    const at = (gameId, outcome) => buildScoreRow({
+      uid: 'u1', centerId: 'langley', gameId, date: '2026-09-20', outcome,
+    });
+    // Mathle: fewer guesses is better, and failing still beats not playing.
+    expect(at('mathle', { solved: true, guesses: 3 }).points).toBe(100);
+    expect(at('mathle', { solved: true, guesses: 1 }).points).toBe(MAX_POINTS);
+    expect(at('mathle', { solved: false, guesses: 6 }).points).toBe(20);
+    // Connections: a clean sweep is worth more than a scrappy one.
+    expect(at('connections', { groups: 4, mistakes: 0 }).points).toBe(120);
+    expect(at('connections', { groups: 4, mistakes: 3 }).points).toBe(85);
+    expect(at('connections', { groups: 2, mistakes: 4 }).points).toBe(30);
+    // Ratio Rush: par is eight of ten.
+    expect(at('ratioRush', { correct: 8 }).points).toBe(100);
+  });
+
+  it('stores one integer per run for the board', () => {
+    const at = (gameId, outcome) => buildScoreRow({
+      uid: 'u1', centerId: 'langley', gameId, date: '2026-09-20', outcome,
+    }).result;
+    expect(at('mathle', { solved: true, guesses: 4 })).toBe(4);
+    expect(at('mathle', { solved: false })).toBe(0);
+    expect(at('connections', { groups: 3 })).toBe(3);
+    expect(Number.isInteger(at('sprint60', { correct: 12 }))).toBe(true);
+  });
+
+  it('never writes a score the Firestore rules would refuse', () => {
+    // points: int, 0..120. result: int, >= 0.
+    const outcomes = [
+      ['sprint60', { correct: 999 }], ['sprint60', { correct: -4 }], ['sprint60', {}],
+      ['mathle', { solved: true, guesses: 0 }], ['mathle', {}],
+      ['connections', { groups: 9, mistakes: -5 }], ['connections', { groups: -1, mistakes: 99 }],
+      ['ratioRush', { correct: 500 }],
+    ];
+    for (const [gameId, outcome] of outcomes) {
+      const row = buildScoreRow({ uid: 'u1', centerId: 'langley', gameId, date: '2026-09-20', outcome });
+      expect(Number.isInteger(row.points)).toBe(true);
+      expect(row.points).toBeGreaterThanOrEqual(0);
+      expect(row.points).toBeLessThanOrEqual(MAX_POINTS);
+      expect(Number.isInteger(row.result)).toBe(true);
+      expect(row.result).toBeGreaterThanOrEqual(0);
+    }
   });
 
   it('turns junk into zero rather than NaN', () => {
-    const row = buildScoreRow({ uid: 'u1', centerId: 'langley', gameId: 'sprint60', date: '2026-09-16', result: 'lots', durationMs: null });
+    const row = buildScoreRow({
+      uid: 'u1', centerId: 'langley', gameId: 'sprint60', date: '2026-09-20',
+      outcome: { correct: 'lots' }, durationMs: null,
+    });
     expect(row.points).toBe(0);
     expect(row.result).toBe(0);
     expect(row.durationMs).toBe(0);
+  });
+
+  it('scores nothing for a game it has never heard of', () => {
+    const row = buildScoreRow({ uid: 'u1', centerId: 'langley', gameId: 'buzz', date: '2026-09-20', outcome: { correct: 10 } });
+    expect(row.points).toBe(0);
+    expect(row.result).toBe(0);
+  });
+});
+
+describe('the roster', () => {
+  it('every game can score itself and name a result', () => {
+    for (const game of GAME_LIST) {
+      expect(typeof game.score).toBe('function');
+      expect(typeof game.resultOf).toBe('function');
+      expect(game.name).toBeTruthy();
+      expect(game.blurb).toBeTruthy();
+      expect(game.par).toBeGreaterThan(0);
+      expect(game.minutes).toBeGreaterThan(0);
+    }
+  });
+
+  it('a par run is worth about a hundred in every game', () => {
+    // The point of scoring against par: no game can carry a month.
+    expect(GAMES.sprint60.score({ correct: 18 })).toBe(100);
+    expect(GAMES.mathle.score({ solved: true, guesses: 3 })).toBe(100);
+    expect(GAMES.connections.score({ groups: 4, mistakes: 0 })).toBe(120);
+    expect(GAMES.ratioRush.score({ correct: 8 })).toBe(100);
+  });
+
+  it('today’s pick cycles through the roster', () => {
+    const week = ['2026-09-20', '2026-09-21', '2026-09-22', '2026-09-23', '2026-09-24'];
+    const picks = week.map(featuredGameId);
+    expect(new Set(picks).size).toBeGreaterThan(1);
+    for (const id of picks) expect(GAMES[id]).toBeTruthy();
+  });
+
+  it('picks the same game all day, and a different one tomorrow', () => {
+    expect(featuredGameId('2026-09-20')).toBe(featuredGameId('2026-09-20'));
+    expect(featuredGameId('2026-09-20')).not.toBe(featuredGameId('2026-09-21'));
+  });
+
+  it('every game in the rotation is a real one', () => {
+    for (const id of ROTATION) expect(GAMES[id]).toBeTruthy();
   });
 });
 

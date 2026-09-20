@@ -70,20 +70,130 @@ export const STREAK_BONUS = 10;
 export const MAX_STREAK_BONUS = 60;
 
 /**
- * The registry. `par` is a good run by a competent player — points are
- * measured against it, so a minute of Sprint and ten minutes of
- * Cross-number end up worth about the same.
+ * The registry.
+ *
+ * Every game scores itself, because "better" means something different in
+ * each: more correct answers in Sprint, FEWER guesses in Mathle, fewer
+ * mistakes in Connections. What they share is the scale — 0 to 120, with
+ * 100 for a good run by a competent player — so a minute of Sprint and
+ * four minutes of Connections are worth about the same, and no single
+ * game can carry a month on its own.
+ *
+ * `score(outcome)` takes that game's own outcome object and returns the
+ * points. `resultOf(outcome)` picks the one integer worth storing and
+ * showing on the board — the Firestore rules require `result` to be a
+ * non-negative int, and one number per run is all the board needs.
  */
 export const GAMES = {
   sprint60: {
     id: 'sprint60',
     name: 'Sprint 60',
     blurb: 'Sixty seconds of mental arithmetic. It speeds up as your streak grows.',
+    kind: 'timed',
     seconds: 60,
     par: 18,
     unit: 'correct',
+    minutes: 1,
+    // Linear against par: 18 correct is a hundred points.
+    score: ({ correct = 0 } = {}) => clampPoints((100 * correct) / 18),
+    resultOf: ({ correct = 0 } = {}) => Math.max(0, Math.round(correct)),
+    summary: ({ correct = 0 } = {}) => `${correct} correct`,
+  },
+
+  mathle: {
+    id: 'mathle',
+    name: 'Mathle',
+    blurb: 'Find the hidden equation in six tries. Everyone here gets the same one.',
+    kind: 'daily',
+    par: 4,
+    unit: 'guesses',
+    minutes: 3,
+    // Fewer guesses is better, and failing still beats not playing —
+    // a zero for turning up is how you teach people not to turn up.
+    score: ({ solved = false, guesses = 6 } = {}) =>
+      (solved ? clampPoints(130 - 10 * guesses) : 20),
+    resultOf: ({ solved = false, guesses = 0 } = {}) => (solved ? Math.max(1, guesses) : 0),
+    summary: ({ solved, guesses } = {}) =>
+      (solved ? `solved in ${guesses}` : 'not solved'),
+  },
+
+  connections: {
+    id: 'connections',
+    name: 'Connections',
+    blurb: 'Sixteen numbers, four sets of four. The overlaps are the puzzle.',
+    kind: 'daily',
+    par: 4,
+    unit: 'groups',
+    minutes: 4,
+    // Twenty-five a group, five off per mistake, and twenty for a clean
+    // sweep — so a perfect round is 120 and a scrappy four is still worth
+    // more than giving up at two.
+    score: ({ groups = 0, mistakes = 0 } = {}) =>
+      clampPoints((25 * groups) - (5 * mistakes) + (groups === 4 && mistakes === 0 ? 20 : 0)),
+    resultOf: ({ groups = 0 } = {}) => Math.max(0, Math.min(4, Math.round(groups))),
+    summary: ({ groups = 0, mistakes = 0 } = {}) =>
+      `${groups} of 4${mistakes > 0 ? `, ${mistakes} wrong` : ' clean'}`,
+  },
+
+  ratioRush: {
+    id: 'ratioRush',
+    name: 'Ratio Rush',
+    blurb: 'A half hour of bookings appears. How many instructors does the floor need?',
+    kind: 'timed',
+    seconds: 60,
+    par: 8,
+    unit: 'right',
+    minutes: 2,
+    // Ten rounds; par is eight right. It is the centre's own maths —
+    // aim 1:3.5, floor 1:4 — so the game teaches the thing it tests.
+    score: ({ correct = 0 } = {}) => clampPoints((100 * correct) / 8),
+    resultOf: ({ correct = 0 } = {}) => Math.max(0, Math.round(correct)),
+    summary: ({ correct = 0, asked = 10 } = {}) => `${correct} of ${asked} right`,
   },
 };
+
+/** Every game, in the order the page lists them. */
+export const GAME_LIST = Object.values(GAMES);
+
+/**
+ * Today's pick, cycling through the roster by date.
+ *
+ * It is a SUGGESTION, not a gate: every game stays playable every day,
+ * each with its own one ranked run. Locking games to weekdays would mean
+ * somebody who only works Tuesdays never plays anything but Connections.
+ */
+export const ROTATION = ['mathle', 'connections', 'ratioRush', 'sprint60'];
+
+export function featuredGameId(date) {
+  const key = typeof date === 'string' ? date : dayKey(date);
+  const [y, m, d] = key.split('-').map(Number);
+  if (!Number.isFinite(y)) return ROTATION[0];
+  // Days since an arbitrary fixed date, so the cycle is stable and does
+  // not restart at the turn of a month or a year.
+  const days = Math.floor(Date.UTC(y, m - 1, d) / 86400000);
+  return ROTATION[((days % ROTATION.length) + ROTATION.length) % ROTATION.length];
+}
+
+/**
+ * A non-negative integer, or zero.
+ *
+ * Every game's `resultOf` goes through this on the way to the row: one of
+ * them returning NaN (Math.round('lots')) would be a value Firestore
+ * cannot store and the rules would refuse anyway, and the run would be
+ * lost at the last step with nothing to show for it.
+ */
+export function clampResult(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.round(v);
+}
+
+/** Round and clamp into the range the Firestore rules will accept. */
+export function clampPoints(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v) || v <= 0) return 0;
+  return Math.min(MAX_POINTS, Math.round(v));
+}
 
 export function gameById(id) {
   return GAMES[id] || null;
@@ -342,7 +452,7 @@ export function sprintQuestion(rng, streak = 0) {
  * The row a finished run writes. Shaped here rather than in the page so
  * the fields the Firestore rules check are decided in one place.
  */
-export function buildScoreRow({ uid, userName, centerId, gameId, date, result, durationMs, seed }) {
+export function buildScoreRow({ uid, userName, centerId, gameId, date, outcome = {}, durationMs, seed }) {
   const game = gameById(gameId);
   return {
     uid,
@@ -350,8 +460,10 @@ export function buildScoreRow({ uid, userName, centerId, gameId, date, result, d
     centerId,
     gameId,
     date: typeof date === 'string' ? date : dayKey(date),
-    result: Math.max(0, Math.round(Number(result) || 0)),
-    points: pointsFor(result, game ? game.par : 0),
+    // One integer for the board, and the points the game worked out for
+    // itself. Both are validated by the Firestore rules.
+    result: game ? clampResult(game.resultOf(outcome)) : 0,
+    points: game ? clampPoints(game.score(outcome)) : 0,
     durationMs: Math.max(0, Math.round(Number(durationMs) || 0)),
     seed: String(seed ?? ''),
     createdAt: new Date().toISOString(),

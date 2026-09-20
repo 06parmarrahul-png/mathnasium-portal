@@ -930,9 +930,39 @@ made in Manage Staff, per centre, without an Enterprise login.
 
 ## Ratio Games — the one thing everybody gets
 
-A short maths game a day, a per-centre board, a monthly winner. Phase 1 is
-**Sprint 60** (60 seconds of mental arithmetic); the roster and the plan for the
-rest are in the draft proposal.
+A short maths game a day, a per-centre board, a monthly winner. **Four games
+live:** Sprint 60 (timed arithmetic), Mathle (guess the equation), Connections
+(sixteen numbers, four sets) and Ratio Rush (the centre's own staffing maths).
+
+**Each game scores itself.** "Better" means something different in each — more
+correct in Sprint, FEWER guesses in Mathle — so the registry entry carries
+`score(outcome)` and `resultOf(outcome)`, and every game lands on the same 0–120
+scale with **100 for a par run**. That is what stops any one game carrying a
+month. The page owns the WRITE; a game only plays and reports an outcome, so a
+new game cannot invent its own way onto the board. `clampPoints`/`clampResult`
+guard the row, because a game returning NaN is a value Firestore cannot store
+and the rules would refuse.
+
+**Engines live in `src/lib/games/`, all pure and seeded** (`mathle.js`,
+`connections.js`, `ratioRush.js`). Daily puzzles seed from `centre|date|game`,
+so the whole centre argues about the same board and nobody can reroll; practice
+adds a nonce. Two things worth knowing:
+- **Mathle never runs a player's string as code.** `evaluate()` is a two-pass
+  parser with a strict alphabet and strict number/operator alternation — without
+  the latter, `1;2` read as 1 because the tokeniser silently dropped what it
+  didn't recognise.
+- **Connections boards are checked for a UNIQUE solution before being dealt.**
+  The properties overlap on purpose (64 is a square AND a power of two), so the
+  generator only draws numbers that ONE chosen property claims. A board with two
+  valid answers is unfair, and there's a prize attached to the month.
+- **Ratio Rush uses `requiredForSlot()` from demand-staffing.js** — the same
+  function the Staffing Board sizes real days with, so the game teaches the
+  thing it tests. A miss shows the division, not just "wrong".
+
+**Still unbuilt, and deliberately:** the bank-based games (Riddle of the Day,
+Spot the Error, Close Enough) and the weekly Cross-number. Those need real
+content authored by staff plus a submission-and-approval flow — a different job
+from a generator, and the "Fun Day category nobody used" warning applies.
 
 **OFF UNTIL THE OWNER TURNS IT ON**, per centre: `gamesEnabled` on
 `centers/{id}/config/main`, read through `gamesEnabled(centerConfig)` — a
