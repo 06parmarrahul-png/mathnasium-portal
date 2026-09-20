@@ -1,6 +1,7 @@
 import { Fragment, useMemo } from 'react';
 import { assignmentFor, assignmentShort, assignmentColorHex, contrastText, stateColorHex } from '../lib/centerConfig';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
+import { rolePriority, subPriorityInTier, isTrainingRole } from '../lib/snapshotGrid';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -100,64 +101,10 @@ function parseShift(str) {
   return { startMins: norm(parts[0]), endMins: norm(parts[1]) };
 }
 
-// 4-tier ordering for Today's Snapshot:
-//   0 = Important staff (Hosts + Management — Manager, Director, Admin, etc.)
-//       These run the centre; they should sit at the top of the grid.
-//   1 = Online instructors — bars only, don't count toward teaching ratio.
-//   2 = In-centre instructors (Instructor + Lead) — the teaching workforce.
-//   3 = Volunteers — unpaid contributors, tracked separately below the
-//       paid roster. Volunteer flag comes from the shift entry itself
-//       (per-centre isVolunteer), so a volunteer with a shift tagged
-//       Elementary still lands in the volunteer tier, not with paid EM.
-// Bold dividers separate the four groups in the rendered table.
-//
-// Checks BOTH role and subRole because most centres tag online staff as
-// role:'Instructor' + subRole:'Online' rather than role:'Online Instructor'.
-// Tier 5 — trainees. Paid and present, but shadowing rather than
-// covering, so they must never sit in the in-centre instructor block
-// where someone reading the grid would count them as staffing.
-const isTrainingRole = (role) => String(role || '').trim().toLowerCase() === 'training';
-
-const rolePriority = (role, subRole, isVolunteer, flexRole) => {
-  // LEGACY tier. STEAM / Summer Camp were removed and nothing writes
-  // flexRole any more, but the 58 summer-2026 shifts that carry it still
-  // need their own row group on a historical day rather than being mixed
-  // into the in-centre instructor block.
-  if (flexRole) return 4;
-  if (isTrainingRole(role)) return 5;
-  if (isVolunteer) return 3;
-  if (role === 'Online Instructor' || subRole === 'Online') return 1;
-  if (role === 'Instructor' || role === 'Lead')             return 2;
-  // Everything else (Host, Manager, Director, Admin, Director of Education,
-  // Centre Director, …) is "important staff".
-  return 0;
-};
-
-// Sub-ordering WITHIN each tier — matches the exact stacking the boss
-// wanted:
-//   Tier 0 (management): CD → Dir. Ed → Manager → Admin Assistant → Host
-//   Tier 1 (online):     alphabetical
-//   Tier 2 (in-centre):  Lead → Highschool → Elementary
-//   Tier 3 (volunteers): alphabetical
-// Anything unrecognised falls to the bottom of its tier so a new role
-// added later doesn't hide.
-const subPriorityInTier = (tier, role, subRole) => {
-  if (tier === 0) {
-    if (role === 'Center Director' || role === 'Centre Director')          return 0;
-    if (role === 'Dir. of Education' || role === 'Director of Education')  return 1;
-    if (role === 'Manager')                                                return 2;
-    if (role === 'Admin Assistant' || role === 'admin_assistant')          return 3;
-    if (role === 'Host')                                                   return 4;
-    return 5;
-  }
-  if (tier === 2) {
-    if (role === 'Lead')                                                   return 0;
-    if (subRole === 'Highschool' || subRole === 'High School')             return 1;
-    if (subRole === 'Elementary')                                          return 2;
-    return 3;
-  }
-  return 0; // tiers 1 + 3 fall through to alphabetical only
-};
+// The row grouping and ordering moved to src/lib/snapshotGrid.js, so this
+// grid and the condensed snapshot on the leadership home read ONE copy of
+// it — a person has to land in the same group, in the same place, on both.
+// Nothing about the rules changed in the move; they have tests now.
 
 export default function CoverageGrid({ day, centerConfig }) {
   // Normalise input to a list of per-SHIFT entries. Each entry is one

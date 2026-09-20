@@ -20,6 +20,10 @@
   --nl-ink2:   #4A403A;
   --nl-muted:  #6E625B;
   --nl-rule:   #E7DED7;
+  /* The half-hour rules inside Today's Snapshot. Lighter than --nl-rule,
+     which is a card edge — one token for both made the columns as heavy
+     as the card itself. */
+  --nl-hair:   #F2ECE7;
 
   /* Mathnasium red. Identity and actions ONLY — never "error", or it
      stops meaning either. */
@@ -48,6 +52,7 @@
   --nl-ink2:   #D8CCC4;
   --nl-muted:  #9A8B82;
   --nl-rule:   #33291F;
+  --nl-hair:   #241D19;
   --nl-brand:  #FF7A8A;
   --nl-brandw: #3A1C21;
   --nl-ok:     #57C2A3;

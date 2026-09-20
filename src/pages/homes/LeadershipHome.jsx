@@ -8,11 +8,13 @@ import { setNewLook } from '../../lib/newLook';
 import { weekAhead, weekWindow } from '../../lib/centreEvents';
 import { LEAD_STATUSES } from '../../lib/leads';
 import { PAGES } from '../../lib/pageNames';
+import { resolveUserForCenter } from '../../lib/centerMembership';
 import DeskHomeCard from '../../components/DeskHomeCard';
 import Mascot from '../../components/Mascot';
 import { mascotFor } from '../../lib/mascots';
 import { Card, Pill, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
-import { fmtTime, fmtDay, todayISO, minutesOf } from '../../components/newlook/format';
+import TodaySnapshotCard from '../../components/newlook/TodaySnapshotCard';
+import { fmtTime, fmtDay, todayISO } from '../../components/newlook/format';
 
 /**
  * The home for people who RUN the centre — owners, directors, the admin
@@ -152,24 +154,20 @@ export default function LeadershipHome() {
     );
   }, [activeCenterId, today]);
 
-  // ── The floor, today ───────────────────────────────────────────────────
-  const floor = useMemo(() => {
-    const rows = (todayShifts || []).filter(isLive);
-    if (!rows.length) return null;
-    const starts = rows.map(s => minutesOf(s.startTime)).filter(Number.isFinite);
-    const ends = rows.map(s => minutesOf(s.endTime)).filter(Number.isFinite);
-    const lead = rows.find(s => String(s.role || '').toLowerCase().includes('lead'));
-    const host = rows.find(s => String(s.role || '').toLowerCase().includes('host'));
-    return {
-      count: rows.length,
-      first: rows.find(s => minutesOf(s.startTime) === Math.min(...starts))?.startTime,
-      last: rows.find(s => minutesOf(s.endTime) === Math.max(...ends))?.endTime,
-      lead: lead?.userName || host?.userName || null,
-      leadRole: lead ? 'leading' : (host ? 'hosting' : null),
-      sick: rows.filter(s => s.sickPay).length,
-      noShow: rows.filter(s => s.noShow).length,
-    };
-  }, [todayShifts]);
+  // Volunteers are a tier of their own in the grid, and the flag is
+  // per-centre, so it comes off the resolved membership rather than the
+  // shift. Same source the classic snapshot uses.
+  const volunteerNames = useMemo(() => {
+    const set = new Set();
+    for (const u of people) {
+      const at = resolveUserForCenter(u, activeCenterId);
+      if (at?.isVolunteer === true && at.displayName) set.add(at.displayName);
+    }
+    return set;
+  }, [people, activeCenterId]);
+
+  const anyLive = useMemo(
+    () => (todayShifts || []).some(isLive), [todayShifts]);
 
   // ── Things waiting on a decision ───────────────────────────────────────
   const unclaimed = useMemo(
@@ -260,44 +258,27 @@ export default function LeadershipHome() {
           whose min-content is the WHOLE string. Without this the column
           measured 408px inside a 362px phone and the cards ran off the
           right edge. */}
+      {/* Full width, above the split. The grid is nineteen half-hour
+          columns wide and cannot live in a 736px half-page. */}
+      <div className="mb-3.5">
+          {todayShifts === null ? (
+          <Loading label="Reading today's roster…" />
+        ) : anyLive ? (
+          <TodaySnapshotCard
+            shifts={todayShifts}
+            volunteerNames={volunteerNames}
+            centerConfig={centerConfig}
+            dateISO={today}
+            to={PAGES.staffSchedule.path} />
+        ) : (
+          <AllClear title="Nobody rostered today"
+            note="No live shifts on the sheet for today at this centre." />
+        )}
+      </div>
+
       <div className="grid gap-3.5 md:grid-cols-2 md:items-start">
         <div className="min-w-0 space-y-3.5">
           {/* ── The floor, today ─────────────────────────────────────── */}
-          {todayShifts === null ? (
-            <Loading label="Reading today's roster…" />
-          ) : floor ? (
-            <div className="rounded-2xl p-5" style={{ background: 'var(--nl-brand)', color: '#fff' }}>
-              <div className="text-[10px] font-bold uppercase tracking-[0.14em] opacity-80">
-                On the floor today
-              </div>
-              <div className="nl-display mt-1.5 text-[32px] font-bold leading-none sm:text-[36px]">
-                {floor.count} on today
-              </div>
-              <div className="mt-2 text-[14px] opacity-90">
-                {floor.first && floor.last
-                  ? `${fmtTime(floor.first)} – ${fmtTime(floor.last)}`
-                  : 'Times not set'}
-                {floor.lead && ` · ${floor.lead} ${floor.leadRole}`}
-              </div>
-              {(floor.sick > 0 || floor.noShow > 0) && (
-                <div className="mt-2 text-[13px] opacity-90">
-                  {[floor.sick && `${floor.sick} off sick`, floor.noShow && `${floor.noShow} no-show`]
-                    .filter(Boolean).join(' · ')}
-                </div>
-              )}
-              <div className="mt-4 flex flex-wrap items-center justify-end gap-2 border-t pt-3"
-                style={{ borderColor: 'rgba(255,255,255,.3)' }}>
-                <Btn to={PAGES.staffSchedule.path} size="sm" variant="ghost"
-                  className="!border-white/60 !text-white">
-                  {PAGES.staffSchedule.name} <ArrowRight size={13} />
-                </Btn>
-              </div>
-            </div>
-          ) : (
-            <AllClear title="Nobody rostered today"
-              note="No live shifts on the sheet for today at this centre." />
-          )}
-
           {/* ── What needs a decision ───────────────────────────────── */}
           <div>
             <Lbl className="mb-1.5">Needs you</Lbl>
