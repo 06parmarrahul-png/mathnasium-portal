@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import {
   CalendarCheck, Phone, Mail, User, ShieldAlert, CheckCircle2,
   XCircle, AlertTriangle, ExternalLink, Loader2,
@@ -27,12 +28,6 @@ const STATUS_OPTIONS = [
 
 function statusBadge(s) {
   return STATUS_OPTIONS.find(o => o.key === s) || STATUS_OPTIONS[0];
-}
-function fmtTime(iso) {
-  return new Date(iso).toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
 }
 function dayKey(iso) {
   const d = new Date(iso);
@@ -197,11 +192,12 @@ function DayBlock({ dayKey, items, onSetStatus }) {
 }
 
 function Row({ item, onSetStatus }) {
+  const fmtTime = useTimeFormat();
   const s = statusBadge(item.status || 'scheduled');
   return (
     <li className="px-4 py-3 flex flex-wrap items-start gap-3 hover:bg-gray-50/50">
       <div className="w-24 shrink-0">
-        <p className="text-sm font-bold text-gray-900 tabular-nums">{fmtTime(item.slot)}</p>
+        <p className="text-sm font-bold text-gray-900 tabular-nums">{fmtTime.stamp(item.slot, { weekday: 'short' })}</p>
         <p className="text-[11px] text-gray-400">{item.durationMin || 60} min</p>
       </div>
       <div className="flex-1 min-w-0">

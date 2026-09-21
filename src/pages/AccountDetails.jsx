@@ -13,10 +13,12 @@ import { Link } from 'react-router-dom';
 import {
   UserCog, Mail, Lock, Image as ImageIcon, Trash2, Save, AlertTriangle,
   CheckCircle2, ShieldAlert, Bell, ArrowRight, Phone, Eye, EyeOff, Smile,
+  Clock,
 } from 'lucide-react';
 import { watchOwnContact, saveContact, lazyMigrateContact } from '../lib/userContact';
 import MascotPicker from '../components/MascotPicker';
 import { mascotFor, resolveMascotId } from '../lib/mascots';
+import { TIME_FORMATS, resolveTimeFormat, timeFormatLabel, formatTime } from '../lib/timeFormat';
 
 /**
  * Account Details — the signed-in user's self-service profile page.
@@ -24,6 +26,7 @@ import { mascotFor, resolveMascotId } from '../lib/mascots';
  * Sections:
  *  - Profile picture (Firebase Storage upload, removable)
  *  - Your character (which Cole sits at the top of the sidebar)
+ *  - Clock (12- or 24-hour, for every time the portal shows you)
  *  - Personal info (firstName, lastName, bio)
  *  - Email (verifyBeforeUpdateEmail — sends a verification link to the
  *    new address; the auth-level change happens when they click it)
@@ -191,6 +194,8 @@ export default function AccountDetails() {
       <ProfilePictureCard profile={profile} />
 
       <MascotCard profile={profile} />
+
+      <ClockCard profile={profile} />
 
       {/* Personal info */}
       <div className="rounded-2xl border bg-white p-5 shadow-sm">
@@ -421,6 +426,76 @@ function MascotCard({ profile }) {
         Sits at the top of your sidebar and phone header. Change it whenever you like.
       </p>
       <MascotPicker value={shown} onChange={choose} disabled={pending !== null} wide />
+    </div>
+  );
+}
+
+// ─── Clock card ────────────────────────────────────────────────────────
+
+/**
+ * 12- or 24-hour, for every time the portal shows this person.
+ *
+ * Saves on tap, like the character above: one choice, so a Save button
+ * would only be a second click. The example under each option is the
+ * same formatter the rest of the app uses, so what you see here is
+ * literally what you will get on the schedule.
+ */
+function ClockCard({ profile }) {
+  const [pending, setPending] = useState(null);
+  const shown = pending ?? resolveTimeFormat(profile?.timeFormat);
+
+  const choose = async (value) => {
+    if (!profile?.uid || value === shown) return;
+    setPending(value);
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), {
+        timeFormat: value, profileUpdatedAt: serverTimestamp(),
+      });
+      toast.success(`Showing times as ${timeFormatLabel(value)}.`);
+    } catch (err) {
+      toast.error(err?.message || 'Couldn\'t change your clock. Try again.');
+    } finally {
+      setPending(null);
+    }
+  };
+
+  return (
+    <div className="rounded-2xl border bg-white p-5 shadow-sm">
+      <div className="mb-1 flex items-center gap-2">
+        <Clock size={16} className="text-purple-600" />
+        <h2 className="font-semibold text-gray-900">Clock</h2>
+      </div>
+      <p className="mb-4 text-sm text-gray-500">
+        How every time in the portal is shown to you — shifts, the schedule,
+        the student scheduler, message stamps. Only you see this choice.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        {TIME_FORMATS.map(value => {
+          const active = value === shown;
+          return (
+            <button
+              key={value}
+              type="button"
+              onClick={() => choose(value)}
+              disabled={pending !== null}
+              aria-pressed={active}
+              className={`rounded-xl border p-3 text-left transition-colors disabled:opacity-60 ${
+                active
+                  ? 'border-purple-400 bg-purple-50 ring-1 ring-purple-300'
+                  : 'border-gray-200 hover:border-purple-300 hover:bg-purple-50/40'
+              }`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-900">{timeFormatLabel(value)}</span>
+                {active && <CheckCircle2 size={15} className="shrink-0 text-purple-600" />}
+              </div>
+              <div className="mt-1 text-xs text-gray-500 tabular-nums">
+                {formatTime('09:30', value)} · {formatTime('15:00', value)} · {formatTime('19:45', value)}
+              </div>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

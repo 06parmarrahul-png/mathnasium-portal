@@ -4,6 +4,7 @@ import { collection, onSnapshot, query, orderBy, limit, where } from 'firebase/f
 import { format } from 'date-fns';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { PAGES } from '../lib/pageNames';
 import { greeting } from '../lib/greeting';
 import { styleFor as subRoleStyleFor } from '../lib/subRoles';
@@ -32,17 +33,6 @@ const CATEGORY_STYLES = {
   policy:   { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Policy' },
   urgent:   { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Urgent' },
 };
-
-function fmtTime(t) {
-  if (!t) return '';
-  const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-}
 
 function fmtShiftDate(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
@@ -74,6 +64,7 @@ const quickLinks = [
 
 export default function Home() {
   const { profile, activeCenterId, canSeeAdminPanel, isVolunteer } = useAuth();
+  const fmtTime = useTimeFormat();
   const [shifts, setShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [careerPlanOpen, setCareerPlanOpen] = useState(false);
@@ -278,7 +269,7 @@ export default function Home() {
                 <div className="mt-2 flex items-center gap-2 flex-wrap">
                   <Clock size={14} className="text-red-200" />
                   <p className="text-base font-medium text-red-100">
-                    {fmtTime(upcomingShift.startTime)} – {fmtTime(upcomingShift.endTime)}
+                    {fmtTime.range(upcomingShift.startTime, upcomingShift.endTime)}
                   </p>
                   {upcomingShift.role && (
                     <>

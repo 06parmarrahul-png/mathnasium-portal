@@ -86,6 +86,7 @@ function ColumnLayer({ axis, pct }) {
 export default function TodaySnapshotCard({
   shifts, volunteerNames, centerConfig, dateISO, isToday = true, to,
 }) {
+  const fmtTime = useTimeFormat();
   const rows = useMemo(
     () => snapshotRows(shifts, { volunteerNames }), [shifts, volunteerNames]);
   const axis = useMemo(() => dayAxis(rows), [rows]);
@@ -154,7 +155,7 @@ export default function TodaySnapshotCard({
               {totals.people} on today
             </div>
             <div className="mt-2 text-[13.5px] leading-snug opacity-90">
-              {fmtTime(fromMins(axis.from))} – {fmtTime(fromMins(axis.to))}
+              {fmtTime.range(fromMins(axis.from), fromMins(axis.to))}
               {leads.length > 0 && ` · ${list(leads)} leading`}
               {host && ` · ${host} hosting`}
             </div>
@@ -199,7 +200,7 @@ export default function TodaySnapshotCard({
                                : 'translateX(-50%)',
                       color: 'var(--nl-muted)',
                     }}>
-                    {hourLabel(h)}
+                    {hourLabel(h, fmtTime)}
                   </span>
                 );
               })}
@@ -250,7 +251,7 @@ export default function TodaySnapshotCard({
                       </div>
                       <div className="shrink-0 whitespace-nowrap text-right text-[12px]"
                         style={{ width: TIME_W, color: 'var(--nl-muted)' }}>
-                        {shortTime(r.startTime)}–{shortTime(r.endTime)}
+                        {shortTime(r.startTime, fmtTime)}–{shortTime(r.endTime, fmtTime)}
                       </div>
                     </div>
                   );
@@ -276,13 +277,17 @@ export default function TodaySnapshotCard({
 }
 
 const fromMins = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-const hourLabel = (h) => `${((h + 11) % 12) + 1}${h < 12 ? 'a' : 'p'}`;
-/** "15:30" -> "3:30", "19:00" -> "7". The band above carries the am/pm. */
-const shortTime = (t) => {
-  const m = mins(t);
-  if (!Number.isFinite(m)) return '';
-  const h = ((Math.floor(m / 60) + 11) % 12) + 1;
-  return m % 60 ? `${h}:${String(m % 60).padStart(2, '0')}` : `${h}`;
+/** An hour mark on the axis: "3p", or "15" on a 24-hour clock. */
+const hourLabel = (h, fmt) => fmt.tick(h * 60);
+/**
+ * "15:30" -> "3:30", "19:00" -> "7". The axis above carries the am/pm,
+ * so the letter comes off inside a bar — but only on a 12-hour clock,
+ * where there is a letter to come off.
+ */
+const shortTime = (t, fmt) => {
+  if (!Number.isFinite(mins(t))) return '';
+  const tick = fmt.tick(t);
+  return fmt.is24h ? tick : tick.slice(0, -1);
 };
 const list = (xs) => (xs.length === 1 ? xs[0]
   : `${xs.slice(0, -1).join(', ')} & ${xs[xs.length - 1]}`);

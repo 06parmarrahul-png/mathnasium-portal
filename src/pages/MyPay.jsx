@@ -12,7 +12,8 @@ import {
   grossPay, isPlausibleRate, money, todayISO, isHourlyPaid,
 } from '../lib/payProjection';
 import { Card, Pill, Btn, Lbl, Loading } from '../components/newlook/ui';
-import { fmtTime, fmtDay } from '../components/newlook/format';
+import { fmtDay } from '../components/newlook/format';
+import { useTimeFormat } from '../lib/useTimeFormat';
 
 /**
  * My Pay — an instructor's own pay period, as far as Ratio knows it.
@@ -34,6 +35,7 @@ import { fmtTime, fmtDay } from '../components/newlook/format';
  */
 export default function MyPay() {
   const { profile, activeCenterId, centerConfig, isVolunteer } = useAuth();
+  const fmtTime = useTimeFormat();
   const today = todayISO();
 
   const [period, setPeriod] = useState(() => periodFor(today));
@@ -210,7 +212,7 @@ export default function MyPay() {
                     {fmtDay(r.date, { weekday: 'short', month: 'short', day: 'numeric' })}
                   </span>
                   <span className="block truncate text-[12px]" style={{ color: 'var(--nl-muted)' }}>
-                    {fmtTime(r.startTime)} – {fmtTime(r.endTime)}
+                    {fmtTime.range(r.startTime, r.endTime)}
                     {r.subRole ? ` · ${r.subRole}` : ''}
                   </span>
                 </span>

@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { collection, addDoc, onSnapshot, query, where, orderBy, limit, doc, runTransaction } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
+import { formatRange } from '../lib/timeFormat';
 import { PAGES } from '../lib/pageNames';
 import { MessageSquare, Send, ArrowRightLeft, CheckCircle, Users, Laptop } from 'lucide-react';
 import { toast } from '../lib/notify';
@@ -13,6 +15,7 @@ import UserProfileModal from '../components/UserProfileModal';
 
 export default function Chat() {
   const { profile, mySubRoles, activeCenterId, canTakeShifts } = useAuth();
+  const fmtTime = useTimeFormat();
   const [allMessages, setAllMessages] = useState([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -195,7 +198,9 @@ export default function Chat() {
 
       // Confirmation message — outside the transaction (separate concern; OK to fail independently)
       await addDoc(collection(db, 'chat'), {
-        text: `${profile.displayName} has taken ${msg.userName}'s shift on ${msg.shiftDate} (${msg.shiftStartTime} - ${msg.shiftEndTime}).`,
+        // Stored text — read by everyone, so it takes the shared 12-hour
+        // default. It used to print the raw "15:00" off the shift doc.
+        text: `${profile.displayName} has taken ${msg.userName}'s shift on ${msg.shiftDate} (${formatRange(msg.shiftStartTime, msg.shiftEndTime)}).`,
         userId: 'system',
         userName: 'System',
         userRole: 'system',
@@ -208,7 +213,7 @@ export default function Chat() {
     }
   };
 
-  const formatTime = (ts) => ts ? new Date(ts.seconds * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+  const formatTime = (ts) => fmtTime.stamp(ts);
   const initials = (name) => name?.split(' ').map(w => w.charAt(0)).join('').toUpperCase().slice(0, 2) || '??';
 
   return (

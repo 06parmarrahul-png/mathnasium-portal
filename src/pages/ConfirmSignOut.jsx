@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Clock, Check, AlertTriangle, Loader2 } from 'lucide-react';
 import RatioLogo from '../components/RatioLogo';
+import { formatTime } from '../lib/timeFormat';
 
 /**
  * ConfirmSignOut — the page an instructor lands on from the
@@ -163,14 +164,8 @@ function Problem({ message }) {
   );
 }
 
+// This page opens from a link in an email, often signed out, so there is
+// nobody whose preference to read — it stays on the 12-hour default.
 function fmt(t) {
-  if (!t) return '—';
-  const [hStr, mStr] = String(t).split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  if (!Number.isFinite(h)) return String(t);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return m ? `${h}:${String(m).padStart(2, '0')} ${ampm}` : `${h}:00 ${ampm}`;
+  return formatTime(t) || '—';
 }

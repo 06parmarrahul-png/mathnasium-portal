@@ -15,6 +15,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
+import { minutesOf } from '../lib/timeFormat';
 import { PAGES } from '../lib/pageNames';
 import { auth, db } from '../firebase';
 import {
@@ -975,6 +977,7 @@ function SideTable({ side, data, centerId, date, checkIns, assignments, ratio, p
 }
 
 function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio, pool, clipboard, setClipboard, nameAliases, timezone, scheduledTodayNames, walkIns, profile, roster, slotPickerOptions, onMoveStudent, presence }) {
+  const fmtTime = useTimeFormat();
   // Two-tier dropdown. By default we show only staff scheduled today
   // (from the `shifts` collection + fixed-staff schedule). A "+ More"
   // option at the bottom expands the picker to the full pool — useful
@@ -1119,7 +1122,11 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   // vice versa) without flipping back and forth.
   const otherInstructors = assignments[`${otherSide}|${row.slot}`] || [];
   const understaffed = instructors.length < need;
-  const slotLabel = `${side} ${row.label.split('–')[0]}`;
+  // The API's `row.label` is a fixed 12-hour string, so the row builds its
+  // own from the slot key — the half hour it starts, and the one it ends.
+  const slotStart = fmtTime.compact(row.slot);
+  const slotEnd = fmtTime.compact((minutesOf(row.slot) ?? 0) + 30);
+  const slotLabel = `${side} ${slotStart}`;
   const isCopySource = clipboard && clipboard.from === slotLabel;
   const canPaste = clipboard && clipboard.from !== slotLabel;
 
@@ -1192,8 +1199,8 @@ function SlotRow({ row, side, alt, centerId, date, checkIns, assignments, ratio,
   return (
     <tr className={alt ? 'bg-gray-50' : ''}>
       <td className="px-1 py-1.5 align-top text-xs font-semibold text-gray-700 whitespace-nowrap border-b border-gray-500">
-        {row.label.split('–')[0]}<br/>
-        <span className="font-normal text-[10px] text-gray-400">{row.label.split('–')[1]}</span>
+        {slotStart}<br/>
+        <span className="font-normal text-[10px] text-gray-400">{slotEnd}</span>
       </td>
       {/* On the hour column — also hosts the +student button when the
           row's natural side is on-hour (slot key ends :00). */}
@@ -1952,6 +1959,7 @@ function SummaryTile({ label, value, sub, tone = 'neutral' }) {
 }
 
 function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
+  const fmtTime = useTimeFormat();
   // Names already placed as tagged walk-ins today (First Session / Free
   // Trial). Once placed, a student drops out of the Uncategorized list so
   // it doesn't nag about someone who's already on the board.
@@ -1978,11 +1986,6 @@ function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
   const visibleGroups = [...groups.values()];
   if (visibleGroups.length === 0) return null;
 
-  function fmtTime(iso) {
-    try {
-      return new Date(iso).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-    } catch { return ''; }
-  }
 
   // Snap a booking's start instant to the half-hour slot grid in centre time.
   const slotFromStart = (iso) => {
@@ -2023,7 +2026,7 @@ function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
     const prompt_msg = n === 1
       ? `Map "${group.name}" to which student?\nEnter the real student's name as it appears in your tracker.`
       : `"${group.name}" has ${n} bookings today:\n` +
-        group.bookings.map((b, i) => `   ${i + 1}. ${fmtTime(b.start)} – ${b.type || ''}`).join('\n') +
+        group.bookings.map((b, i) => `   ${i + 1}. ${fmtTime.clock(b.start)} – ${b.type || ''}`).join('\n') +
         `\n\nEnter the ${n} student names, comma-separated, in BOOKING ORDER (earliest first).\nExample: "Claire Eddy, Julia Eddy"`;
     try {
       const real = prompt(prompt_msg, '');
@@ -2052,7 +2055,7 @@ function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
               <ul className="text-xs text-gray-600 ml-3 mt-0.5">
                 {g.bookings.map((b, i) => (
                   <li key={b.id}>
-                    <span className="font-mono">{i + 1}.</span> <span className="font-semibold">{fmtTime(b.start)}</span> · {b.type || '(no type)'}
+                    <span className="font-mono">{i + 1}.</span> <span className="font-semibold">{fmtTime.clock(b.start)}</span> · {b.type || '(no type)'}
                   </li>
                 ))}
               </ul>
@@ -2092,6 +2095,7 @@ function UnknownBanner({ data, centerId, date, timezone, walkIns, onFix }) {
 //  FORECAST TAB
 // ═══════════════════════════════════════════════════════════════════════
 function ForecastTab({ centerId }) {
+  const fmtTime = useTimeFormat();
   const [days, setDays] = useState(14);
   const [rows, setRows] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -2115,7 +2119,7 @@ function ForecastTab({ centerId }) {
         for (const s of (j.slots || [])) {
           const total = (s.counts.HS || 0) + (s.counts.EM || 0);
           const need = Math.max(1, Math.ceil(total / 4));
-          if (total > peakStudents) { peakStudents = total; peakSlot = s.label; }
+          if (total > peakStudents) { peakStudents = total; peakSlot = s.slot; }
           if (need > peakNeeded) peakNeeded = need;
         }
         out.push({ day, peakStudents, peakNeeded, peakSlot, total: j.totals.all });
@@ -2166,7 +2170,7 @@ function ForecastTab({ centerId }) {
                 <td className="py-1 text-right">{r.total}</td>
                 <td className="py-1 text-right">{r.peakStudents}</td>
                 <td className="py-1 text-right font-semibold">{r.peakNeeded}</td>
-                <td className="py-1 pl-3 text-gray-500">{r.peakSlot || '—'}</td>
+                <td className="py-1 pl-3 text-gray-500">{r.peakSlot ? fmtTime.compact(r.peakSlot) : '—'}</td>
               </tr>
             ))}
           </tbody>
@@ -2183,6 +2187,7 @@ function ForecastTab({ centerId }) {
 // average demand looks like, what the centre typically staffs, and what
 // the target ratio would suggest. Three pieces of info per slot.
 function WeeklyPatterns({ centerId }) {
+  const fmtTime = useTimeFormat();
   const [snapshots, setSnapshots] = useState(null);
   const [loading,   setLoading]   = useState(true);
   const [error,     setError]     = useState(null);
@@ -2310,7 +2315,7 @@ function WeeklyPatterns({ centerId }) {
                         : { label: 'on target', cls: 'text-emerald-700' };
                       return (
                         <tr key={k} className="border-t border-gray-100">
-                          <td className="py-1 font-mono text-xs">{s.slot}</td>
+                          <td className="py-1 font-mono text-xs">{fmtTime.compact(s.slot)}</td>
                           <td className="py-1 text-center text-xs">{s.side}</td>
                           <td className="py-1 text-right">{enoughSamples ? s.avgScheduled.toFixed(1) : '—'}</td>
                           <td className="py-1 text-right">{enoughSamples ? s.avgPresent.toFixed(1) : '—'}</td>

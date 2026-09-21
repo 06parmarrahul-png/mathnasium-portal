@@ -23,7 +23,7 @@ vi.mock('firebase/firestore', () => ({
 vi.mock('./CenterSwitcher', () => ({ default: () => null }));
 vi.mock('./MigrationBanner', () => ({ default: () => null }));
 const current = { auth: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: Layout } = await import('./Layout');
 const { resolveRoles, resolvePermissions } = await import('../lib/roles');

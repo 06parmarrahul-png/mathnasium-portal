@@ -35,7 +35,7 @@ vi.mock('../lib/notify', () => ({
   toast: { success: (m) => toasts.push(['ok', m]), error: (m) => toasts.push(['err', m]) },
 }));
 const current = { auth: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: RatioGames } = await import('./RatioGames');
 const { GAME_LIST } = await import('../lib/ratioGames');

@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { fetchApptotoEvents } from '../lib/integrations/apptoto';
 import {
   CalendarCheck, Plug, Loader2, AlertTriangle, ExternalLink, ChevronRight,
@@ -72,17 +73,10 @@ function endOfWeek(d) {
   x.setDate(x.getDate() + 7);
   return x;
 }
-function fmtTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleString('en-US', {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
-}
 
 export default function ApptotoAppointmentsCard() {
   const { activeCenterId } = useAuth();
+  const fmtTime = useTimeFormat();
   const [connected, setConnected] = useState(null); // null = loading
   const [events, setEvents] = useState(null);       // null = loading; [] = empty
   const [error, setError] = useState('');
@@ -216,7 +210,7 @@ export default function ApptotoAppointmentsCard() {
                   <p className="truncate font-medium text-gray-800">{u.title}</p>
                   {u.contact && <p className="text-xs text-gray-500 truncate">{u.contact}</p>}
                 </div>
-                <span className="text-xs text-gray-500 whitespace-nowrap shrink-0">{fmtTime(u.when)}</span>
+                <span className="text-xs text-gray-500 whitespace-nowrap shrink-0">{fmtTime.stamp(u.when, { weekday: 'short' })}</span>
               </li>
             ))}
           </ul>

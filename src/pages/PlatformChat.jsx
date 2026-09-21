@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { collection, addDoc, onSnapshot, getDocs, query, orderBy, limit, where } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { PAGES } from '../lib/pageNames';
 import { isCentreManager, inManagementChat } from '../lib/managementTier';
 import { MessageSquare, Send, ShieldAlert, Building2, Users, Globe } from 'lucide-react';
@@ -32,6 +33,7 @@ const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2 };
 
 export default function PlatformChat() {
   const { profile, activeCenterId, isSuperAdmin, isOwner, isOwnerLike, isAdmin } = useAuth();
+  const fmtTime = useTimeFormat();
   const [searchParams] = useSearchParams();
   // Management chat — the same people the centerLeadership rules let in:
   // owner-level (owner, admin assistant, directors), plain admin and
@@ -171,10 +173,7 @@ export default function PlatformChat() {
     }
   };
 
-  const formatTime = (ts) =>
-    ts ? new Date(ts.seconds * 1000).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    }) : '';
+  const formatTime = (ts) => fmtTime.stamp(ts);
   const initials = (name) => name?.split(' ').map(w => w.charAt(0)).join('').toUpperCase().slice(0, 2) || '??';
   // `sender` is the author's user doc when we have it: a Manager's messages
   // carry userRole 'instructor', so the badge comes from their title.

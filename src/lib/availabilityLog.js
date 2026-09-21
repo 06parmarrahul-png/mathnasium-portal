@@ -42,6 +42,7 @@ import {
   collection, addDoc, onSnapshot, query, where, orderBy, limit,
 } from 'firebase/firestore';
 import { db } from '../firebase';
+import { formatTime, formatStamp } from './timeFormat';
 
 export const AVAILABILITY_LOG = 'availabilityLog';
 
@@ -258,22 +259,19 @@ export const CONFLICT_TEXT = {
 
 // ─── Display helpers ───────────────────────────────────────────────────
 
-export function fmtTime(t) {
-  if (!t) return '—';
-  const [hStr, mStr] = String(t).split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  if (!Number.isFinite(h)) return String(t);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return m ? `${h}:${String(m).padStart(2, '0')} ${ampm}` : `${h} ${ampm}`;
+
+// These take the reader's clock — the log renders on screen — and default
+// to 12-hour, which is what the CSV export below gets: that file leaves
+// the app, so it should not vary with who pressed the button.
+
+export function fmtTime(t, format) {
+  return formatTime(t, format) || '—';
 }
 
-export function fmtWindow(snap) {
+export function fmtWindow(snap, format) {
   if (!snap) return 'not available';
   if (!snap.startTime && !snap.endTime) return 'not available';
-  return `${fmtTime(snap.startTime)} – ${fmtTime(snap.endTime)}`;
+  return `${fmtTime(snap.startTime, format)} – ${fmtTime(snap.endTime, format)}`;
 }
 
 export function fmtDay(iso) {
@@ -285,24 +283,20 @@ export function fmtDay(iso) {
   } catch { return iso; }
 }
 
-export function fmtWhen(iso) {
+export function fmtWhen(iso, format) {
   if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  } catch { return iso; }
+  return formatStamp(iso, format) || iso;
 }
 
 const PREF_LABEL = { either: 'Either', centre: 'Centre', online: 'Online' };
 
 /** One-line description of what changed, for the row and the CSV. */
-export function describeChange(entry) {
+export function describeChange(entry, format) {
   switch (entry.action) {
     case AVAIL_ACTIONS.ADDED:
-      return `Added ${fmtWindow(entry.after)}`;
+      return `Added ${fmtWindow(entry.after, format)}`;
     case AVAIL_ACTIONS.REMOVED:
-      return `Removed ${fmtWindow(entry.before)}`;
+      return `Removed ${fmtWindow(entry.before, format)}`;
     case AVAIL_ACTIONS.CHANGED: {
       const parts = (entry.fields || []).map(f => {
         if (f === 'startTime' || f === 'endTime') return null; // covered by the window line
@@ -318,7 +312,7 @@ export function describeChange(entry) {
 
       const timeChanged = (entry.fields || []).some(f => f === 'startTime' || f === 'endTime');
       const bits = [];
-      if (timeChanged) bits.push(`${fmtWindow(entry.before)} → ${fmtWindow(entry.after)}`);
+      if (timeChanged) bits.push(`${fmtWindow(entry.before, format)} → ${fmtWindow(entry.after, format)}`);
       bits.push(...parts);
       return bits.join(', ') || 'Updated';
     }

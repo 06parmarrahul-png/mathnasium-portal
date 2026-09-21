@@ -97,7 +97,7 @@ vi.mock('../lib/audit', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: ManagementDesk } = await import('./ManagementDesk');
 

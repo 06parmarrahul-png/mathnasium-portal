@@ -17,6 +17,7 @@ import {
   TrendingUp, Filter,
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import {
   watchLeads, createLead, updateLead, setLeadStatus, deleteLead,
   appendLeadNote, convertLeadToStudent,
@@ -214,6 +215,7 @@ function LeadRow({ lead, onOpen }) {
 
 // ─── Lead modal (add + edit) ──────────────────────────────────────────
 function LeadModal({ centerId, actor, lead, onClose }) {
+  const fmtTime = useTimeFormat();
   const isEdit = !!lead;
   const [form, setForm] = useState(() => ({
     parentName:   lead?.parentName   || '',
@@ -306,8 +308,8 @@ function LeadModal({ centerId, actor, lead, onClose }) {
             <h2 className="text-lg font-semibold text-gray-900">{isEdit ? 'Lead' : 'Add lead'}</h2>
             {isEdit && (
               <p className="text-xs text-gray-500 mt-0.5">
-                Created {formatDate(lead.createdAt)}
-                {lead.enrolledAt && ` · Enrolled ${formatDate(lead.enrolledAt)}`}
+                Created {formatDate(lead.createdAt, fmtTime)}
+                {lead.enrolledAt && ` · Enrolled ${formatDate(lead.enrolledAt, fmtTime)}`}
               </p>
             )}
           </div>
@@ -404,7 +406,7 @@ function LeadModal({ centerId, actor, lead, onClose }) {
               <div className="space-y-1 rounded border border-gray-200 bg-gray-50 p-2 max-h-48 overflow-y-auto">
                 {(lead.history || []).slice().reverse().map((h, i) => (
                   <div key={i} className="text-xs">
-                    <span className="text-gray-400">{formatDate(h.at)}</span>
+                    <span className="text-gray-400">{formatDate(h.at, fmtTime)}</span>
                     <span className="mx-1.5 text-gray-300">·</span>
                     <span className="text-gray-500">{h.by}</span>
                     <span className="mx-1.5 text-gray-300">·</span>
@@ -506,7 +508,7 @@ function SourceTable({ sources }) {
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────
-function formatDate(v) {
+function formatDate(v, fmtTime) {
   if (!v) return '';
   // Firestore Timestamp or ISO string or millis — normalize.
   let d;
@@ -515,11 +517,6 @@ function formatDate(v) {
   else if (typeof v === 'number') d = new Date(v);
   else return '';
   if (isNaN(d.getTime())) return '';
-  const now = new Date();
-  const sameYear = d.getFullYear() === now.getFullYear();
-  return d.toLocaleDateString(undefined, {
-    month: 'short', day: 'numeric',
-    ...(sameYear ? {} : { year: 'numeric' }),
-    hour: 'numeric', minute: '2-digit',
-  });
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return fmtTime.stamp(d, sameYear ? {} : { year: 'numeric' });
 }

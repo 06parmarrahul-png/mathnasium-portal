@@ -13,7 +13,7 @@ import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 vi.mock('../firebase', () => ({ db: {}, auth: {}, storage: {}, serverTimestamp: () => 'ts' }));
 vi.mock('firebase/firestore', () => ({}));
 vi.mock('firebase/storage', () => ({}));
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({}) }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({}), useOptionalAuth: () => ({}) }));
 vi.mock('../lib/notify', () => ({ toast: { success: vi.fn(), error: vi.fn() }, confirmDialog: async () => true }));
 
 const { PayPeriodStepper, PeriodSickDays, StatHolidaysTab } = await import('./Admin');

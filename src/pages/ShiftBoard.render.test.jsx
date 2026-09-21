@@ -47,7 +47,7 @@ vi.mock('../lib/notify', () => ({
 vi.mock('../lib/emailService', () => ({ notifyShiftClaimed: async () => {} }));
 
 const authValue = { current: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: ShiftBoard } = await import('./ShiftBoard');
 

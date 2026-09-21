@@ -60,7 +60,7 @@ vi.mock('../../lib/scheduler-data', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: InstructorHome } = await import('./InstructorHome');
 

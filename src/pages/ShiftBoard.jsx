@@ -6,6 +6,8 @@ import {
 import { format } from 'date-fns';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
+import { formatRange } from '../lib/timeFormat';
 import { roleDisplayName } from '../lib/roleLabel';
 import { PAGES } from '../lib/pageNames';
 import { styleFor as subRoleStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
@@ -24,17 +26,6 @@ import { shiftOnDate, conflictLabel, conflictReason } from '../lib/doubleBooking
 const HIDE_INELIGIBLE_KEY = 'shiftBoard.hideIneligible';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function fmtTime(t) {
-  if (!t) return '';
-  const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-}
 
 function fmtDate(dateStr) {
   if (!dateStr) return '';
@@ -84,6 +75,7 @@ function CardShell({ children, eligible, isMine }) {
 }
 
 function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete, clash }) {
+  const fmtTime = useTimeFormat();
   const [busy, setBusy] = useState(false);
   const eligible = canTake(requiredCapabilityForShift(shift), mySubRoles) && !clash;
   const handleClick = async () => {
@@ -143,11 +135,11 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete,
            the way, so nobody has to guess why the button won't press. */
         <button
           disabled
-          title={conflictReason(clash)}
+          title={conflictReason(clash, fmtTime.format)}
           className="w-full flex items-center justify-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed"
         >
           <CalendarCheck size={13} />
-          {conflictLabel(clash)}
+          {conflictLabel(clash, fmtTime.format)}
         </button>
       ) : (
         <button
@@ -164,6 +156,7 @@ function OpenShiftCard({ shift, mySubRoles, onClaim, canAdmin, onEdit, onDelete,
 }
 
 function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRetract, clash }) {
+  const fmtTime = useTimeFormat();
   const [busy, setBusy] = useState(false);
   const isMine = swap.userId === profile?.uid;
   const eligible = !isMine && canTake(swap.shiftSubRole, mySubRoles) && !clash;
@@ -229,11 +222,11 @@ function SwapCard({ swap, profile, mySubRoles, onTake, canAdmin, onDelete, onRet
       ) : clash ? (
         <button
           disabled
-          title={conflictReason(clash)}
+          title={conflictReason(clash, fmtTime.format)}
           className="w-full flex items-center justify-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-500 cursor-not-allowed"
         >
           <CalendarCheck size={13} />
-          {conflictLabel(clash)}
+          {conflictLabel(clash, fmtTime.format)}
         </button>
       ) : (
         <button
@@ -312,6 +305,7 @@ function EditOpenShiftModal({ shift, onClose, onSave }) {
 
 export default function ShiftBoard() {
   const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, canTakeShifts, centerConfig } = useAuth();
+  const fmtTime = useTimeFormat();
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
   const [chatDocs, setChatDocs] = useState([]);
@@ -424,7 +418,7 @@ export default function ShiftBoard() {
     // somebody else rostered them onto that day.
     const clash = shiftOnDate(myShifts, profile?.uid, openShift.date);
     if (clash) {
-      toast.error(conflictReason(clash));
+      toast.error(conflictReason(clash, fmtTime.format));
       return;
     }
     try {
@@ -473,7 +467,9 @@ export default function ShiftBoard() {
       // and Doug/Sylvia at Chilliwack don't see "Mathnasium Langley" on
       // their system messages.
       await addDoc(collection(db, 'chat'), {
-        text: `✅ ${profile.displayName} claimed the open shift on ${fmtDate(openShift.date)} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
+        // Stored text: everyone reads the same string, so it stays on the
+        // shared 12-hour default rather than the author's own clock.
+        text: `✅ ${profile.displayName} claimed the open shift on ${fmtDate(openShift.date)} (${formatRange(openShift.startTime, openShift.endTime)}).`,
         userId: 'system',
         userName: centerConfig?.name || 'Mathnasium',
         userRole: 'system',
@@ -523,7 +519,7 @@ export default function ShiftBoard() {
     // is still open.
     const swapClash = shiftOnDate(myShifts, profile?.uid, swap.shiftDate);
     if (swapClash) {
-      toast.error(conflictReason(swapClash));
+      toast.error(conflictReason(swapClash, fmtTime.format));
       return;
     }
     // 15-minute grace period so the poster has time to take it back
@@ -582,7 +578,7 @@ export default function ShiftBoard() {
       });
 
       await addDoc(collection(db, 'chat'), {
-        text: `${profile.displayName} took ${swap.userName}'s shift on ${fmtDate(swap.shiftDate)} (${fmtTime(swap.shiftStartTime)} – ${fmtTime(swap.shiftEndTime)}).`,
+        text: `${profile.displayName} took ${swap.userName}'s shift on ${fmtDate(swap.shiftDate)} (${formatRange(swap.shiftStartTime, swap.shiftEndTime)}).`,
         userId: 'system',
         userName: 'System',
         userRole: 'system',

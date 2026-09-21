@@ -15,7 +15,7 @@ vi.mock('firebase/firestore', () => ({
   collection: () => ({}),
   getDocs: async () => ({ docs: [{ id: 'langley', data: () => ({ name: 'Mathnasium Langley' }) }] }),
 }));
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ signup }) }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => ({ signup }), useOptionalAuth: () => ({ signup }) }));
 
 const { default: Signup } = await import('./Signup');
 

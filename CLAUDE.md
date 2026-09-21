@@ -1095,6 +1095,52 @@ but volunteers can reach a chat (owner-shaped sidebars get **Chats**, which
 Directors and the Admin Assistant used to lack), and each card shows the
 right title.
 
+## One clock — 12-hour by default, 24-hour if you ask
+
+Every time a person reads goes through **`src/lib/timeFormat.js`**. Components
+bind it once with `useTimeFormat()` and call it like the old local helpers:
+
+```js
+const fmtTime = useTimeFormat();
+fmtTime('15:30')               // "3:30 PM"      prose and cards
+fmtTime.compact('15:30')       // "3:30PM"       chart axes, grid headers
+fmtTime.short('15:00')         // "3pm"          dense boards
+fmtTime.tick('15:00')          // "3p"           hour marks on an axis
+fmtTime.range(start, end)      // "3:00 PM – 7:00 PM"
+fmtTime.clock(ts)              // "3:04 PM"      a timestamp
+fmtTime.stamp(ts)              // "Sep 20, 3:04 PM"
+fmtTime.format                 // '12h' | '24h', to pass into a lib function
+```
+
+**The preference** is `users/{uid}.timeFormat`, set on My Account → Clock and
+nowhere else. It is per person, live (AuthContext already watches the user
+doc, so changing it re-renders open pages), and defaults to 12-hour — what
+the centre says out loud. Anything unreadable falls back to 12-hour rather
+than throwing; `useTimeFormat` works with no auth provider at all, so a card
+rendered on its own in a test still formats.
+
+**Storage and input stay 24-hour.** Shift times, slot keys and every
+`<input type="time">` are "HH:MM" because that sorts, compares and
+round-trips. This is display only — never write a formatted time back.
+
+**Three things deliberately ignore the preference**, all for the same reason —
+the reader isn't the person whose setting we hold: `emailService.js`, the
+payroll XLSX / availability CSV exports, and **text written into the chat**
+(a claimed shift, a swap request). A chat message is stored once and read by
+everyone, so it carries the shared 12-hour default instead of its author's
+clock. The public booking page has no signed-in reader, so it takes the
+default too.
+
+**Why this exists**: twelve hand-rolled `fmtTime`s had grown across the app and
+disagreed with each other, and several surfaces skipped them and printed the
+stored "15:30" — Manage Availability's hint, the centre events list, the
+weekly-patterns table, the coverage tooltip. `timeFormat.scan.test.js` scans
+every source file for a hand-built AM/PM suffix or a `toLocaleTimeString`
+without `hour12`, and fails on either, so a thirteenth copy can't appear.
+Lib functions that build a sentence for the screen (`doubleBooking`,
+`availabilityLog`, `availabilityFit`) take the format as a last argument and
+default to 12-hour.
+
 ## Cole — the mascot each person picks
 
 The A+ at the top of the sidebar (and the phone header, and sign-up) is now

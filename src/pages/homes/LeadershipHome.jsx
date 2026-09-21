@@ -14,7 +14,8 @@ import Mascot from '../../components/Mascot';
 import { mascotFor } from '../../lib/mascots';
 import { Card, Pill, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
 import TodaySnapshotCard from '../../components/newlook/TodaySnapshotCard';
-import { fmtTime, fmtDay, todayISO } from '../../components/newlook/format';
+import { fmtDay, todayISO } from '../../components/newlook/format';
+import { useTimeFormat } from '../../lib/useTimeFormat';
 
 /**
  * The home for people who RUN the centre — owners, directors, the admin
@@ -57,6 +58,7 @@ const isLive = (s) => s.status !== 'draft' && s.status !== 'cancelled';
 
 export default function LeadershipHome() {
   const auth = useAuth();
+  const fmtTime = useTimeFormat();
   const {
     profile, activeCenterId, isOwner, isSuperAdmin, isDirector, isAdminAssistant, centerConfig,
   } = auth;

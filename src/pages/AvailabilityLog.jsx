@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { roleDisplayName } from '../lib/roleLabel';
 import { toast } from '../lib/notify';
 import {
   ACTION_STYLE, AVAIL_ACTIONS, CONFLICT_TEXT,
   subscribeAvailabilityLog, indexShifts, conflictFor,
-  describeChange, fmtWindow, fmtDay, fmtWhen, fmtTime, logToCsv,
+  describeChange, fmtWindow, fmtDay, fmtWhen, logToCsv,
 } from '../lib/availabilityLog';
 import {
   History, Search, Download, AlertTriangle, CalendarDays, Loader2,
@@ -125,6 +126,7 @@ function ActionChip({ action }) {
 }
 
 function ConflictBanner({ conflict }) {
+  const fmtTime = useTimeFormat();
   return (
     <div className="mt-2 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 px-3 py-2">
       <AlertTriangle size={15} className="mt-0.5 shrink-0 text-red-600" />
@@ -135,7 +137,7 @@ function ConflictBanner({ conflict }) {
           {conflict.shifts.map((s, i) => (
             <span key={s.id || i}>
               {i > 0 && ', '}
-              {fmtTime(s.startTime)}–{fmtTime(s.endTime)}
+              {fmtTime.range(s.startTime, s.endTime, 'short')}
               {s.role ? ` (${roleDisplayName(s.role)})` : ''}
             </span>
           ))}
@@ -147,6 +149,7 @@ function ConflictBanner({ conflict }) {
 
 /** One change. `entry._conflict` is attached by the page. */
 function EntryRow({ entry, compact = false }) {
+  const fmtTime = useTimeFormat();
   return (
     <div className={compact ? 'py-2' : 'px-4 py-3'}>
       <div className="flex flex-wrap items-start gap-x-3 gap-y-1">
@@ -159,14 +162,14 @@ function EntryRow({ entry, compact = false }) {
         <span className="ml-auto text-xs text-gray-400">
           {entry.actorIsSelf ? entry.actorName : `${entry.actorName} (on their behalf)`}
           {' · '}
-          {fmtWhen(entry.at)}
+          {fmtWhen(entry.at, fmtTime.format)}
         </span>
       </div>
 
-      <p className="mt-1 text-sm text-gray-700">{describeChange(entry)}</p>
+      <p className="mt-1 text-sm text-gray-700">{describeChange(entry, fmtTime.format)}</p>
 
       {entry.action === AVAIL_ACTIONS.REMOVED && (
-        <p className="mt-0.5 text-xs text-gray-500">Previously {fmtWindow(entry.before)}</p>
+        <p className="mt-0.5 text-xs text-gray-500">Previously {fmtWindow(entry.before, fmtTime.format)}</p>
       )}
 
       {entry._conflict && <ConflictBanner conflict={entry._conflict} />}
@@ -176,6 +179,7 @@ function EntryRow({ entry, compact = false }) {
 
 /** A weekly bulk save — collapsed to one line so it can't flood the feed. */
 function BatchGroup({ entries }) {
+  const fmtTime = useTimeFormat();
   const [open, setOpen] = useState(false);
   const conflicts = entries.filter(e => e._conflict).length;
   const newest = entries[0];
@@ -202,7 +206,7 @@ function BatchGroup({ entries }) {
                 <AlertTriangle size={11} /> {conflicts} conflict{conflicts === 1 ? '' : 's'}
               </span>
             )}
-            <span className="ml-auto text-xs text-gray-400">{fmtWhen(newest.at)}</span>
+            <span className="ml-auto text-xs text-gray-400">{fmtWhen(newest.at, fmtTime.format)}</span>
           </span>
           {!open && (
             <span className="mt-1 block truncate text-xs text-gray-500">

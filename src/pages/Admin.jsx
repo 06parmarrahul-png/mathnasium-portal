@@ -65,7 +65,8 @@ import {
   buildSignOutRequest, newSignOutToken, SIGNOUT_TTL_DAYS, payrollNeedsReview,
 } from '../lib/signOut';
 import { parseRadiusRows } from '../lib/radiusTimesheet';
-import { fmtTime as fmt12h } from '../lib/availabilityLog';
+import { useTimeFormat } from '../lib/useTimeFormat';
+import { formatTime } from '../lib/timeFormat';
 import {
   resolveUserForCenter,
   membershipFieldPath,
@@ -135,17 +136,6 @@ function shiftNeedsTeachingLevel(role) {
 // and assignmentColorHex() in src/lib/centerConfig.js. Those nine colors
 // are per-center and editable from Super Admin → Appearance.
 
-
-function fmtHHMM(t) {
-  if (!t) return '';
-  const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  const ampm = h >= 12 ? 'p' : 'a';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return m === 0 ? `${h}${ampm}` : `${h}:${String(m).padStart(2,'0')}${ampm}`;
-}
 
 // Inline "this shift should have paid N hours" input, used by the payroll
 // gap panel. Local state so typing doesn't re-render the whole payroll tab.
@@ -422,6 +412,7 @@ function useRatioToggle(initialShift) {
 
 // ── Add Shift Modal ────────────────────────────────────────────────────────────
 function AddShiftModal({ date, user, users, availability, timeOffIndex, centerConfig, onClose, onSave }) {
+  const fmtTime = useTimeFormat();
   const [selectedUser, setSelectedUser] = useState(user?.uid || '');
   // Default the time fields from this centre's configured hours for the
   // picked date's day-of-week — Hosts get operating hours, instructors
@@ -525,7 +516,7 @@ function AddShiftModal({ date, user, users, availability, timeOffIndex, centerCo
           const availText = avail.map(a => (
             (a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00'))
               ? 'Full day'
-              : `${a.startTime}–${a.endTime}`
+              : fmtTime.range(a.startTime, a.endTime, 'short')
           )).join(', ');
           if (selectedTimeOff) {
             const approved = selectedTimeOff.status === 'approved';
@@ -814,6 +805,7 @@ function EditShiftModal({ shift, onClose, onSave, onDelete, onPublish }) {
 // scheduled shifts on each day so the admin can compare "available 3–7"
 // vs "scheduled 4–6" at a glance.
 function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIndex, onClose }) {
+  const fmtTime = useTimeFormat();
   const userAvail = availability.filter(a => a.userId === user.uid);
   const userShifts = shifts.filter(s => s.userId === user.uid);
   const isFull = (a) => a?.startTime === '00:00' && (a?.endTime === '23:59' || a?.endTime === '24:00');
@@ -877,7 +869,7 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIn
                     <div key={i} className="flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
                       <span className="text-xs text-emerald-800 font-medium">
-                        {isFull(a) ? 'Full day · anytime' : `${fmtHHMM(a.startTime)} – ${fmtHHMM(a.endTime)}`}
+                        {isFull(a) ? 'Full day · anytime' : `${fmtTime.tick(a.startTime)} – ${fmtTime.tick(a.endTime)}`}
                       </span>
                       {a.comment && (
                         <span className="text-xs text-blue-600 italic truncate">&quot;{a.comment}&quot;</span>
@@ -892,7 +884,7 @@ function UserAvailabilityModal({ user, weekDays, availability, shifts, timeOffIn
                     <div key={s.id} className="flex items-center gap-2">
                       <span className="inline-block w-2 h-2 rounded-full bg-red-500" />
                       <span className="text-xs text-gray-700">
-                        Scheduled {fmtHHMM(s.startTime)} – {fmtHHMM(s.endTime)}
+                        Scheduled {fmtTime.tick(s.startTime)} – {fmtTime.tick(s.endTime)}
                         {s.role ? ` · ${roleDisplayName(s.role)}` : ''}
                       </span>
                       {s.status === 'draft' && (
@@ -2491,6 +2483,7 @@ function StatPayTab({ holidays, rows }) {
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, canSeeCenterSettings, canManageOperations } = useAuth();
+  const fmtTime = useTimeFormat();
   // The centre's staffing day model. Manage Staff Schedule's day headers
   // used to divide by a HARDCODED constant while the Staffing Budget page
   // edited a completely separate per-period number — so editing the budget
@@ -4426,12 +4419,12 @@ export default function Admin() {
         name,
         reason,
         isDraft: s.status === 'draft',
-        label: `${s.flexRole || s.role || 'Instructor'} · ${fmtHHMM(s.startTime) || '?'}–${fmtHHMM(s.endTime) || '?'}`,
+        label: `${s.flexRole || s.role || 'Instructor'} · ${fmtTime.tick(s.startTime) || '?'}–${fmtTime.tick(s.endTime) || '?'}`,
         hours: shiftHours(s),
       });
     }
     return out.sort((a, b) => a.date.localeCompare(b.date) || a.name.localeCompare(b.name));
-  }, [shifts, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps]);
+  }, [shifts, payStart, payEnd, salaryStaff, volunteerNames, hiddenFromOps, fmtTime]);
 
   // Sick days tracker — per-user counts for the current calendar year.
   //
@@ -4785,16 +4778,10 @@ export default function Admin() {
   //      0 in the Employees column; everyone else is 1. Sick pay sums the
   //      per-person sickHours. Special Cases stays empty for manual fill.
   const handleExportPayroll = async () => {
-    const fmtTime = (t) => {
-      if (!t) return '';
-      const [hStr, mStr] = t.split(':');
-      let h = parseInt(hStr, 10);
-      const m = parseInt(mStr, 10);
-      const ampm = h >= 12 ? 'PM' : 'AM';
-      if (h > 12) h -= 12;
-      if (h === 0) h = 12;
-      return `${h}:${String(m).padStart(2,'0')} ${ampm}`;
-    };
+    // Pinned to 12-hour on purpose, unlike the screen. The workbook goes
+    // to whoever does the books, so it should read the same whatever
+    // clock the person who exported it happens to prefer.
+    const fmtExportTime = (t) => formatTime(t, '12h');
 
     // Dynamically load SheetJS (same pattern as the Radius importer).
     if (!window.XLSX) {
@@ -4822,8 +4809,8 @@ export default function Admin() {
           person.name,
           person.role,
           dateLabel,
-          fmtTime(s.startTime),
-          fmtTime(s.endTime),
+          fmtExportTime(s.startTime),
+          fmtExportTime(s.endTime),
           s.hours.toFixed(2),
           (s.payHours ?? s.hours).toFixed(2),
           s.payrollResolved ? '✓' : '',
@@ -5989,7 +5976,7 @@ export default function Admin() {
                           {dayOpenShifts.map(s => (
                             <div key={s.id}
                               className={`rounded px-1.5 py-1 mb-0.5 text-xs ${s.status === 'claimed' ? 'bg-green-100 border border-green-300' : 'bg-orange-100 border border-orange-300'}`}>
-                              <div className="font-semibold text-orange-800">{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}</div>
+                              <div className="font-semibold text-orange-800">{fmtTime.tick(s.startTime)}–{fmtTime.tick(s.endTime)}</div>
                               {s.role && <div className="text-orange-600 uppercase tracking-wide" style={{fontSize:'10px'}}>{roleDisplayName(s.role)}</div>}
                               {s.claimedByName && <div className="text-green-700" style={{fontSize:'10px'}}>→ {s.claimedByName}</div>}
                               <button
@@ -6138,7 +6125,7 @@ export default function Admin() {
                                         {dayAvail.map(a => (
                                           a.startTime === '00:00' && (a.endTime === '23:59' || a.endTime === '24:00')
                                             ? 'all day'
-                                            : `${fmtHHMM(a.startTime)}–${fmtHHMM(a.endTime)}`
+                                            : `${fmtTime.tick(a.startTime)}–${fmtTime.tick(a.endTime)}`
                                         )).join(', ')}
                                         {cellTimeOff.status === 'pending' ? ' — approve or deny to settle it.' : ''}
                                       </p>
@@ -6161,7 +6148,7 @@ export default function Admin() {
                                       return (
                                         <div key={i}>
                                           <p className="text-xs text-gray-600">
-                                            {isFull ? 'Full day' : `${fmtHHMM(a.startTime)} – ${fmtHHMM(a.endTime)}`}
+                                            {isFull ? 'Full day' : `${fmtTime.tick(a.startTime)} – ${fmtTime.tick(a.endTime)}`}
                                           </p>
                                           {a.comment && <p className="text-xs text-blue-600 italic mt-0.5">&quot;{a.comment}&quot;</p>}
                                         </div>
@@ -6233,7 +6220,7 @@ export default function Admin() {
                                     className={`rounded px-1.5 py-1 mb-0.5 cursor-pointer hover:opacity-80 transition-opacity overflow-hidden ${isDraft ? 'border border-dashed border-white/70 ring-1 ring-gray-300' : ''}`}
                                     style={styleBlock}>
                                     <div className="font-semibold leading-tight flex items-center gap-1" style={{fontSize:'11px'}}>
-                                      <span>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</span>
+                                      <span>{fmtTime.tick(s.startTime)}–{fmtTime.tick(s.endTime)}{hrsDisplay ? ` · ${hrsDisplay}` : ''}</span>
                                       {isDraft && (
                                         <span className="ml-auto rounded bg-white/85 text-gray-700 px-1 py-px font-bold tracking-wider" style={{fontSize:'8px'}}>DRAFT</span>
                                       )}
@@ -6265,7 +6252,7 @@ export default function Admin() {
                                     </p>
                                     {availClash.conflicts.map(({ shift: cs, fit }, i) => (
                                       <p key={cs.id || i} className="mb-1 text-[11px] leading-snug text-gray-700">
-                                        {describeConflict(fit)}
+                                        {describeConflict(fit, fmtTime.format)}
                                       </p>
                                     ))}
                                     <p className="mt-1 border-t pt-1 text-[10px] text-gray-500">
@@ -6400,7 +6387,7 @@ export default function Admin() {
                   .map(s => (
                     <div key={s.id} className={`flex items-center gap-2 rounded-lg px-3 py-1.5 text-xs border ${s.status === 'claimed' ? 'bg-green-100 border-green-300 text-green-800' : 'bg-white border-orange-300 text-orange-800'}`}>
                       <span className="font-medium">{new Date(s.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
-                      <span>{fmtHHMM(s.startTime)}–{fmtHHMM(s.endTime)}</span>
+                      <span>{fmtTime.tick(s.startTime)}–{fmtTime.tick(s.endTime)}</span>
                       {s.role && <span className="text-orange-500">{roleDisplayName(s.role)}</span>}
                       {s.claimedByName ? <span className="text-green-700">→ {s.claimedByName}</span> : <span className="italic text-orange-400">unclaimed</span>}
                       <button onClick={() => handleDeleteOpenShift(s.id)} className="text-orange-300 hover:text-red-500 ml-1">
@@ -7075,7 +7062,7 @@ export default function Admin() {
                                 } else if (userAvail) {
                                   pillCls = 'border-emerald-300 bg-emerald-50 text-emerald-700 hover:border-emerald-500 hover:bg-emerald-100';
                                   const isFull = userAvail.startTime === '00:00' && (userAvail.endTime === '23:59' || userAvail.endTime === '24:00');
-                                  title = isFull ? 'Available — full day' : `Available ${fmtHHMM(userAvail.startTime)}–${fmtHHMM(userAvail.endTime)}`;
+                                  title = isFull ? 'Available — full day' : `Available ${fmtTime.tick(userAvail.startTime)}–${fmtTime.tick(userAvail.endTime)}`;
                                 }
                                 return (
                                   <button key={u.uid} onClick={() => handleAddToDay(u.displayName)}
@@ -7621,11 +7608,11 @@ export default function Admin() {
                       {new Date(`${shift.date}T12:00:00`).toLocaleDateString('en-CA', { weekday: 'short', month: 'short', day: 'numeric' })}
                     </span>
                     <span className="tabular-nums text-gray-600">
-                      in {fmt12h(normalizeTimeToHHMM(row?.timeIn))}
+                      in {fmtTime(normalizeTimeToHHMM(row?.timeIn)) || '—'}
                     </span>
                     <span className="text-gray-400">→</span>
                     <span className="tabular-nums text-gray-600">
-                      scheduled out {fmt12h(normalizeTimeToHHMM(shift.endTime))}
+                      scheduled out {fmtTime(normalizeTimeToHHMM(shift.endTime)) || '—'}
                     </span>
                     {shift.signOutRequestSentAt && (
                       <span className="ml-auto rounded-full bg-gray-100 px-2 py-0.5 text-[11px] font-medium text-gray-600"
@@ -7871,16 +7858,7 @@ export default function Admin() {
                       </thead>
                       <tbody className="divide-y divide-gray-50">
                         {shiftRows.map((s, i) => {
-                          const fmtT = (t) => {
-                            if (!t) return '–';
-                            const [hStr, mStr] = t.split(':');
-                            let h = parseInt(hStr, 10);
-                            const m = parseInt(mStr, 10);
-                            const ampm = h >= 12 ? 'PM' : 'AM';
-                            if (h > 12) h -= 12;
-                            if (h === 0) h = 12;
-                            return `${h}:${String(m).padStart(2,'0')} ${ampm}`;
-                          };
+                          const fmtT = (t) => fmtTime(t) || '–';
                           const dateLabel = new Date(s.date + 'T00:00:00').toLocaleDateString('en-US', {
                             weekday: 'short', month: 'short', day: 'numeric',
                           });
@@ -7956,7 +7934,7 @@ export default function Admin() {
                                         On shift now
                                       </span>
                                       <div className="mt-1 text-[11px] text-gray-500 tabular-nums">
-                                        in {fmt12h(normalizeTimeToHHMM(s.actual.timeIn))}
+                                        in {fmtTime(normalizeTimeToHHMM(s.actual.timeIn)) || '—'}
                                       </div>
                                     </div>
                                   ) : s.signOutState === 'open' ? (
@@ -7969,7 +7947,7 @@ export default function Admin() {
                                         Signed in · no sign-out
                                       </span>
                                       <div className="mt-1 flex items-center gap-1 text-[11px] text-gray-500">
-                                        <span className="tabular-nums">in {fmt12h(normalizeTimeToHHMM(s.actual.timeIn))}</span>
+                                        <span className="tabular-nums">in {fmtTime(normalizeTimeToHHMM(s.actual.timeIn)) || '—'}</span>
                                         <span>· out unknown</span>
                                       </div>
                                     </div>
@@ -7984,7 +7962,7 @@ export default function Admin() {
                                         Self-confirmed sign-out
                                       </span>
                                       <div className="mt-1 text-[11px] text-gray-500 tabular-nums">
-                                        in {fmt12h(normalizeTimeToHHMM(s.actual.timeIn))} – {fmt12h(s.signOutConfirmed?.time)} (stated)
+                                        in {fmtTime(normalizeTimeToHHMM(s.actual.timeIn)) || '—'} – {fmtTime(s.signOutConfirmed?.time) || '—'} (stated)
                                       </div>
                                     </div>
                                   ) : (

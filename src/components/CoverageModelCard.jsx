@@ -33,6 +33,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where, orderBy, doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { toast } from '../lib/notify';
 import { isCentreManager } from '../lib/managementTier';
 import { resolveUserForCenter } from '../lib/centerMembership';
@@ -52,21 +53,11 @@ import { Users, ChevronDown, ChevronRight, Save, Loader2, Lock, RotateCcw } from
 const fmtDate = (ymd) => new Date(`${ymd}T12:00:00`)
   .toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
-const slotLabel = (slot) => {
-  const [h, m] = slot.split(':').map(Number);
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, '0')}${h >= 12 ? 'PM' : 'AM'}`;
-};
+// Column headers are compact and the opening-hours line is short, both
+// on the reader's own clock — see src/lib/timeFormat.js.
+const slotLabel = (slot, fmtTime) => fmtTime.compact(slot);
 
-const fmtWindow = (hours) => {
-  if (!hours?.start || !hours?.end) return '';
-  const to12 = (t) => {
-    const [h, m] = t.split(':').map(Number);
-    const h12 = h % 12 === 0 ? 12 : h % 12;
-    return `${h12}${m ? `:${String(m).padStart(2, '0')}` : ''}${h >= 12 ? 'pm' : 'am'}`;
-  };
-  return `${to12(hours.start)}–${to12(hours.end)}`;
-};
+const fmtWindow = (hours, fmtTime) => fmtTime.range(hours?.start, hours?.end, 'short');
 
 /**
  * The status language of Supply & Demand, in instructors: "2 Short" is
@@ -103,6 +94,7 @@ const PILL_TONE = {
 
 export default function CoverageModelCard() {
   const { activeCenterId, centerConfig, centreRoles, can, isAdmin, profile } = useAuth();
+  const fmtTime = useTimeFormat();
   const [users, setUsers] = useState([]);
   const [availability, setAvailability] = useState([]);
   const [timeOff, setTimeOff] = useState([]);
@@ -224,7 +216,7 @@ export default function CoverageModelCard() {
   const chart = expanded
     ? {
         items: slotRows.map(r => ({
-          label: slotLabel(r.slot),
+          label: slotLabel(r.slot, fmtTime),
           value: r.available ?? 0,
           marker: Number.isFinite(r.target) ? r.target : undefined,
           status: r.verdict.chart,
@@ -279,7 +271,7 @@ export default function CoverageModelCard() {
           <p className="mt-0.5 text-xs text-gray-500">
             {expanded
               ? <>Target: instructors wanted · Supply: instructors available ·
-                  instructional hours {fmtWindow(expanded.hours) || 'not set'}, {fmtDate(expanded.date)}</>
+                  instructional hours {fmtWindow(expanded.hours, fmtTime) || 'not set'}, {fmtDate(expanded.date)}</>
               : <>Target: instructors wanted · Supply: instructors available that day ·
                   only staff who count toward the ratio</>}
           </p>
@@ -367,7 +359,7 @@ export default function CoverageModelCard() {
                     </th>
                     {columns.map((c, i) => (
                       <td key={i} className="px-0.5 py-1 text-center text-[10px] text-gray-500">
-                        {expanded ? slotLabel(c.slot) : (
+                        {expanded ? slotLabel(c.slot, fmtTime) : (
                           <button
                             onClick={() => setOpenDay(days[i].weekday)}
                             className="inline-flex items-center gap-0.5 font-semibold text-gray-700 hover:text-purple-700"

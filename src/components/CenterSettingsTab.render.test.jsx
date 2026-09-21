@@ -21,7 +21,7 @@ vi.mock('firebase/firestore', () => ({
   serverTimestamp: () => 'ts',
 }));
 const current = { auth: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: CenterSettingsTab } = await import('./CenterSettingsTab');
 const { DEFAULT_CENTER_CONFIG } = await import('../lib/centerConfig');

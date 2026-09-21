@@ -6,17 +6,8 @@
  * lint rule that says so is right.
  */
 
-export function fmtTime(t) {
-  if (!t) return '';
-  const [hStr, mStr] = String(t).split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  if (!Number.isFinite(h)) return String(t);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return m ? `${h}:${String(m).padStart(2, '0')} ${ampm}` : `${h}:00 ${ampm}`;
-}
+// Times are NOT here: they follow the reader's 12/24-hour preference,
+// so they come from useTimeFormat() — see src/lib/timeFormat.js.
 
 /** Local-noon parse. A bare YYYY-MM-DD is UTC midnight, i.e. yesterday here. */
 export function asDate(iso) {

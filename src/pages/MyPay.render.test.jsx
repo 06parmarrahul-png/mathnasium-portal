@@ -42,7 +42,7 @@ vi.mock('../lib/payRate', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: MyPay } = await import('./MyPay');
 
@@ -258,5 +258,34 @@ describe('who the page is for', () => {
     snapshots.shifts = [shift()];
     draw();
     expect(screen.queryByText(/This page is for hourly staff/)).toBeNull();
+  });
+});
+
+describe('the clock the reader picked', () => {
+  it('shows shift hours as 12-hour by default', () => {
+    snapshots.shifts = [shift()];
+    draw();
+    expect(screen.getByText(/3:00 PM – 7:00 PM/)).toBeTruthy();
+  });
+
+  it('shows them 24-hour for someone who asked for that', () => {
+    snapshots.shifts = [shift()];
+    authValue.current = {
+      ...BASE_AUTH,
+      profile: { ...BASE_AUTH.profile, timeFormat: '24h' },
+    };
+    draw();
+    expect(screen.getByText(/15:00 – 19:00/)).toBeTruthy();
+    expect(screen.queryByText(/3:00 PM/)).toBeNull();
+  });
+
+  it('falls back to 12-hour on a preference it does not recognise', () => {
+    snapshots.shifts = [shift()];
+    authValue.current = {
+      ...BASE_AUTH,
+      profile: { ...BASE_AUTH.profile, timeFormat: 'military' },
+    };
+    draw();
+    expect(screen.getByText(/3:00 PM – 7:00 PM/)).toBeTruthy();
   });
 });

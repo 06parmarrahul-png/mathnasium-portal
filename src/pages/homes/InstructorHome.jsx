@@ -23,7 +23,8 @@ import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
 } from '../../lib/sideAssignments';
 import { Card, Pill, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
-import { fmtTime, fmtDay, todayISO, minutesOf, asDate } from '../../components/newlook/format';
+import { fmtDay, todayISO, minutesOf, asDate } from '../../components/newlook/format';
+import { useTimeFormat } from '../../lib/useTimeFormat';
 
 /**
  * The floor-staff home — built for a phone held in one hand.
@@ -58,6 +59,7 @@ const ANNOUNCEMENT_FETCH = 5;
 
 export default function InstructorHome() {
   const { profile, activeCenterId, mySubRoles, canTakeShifts, centerConfig } = useAuth();
+  const fmtTime = useTimeFormat();
   const [shifts, setShifts] = useState(null);        // null = still loading
   const [dayRoster, setDayRoster] = useState({ date: null, rows: null });
   const [openShifts, setOpenShifts] = useState([]);
@@ -321,7 +323,7 @@ export default function InstructorHome() {
             </div>
             {/* The biggest thing on the page, because it's the answer. */}
             <div className="nl-display mt-1.5 text-[32px] font-bold leading-none sm:text-[36px]">
-              {fmtTime(next.startTime)} – {fmtTime(next.endTime)}
+              {fmtTime.range(next.startTime, next.endTime)}
             </div>
             <div className="mt-2 text-[14px] opacity-90">
               {[next.subRole, next.instructorType].filter(Boolean).join(' · ') || 'Floor'}
@@ -369,7 +371,7 @@ export default function InstructorHome() {
                       style={{ background: sideColour(b.side) }} />
                     <span className="min-w-0 flex-1">
                       <span className="block text-[15px] font-semibold tabular-nums">
-                        {fmtTime(b.start)} – {fmtTime(b.end)}
+                        {fmtTime.range(b.start, b.end)}
                       </span>
                       <span className="block text-[13px]" style={{ color: 'var(--nl-muted)' }}>
                         {sideLabel(b.side)}

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   INVENTORY_CATEGORIES, INVENTORY_UNITS, DEFAULT_ITEM, DEFAULT_SETTINGS,
@@ -62,13 +63,8 @@ function fmtDate(iso) {
   } catch { return '—'; }
 }
 
-function fmtWhen(iso) {
-  if (!iso) return '';
-  try {
-    return new Date(iso).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  } catch { return ''; }
+function fmtWhen(iso, fmtTime) {
+  return fmtTime.stamp(iso);
 }
 
 function money(n) {
@@ -458,6 +454,7 @@ function SettingsModal({
   settings, onClose, onSave, saving,
   platformOn, myNotify, onToggleMine, togglingMine,
 }) {
+  const fmtTime = useTimeFormat();
   const [enabled, setEnabled] = useState(settings.alertsEnabled !== false);
   const [emails, setEmails] = useState((settings.alertEmails || []).join(', '));
 
@@ -539,7 +536,7 @@ function SettingsModal({
         </div>
 
         {settings.lastAlertSentAt && (
-          <p className="text-xs text-gray-500">Last alert sent {fmtWhen(settings.lastAlertSentAt)}.</p>
+          <p className="text-xs text-gray-500">Last alert sent {fmtWhen(settings.lastAlertSentAt, fmtTime)}.</p>
         )}
       </div>
 
@@ -567,6 +564,7 @@ function SettingsModal({
 
 export default function Inventory() {
   const { profile, activeCenterId, canManageOperations, centerConfig } = useAuth();
+  const fmtTime = useTimeFormat();
   // Managers and Hosts get full inventory access too — they're the ones
   // ordering supplies day to day.
   const canSeeInventory = canManageOperations;
@@ -1101,7 +1099,7 @@ export default function Inventory() {
                       {e.action === 'edit'     && 'details updated'}
                       {e.action === 'delete'   && 'deleted'}
                     </span>
-                    <span className="ml-auto text-xs text-gray-400">{e.byName} · {fmtWhen(e.at)}</span>
+                    <span className="ml-auto text-xs text-gray-400">{e.byName} · {fmtWhen(e.at, fmtTime)}</span>
                   </li>
                 ))}
               </ul>

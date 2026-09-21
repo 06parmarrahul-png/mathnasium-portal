@@ -61,7 +61,7 @@ vi.mock('firebase/firestore', () => ({
 vi.mock('../lib/notify', () => ({ toast: { success: () => {}, error: () => {} } }));
 
 const current = { auth: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: CoverageModelCard } = await import('./CoverageModelCard');
 const { builtInRoles } = await import('../lib/roles');

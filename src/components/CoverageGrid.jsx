@@ -2,6 +2,7 @@ import { Fragment, useMemo } from 'react';
 import { assignmentFor, assignmentShort, assignmentColorHex, contrastText, stateColorHex } from '../lib/centerConfig';
 import { RATIO_FIELD, countsInRatio } from '../lib/ratioCount';
 import { rolePriority, subPriorityInTier, isTrainingRole } from '../lib/snapshotGrid';
+import { useTimeFormat } from '../lib/useTimeFormat';
 
 /**
  * Half-hour staffing density grid for a single day.
@@ -68,14 +69,6 @@ function generateSlotsFromRange(startMins, endMins) {
   return slots;
 }
 
-function fmtSlotLabel(timeStr) {
-  const [h, m] = timeStr.split(':').map(Number);
-  const ampm = h >= 12 ? 'p' : 'a';
-  let h12 = h > 12 ? h - 12 : h;
-  if (h12 === 0) h12 = 12;
-  return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2, '0')}${ampm}`;
-}
-
 /**
  * Parse a shift-time string ("15:00 - 19:00" or "11:00 AM - 7:00 PM")
  * into { startMins, endMins } since midnight.
@@ -101,12 +94,24 @@ function parseShift(str) {
   return { startMins: norm(parts[0]), endMins: norm(parts[1]) };
 }
 
+/**
+ * The same string, for a person rather than the parser. `shiftTime` is
+ * stored 24-hour so it can be read back; a tooltip shows it on whichever
+ * clock the reader picked.
+ */
+function shiftTimeLabel(str, fmtTime) {
+  const parsed = parseShift(str);
+  if (!parsed) return str || '';
+  return fmtTime.range(parsed.startMins, parsed.endMins, 'short');
+}
+
 // The row grouping and ordering moved to src/lib/snapshotGrid.js, so this
 // grid and the condensed snapshot on the leadership home read ONE copy of
 // it — a person has to land in the same group, in the same place, on both.
 // Nothing about the rules changed in the move; they have tests now.
 
 export default function CoverageGrid({ day, centerConfig }) {
+  const fmtTime = useTimeFormat();
   // Normalise input to a list of per-SHIFT entries. Each entry is one
   // shift on the day, so one person with two shifts (e.g. LEAD 11–3
   // AND HOST 3–7) gets two entries with distinct roles + times instead
@@ -233,7 +238,7 @@ export default function CoverageGrid({ day, centerConfig }) {
           <span className="text-gray-500">Peak instructors:</span>
           <span className="font-bold text-blue-700">{peakTeaching}</span>
           {peakSlot && (
-            <span className="text-gray-400">@ {fmtSlotLabel(peakSlot.start)}</span>
+            <span className="text-gray-400">@ {fmtTime.tick(peakSlot.start)}</span>
           )}
         </span>
         <span className="flex items-center gap-1.5 text-gray-500">
@@ -262,7 +267,7 @@ export default function CoverageGrid({ day, centerConfig }) {
                     key={slot.start}
                     className={`px-1 py-1.5 text-center font-medium min-w-[28px] border-r border-gray-100 ${isHourMark ? 'text-gray-700' : 'text-gray-300'}`}
                   >
-                    {isHourMark ? fmtSlotLabel(slot.start) : ''}
+                    {isHourMark ? fmtTime.tick(slot.start) : ''}
                   </th>
                 );
               })}
@@ -392,7 +397,7 @@ export default function CoverageGrid({ day, centerConfig }) {
                         <div
                           className="h-5"
                           style={inSlot ? { backgroundColor: roleBg } : undefined}
-                          title={inSlot ? `${name}${isSick ? ' (sick)' : ''} · ${shiftTime || ''}` : ''}
+                          title={inSlot ? `${name}${isSick ? ' (sick)' : ''} · ${shiftTimeLabel(shiftTime, fmtTime)}` : ''}
                         />
                       </td>
                     );

@@ -6,6 +6,8 @@ import {
 } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
+import { formatRange } from '../lib/timeFormat';
 import { roleDisplayName } from '../lib/roleLabel';
 import { PAGES } from '../lib/pageNames';
 import { styleFor as subRoleStyleFor, sickStyleFor, flexStyleFor, requiredCapabilityForShift, hasCapability } from '../lib/subRoles';
@@ -29,17 +31,6 @@ import { shiftOnDate, blockingShift, conflictLabel, conflictReason } from '../li
 import { SWAP_TYPE, isOpenSwap, openSwapFor } from '../lib/shiftSwaps';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-function fmtTime(t) {
-  if (!t) return '';
-  const [hStr, mStr] = t.split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-}
 
 /**
  * "Sunday, Sep 20" from a YYYY-MM-DD.
@@ -118,6 +109,7 @@ function shiftTypeStyle(shiftType) {
 // ─── Cell Modal ──────────────────────────────────────────────────────────────
 
 function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, centerConfig, isClosedDay, onClose, onSaveAvail, onDeleteAvail, onPostSwap, onRetractSwap, postedSwap, postingSwap, onClaimOpenShift, onRequestTimeOff, mySubRoles = [], canTakeShifts = true }) {
+  const fmtTime = useTimeFormat();
   const [mode, setMode] = useState('main');
   // Default the time inputs to this centre's configured instructional
   // hours for the picked date's day-of-week. Falls back to 15:00–20:00
@@ -372,9 +364,9 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
                         ) : clash ? (
                           <span
                             className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-500"
-                            title={conflictReason(clash)}
+                            title={conflictReason(clash, fmtTime.format)}
                           >
-                            {conflictLabel(clash)}
+                            {conflictLabel(clash, fmtTime.format)}
                           </span>
                         ) : (
                           <span
@@ -411,17 +403,6 @@ function DayModal({ date, myAvailability, myShift, openShifts, timeOffMap, cente
             // avoids instructors saving 3-7 on a day the centre now
             // opens at 10 for summer.
             const fullDayLabel = 'Full Day';
-            const fmtTime = (t) => {
-              // Turn "15:00" into "3:00 PM"
-              if (!t) return '';
-              const [hs, ms] = t.split(':');
-              let h = parseInt(hs, 10);
-              const m = parseInt(ms, 10);
-              const ampm = h >= 12 ? 'PM' : 'AM';
-              if (h > 12) h -= 12;
-              if (h === 0) h = 12;
-              return m === 0 ? `${h}:00 ${ampm}` : `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-            };
             const addMin = (t, mins) => {
               const [hs, ms] = t.split(':').map(n => parseInt(n, 10));
               const total = hs * 60 + ms + mins;
@@ -702,6 +683,7 @@ function weekMatchesRecurrence(date, recurrence) {
 }
 
 function WeeklyAvailabilityModal({ currentMonth, availability, profile, centerConfig, onClose, onSaveBulk }) {
+  const fmtTime = useTimeFormat();
   const [selectedDays, setSelectedDays] = useState([]);
   const [recurrence, setRecurrence] = useState('every');
   // Default custom-time inputs to this centre's Monday instructional
@@ -1269,6 +1251,7 @@ function CalendarSyncModal({ profile, onClose }) {
 
 export default function Schedule() {
   const { profile, mySubRoles, activeCenterId, centerConfig, canTakeShifts } = useAuth();
+  const fmtTime = useTimeFormat();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
   const [showWeeklyModal, setShowWeeklyModal] = useState(false);
@@ -1581,7 +1564,9 @@ export default function Schedule() {
   const postSwapDoc = async (shift) => {
     const dateFormatted = fmtDate(shift.date);
     await addDoc(collection(db, 'chat'), {
-      text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${fmtTime(shift.startTime)} – ${fmtTime(shift.endTime)}${shift.role ? ` (${roleDisplayName(shift.role)})` : ''}`,
+      // Stored text: everyone reads the same string, so it stays on the
+      // shared 12-hour default rather than the author's own clock.
+      text: `Is anyone able to swap or take my shift?\n\nShift: ${dateFormatted}, ${formatRange(shift.startTime, shift.endTime)}${shift.role ? ` (${roleDisplayName(shift.role)})` : ''}`,
       userId: profile.uid,
       userName: profile.displayName,
       userRole: profile.role,
@@ -1636,7 +1621,7 @@ export default function Schedule() {
     // opening the modal and pressing it.
     const clash = shiftOnDate(shifts, profile?.uid, openShift.date);
     if (clash) {
-      toast.error(conflictReason(clash));
+      toast.error(conflictReason(clash, fmtTime.format));
       return;
     }
     try {
@@ -1685,7 +1670,7 @@ export default function Schedule() {
         weekday: 'long', month: 'short', day: 'numeric',
       });
       await addDoc(collection(db, 'chat'), {
-        text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${fmtTime(openShift.startTime)} – ${fmtTime(openShift.endTime)}).`,
+        text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${formatRange(openShift.startTime, openShift.endTime)}).`,
         userId: 'system',
         userName: centerConfig?.name || 'Mathnasium',
         userRole: 'system',

@@ -9,6 +9,7 @@ import {
   Save, ExternalLink, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { resolveInstructionalHours, isSummerOverrideActive } from '../lib/centerConfig';
+import { useTimeFormat } from '../lib/useTimeFormat';
 
 const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
@@ -38,6 +39,7 @@ const DEFAULTS = {
 };
 
 export default function IntakeBookingSettings({ activeCenterId, centerConfig }) {
+  const fmtTime = useTimeFormat();
   const initial = useMemo(
     () => ({
       ...DEFAULTS,
@@ -110,7 +112,7 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
       {savedAt && !error && (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 flex items-start gap-1.5">
           <CheckCircle2 size={14} className="mt-0.5 shrink-0" />
-          Saved at {savedAt.toLocaleTimeString()}.
+          Saved at {fmtTime.clock(savedAt, { second: '2-digit' })}.
         </div>
       )}
 

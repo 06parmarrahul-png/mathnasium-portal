@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { Shield, ShieldAlert } from 'lucide-react';
 
 /**
@@ -15,6 +16,7 @@ import { Shield, ShieldAlert } from 'lucide-react';
  */
 export default function AuditLogs() {
   const { isSuperAdmin } = useAuth();
+  const fmtTime = useTimeFormat();
   const [entries, setEntries] = useState([]);
   const [loading, setLoading] = useState(true);
 
@@ -102,12 +104,7 @@ export default function AuditLogs() {
     return r;
   };
 
-  const fmt = (ts) => {
-    if (!ts?.seconds) return '';
-    return new Date(ts.seconds * 1000).toLocaleString('en-US', {
-      month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit',
-    });
-  };
+  const fmt = (ts) => (ts?.seconds ? fmtTime.stamp(ts, { year: 'numeric' }) : '');
 
   return (
     <div className="mx-auto max-w-4xl">

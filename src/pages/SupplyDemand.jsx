@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { PAGES } from '../lib/pageNames';
 import {
   Activity, ChevronLeft, ChevronRight, Loader2, AlertTriangle, RotateCcw, Sparkles,
@@ -93,15 +94,10 @@ function buildDayWindow(hours) {
   return { startMin, slotCount, slotKeys };
 }
 
-function slotLabelFromMin(totalMin) {
-  const h24 = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  const ampm = h24 >= 12 ? 'PM' : 'AM';
-  let h = h24 % 12; if (h === 0) h = 12;
-  return `${h}:${String(m).padStart(2, '0')}${ampm}`;
-}
-function slotLabelForIndex(startMin, i) {
-  return slotLabelFromMin(startMin + i * SLOT_MIN);
+// Column headers are the narrow width — every half hour gets a label and
+// a space would cost a column. The reader's clock decides 3:00PM vs 15:00.
+function slotLabelForIndex(startMin, i, fmtTime) {
+  return fmtTime.compact(startMin + i * SLOT_MIN);
 }
 
 // Per-slot classification, counted in WHOLE INSTRUCTORS.
@@ -579,8 +575,9 @@ export default function SupplyDemand() {
 }
 
 function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio, onRatioChange, onDemandChange, onSupplyChange, onResetOverrides, onMatchDemand }) {
+  const fmtTime = useTimeFormat();
   const startMin = dayWindow?.startMin || 15 * 60;
-  const slotLabel = (i) => slotLabelForIndex(startMin, i);
+  const slotLabel = (i) => slotLabelForIndex(startMin, i, fmtTime);
   const slotCount = dayWindow?.slotCount || data?.demand?.length || 10;
   const { demand, supply, rows, stats, hasOverrides, demandOverriddenSlots, supplyOverriddenSlots } = data;
 

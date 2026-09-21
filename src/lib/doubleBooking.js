@@ -31,19 +31,7 @@
  */
 
 import { isLiveShift } from './snapshotGrid';
-
-/** 24h "15:00" → "3:00 PM". Local to the message builders below. */
-function fmtTime(t) {
-  if (!t) return '';
-  const [hStr, mStr] = String(t).split(':');
-  let h = parseInt(hStr, 10);
-  const m = parseInt(mStr, 10);
-  if (Number.isNaN(h) || Number.isNaN(m)) return '';
-  const ampm = h >= 12 ? 'PM' : 'AM';
-  if (h > 12) h -= 12;
-  if (h === 0) h = 12;
-  return `${h}:${String(m).padStart(2, '0')} ${ampm}`;
-}
+import { formatRange, DEFAULT_TIME_FORMAT } from './timeFormat';
 
 /**
  * The shift itself, if it's one that blocks a pickup — otherwise null.
@@ -78,22 +66,24 @@ export function isDoubleBooked(shifts, uid, date) {
 /**
  * "3:00 PM – 7:00 PM", or '' when the shift has no usable times — legacy
  * rows do exist, and half a range reads worse than none.
+ *
+ * The two message builders below take the reader's clock format because
+ * these strings land on a button and in a toast the same person is
+ * looking at; they fall back to 12-hour like everything else.
  */
-function hoursOf(shift) {
-  const from = fmtTime(shift?.startTime);
-  const to   = fmtTime(shift?.endTime);
-  return from && to ? `${from} – ${to}` : '';
+function hoursOf(shift, format) {
+  return formatRange(shift?.startTime, shift?.endTime, format);
 }
 
 /** Short label for a disabled button — no room for a sentence. */
-export function conflictLabel(shift) {
-  const hours = hoursOf(shift);
+export function conflictLabel(shift, format = DEFAULT_TIME_FORMAT) {
+  const hours = hoursOf(shift, format);
   return hours ? `Already on ${hours}` : 'Already working this day';
 }
 
 /** The full sentence, for a tooltip or a toast. */
-export function conflictReason(shift) {
-  const hours = hoursOf(shift);
+export function conflictReason(shift, format = DEFAULT_TIME_FORMAT) {
+  const hours = hoursOf(shift, format);
   return hours
     ? `You already work this day (${hours}). Speak to a centre admin if you need a second shift.`
     : 'You already work this day. Speak to a centre admin if you need a second shift.';

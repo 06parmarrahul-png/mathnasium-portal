@@ -27,7 +27,7 @@ vi.mock('firebase/firestore', () => ({
   },
 }));
 const current = { auth: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: DeskHomeCard } = await import('./DeskHomeCard');
 

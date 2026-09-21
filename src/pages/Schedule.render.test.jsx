@@ -62,7 +62,7 @@ vi.mock('../lib/availabilityLog', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: Schedule } = await import('./Schedule');
 

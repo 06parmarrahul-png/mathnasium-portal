@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { toast, confirmDialog } from '../lib/notify';
 import {
   EVENT_TYPE_LIST, eventTypeLabel, validateEvent, asDate, toISO, isUsableEvent,
@@ -484,6 +485,7 @@ function FunDayUpload({ centerId, profile, ym }) {
 }
 
 function EventList({ title, rows, onEdit, onDelete, empty, muted }) {
+  const fmtTime = useTimeFormat();
   return (
     <div className="mb-6">
       <p className="mb-2 text-xs font-bold uppercase tracking-widest text-gray-500">{title}</p>
@@ -515,7 +517,9 @@ function EventList({ title, rows, onEdit, onDelete, empty, muted }) {
                   </span>
                   <span className="block text-xs text-gray-500">
                     {eventTypeLabel(ev.type)}
-                    {ev.startTime ? ` · ${ev.startTime}${ev.endTime ? `–${ev.endTime}` : ''}` : ' · all day'}
+                    {ev.startTime
+                      ? ` · ${ev.endTime ? fmtTime.range(ev.startTime, ev.endTime, 'short') : fmtTime.short(ev.startTime)}`
+                      : ' · all day'}
                     {ev.note ? ` · ${ev.note}` : ''}
                   </span>
                 </span>

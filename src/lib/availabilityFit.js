@@ -27,6 +27,8 @@
  *   checks that first, so the two can never argue on one cell.
  */
 
+import { formatTime } from './timeFormat';
+
 /** 'HH:MM' → minutes past midnight, or null if unusable. */
 export function toMinutes(t) {
   if (!t || typeof t !== 'string') return null;
@@ -38,14 +40,10 @@ export function toMinutes(t) {
   return h * 60 + min;
 }
 
-/** Minutes → 'H:MM am/pm', for the tooltip. */
-export function fmtMinutes(mins) {
+/** Minutes → 'H:MMam/pm', or '15:30' on a 24-hour clock. For the tooltip. */
+export function fmtMinutes(mins, format) {
   if (!Number.isFinite(mins)) return '';
-  const h24 = Math.floor(mins / 60) % 24;
-  const m = mins % 60;
-  const ampm = h24 < 12 ? 'am' : 'pm';
-  const h = h24 % 12 === 0 ? 12 : h24 % 12;
-  return `${h}:${String(m).padStart(2, '0')}${ampm}`;
+  return formatTime(mins, format, 'compact').toLowerCase();
 }
 
 /**
@@ -167,10 +165,10 @@ export function describeDuration(mins) {
  * One plain sentence for a conflicting shift, e.g.
  *   "Scheduled 3:00pm–7:00pm but only available from 4:00pm — 1h outside."
  */
-export function describeConflict(fit) {
+export function describeConflict(fit, format) {
   if (!fit || fit.covered) return '';
-  const shift = `${fmtMinutes(fit.shiftStart)}–${fmtMinutes(fit.shiftEnd)}`;
-  const offered = fit.windows.map(([s, e]) => `${fmtMinutes(s)}–${fmtMinutes(e)}`).join(', ');
+  const shift = `${fmtMinutes(fit.shiftStart, format)}–${fmtMinutes(fit.shiftEnd, format)}`;
+  const offered = fit.windows.map(([s, e]) => `${fmtMinutes(s, format)}–${fmtMinutes(e, format)}`).join(', ');
   const amount = describeDuration(fit.minutesOutside);
   let edge = '';
   if (fit.earlyBy > 0 && fit.lateBy > 0) edge = ' at both ends';

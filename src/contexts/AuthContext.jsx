@@ -26,6 +26,19 @@ export function useAuth() {
   return ctx;
 }
 
+/**
+ * The same context, for the things that can do without it.
+ *
+ * useAuth() throwing is right for a page: rendering one without a signed-in
+ * user is a bug worth hearing about. It is wrong for a preference — a
+ * presentational card rendered on its own should fall back to the default
+ * clock, not take the page down with it. Returns null outside the provider.
+ */
+// eslint-disable-next-line react-refresh/only-export-components
+export function useOptionalAuth() {
+  return useContext(AuthContext);
+}
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);

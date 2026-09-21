@@ -43,7 +43,7 @@ vi.mock('firebase/firestore', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: LeadershipHome } = await import('./LeadershipHome');
 

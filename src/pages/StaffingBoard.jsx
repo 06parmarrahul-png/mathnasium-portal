@@ -27,6 +27,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { collection, query, where, orderBy, onSnapshot, writeBatch, doc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { toast } from '../lib/notify';
 import { format, startOfWeek, addDays } from 'date-fns';
 import {
@@ -111,17 +112,9 @@ function round1(n) {
   return String(Math.round((Number(n) || 0) * 10) / 10);
 }
 
-function fmt12(hhmm) {
-  const m = toMinutes(hhmm);
-  if (m == null) return hhmm;
-  const h = Math.floor(m / 60), min = m % 60;
-  const ampm = h >= 12 ? 'pm' : 'am';
-  const h12 = ((h + 11) % 12) + 1;
-  return min === 0 ? `${h12}${ampm}` : `${h12}:${String(min).padStart(2, '0')}${ampm}`;
-}
-
 export default function StaffingBoard() {
   const { activeCenterId, centerConfig } = useAuth();
+  const fmtTime = useTimeFormat();
   // The centre's staffing day model — same numbers Manage Staff Schedule
   // divides by and the Staffing Budget page sums into a pay period.
   const weekdayModel = useMemo(() => resolveWeekdayModel(centerConfig), [centerConfig]);
@@ -435,7 +428,7 @@ export default function StaffingBoard() {
       return;
     }
     if (!canCover(person, slot)) {
-      toast.error(`${person.name} isn't available ${fmt12(slot.start)}–${fmt12(slot.end)}.`);
+      toast.error(`${person.name} isn't available ${fmtTime.short(slot.start)}–${fmtTime.short(slot.end)}.`);
       return;
     }
     if (assignedElsewhere(day, person.uid, slot.id)) {
@@ -847,6 +840,7 @@ export default function StaffingBoard() {
  * what makes the bars legible as a response to something.
  */
 function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget, onAddExtra, onRemoveSlot, onRetime, salariedNames }) {
+  const fmtTime = useTimeFormat();
   if (day.closed || day.empty) {
     return (
       <div className="mb-2 flex items-center gap-3 rounded-xl border border-gray-200/80 bg-gray-50/70 px-4 py-2.5">
@@ -903,7 +897,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
           </span>
         </div>
         <span className="text-xs text-gray-400">
-          {fmt12(day.window.start)} – {fmt12(day.window.end)}
+          {fmtTime.short(day.window.start)} – {fmtTime.short(day.window.end)}
         </span>
 
         <span className="ml-auto flex items-center gap-3">
@@ -989,7 +983,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
               return (
                 <div
                   key={c.slot}
-                  title={`${fmt12(c.slot)} · ${c.students} students · needs ${c.required}`}
+                  title={`${fmtTime.short(c.slot)} · ${c.students} students · needs ${c.required}`}
                   className="absolute bottom-0 rounded-t-[2px] bg-blue-400/80 transition-colors hover:bg-blue-500"
                   style={{
                     left: `${pct(s0)}%`,
@@ -1009,7 +1003,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
                 className="absolute -translate-x-1/2 pt-0.5 text-[10px] tabular-nums text-gray-400"
                 style={{ left: `${pct(t)}%` }}
               >
-                {fmt12(toHHMM(t))}
+                {fmtTime.short(toHHMM(t))}
               </span>
             ))}
           </div>
@@ -1160,8 +1154,8 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
                       <span className={`block truncate text-[10px] tabular-nums ${
                         isPicked ? 'text-purple-100' : on ? 'text-emerald-700' : 'text-gray-400'}`}>
                         {on
-                          ? `On ${fmt12(on.start)}–${fmt12(on.end)}`
-                          : `${fmt12(toHHMM(p.availStart))}–${fmt12(toHHMM(p.availEnd))}`}
+                          ? `On ${fmtTime.short(on.start)}–${fmtTime.short(on.end)}`
+                          : `${fmtTime.short(toHHMM(p.availStart))}–${fmtTime.short(toHHMM(p.availEnd))}`}
                       </span>
                       {p.pendingTimeOff && !on && (
                         <span className={`mt-0.5 block truncate text-[10px] ${
@@ -1189,6 +1183,7 @@ function DayBoard({ day, bench, picked, setPicked, onSlotClick, canCover, budget
  * read as a hole, not as absence.
  */
 function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) {
+  const fmtTime = useTimeFormat();
   const [editing, setEditing] = useState(false);
   const filled = !!slot.assigned;
   const dim = eligible === false && !filled;
@@ -1204,8 +1199,8 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
         onClick={isFixed ? undefined : onClick}
         style={{ left: `${left}%`, width: `${Math.max(width, 6)}%` }}
         title={filled
-          ? `${slot.assigned.name} · ${fmt12(slot.start)}–${fmt12(slot.end)} — click to unassign`
-          : `${fmt12(slot.start)}–${fmt12(slot.end)} — unassigned`}
+          ? `${slot.assigned.name} · ${fmtTime.short(slot.start)}–${fmtTime.short(slot.end)} — click to unassign`
+          : `${fmtTime.short(slot.start)}–${fmtTime.short(slot.end)} — unassigned`}
         className={`group absolute inset-y-0 flex items-center gap-1.5 overflow-hidden rounded-lg px-2.5 text-left transition-all ${
           filled
             ? isHost
@@ -1253,7 +1248,7 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
         </span>
         <span className={`hidden shrink-0 text-[10px] tabular-nums sm:inline ${
           filled ? (isExtra ? 'text-teal-700' : 'text-white/70') : 'text-gray-400'}`}>
-          {fmt12(slot.start)}–{fmt12(slot.end)}
+          {fmtTime.short(slot.start)}–{fmtTime.short(slot.end)}
         </span>
         {filled && !isExtra && (
           <X size={12} className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100" />
@@ -1269,7 +1264,7 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
       {onRetime && filled && !onRemove && (
         <button
           onClick={() => setEditing(v => !v)}
-          title={`Change ${fmt12(slot.start)}–${fmt12(slot.end)}`}
+          title={`Change ${fmtTime.short(slot.start)}–${fmtTime.short(slot.end)}`}
           style={{ left: `calc(${left}% + ${Math.max(width, 6)}% - 20px)` }}
           className={`absolute top-1/2 z-10 -translate-y-1/2 rounded p-0.5 transition-colors ${
             isFixed || isHost || isAdmin ? 'text-white/60 hover:bg-white/20 hover:text-white'
@@ -1330,6 +1325,7 @@ function ShiftBar({ slot, left, width, eligible, onClick, onRemove, onRetime }) 
  * the thing a totals row hides.
  */
 function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime }) {
+  const fmtTime = useTimeFormat();
   const [editing, setEditing] = useState(false);
   const filled = !!slot.assigned;
 
@@ -1372,7 +1368,7 @@ function FixedCard({ slot, instrWindow, salaried, eligible, onClick, onRetime })
 
       <div className="mt-0.5 flex items-center gap-1">
         <span className="text-[10px] tabular-nums text-gray-500">
-          {fmt12(slot.start)}–{fmt12(slot.end)}
+          {fmtTime.short(slot.start)}–{fmtTime.short(slot.end)}
         </span>
         <span className="text-[9px] uppercase tracking-wide text-gray-400">
           {slot.kind === 'admin' ? 'Admin desk' : slot.fixedRole}

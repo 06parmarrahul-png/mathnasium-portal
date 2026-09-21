@@ -12,6 +12,7 @@ import { Link } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { useTimeFormat } from '../lib/useTimeFormat';
 import { fetchApptotoEvents } from '../lib/integrations/apptoto';
 import {
   CalendarCheck, ChevronLeft, ChevronRight, Loader2, AlertTriangle,
@@ -66,11 +67,6 @@ function fmtDayHeader(d) {
   return d.toLocaleDateString('en-US', {
     weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
   });
-}
-function fmtTime(iso) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 }
 
 export default function ApptotoSchedule() {
@@ -303,15 +299,16 @@ function DayBlock({ group }) {
 }
 
 function AppointmentRow({ item }) {
+  const fmtTime = useTimeFormat();
   const c = item.contact || {};
   return (
     <li className="px-4 py-3 flex flex-wrap items-start gap-3 hover:bg-gray-50/50">
       <div className="w-20 shrink-0">
         <p className="text-sm font-bold text-gray-900 tabular-nums">
-          {fmtTime(item.start)}
+          {fmtTime.clock(item.start)}
         </p>
         {item.end && (
-          <p className="text-[11px] text-gray-400 tabular-nums">→ {fmtTime(item.end)}</p>
+          <p className="text-[11px] text-gray-400 tabular-nums">→ {fmtTime.clock(item.end)}</p>
         )}
       </div>
       <div className="flex-1 min-w-0">

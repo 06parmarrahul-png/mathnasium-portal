@@ -45,7 +45,7 @@ vi.mock('../lib/notify', () => ({
 }));
 
 const authValue = { current: {} };
-vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current }));
+vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: CentreEvents } = await import('./CentreEvents');
 
