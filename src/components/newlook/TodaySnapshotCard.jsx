@@ -1,11 +1,12 @@
 import { useMemo } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Btn } from './ui';
-import { fmtTime, fmtDay } from './format';
+import { fmtDay } from './format';
+import { useTimeFormat } from '../../lib/useTimeFormat';
 import { assignmentFor, assignmentShort, assignmentColorHex, stateColorHex } from '../../lib/centerConfig';
 import {
-  mins, dayAxis, snapshotRows, groupRows, instructorsPerSlot,
-  snapshotTotals, whoIsRunningIt, peakWindow, isTrainingRole,
+  mins, dayAxis, snapshotRows, groupRows,
+  snapshotTotals, whoIsRunningIt, isTrainingRole,
 } from '../../lib/snapshotGrid';
 
 /**
@@ -22,13 +23,18 @@ import {
  *     the same number appeared twice on one page.
  *   - A cell per half hour became a bar per person, laid over the same
  *     half-hour columns. One row is 26px instead of a table row.
- *   - The "Instructors" footer row became a bar strip in the band, where
- *     it answers "when is it thin" at a glance.
+ *   - The "Instructors" footer row is gone. It spent 40px of the band
+ *     restating, as bars, a shape the grid underneath already draws.
  *
  * THE COLUMNS ARE ONE LAYER BEHIND EVERY ROW, not a background on each.
  * Per-row rules restart at every group heading and read as stripes rather
  * than columns; drawn once behind the whole grid they line up, which is
  * what makes this read as the table it is replacing.
+ *
+ * ONE FUNCTION PLACES EVERYTHING HORIZONTAL. pct() turns a time into a
+ * percentage across the track, and the hour labels, the rules and the bars
+ * all go through it. They used to be positioned three different ways and
+ * agreed with each other only by accident — see ColumnLayer below.
  *
  * Colours come from the centre's own role registry through
  * assignmentColorHex, so recolouring a role in Manage Roles repaints this
@@ -40,18 +46,40 @@ import {
 const NAME_W = 178;
 const TIME_W = 92;
 
-/** Two rules: every half hour light, every hour darker. */
-function columnLayer(count) {
-  const half = 100 / count;
+/**
+ * The rules behind the rows: every half hour light, every hour darker.
+ *
+ * Each one is an element placed by the SAME pct() the bars use. It used to
+ * be a repeating CSS gradient, which was wrong twice over:
+ *
+ *   - A gradient tiles from its own left edge, so the darker "hour" rule
+ *     only landed on an hour while the day happened to START on one. A day
+ *     opening at 10:30 drew its hour rules at 10:30, 11:30, 12:30…
+ *   - The layer is absolutely positioned, so its left/right are measured
+ *     from the parent's PADDING edge — but the rows sit INSIDE that
+ *     parent's px-4. The rules were 16px left of the track and 32px wider
+ *     than it, so every column was ~2px too wide and the error compounded
+ *     across the day.
+ *
+ * Its parent is now a box with no padding of its own, which is what makes
+ * left/right here land on exactly the pixels each row's flex track covers.
+ */
+function ColumnLayer({ axis, pct }) {
+  const ticks = [];
+  for (let t = axis.from + 30; t < axis.to; t += 30) ticks.push(t);
   return (
-    <div aria-hidden="true" className="pointer-events-none absolute inset-y-0"
-      style={{
-        left: NAME_W, right: TIME_W,
-        borderLeft: '1px solid var(--nl-rule)', borderRight: '1px solid var(--nl-rule)',
-        backgroundImage: 'linear-gradient(to right, var(--nl-rule) 1px, transparent 1px),'
-          + ' linear-gradient(to right, var(--nl-hair) 1px, transparent 1px)',
-        backgroundSize: `${half * 2}% 100%, ${half}% 100%`,
-      }} />
+    <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 z-0"
+      style={{ left: NAME_W, right: TIME_W }}>
+      <span className="absolute inset-y-0 left-0 w-px" style={{ background: 'var(--nl-rule)' }} />
+      <span className="absolute inset-y-0 right-0 w-px" style={{ background: 'var(--nl-rule)' }} />
+      {ticks.map(t => (
+        <span key={t} className="absolute inset-y-0 w-px"
+          style={{
+            left: `${pct(t)}%`,
+            background: t % 60 === 0 ? 'var(--nl-rule)' : 'var(--nl-hair)',
+          }} />
+      ))}
+    </div>
   );
 }
 
@@ -61,30 +89,23 @@ export default function TodaySnapshotCard({
   const rows = useMemo(
     () => snapshotRows(shifts, { volunteerNames }), [shifts, volunteerNames]);
   const axis = useMemo(() => dayAxis(rows), [rows]);
-  const perSlot = useMemo(() => instructorsPerSlot(rows, axis.slots), [rows, axis.slots]);
   const totals = useMemo(() => snapshotTotals(rows), [rows]);
   const groups = useMemo(() => groupRows(rows), [rows]);
-  const peak = useMemo(() => peakWindow(perSlot, axis.slots), [perSlot, axis.slots]);
   const { leads, host } = useMemo(() => whoIsRunningIt(rows), [rows]);
 
   if (!rows.length || !axis.slots.length) return null;
 
   const span = axis.to - axis.from;
   const pct = (m) => ((m - axis.from) / span) * 100;
-  const maxCount = Math.max(1, ...perSlot);
 
-  // Where "now" falls, but only on a day that is actually today and only
-  // while the centre is open — a marker parked at the edge is noise.
-  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-  const nowIn = isToday && nowMin >= axis.from && nowMin < axis.to;
-  const nowCount = nowIn
-    ? perSlot[Math.floor((nowMin - axis.from) / 30)] : null;
-
+  // Every hour tick the day touches, closing one included.
+  //
+  // This used to record the MIDDLE of each hour and centre the label there,
+  // so "10a" was drawn at 10:30 — half a column right of where a 10:00 bar
+  // began. That single line is why none of the start times appeared to line
+  // up with the header.
   const hours = [];
-  for (let h = Math.ceil(axis.from / 60); h * 60 < axis.to; h += 1) {
-    const end = Math.min((h + 1) * 60, axis.to);
-    hours.push({ h, centre: (h * 60 + end) / 2 });
-  }
+  for (let h = Math.ceil(axis.from / 60); h * 60 <= axis.to; h += 1) hours.push(h);
 
   const keyOf = (r) => {
     if (r.sickPay) return ['Sick', stateColorHex('Sick Pay', centerConfig)];
@@ -151,89 +172,95 @@ export default function TodaySnapshotCard({
             {stat(`${totals.hours.toFixed(1)}h`, 'Total hours')}
           </div>
         </div>
-
-        {/* Instructors each half hour — the classic grid's footer row. */}
-        <div className="mt-4 border-t pt-3" style={{ borderColor: 'rgba(255,255,255,.28)' }}>
-          <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 text-[12px]">
-            <span className="opacity-90">Instructors on the floor, each half hour</span>
-            <span className="font-semibold">
-              {nowIn && `Right now ${nowCount}`}
-              {nowIn && peak && ' · '}
-              {peak && `${peak.max} from ${fmtTime(fromMins(peak.from))} to ${fmtTime(fromMins(peak.to))}`}
-            </span>
-          </div>
-          <div className="flex items-end gap-[3px]" style={{ height: 40 }}>
-            {perSlot.map((c, i) => (
-              <div key={axis.slots[i]} className="flex-1 rounded-t-[3px]"
-                style={{
-                  height: Math.max(2, Math.round((c / maxCount) * 40)),
-                  background: `rgba(255,255,255,${c === maxCount ? 0.95 : c ? 0.6 : 0.2})`,
-                }} />
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* ── The grid ─────────────────────────────────────────────── */}
       <div className="overflow-x-auto rounded-b-2xl border border-t-0"
         style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
-        <div className="relative min-w-[720px] px-4 pb-3 pt-2.5">
-          {columnLayer(axis.slots.length)}
+        <div className="min-w-[720px] px-4 pb-3 pt-2.5">
 
-          <div className="relative flex h-6 items-center">
+          {/* Hour labels. Built on the same three-part flex as every row
+              below, so a label and the bars beneath it are measured off
+              one track rather than two that only looked alike. */}
+          <div className="flex h-6 items-center">
             <div className="shrink-0" style={{ width: NAME_W }} />
             <div className="relative min-w-0 flex-1">
-              {hours.map(({ h, centre }) => (
-                <span key={h} className="absolute -translate-x-1/2 text-[11px] font-semibold"
-                  style={{ left: `${pct(centre)}%`, color: 'var(--nl-muted)' }}>
-                  {hourLabel(h)}
-                </span>
-              ))}
+              {hours.map(h => {
+                const p = pct(h * 60);
+                return (
+                  <span key={h} className="absolute text-[11px] font-semibold"
+                    style={{
+                      left: `${p}%`,
+                      // Sits on its tick. The two end labels are pulled
+                      // inward instead, where centring would hang them off
+                      // the track and into the columns either side.
+                      transform: p <= 0 ? 'none'
+                               : p >= 100 ? 'translateX(-100%)'
+                               : 'translateX(-50%)',
+                      color: 'var(--nl-muted)',
+                    }}>
+                    {hourLabel(h)}
+                  </span>
+                );
+              })}
             </div>
             <div className="shrink-0" style={{ width: TIME_W }} />
           </div>
 
-          {groups.map(g => (
-            <div key={g.tier}>
-              <div className="relative flex h-[30px] items-center border-b"
-                style={{ borderColor: 'var(--nl-hair)' }}>
-                <div className="sticky left-0 shrink-0 whitespace-nowrap pr-3 text-[10px] font-bold uppercase tracking-[0.1em]"
-                  style={{ color: 'var(--nl-muted)', background: 'var(--nl-card)' }}>
-                  {g.label} · {g.rows.length}
-                </div>
-                <div className="flex-1" />
-              </div>
-              {g.rows.map((r) => {
-                const a = mins(r.startTime);
-                const b = mins(r.endTime);
-                const colour = colourOf(r);
-                return (
-                  <div key={r.id} className="relative flex h-[26px] items-center border-b"
-                    style={{ borderColor: 'var(--nl-hair)' }}>
-                    <div className="sticky left-0 flex shrink-0 items-center gap-2 truncate pr-2 text-[13px]"
-                      style={{ width: NAME_W, background: 'var(--nl-card)' }}>
-                      <span className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
-                        style={{ background: colour }} />
-                      <span className="truncate">{r.userName}</span>
-                    </div>
-                    <div className="relative h-[26px] min-w-0 flex-1">
-                      <div className="absolute rounded-[3px]"
-                        style={{
-                          left: `${pct(a)}%`, width: `${pct(b) - pct(a)}%`,
-                          top: 7, height: 11, background: colour,
-                        }} />
-                    </div>
-                    <div className="shrink-0 whitespace-nowrap text-right text-[12px]"
-                      style={{ width: TIME_W, color: 'var(--nl-muted)' }}>
-                      {shortTime(r.startTime)}–{shortTime(r.endTime)}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          {/* The rows, with the rules behind them. No padding on this box:
+              that is what makes ColumnLayer's left/right agree with each
+              row's flex track to the pixel. */}
+          <div className="relative">
+            <ColumnLayer axis={axis} pct={pct} />
 
-          <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-3 text-[11px]"
+            {groups.map(g => (
+              <div key={g.tier}>
+                <div className="relative flex h-[30px] items-center border-b"
+                  style={{ borderColor: 'var(--nl-hair)' }}>
+                  <div className="sticky left-0 z-[2] shrink-0 whitespace-nowrap pr-3 text-[10px] font-bold uppercase tracking-[0.1em]"
+                    style={{ color: 'var(--nl-muted)', background: 'var(--nl-card)' }}>
+                    {g.label} · {g.rows.length}
+                  </div>
+                  <div className="flex-1" />
+                </div>
+                {g.rows.map((r) => {
+                  const a = mins(r.startTime);
+                  const b = mins(r.endTime);
+                  const colour = colourOf(r);
+                  return (
+                    <div key={r.id} className="relative flex h-[26px] items-center border-b"
+                      style={{ borderColor: 'var(--nl-hair)' }}>
+                      {/* Above the bars, not under them: when the grid is
+                          scrolled sideways the names stay legible instead
+                          of having somebody's shift drawn across them. */}
+                      <div className="sticky left-0 z-[2] flex shrink-0 items-center gap-2 truncate pr-2 text-[13px]"
+                        style={{ width: NAME_W, background: 'var(--nl-card)' }}>
+                        <span className="inline-block h-[7px] w-[7px] shrink-0 rounded-full"
+                          style={{ background: colour }} />
+                        <span className="truncate">{r.userName}</span>
+                      </div>
+                      <div className="relative z-[1] h-[26px] min-w-0 flex-1">
+                        <div className="absolute rounded-[3px]"
+                          style={{
+                            left: `${pct(a)}%`,
+                            width: `${Math.max(0, pct(b) - pct(a))}%`,
+                            top: '50%', height: 11, transform: 'translateY(-50%)',
+                            background: colour,
+                          }} />
+                      </div>
+                      <div className="shrink-0 whitespace-nowrap text-right text-[12px]"
+                        style={{ width: TIME_W, color: 'var(--nl-muted)' }}>
+                        {shortTime(r.startTime)}–{shortTime(r.endTime)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          {/* Outside the layer, so no rules run behind the key. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 pt-3 text-[11px]"
             style={{ color: 'var(--nl-muted)' }}>
             {legend.map(({ label, colour }) => (
               <span key={label} className="inline-flex items-center gap-1.5">
