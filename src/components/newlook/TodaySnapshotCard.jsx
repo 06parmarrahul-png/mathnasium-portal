@@ -1,8 +1,7 @@
 import { useMemo } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { Btn } from './ui';
-import { fmtDay } from './format';
-import { useTimeFormat } from '../../lib/useTimeFormat';
+import { fmtTime, fmtDay } from './format';
 import { assignmentFor, assignmentShort, assignmentColorHex, stateColorHex } from '../../lib/centerConfig';
 import {
   mins, dayAxis, snapshotRows, groupRows,
