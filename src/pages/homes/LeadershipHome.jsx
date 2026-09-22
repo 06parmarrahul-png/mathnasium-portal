@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { ArrowRight, CalendarDays, Users, Clock, Settings } from 'lucide-react';
+import { ArrowRight, CalendarDays, Users, Clock } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { greeting } from '../../lib/greeting';
@@ -12,7 +12,7 @@ import { resolveUserForCenter } from '../../lib/centerMembership';
 import DeskHomeCard from '../../components/DeskHomeCard';
 import Mascot from '../../components/Mascot';
 import { mascotFor } from '../../lib/mascots';
-import { Card, Pill, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
+import { Card, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
 import TodaySnapshotCard from '../../components/newlook/TodaySnapshotCard';
 import { fmtDay, todayISO } from '../../components/newlook/format';
 import { useTimeFormat } from '../../lib/useTimeFormat';
@@ -47,10 +47,21 @@ import { useTimeFormat } from '../../lib/useTimeFormat';
  * that got deleted.
  * ═══════════════════════════════════════════════════════════════════════
  *
- * ONE PAGE, NOT THREE. A Manager and a Director carry the same permissions
- * apart from centre.settings, so the differences are a few gated cards
- * rather than separate files: Directors get availability chasing and the
- * settings shortcut, owners get the centres row and the plan.
+ * ONE PAGE, NOT THREE, AND THE SAME PAGE FOR EVERYONE ON IT. A Manager
+ * and a Director carry the same permissions apart from centre.settings,
+ * and this page no longer has a card that turns on it — so there is
+ * nothing here gated by role any more.
+ *
+ * WHAT IS NOT HERE, AND WHY. The centre-settings shortcut and the
+ * availability-chasing card both went: they are errands, not decisions,
+ * and the sidebar already reaches both. A home page earns its place by
+ * answering "what is waiting on me", and anything that only answers
+ * "where do I click" is competing with the things that do.
+ *
+ * THE ORDER IS THE POINT. Snapshot, then the desk, then the queue. The
+ * snapshot says whether the floor is covered; the desk is what leadership
+ * actually come here to read; the queue underneath keeps until both have
+ * been looked at.
  */
 
 /** A shift that is neither a draft nor cancelled is a shift someone works. */
@@ -60,9 +71,8 @@ export default function LeadershipHome() {
   const auth = useAuth();
   const fmtTime = useTimeFormat();
   const {
-    profile, activeCenterId, isOwner, isSuperAdmin, isDirector, isAdminAssistant, centerConfig,
+    profile, activeCenterId, centerConfig,
   } = auth;
-  const canSeeCentreSettings = isOwner || isSuperAdmin || isDirector || isAdminAssistant;
 
   const today = todayISO();
   const [todayShifts, setTodayShifts] = useState(null);   // null = still loading
@@ -72,7 +82,6 @@ export default function LeadershipHome() {
   const [intakes, setIntakes] = useState([]);
   const [leads, setLeads] = useState([]);
   const [events, setEvents] = useState([]);
-  const [availRows, setAvailRows] = useState([]);
 
   // Today's roster. The one figure everyone opens this page for.
   useEffect(() => {
@@ -144,18 +153,6 @@ export default function LeadershipHome() {
     );
   }, [activeCenterId]);
 
-  // Availability from today on. The centerId + date index this needs is
-  // the one Manage Staff Schedule already uses.
-  useEffect(() => {
-    if (!activeCenterId) return undefined;
-    return onSnapshot(
-      query(collection(db, 'availability'),
-        where('centerId', '==', activeCenterId), where('date', '>=', today)),
-      snap => setAvailRows(snap.docs.map(d => d.data())),
-      () => setAvailRows([]),
-    );
-  }, [activeCenterId, today]);
-
   // Volunteers are a tier of their own in the grid, and the flag is
   // per-centre, so it comes off the resolved membership rather than the
   // shift. Same source the classic snapshot uses.
@@ -211,26 +208,6 @@ export default function LeadershipHome() {
     return weekAhead({ shifts: [], events, from: w.from, to: w.to });
   }, [events, today]);
 
-  /**
-   * Who has told us anything about the days ahead, and who has not.
-   *
-   * There is no "submitted" flag on a person — availability is one row per
-   * person per DAY, so the only honest answer is how many distinct people
-   * have at least one row dated today or later. An earlier version of this
-   * read a `availabilitySubmittedFor` field off the user, which does not
-   * exist: it would have reported nobody, forever, in a confident voice.
-   * That is the failure this whole page is built to avoid.
-   */
-  const availability = useMemo(() => {
-    const active = people.filter(u => u.approved === true && u.status !== 'terminated');
-    const known = new Set(active.map(u => u.uid));
-    const submitted = new Set();
-    for (const r of availRows) {
-      if (r?.userId && known.has(r.userId)) submitted.add(r.userId);
-    }
-    return { total: active.length, submitted: submitted.size };
-  }, [people, availRows]);
-
   const first = (profile?.displayName || '').split(' ')[0] || 'there';
   const nothingWaiting = !unclaimed.length && !awaitingApproval.length && !pendingTimeOff.length;
 
@@ -280,7 +257,11 @@ export default function LeadershipHome() {
 
       <div className="grid gap-3.5 md:grid-cols-2 md:items-start">
         <div className="min-w-0 space-y-3.5">
-          {/* ── The floor, today ─────────────────────────────────────── */}
+          {/* The desk comes first. After the snapshot it is the thing
+              leadership are actually here for — everything below it is a
+              queue that can wait until the notes have been read. */}
+          <DeskHomeCard />
+
           {/* ── What needs a decision ───────────────────────────────── */}
           <div>
             <Lbl className="mb-1.5">Needs you</Lbl>
@@ -288,7 +269,23 @@ export default function LeadershipHome() {
               <AllClear title="Nothing waiting"
                 note="No unclaimed shifts, no one waiting to be approved, no time-off to answer." />
             ) : (
+              /* Time off, then shifts nobody has taken. Both are somebody
+                 waiting on an answer; the time-off request has a person
+                 sitting on the other end of it, so it goes first.
+                 Approvals last — rarer, and only ever rendered when there
+                 is genuinely an account waiting. */
               <div className="space-y-2.5">
+                {pendingTimeOff.length > 0 && (
+                  <NeedsRow
+                    icon={<Clock size={16} />}
+                    title={`${pendingTimeOff.length} time-off request${pendingTimeOff.length === 1 ? '' : 's'}`}
+                    note={pendingTimeOff.slice(0, 2).map(r => (
+                      [r.userName, r.from && fmtDay(r.from, { month: 'short', day: 'numeric' })]
+                        .filter(Boolean).join(' · ')
+                    )).join('  ·  ')}
+                    to={PAGES.staffSchedule.path}
+                    cta="Review" />
+                )}
                 {unclaimed.length > 0 && (
                   <NeedsRow
                     icon={<CalendarDays size={16} />}
@@ -307,36 +304,9 @@ export default function LeadershipHome() {
                     to={PAGES.manageStaff.path}
                     cta={PAGES.manageStaff.name} />
                 )}
-                {pendingTimeOff.length > 0 && (
-                  <NeedsRow
-                    icon={<Clock size={16} />}
-                    title={`${pendingTimeOff.length} time-off request${pendingTimeOff.length === 1 ? '' : 's'}`}
-                    note={pendingTimeOff.slice(0, 2).map(r => (
-                      [r.userName, r.from && fmtDay(r.from, { month: 'short', day: 'numeric' })]
-                        .filter(Boolean).join(' · ')
-                    )).join('  ·  ')}
-                    to={PAGES.staffSchedule.path}
-                    cta="Review" />
-                )}
               </div>
             )}
           </div>
-
-          <DeskHomeCard />
-
-          {/* Directors own the hours, the roles and the look of the centre;
-              Managers do not, so this card is theirs alone. */}
-          {canSeeCentreSettings && (
-            <div>
-              <Lbl className="mb-1.5">Centre</Lbl>
-              <NeedsRow
-                icon={<Settings size={16} />}
-                title="Hours, roles and appearance"
-                note={centerConfig?.name || 'This centre'}
-                to={PAGES.centreSettings.path}
-                cta={PAGES.centreSettings.name} />
-            </div>
-          )}
 
         </div>
 
@@ -392,29 +362,6 @@ export default function LeadershipHome() {
               </div>
             </Card>
           </div>
-
-          {/* Who still owes availability. A plain count of a stored flag —
-              nothing here works out whether the month is coverable. */}
-          {canSeeCentreSettings && availability.total > 0 && (
-            <div>
-              <Lbl className="mb-1.5">Availability</Lbl>
-              <Card>
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-[14px] font-semibold">
-                    {availability.submitted} of {availability.total} have days in
-                  </span>
-                  {availability.submitted < availability.total && (
-                    <Pill tone="warn">{availability.total - availability.submitted} to go</Pill>
-                  )}
-                </div>
-                <div className="mt-3 border-t pt-2.5" style={{ borderColor: 'var(--nl-rule)' }}>
-                  <Btn to={PAGES.availabilityLog.path} size="sm" variant="ghost">
-                    {PAGES.availabilityLog.name} <ArrowRight size={13} />
-                  </Btn>
-                </div>
-              </Card>
-            </div>
-          )}
 
           {/* ── What's on ────────────────────────────────────────────── */}
           {week.length > 0 && (

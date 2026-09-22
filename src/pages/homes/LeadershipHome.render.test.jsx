@@ -20,8 +20,11 @@ import { MemoryRouter } from 'react-router-dom';
 // Firestore, routed BY COLLECTION — a mock that hands every listener the
 // same rows lets a test pass for the wrong reason.
 const snapshots = {};
+/** Which collections the page actually subscribed to, this render. */
+const asked = [];
 const rowsFor = (q) => {
   const key = String(q?.__c || '').split('/').pop();
+  asked.push(key);
   return snapshots[key] || [];
 };
 
@@ -73,6 +76,7 @@ const draw = (auth = MANAGER) => {
 };
 
 beforeEach(() => {
+  asked.length = 0;
   for (const k of Object.keys(snapshots)) delete snapshots[k];
   Object.assign(snapshots, {
     shifts: [], openShifts: [], users: [], timeOffRequests: [],
@@ -199,26 +203,78 @@ describe('the funnel', () => {
   });
 });
 
-describe('the cards each role gets', () => {
-  it('gives a director the centre settings and availability cards', () => {
-    snapshots.users = [
-      { id: 'a', uid: 'a', displayName: 'Has days', approved: true },
-      { id: 'b', uid: 'b', displayName: 'Has not', approved: true },
-    ];
-    snapshots.availability = [
-      { userId: 'a', date: TODAY }, { userId: 'a', date: '2099-01-01' },
-      { userId: 'ghost', date: TODAY },        // nobody on the roster
-    ];
+describe('the errands that are no longer on the page', () => {
+  /**
+   * The centre-settings shortcut and the availability-chasing card used to
+   * be here, gated on role. Both went: they answer "where do I click", not
+   * "what is waiting on me", and the sidebar reaches both. Nobody gets
+   * them now — which is the point, so it is asserted for every role rather
+   * than just the one that used to be refused.
+   */
+  for (const [name, auth] of [['a director', DIRECTOR], ['a manager', MANAGER], ['an owner', OWNER]]) {
+    it(`shows ${name} no centre-settings shortcut`, () => {
+      snapshots.users = [{ id: 'a', uid: 'a', displayName: 'A', approved: true }];
+      draw(auth);
+      expect(screen.queryByText(/Hours, roles and appearance/)).toBeNull();
+    });
+
+    it(`shows ${name} no availability card`, () => {
+      snapshots.users = [
+        { id: 'a', uid: 'a', displayName: 'Has days', approved: true },
+        { id: 'b', uid: 'b', displayName: 'Has not', approved: true },
+      ];
+      snapshots.availability = [{ userId: 'a', date: TODAY }];
+      draw(auth);
+      expect(screen.queryByText(/have days in/)).toBeNull();
+    });
+  }
+
+  it('no longer subscribes to the availability collection at all', () => {
+    // The card went; so should the read that fed it. A page that keeps
+    // the listener is still paying for a card nobody can see.
+    snapshots.availability = [{ userId: 'a', date: TODAY }];
     draw(DIRECTOR);
-    expect(screen.getByText(/Hours, roles and appearance/)).toBeTruthy();
-    // One distinct person, counted once across two rows; the ghost is out.
-    expect(screen.getByText(/1 of 2 have days in/)).toBeTruthy();
+    expect(asked).not.toContain('availability');
+    // and the ones it still needs are all there
+    expect(asked).toEqual(expect.arrayContaining([
+      'shifts', 'openShifts', 'users', 'timeOffRequests', 'centerIntakes', 'leads', 'events',
+    ]));
+  });
+});
+
+describe('the order leadership read it in', () => {
+  /**
+   * Snapshot, then the desk, then the queue. The desk is what they come
+   * here for once they know the floor is covered, so it sits above the
+   * things that can wait.
+   */
+  // DeskHomeCard asks canUseDesk(), which reads profile.role — without it
+  // the card never renders and an order assertion would pass on absence.
+  const DESK_DIRECTOR = { ...DIRECTOR, profile: { ...DIRECTOR.profile, role: 'director' } };
+
+  const orderOf = (...labels) => {
+    const html = document.body.innerHTML;
+    return labels.map(l => html.indexOf(l));
+  };
+
+  it('puts the desk above what needs a decision', () => {
+    snapshots.timeOffRequests = [{ id: 't1', userName: 'Sam', from: TODAY, status: 'pending' }];
+    draw(DESK_DIRECTOR);
+    // The new-look variant heads the card "On your desk".
+    const [desk, needs] = orderOf('On your desk', 'Needs you');
+    expect(desk).toBeGreaterThan(-1);
+    expect(needs).toBeGreaterThan(-1);
+    expect(desk).toBeLessThan(needs);
   });
 
-  it('withholds both from a manager, who cannot write centre settings', () => {
-    snapshots.users = [{ displayName: 'A', approved: true }];
-    draw(MANAGER);
-    expect(screen.queryByText(/Hours, roles and appearance/)).toBeNull();
+  it('answers a person before it chases a shift', () => {
+    snapshots.timeOffRequests = [{ id: 't1', userName: 'Sam', from: TODAY, status: 'pending' }];
+    snapshots.openShifts = [{ id: 'o1', status: 'open', date: TODAY, startTime: '15:00' }];
+    draw(DESK_DIRECTOR);
+    const [timeOff, unclaimed] = orderOf('time-off request', 'nobody has taken');
+    expect(timeOff).toBeGreaterThan(-1);
+    expect(unclaimed).toBeGreaterThan(-1);
+    expect(timeOff).toBeLessThan(unclaimed);
   });
 });
 
