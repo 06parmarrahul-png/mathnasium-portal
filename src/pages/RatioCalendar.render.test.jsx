@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, within, act } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -16,11 +16,26 @@ import { MemoryRouter } from 'react-router-dom';
 const snapshots = {};
 
 vi.mock('../firebase', () => ({ db: {}, auth: {}, storage: {}, serverTimestamp: () => 'ts' }));
+/** Every write the page makes, so a series can be checked document by document. */
+const writes = { added: [], set: [], updated: [], deleted: [] };
+let minted = 0;
+
 vi.mock('firebase/firestore', () => ({
   collection: (...a) => ({ __c: a.slice(1).join('/') }),
   query: (c) => c, where: () => ({}), orderBy: () => ({}), limit: () => ({}),
-  doc: (...a) => ({ __d: a.slice(1).join('/') }),
-  addDoc: async () => ({ id: 'x' }), updateDoc: async () => {}, deleteDoc: async () => {},
+  // doc(col) mints a new id the way Firestore does; doc(col, id) points at one.
+  doc: (...a) => (a.length === 1
+    ? { __d: `new-${++minted}`, id: `new-${minted}` }
+    : { __d: a[a.length - 1], id: a[a.length - 1] }),
+  addDoc: async (c, d) => { writes.added.push(d); return { id: 'x' }; },
+  updateDoc: async (r, d) => { writes.updated.push({ id: r.id, data: d }); },
+  deleteDoc: async (r) => { writes.deleted.push(r.id); },
+  writeBatch: () => ({
+    set: (r, d) => writes.set.push({ id: r.id, data: d }),
+    update: (r, d) => writes.updated.push({ id: r.id, data: d }),
+    delete: (r) => writes.deleted.push(r.id),
+    commit: async () => {},
+  }),
   onSnapshot: (ref, next) => {
     if (typeof next === 'function') {
       const rows = snapshots[String(ref?.__c || '').split('/').pop()] || [];
@@ -68,6 +83,8 @@ beforeEach(() => {
   // Tuesday 22 September 2026, so the week grid runs Sun 20 – Sat 26.
   vi.setSystemTime(new Date(2026, 8, 22, 12, 0, 0));
   authValue.current = DIRECTOR;
+  writes.added = []; writes.set = []; writes.updated = []; writes.deleted = [];
+  minted = 0;
   snapshots.calendar = [TRAINING];
   snapshots.events = [{ id: 'ev1', date: '2026-09-24', title: 'Bingo', type: 'fun-day' }];
   snapshots.centerIntakes = [{
@@ -316,5 +333,246 @@ describe('the three week rows keep one set of columns', () => {
     for (const g of grids) {
       for (const cell of g.children) expect(cell.className).toMatch(/\bmin-w-0\b/);
     }
+  });
+});
+
+/**
+ * Recurring entries.
+ *
+ * The real ask: "I just added our management team meeting 12–1 on
+ * Wednesday, I want to make it recurring." Wednesday is 23 September
+ * 2026 in this fixture.
+ *
+ * A series is written as one document per occurrence. That is not a
+ * storage preference — api/intakes.js finds holds with a date-range
+ * query, so a rule on a single document would hold the first week and
+ * then silently stop. These tests read the actual writes.
+ */
+describe('making it repeat', () => {
+  const WED = '2026-09-23';
+
+  const fillMeeting = (dialog, { date = WED } = {}) => {
+    fireEvent.change(within(dialog).getByPlaceholderText(/radius training/i), {
+      target: { value: 'Management team meeting' },
+    });
+    fireEvent.change(dialog.querySelector('input[type="date"]'), { target: { value: date } });
+    const times = dialog.querySelectorAll('input[type="time"]');
+    fireEvent.change(times[0], { target: { value: '12:00' } });
+    fireEvent.change(times[1], { target: { value: '13:00' } });
+  };
+  const pick = (dialog, label) =>
+    fireEvent.click(within(dialog).getByRole('button', { name: label }));
+  const saveIt = async (dialog) => {
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save entry$/i }));
+    });
+  };
+  const open = (container) => { openComposer(); return container.querySelector('.fixed'); };
+
+  it('offers the patterns a centre actually runs on', () => {
+    const { container } = draw();
+    const dialog = open(container);
+    for (const label of [/does not repeat/i, /every week/i, /every 2 weeks/i,
+      /every 4 weeks/i, /every month/i]) {
+      expect(within(dialog).getByRole('button', { name: label })).toBeTruthy();
+    }
+  });
+
+  it('says how many it will make before you press save', () => {
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    pick(dialog, /^every week$/i);
+    expect(within(dialog).getByText(/53 entries, every week, through/i)).toBeTruthy();
+  });
+
+  it('writes one document per week, every one a Wednesday', async () => {
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    pick(dialog, /^every week$/i);
+    // [0] is the entry's own date, [1] is the series "Until".
+    fireEvent.change(dialog.querySelectorAll('input[type="date"]')[1], { target: { value: '2026-10-21' } });
+    await saveIt(dialog);
+
+    expect(writes.set).toHaveLength(5);
+    expect(writes.set.map(w => w.data.date)).toEqual([
+      '2026-09-23', '2026-09-30', '2026-10-07', '2026-10-14', '2026-10-21',
+    ]);
+    for (const w of writes.set) {
+      expect(new Date(`${w.data.date}T12:00:00`).getDay()).toBe(3);
+      expect(w.data.startTime).toBe('12:00');
+      expect(w.data.endTime).toBe('13:00');
+      expect(w.data.repeat).toBe('weekly');
+    }
+  });
+
+  it('ties them together with one seriesId', async () => {
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    pick(dialog, /^every week$/i);
+    fireEvent.change(dialog.querySelectorAll('input[type="date"]')[1], { target: { value: '2026-10-07' } });
+    await saveIt(dialog);
+    const ids = new Set(writes.set.map(w => w.data.seriesId));
+    expect(ids.size).toBe(1);
+    expect([...ids][0]).toBeTruthy();
+  });
+
+  it('skips a week the centre is closed', async () => {
+    authValue.current = {
+      ...DIRECTOR,
+      centerConfig: { ...CONFIG, holidays: [{ date: '2026-09-30', name: 'Closure day' }] },
+    };
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    pick(dialog, /^every week$/i);
+    fireEvent.change(dialog.querySelectorAll('input[type="date"]')[1], { target: { value: '2026-10-07' } });
+    expect(within(dialog).getByText(/1 skipped — the centre is closed/i)).toBeTruthy();
+    await saveIt(dialog);
+    expect(writes.set.map(w => w.data.date)).toEqual(['2026-09-23', '2026-10-07']);
+  });
+
+  it('warns that a repeating hold holds every single one', () => {
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    pick(dialog, /^every week$/i);
+    fireEvent.click(within(dialog).getByLabelText(/hold the booking page/i));
+    expect(within(dialog).getByText(/every one of them holds the booking page/i)).toBeTruthy();
+  });
+
+  it('keeps a one-off a one-off', async () => {
+    const { container } = draw();
+    const dialog = open(container);
+    fillMeeting(dialog);
+    await saveIt(dialog);
+    expect(writes.set).toHaveLength(0);
+    expect(writes.added).toHaveLength(1);
+    expect(writes.added[0]).toMatchObject({ date: WED, seriesId: null, repeat: null });
+  });
+});
+
+describe('an entry that is already part of a series', () => {
+  const S = (id, date) => ({
+    id, title: 'Management team meeting', kind: 'meeting', date,
+    startTime: '12:00', endTime: '13:00', allDay: false,
+    assignedTo: [], assignedNames: [], holdsBooking: false,
+    seriesId: 'ser1', repeat: 'weekly', repeatUntil: '2026-10-14',
+  });
+  const SERIES = [S('w1', '2026-09-23'), S('w2', '2026-09-30'), S('w3', '2026-10-07'), S('w4', '2026-10-14')];
+
+  const openOccurrence = (container) => {
+    fireEvent.click(screen.getAllByTitle(/Management team meeting/i)[0]);
+    return container.querySelector('.fixed');
+  };
+
+  beforeEach(() => { snapshots.calendar = SERIES; });
+
+  it('says it is part of a series rather than offering the chips again', () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    expect(within(dialog).getByText(/part of a series/i)).toBeTruthy();
+    expect(within(dialog).queryByRole('button', { name: /^every 4 weeks$/i })).toBeNull();
+  });
+
+  it('asks which occurrences an edit applies to', () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    expect(within(dialog).getByRole('button', { name: /just this one/i })).toBeTruthy();
+    expect(within(dialog).getByRole('button', { name: /this and all later ones/i })).toBeTruthy();
+  });
+
+  it('edits only this one by default', async () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    fireEvent.change(within(dialog).getByPlaceholderText(/radius training/i), {
+      target: { value: 'Management meeting (moved)' },
+    });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save changes$/i }));
+    });
+    expect(writes.updated).toHaveLength(1);
+    expect(writes.updated[0].id).toBe('w1');
+  });
+
+  it('carries an edit forward to every later one when asked', async () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    fireEvent.click(within(dialog).getByRole('button', { name: /this and all later ones/i }));
+    fireEvent.change(within(dialog).getByPlaceholderText(/radius training/i), {
+      target: { value: 'Leadership sync' },
+    });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save changes$/i }));
+    });
+    // The whole series, because the one opened is the first of it.
+    expect(writes.updated.map(w => w.id)).toEqual(['w1', 'w2', 'w3', 'w4']);
+    for (const w of writes.updated) expect(w.data.title).toBe('Leadership sync');
+  });
+
+  it('never rewrites an occurrence-s own date when carrying an edit forward', async () => {
+    // The date is the only thing telling two occurrences apart. Pushing
+    // one over the others would collapse the series onto a single day.
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    fireEvent.click(within(dialog).getByRole('button', { name: /this and all later ones/i }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save changes$/i }));
+    });
+    for (const w of writes.updated) expect(w.data.date).toBeUndefined();
+  });
+
+  it('deletes just this one by default', async () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /delete/i }));
+    });
+    expect(writes.deleted).toEqual(['w1']);
+  });
+
+  it('deletes this and every later one when asked', async () => {
+    const { container } = draw();
+    const dialog = openOccurrence(container);
+    fireEvent.click(within(dialog).getByRole('button', { name: /this and all later ones/i }));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /delete/i }));
+    });
+    expect(writes.deleted).toEqual(['w1', 'w2', 'w3', 'w4']);
+  });
+});
+
+describe('turning a meeting that already exists into a recurring one', () => {
+  // Exactly the reported case: the Wednesday 12–1 meeting is already
+  // saved as a one-off and now needs to repeat.
+  const ONE_OFF = {
+    id: 'mtg', title: 'Management team meeting', kind: 'meeting',
+    date: '2026-09-23', startTime: '12:00', endTime: '13:00', allDay: false,
+    assignedTo: [], assignedNames: [], holdsBooking: false,
+  };
+  beforeEach(() => { snapshots.calendar = [ONE_OFF]; });
+
+  it('keeps the entry that exists and adds the rest around it', async () => {
+    const { container } = draw();
+    fireEvent.click(screen.getByTitle(/Management team meeting/i));
+    const dialog = container.querySelector('.fixed');
+    fireEvent.click(within(dialog).getByRole('button', { name: /^every week$/i }));
+    fireEvent.change(dialog.querySelectorAll('input[type="date"]')[1], { target: { value: '2026-10-14' } });
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save changes$/i }));
+    });
+
+    // The original document stays put — same id, now the first of the
+    // series — so nothing anyone has already looked at moves.
+    expect(writes.updated).toHaveLength(1);
+    expect(writes.updated[0].id).toBe('mtg');
+    expect(writes.updated[0].data.seriesId).toBe('mtg');
+    expect(writes.updated[0].data.repeat).toBe('weekly');
+
+    // And the three later Wednesdays are added.
+    expect(writes.set.map(w => w.data.date)).toEqual(['2026-09-30', '2026-10-07', '2026-10-14']);
+    for (const w of writes.set) expect(w.data.seriesId).toBe('mtg');
   });
 });

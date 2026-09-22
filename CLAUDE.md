@@ -1120,6 +1120,41 @@ both test files. Change one, change the other.
 `holdsBooking` is filtered in JS rather than in the Firestore query, so the read
 needs no composite index — the date range alone is a single-field range.
 
+**RECURRENCE IS MATERIALISED — one document per occurrence, sharing a
+`seriesId`.** That is not a storage preference. `api/intakes.js` finds holds
+with a `date >= … <= …` range query, and a document carrying an RRULE has
+exactly one `date`: store the rule alone and a recurring hold would block the
+first week and then silently stop, which nobody notices until a family books
+over the management meeting. Every read path already understands a dated row,
+so materialising needed no change anywhere else. Mutation-tested — collapsing
+the series back to one document fails two tests.
+
+Rules: `weekly | biweekly | fourweekly | monthly`. **Monthly is the nth
+WEEKDAY** ("the fourth Wednesday"), not the same date — and a month with no
+fifth Wednesday is skipped rather than slid to the fourth, because sliding
+puts a meeting in diaries nobody agreed to. Series run 12 months by default,
+hard-capped at `MAX_OCCURRENCES` (200), written in one `writeBatch`.
+
+A later occurrence landing on a **centre closure is dropped**, and the composer
+says how many. The **start date is always kept** even if it is a closure:
+somebody chose that exact day, and an empty series ("I pressed save and nothing
+appeared") is a worse answer than one meeting on an odd day they can see and
+move.
+
+Editing or deleting an occurrence asks **"Just this one" / "This and all later
+ones"**. A forward edit never writes `date` — it is the only thing telling two
+occurrences apart, and pushing one over the others would collapse the series
+onto a single day. Turning an existing one-off into a series **keeps that
+document** as the first occurrence, so nothing anyone has already looked at
+moves or changes id. Re-cutting the pattern of a LIVE series is deliberately
+not offered: it means deciding what happens to occurrences people were already
+told about. Delete the later ones and make it again.
+
+The page's calendar listener is **unfiltered** (`collection(…, 'calendar')`),
+which is what lets a forward edit find its siblings without a second query. A
+year of weekly meetings is ~53 tiny documents; if series ever get numerous this
+is the thing to window.
+
 **Who gets it:** a new `calendar.access` permission — owners, both directors,
 Managers, admin assistants, Hosts. Not Leads, for the same reason they are off
 the Management Desk: a Lead runs the floor for a shift, and taking assessment

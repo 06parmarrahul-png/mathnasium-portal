@@ -35,6 +35,9 @@
  *     assignedTo:   ['uid1', 'uid2'],    // may be empty — unassigned is fine
  *     assignedNames:['Neeru Gill', …],   // denormalised for display
  *     holdsBooking: true,                // ← the one with teeth
+ *     seriesId:     'abc123' | null,     // set on every entry in a series
+ *     repeat:       'weekly' | null,     // the rule, copied onto each one
+ *     repeatUntil:  '2027-06-30' | null,
  *     location:     '', note:  '',
  *     createdAt, createdBy, updatedAt, updatedBy
  *   }
@@ -50,6 +53,17 @@
  *   would make one staff meeting eat one of Friday's two assessments.
  *   Only a real assessment counts against the cap. See holdBlocks() and
  *   the `holds` argument on computeWeekSlots.
+ *
+ * RECURRENCE IS MATERIALISED, NOT A RULE ON ONE DOCUMENT.
+ *   A weekly meeting writes one document per occurrence, linked by
+ *   `seriesId`. That costs more rows than an RRULE on a single doc, and it
+ *   is the only shape that is CORRECT here: api/intakes.js finds holds with
+ *   a `date >= … <= …` range query, and a rule-bearing document has exactly
+ *   one `date`. Store the rule alone and a recurring hold would block the
+ *   first week and then silently stop — the failure nobody notices until a
+ *   family books over the management meeting. Every read path in the app
+ *   and on the server already understands a dated row, so materialising
+ *   needs no change anywhere else.
  */
 
 /* ── Kinds ────────────────────────────────────────────────────────────── */
@@ -76,6 +90,124 @@ export function kindLabel(kind) {
 export function kindTone(kind) {
   const k = KINDS[kind] || KINDS.task;
   return { color: `var(${k.colorVar})`, wash: `var(${k.washVar})` };
+}
+
+/* ── Recurrence ───────────────────────────────────────────────────────── */
+
+export const REPEAT_RULES = {
+  none:       { id: 'none',       label: 'Does not repeat', days: 0 },
+  weekly:     { id: 'weekly',     label: 'Every week',      days: 7 },
+  biweekly:   { id: 'biweekly',   label: 'Every 2 weeks',   days: 14 },
+  fourweekly: { id: 'fourweekly', label: 'Every 4 weeks',   days: 28 },
+  // Same weekday, same position in the month — "the third Wednesday",
+  // which is what people mean by a monthly meeting. NOT the same date.
+  monthly:    { id: 'monthly',    label: 'Every month',     days: 0 },
+};
+
+export const REPEAT_LIST = Object.values(REPEAT_RULES);
+export const repeatLabel = (id) => REPEAT_RULES[id]?.label || REPEAT_RULES.none.label;
+export const isRepeating = (id) => !!REPEAT_RULES[id] && id !== 'none';
+
+/** How far ahead a series is written, and the hard ceiling on one. */
+export const DEFAULT_HORIZON_MONTHS = 12;
+export const MAX_OCCURRENCES = 200;
+
+/** The date a series runs to when nobody picks one. */
+export function defaultUntil(startISO, months = DEFAULT_HORIZON_MONTHS) {
+  const d = asDate(startISO);
+  if (!d) return startISO;
+  return toISO(new Date(d.getFullYear(), d.getMonth() + months, d.getDate(), 12, 0, 0));
+}
+
+/** Which occurrence of its own weekday a date is in its month: 1–5. */
+export function weekdayOrdinal(iso) {
+  const d = asDate(iso);
+  return d ? Math.floor((d.getDate() - 1) / 7) + 1 : null;
+}
+
+/**
+ * The nth <weekday> of a month, or null when the month has no such day.
+ *
+ * A meeting on the fifth Wednesday simply does not happen in a month with
+ * four. Returning null rather than falling back to the fourth is the
+ * honest answer — sliding it would put a meeting in someone's calendar on
+ * a day nobody agreed to.
+ */
+export function nthWeekdayOfMonth(year, monthIndex, weekday, n) {
+  const first = new Date(year, monthIndex, 1, 12, 0, 0);   // normalises overflow
+  const y = first.getFullYear();
+  const m = first.getMonth();
+  const offset = (weekday - first.getDay() + 7) % 7;
+  const probe = new Date(y, m, 1 + offset + (n - 1) * 7, 12, 0, 0);
+  return probe.getMonth() === m ? probe : null;
+}
+
+/** The date after this one under the rule, or null if there isn't one. */
+export function nextOccurrence(iso, freq, anchorISO = iso) {
+  const rule = REPEAT_RULES[freq];
+  if (!rule || freq === 'none') return null;
+  if (rule.days) return addDays(iso, rule.days);
+  const anchor = asDate(anchorISO);
+  const cur = asDate(iso);
+  if (!anchor || !cur) return null;
+  const n = weekdayOrdinal(anchorISO);
+  for (let ahead = 1; ahead <= 12; ahead += 1) {
+    const hit = nthWeekdayOfMonth(cur.getFullYear(), cur.getMonth() + ahead, anchor.getDay(), n);
+    if (hit) return toISO(hit);
+  }
+  return null;
+}
+
+/**
+ * Every date a series lands on.
+ *
+ * `skip` is the centre's closures. A later occurrence falling on one is
+ * dropped, not moved — a meeting does not happen on a day the centre is
+ * shut, and sliding it to the Thursday would put it in diaries nobody
+ * agreed to.
+ *
+ * THE START DATE IS ALWAYS KEPT, even if it is a closure. Somebody chose
+ * that exact day; dropping it could return an empty series, and "I pressed
+ * save and nothing appeared" is a worse answer than one meeting on an
+ * unusual day that they can see and move.
+ */
+export function occurrenceDates({
+  startISO, freq = 'none', untilISO = null, skip = [], max = MAX_OCCURRENCES,
+} = {}) {
+  if (!asDate(startISO)) return { dates: [], skipped: [], truncated: false };
+  if (!isRepeating(freq)) return { dates: [startISO], skipped: [], truncated: false };
+
+  const skipSet = skip instanceof Set ? skip : new Set(skip || []);
+  const until = asDate(untilISO) ? untilISO : defaultUntil(startISO);
+  if (until < startISO) return { dates: [startISO], skipped: [], truncated: false };
+
+  const dates = [];
+  const skipped = [];
+  let cursor = startISO;
+  let guard = 0;
+  while (cursor && cursor <= until && guard < max * 2 + 120) {
+    guard += 1;
+    if (dates.length && skipSet.has(cursor)) {
+      skipped.push(cursor);
+    } else {
+      if (dates.length >= max) return { dates, skipped, truncated: true };
+      dates.push(cursor);
+    }
+    cursor = nextOccurrence(cursor, freq, startISO);
+  }
+  return { dates, skipped, truncated: false };
+}
+
+/** A plain-words summary of what pressing save will create. */
+export function describeSeries({ dates, skipped, truncated }, freq, untilISO) {
+  if (!dates?.length) return '';
+  if (dates.length === 1) return 'Just the one.';
+  const when = asDate(dates[dates.length - 1]);
+  const last = when ? when.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : untilISO;
+  let out = `${dates.length} entries, ${repeatLabel(freq).toLowerCase()}, through ${last}.`;
+  if (skipped?.length) out += ` ${skipped.length} skipped — the centre is closed.`;
+  if (truncated) out += ` Stopped at ${MAX_OCCURRENCES}.`;
+  return out;
 }
 
 /* ── Times ────────────────────────────────────────────────────────────── */

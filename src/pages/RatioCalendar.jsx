@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc,
+  collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch,
 } from 'firebase/firestore';
 import {
   ChevronLeft, ChevronRight, Plus, Lock, Trash2, X, Loader2, CalendarClock,
@@ -13,6 +13,8 @@ import { resolveInstructionalHours, isOperatingDay } from '../lib/centerConfig';
 import {
   KIND_LIST, kindLabel, kindTone, minutesOf, hhmm, asDate, toISO, addDays,
   weekStartOf, entrySpan, validateEntry, blockedStarts, closureMap, rowsForDate,
+  REPEAT_LIST, repeatLabel, isRepeating, occurrenceDates, describeSeries,
+  defaultUntil,
 } from '../lib/ratioCalendar';
 
 /**
@@ -71,6 +73,8 @@ const ampm = (t) => {
   return `${shortTime(t)}${m < 12 * 60 ? 'am' : 'pm'}`;
 };
 const hourLabel = (h) => `${((h + 11) % 12) + 1}${h < 12 ? 'a' : 'p'}`;
+const fmtLong = (iso) => asDate(iso)?.toLocaleDateString(undefined,
+  { day: 'numeric', month: 'short', year: 'numeric' }) || iso;
 
 /** A source that is not an entry cannot be edited from here. */
 const isEntry = (r) => r.source === 'entry';
@@ -86,6 +90,10 @@ const toneFor = (r) => SOURCE_TONE[r.source] || kindTone(r.kind);
 const BLANK = {
   title: '', kind: 'meeting', date: '', startTime: '', endTime: '',
   allDay: false, assignedTo: [], assignedNames: [], holdsBooking: false, note: '',
+  repeat: 'none', repeatUntil: '',
+  // Which occurrences an edit or a delete applies to. Only ever asked
+  // once an entry is part of a series.
+  scope: 'one',
 };
 
 export default function RatioCalendar() {
@@ -187,6 +195,19 @@ export default function RatioCalendar() {
     return map;
   }, [days, entries, events, intakes, timeOff, holidays, hidden]);
 
+  /* Every closure the centre has configured, as bare dates. The series
+     generator skips these: a meeting does not happen on a day the centre
+     is shut. Not windowed — a series runs a year ahead of the grid. */
+  const closedDates = useMemo(() => new Set(Object.keys(closureMap(holidays))), [holidays]);
+
+  /* What pressing save would create. Recomputed as the draft changes so
+     the composer can say "38 entries, every week, through 23 Sep 2027"
+     while there is still a Cancel button. */
+  const seriesRun = useMemo(() => occurrenceDates({
+    startISO: draft?.date, freq: draft?.repeat || 'none',
+    untilISO: draft?.repeatUntil || null, skip: closedDates,
+  }), [draft?.date, draft?.repeat, draft?.repeatUntil, closedDates]);
+
   /* Days the centre does not open at all. Without this a Saturday reads
      exactly like a quiet Tuesday, and someone books a meeting on one. */
   const closedDays = useMemo(
@@ -236,15 +257,32 @@ export default function RatioCalendar() {
     });
   };
 
+  /**
+   * Saving.
+   *
+   * A series is MATERIALISED — one document per occurrence, sharing a
+   * seriesId. See the note at the top of lib/ratioCalendar.js: the server
+   * finds holds with a date-range query, so a rule on one document would
+   * hold the first week and then silently stop.
+   *
+   * Four paths, and the scope picker decides between the middle two:
+   *   new + repeats        → write the whole series
+   *   editing, "all later" → update this occurrence and every later one
+   *   one-off + repeats    → keep this document as the first and add the rest
+   *   anything else        → update the one document
+   */
   const save = async () => {
     const problem = validateEntry(draft);
     if (problem) { setError(problem); return; }
     setSaving(true);
     try {
-      const body = {
+      const col = collection(db, 'centers', activeCenterId, 'calendar');
+      const who = profile?.displayName || profile?.email || null;
+      // Deliberately WITHOUT `date`: each occurrence keeps its own, which
+      // is the only thing distinguishing them.
+      const fields = {
         title: draft.title.trim(),
         kind: draft.kind || 'task',
-        date: draft.date,
         allDay: !!draft.allDay,
         startTime: draft.allDay ? null : draft.startTime,
         endTime: draft.allDay ? null : draft.endTime,
@@ -253,18 +291,45 @@ export default function RatioCalendar() {
         holdsBooking: !!draft.holdsBooking,
         note: (draft.note || '').trim(),
         updatedAt: new Date().toISOString(),
-        updatedBy: profile?.displayName || profile?.email || null,
+        updatedBy: who,
       };
-      if (draft.id) {
-        await updateDoc(doc(db, 'centers', activeCenterId, 'calendar', draft.id), body);
+      const repeat = isRepeating(draft.repeat) ? draft.repeat : null;
+      const repeatUntil = repeat ? (draft.repeatUntil || defaultUntil(draft.date)) : null;
+      const born = { createdAt: new Date().toISOString(), createdBy: who };
+
+      if (draft.id && draft.scope === 'series' && draft.seriesId) {
+        const later = (entries || []).filter(
+          e => e.seriesId === draft.seriesId && e.date >= draft.date);
+        const batch = writeBatch(db);
+        for (const e of later) batch.update(doc(col, e.id), fields);
+        await batch.commit();
+        toast.success(`Updated ${later.length} ${later.length === 1 ? 'entry' : 'entries'}.`);
+      } else if (draft.id && !draft.seriesId && repeat) {
+        // Turning a one-off into a series. This document stays put and
+        // becomes the first occurrence, so nothing anyone has already
+        // looked at moves or changes id.
+        const seriesId = draft.id;
+        const batch = writeBatch(db);
+        batch.update(doc(col, draft.id), { ...fields, seriesId, repeat, repeatUntil });
+        for (const d of seriesRun.dates.slice(1)) {
+          batch.set(doc(col), { ...fields, ...born, date: d, seriesId, repeat, repeatUntil });
+        }
+        await batch.commit();
+        toast.success(`Repeats now — ${seriesRun.dates.length} entries.`);
+      } else if (draft.id) {
+        await updateDoc(doc(col, draft.id), { ...fields, date: draft.date });
         toast.success('Updated.');
+      } else if (repeat) {
+        const seriesId = doc(col).id;
+        const batch = writeBatch(db);
+        for (const d of seriesRun.dates) {
+          batch.set(doc(col), { ...fields, ...born, date: d, seriesId, repeat, repeatUntil });
+        }
+        await batch.commit();
+        toast.success(`Saved ${seriesRun.dates.length} entries.`);
       } else {
-        await addDoc(collection(db, 'centers', activeCenterId, 'calendar'), {
-          ...body,
-          createdAt: new Date().toISOString(),
-          createdBy: profile?.displayName || profile?.email || null,
-        });
-        toast.success(body.holdsBooking
+        await addDoc(col, { ...fields, ...born, date: draft.date, seriesId: null, repeat: null, repeatUntil: null });
+        toast.success(fields.holdsBooking
           ? 'Saved — that time is now off the booking page.'
           : 'Saved.');
       }
@@ -277,9 +342,15 @@ export default function RatioCalendar() {
     }
   };
 
-  const remove = async (entry) => {
+  const remove = async (entry, scope = 'one') => {
+    const series = scope === 'series' && entry.seriesId;
+    const later = series
+      ? (entries || []).filter(e => e.seriesId === entry.seriesId && e.date >= entry.date)
+      : [entry];
     const ok = await confirmDialog({
-      title: `Delete "${entry.title}"?`,
+      title: series
+        ? `Delete ${later.length} entries in "${entry.title}"?`
+        : `Delete "${entry.title}"?`,
       message: entry.holdsBooking
         ? 'That time goes back on the public booking page straight away.'
         : 'This cannot be undone.',
@@ -287,8 +358,16 @@ export default function RatioCalendar() {
     });
     if (!ok) return;
     try {
-      await deleteDoc(doc(db, 'centers', activeCenterId, 'calendar', entry.id));
-      toast.success('Deleted.');
+      const col = collection(db, 'centers', activeCenterId, 'calendar');
+      if (series) {
+        const batch = writeBatch(db);
+        for (const e of later) batch.delete(doc(col, e.id));
+        await batch.commit();
+        toast.success(`Deleted ${later.length} entries.`);
+      } else {
+        await deleteDoc(doc(col, entry.id));
+        toast.success('Deleted.');
+      }
     } catch (e) { toast.error(e?.message || 'Could not delete that.'); }
   };
 
@@ -371,8 +450,8 @@ export default function RatioCalendar() {
         <Composer
           draft={draft} setDraft={setDraft} staff={staff} error={error}
           saving={saving} onSave={save} onClose={() => { setDraft(null); setError(''); }}
-          onDelete={draft.id ? () => { remove(draft); setDraft(null); } : null}
-          preview={holdPreview}
+          onDelete={draft.id ? () => { remove(draft, draft.scope); setDraft(null); } : null}
+          preview={holdPreview} run={seriesRun}
         />
       )}
     </div>
@@ -619,7 +698,7 @@ function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
 
 /* ── Composer ───────────────────────────────────────────────────────── */
 
-function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDelete, preview }) {
+function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDelete, preview, run }) {
   const set = (patch) => setDraft(d => ({ ...d, ...patch }));
   const togglePerson = (u) => {
     const has = (draft.assignedTo || []).includes(u.id);
@@ -693,6 +772,59 @@ function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDe
           </div>
         </Field>
 
+        <Field label="Repeats">
+          {draft.seriesId ? (
+            /* Already a series. Re-cutting the pattern of a live series
+               means deciding what happens to occurrences people have
+               already been told about, so it is not offered here. */
+            <div className="rounded-lg border p-2.5 text-[12.5px]"
+              style={{ borderColor: 'var(--nl-rule)' }}>
+              <b>Part of a series</b> — {repeatLabel(draft.repeat).toLowerCase()}
+              {draft.repeatUntil ? `, through ${fmtLong(draft.repeatUntil)}` : ''}.
+              <p className="mt-1 text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
+                To change the pattern, delete this and all later ones, then make it again.
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-1.5">
+                {REPEAT_LIST.map(r => {
+                  const on = (draft.repeat || 'none') === r.id;
+                  return (
+                    <button key={r.id} type="button" onClick={() => set({ repeat: r.id })}
+                      className="rounded-full border px-3 py-1.5 text-[11.5px] font-medium"
+                      style={on
+                        ? { background: 'var(--nl-ink)', borderColor: 'var(--nl-ink)', color: '#fff', fontWeight: 600 }
+                        : { borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+                      {r.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {isRepeating(draft.repeat) && (
+                <div className="mt-2.5 rounded-lg border p-2.5"
+                  style={{ borderColor: 'var(--nl-rule)' }}>
+                  <label className="flex flex-wrap items-center gap-2 text-[12.5px]">
+                    <span style={{ color: 'var(--nl-muted)' }}>Until</span>
+                    <input type="date" value={draft.repeatUntil || defaultUntil(draft.date)}
+                      onChange={e => set({ repeatUntil: e.target.value })}
+                      className="rounded-lg border px-2.5 py-1.5 text-[13px]"
+                      style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+                  </label>
+                  <p className="mt-2 text-[12px]" style={{ color: 'var(--nl-ink2)' }}>
+                    {describeSeries(run, draft.repeat, draft.repeatUntil)}
+                  </p>
+                  {draft.holdsBooking && (run?.dates?.length || 0) > 1 && (
+                    <p className="mt-1 text-[11.5px] font-semibold" style={{ color: 'var(--nl-warn)' }}>
+                      Every one of them holds the booking page.
+                    </p>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </Field>
+
         <Field label="Who is on it">
           <div className="max-h-[132px] overflow-y-auto rounded-lg border p-1.5"
             style={{ borderColor: 'var(--nl-rule)' }}>
@@ -761,6 +893,30 @@ function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDe
 
         {error && (
           <p className="mt-2 text-[12.5px] font-medium" style={{ color: 'var(--nl-brand)' }}>{error}</p>
+        )}
+
+        {draft.seriesId && (
+          <Field label="Apply to">
+            <div className="flex flex-wrap gap-1.5">
+              {[['one', 'Just this one'], ['series', 'This and all later ones']].map(([id, label]) => {
+                const on = (draft.scope || 'one') === id;
+                return (
+                  <button key={id} type="button" onClick={() => set({ scope: id })}
+                    className="rounded-full border px-3 py-1.5 text-[11.5px] font-medium"
+                    style={on
+                      ? { background: 'var(--nl-brand)', borderColor: 'var(--nl-brand)', color: '#fff', fontWeight: 600 }
+                      : { borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-1.5 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+              {draft.scope === 'series'
+                ? 'Saving and deleting both apply to every later one. The date stays each entry’s own — moving it here moves only this one.'
+                : 'Saving and deleting apply to this entry alone.'}
+            </p>
+          </Field>
         )}
 
         <div className="mt-4 flex items-center gap-2 border-t pt-4" style={{ borderColor: 'var(--nl-rule)' }}>

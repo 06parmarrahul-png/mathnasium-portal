@@ -3,6 +3,8 @@ import {
   minutesOf, hhmm, asDate, addDays, weekStartOf, isUsableEntry, entrySpan,
   validateEntry, entriesBetween, holdBlocks, blockedStarts, closureMap,
   rowsForDate, kindLabel, kindTone,
+  occurrenceDates, nextOccurrence, nthWeekdayOfMonth, weekdayOrdinal,
+  defaultUntil, describeSeries, repeatLabel, isRepeating, MAX_OCCURRENCES,
 } from './ratioCalendar';
 
 /**
@@ -309,5 +311,171 @@ describe('kinds', () => {
   it('colours a kind from the .nl tokens so themes follow', () => {
     expect(kindTone('assessment')).toEqual({ color: 'var(--nl-ok)', wash: 'var(--nl-okw)' });
     expect(kindTone('nonsense').color).toBe('var(--nl-muted)');
+  });
+});
+
+/**
+ * Recurrence.
+ *
+ * The management meeting is 12–1 every Wednesday. Wednesday 23 September
+ * 2026 is the one being made recurring, so that is the anchor throughout.
+ */
+const WED = '2026-09-23';
+
+describe('stepping to the next occurrence', () => {
+  it('walks a fixed interval', () => {
+    expect(nextOccurrence(WED, 'weekly')).toBe('2026-09-30');
+    expect(nextOccurrence(WED, 'biweekly')).toBe('2026-10-07');
+    expect(nextOccurrence(WED, 'fourweekly')).toBe('2026-10-21');
+  });
+
+  it('crosses a month and a year without drifting off the weekday', () => {
+    expect(nextOccurrence('2026-12-30', 'weekly')).toBe('2027-01-06');
+    expect(asDate(nextOccurrence('2026-12-30', 'weekly')).getDay())
+      .toBe(asDate('2026-12-30').getDay());
+  });
+
+  it('is nothing at all when it does not repeat', () => {
+    expect(nextOccurrence(WED, 'none')).toBe(null);
+    expect(nextOccurrence(WED, 'nonsense')).toBe(null);
+  });
+});
+
+describe('a monthly meeting is a weekday, not a date', () => {
+  it('knows which Wednesday of the month it is', () => {
+    expect(weekdayOrdinal('2026-09-02')).toBe(1);
+    expect(weekdayOrdinal(WED)).toBe(4);        // the fourth Wednesday
+    expect(weekdayOrdinal('2026-09-30')).toBe(5);
+  });
+
+  it('keeps the position rather than the date', () => {
+    // The fourth Wednesday of September is the 23rd; of October, the 28th.
+    // A same-DATE rule would have said 23 October, which is a Friday.
+    expect(nextOccurrence(WED, 'monthly')).toBe('2026-10-28');
+    expect(asDate('2026-10-28').getDay()).toBe(3);
+  });
+
+  it('skips a month that has no fifth Wednesday instead of sliding it', () => {
+    // 30 Sep 2026 is the fifth Wednesday. October has four, November has
+    // four, December has five. Sliding to the fourth would put a meeting
+    // in diaries on a day nobody agreed to.
+    expect(nthWeekdayOfMonth(2026, 9, 3, 5)).toBe(null);   // October
+    expect(nextOccurrence('2026-09-30', 'monthly')).toBe('2026-12-30');
+  });
+
+  it('finds the nth weekday of any month, and null past the end', () => {
+    expect(nthWeekdayOfMonth(2026, 8, 3, 1).getDate()).toBe(2);   // 1st Wed Sep
+    expect(nthWeekdayOfMonth(2026, 8, 3, 5).getDate()).toBe(30);  // 5th Wed Sep
+    expect(nthWeekdayOfMonth(2026, 1, 0, 5)).toBe(null);          // Feb 2026
+  });
+
+  it('normalises a month index that runs past December', () => {
+    const jan = nthWeekdayOfMonth(2026, 12, 3, 1);
+    expect(jan.getFullYear()).toBe(2027);
+    expect(jan.getMonth()).toBe(0);
+  });
+});
+
+describe('the dates a series lands on', () => {
+  it('is just the one when it does not repeat', () => {
+    expect(occurrenceDates({ startISO: WED, freq: 'none' }))
+      .toEqual({ dates: [WED], skipped: [], truncated: false });
+  });
+
+  it('runs weekly to the date it was given, inclusive', () => {
+    const { dates } = occurrenceDates({ startISO: WED, freq: 'weekly', untilISO: '2026-10-21' });
+    expect(dates).toEqual(['2026-09-23', '2026-09-30', '2026-10-07', '2026-10-14', '2026-10-21']);
+  });
+
+  it('defaults to a year ahead when nobody picks an end', () => {
+    const { dates } = occurrenceDates({ startISO: WED, freq: 'weekly' });
+    expect(defaultUntil(WED)).toBe('2027-09-23');
+    expect(dates).toHaveLength(53);
+    expect(dates[dates.length - 1] <= '2027-09-23').toBe(true);
+  });
+
+  it('drops a later occurrence the centre is closed on, and says which', () => {
+    // A meeting does not happen on a day the centre is shut, and moving
+    // it to the Thursday would put it in diaries nobody agreed to.
+    const { dates, skipped } = occurrenceDates({
+      startISO: WED, freq: 'weekly', untilISO: '2026-10-21',
+      skip: ['2026-09-30', '2026-10-14'],
+    });
+    expect(skipped).toEqual(['2026-09-30', '2026-10-14']);
+    expect(dates).toEqual(['2026-09-23', '2026-10-07', '2026-10-21']);
+  });
+
+  it('KEEPS the start date even when it is a closure', () => {
+    // Somebody chose that exact day. Dropping it can return an empty
+    // series, and "I pressed save and nothing appeared" is worse than one
+    // meeting on an odd day that they can see and move.
+    const { dates, skipped } = occurrenceDates({
+      startISO: WED, freq: 'weekly', untilISO: '2026-10-07', skip: [WED, '2026-09-30'],
+    });
+    expect(dates[0]).toBe(WED);
+    expect(skipped).toEqual(['2026-09-30']);
+  });
+
+  it('never returns an empty series for a usable start', () => {
+    for (const freq of ['weekly', 'biweekly', 'fourweekly', 'monthly']) {
+      const { dates } = occurrenceDates({ startISO: WED, freq, untilISO: '2020-01-01' });
+      expect(dates).toEqual([WED]);          // end before start → just the one
+    }
+  });
+
+  it('stops at the ceiling rather than writing forever', () => {
+    const { dates, truncated } = occurrenceDates({
+      startISO: WED, freq: 'weekly', untilISO: '2099-01-01',
+    });
+    expect(dates).toHaveLength(MAX_OCCURRENCES);
+    expect(truncated).toBe(true);
+  });
+
+  it('gives nothing for a date that is not a date', () => {
+    expect(occurrenceDates({ startISO: 'whenever', freq: 'weekly' }).dates).toEqual([]);
+    expect(occurrenceDates().dates).toEqual([]);
+  });
+
+  it('every weekly date is the same weekday as the start', () => {
+    const { dates } = occurrenceDates({ startISO: WED, freq: 'weekly', untilISO: '2027-03-31' });
+    for (const d of dates) expect(asDate(d).getDay()).toBe(3);
+  });
+});
+
+describe('saying what save will do, before it does it', () => {
+  it('counts the entries and names the last date', () => {
+    const run = occurrenceDates({ startISO: WED, freq: 'weekly', untilISO: '2026-10-21' });
+    expect(describeSeries(run, 'weekly')).toMatch(/^5 entries, every week, through/);
+  });
+
+  it('owns up to the ones it dropped', () => {
+    const run = occurrenceDates({
+      startISO: WED, freq: 'weekly', untilISO: '2026-10-21', skip: ['2026-09-30'],
+    });
+    expect(describeSeries(run, 'weekly')).toMatch(/1 skipped — the centre is closed/);
+  });
+
+  it('owns up to hitting the ceiling', () => {
+    const run = occurrenceDates({ startISO: WED, freq: 'weekly', untilISO: '2099-01-01' });
+    expect(describeSeries(run, 'weekly')).toMatch(new RegExp(`Stopped at ${MAX_OCCURRENCES}`));
+  });
+
+  it('says so plainly when there is only one', () => {
+    expect(describeSeries({ dates: [WED], skipped: [], truncated: false }, 'none'))
+      .toBe('Just the one.');
+  });
+});
+
+describe('repeat labels', () => {
+  it('names each rule and falls back rather than rendering blank', () => {
+    expect(repeatLabel('weekly')).toBe('Every week');
+    expect(repeatLabel('monthly')).toBe('Every month');
+    expect(repeatLabel('nonsense')).toBe('Does not repeat');
+  });
+
+  it('knows which ones actually repeat', () => {
+    expect(isRepeating('weekly')).toBe(true);
+    expect(isRepeating('none')).toBe(false);
+    expect(isRepeating('nonsense')).toBe(false);
   });
 });
