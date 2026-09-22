@@ -953,6 +953,16 @@ missed is named underneath. The timed two close themselves off when they end
 (**Time.** / **That's the ten.**, input gone) — a board that stays up has to
 stop looking playable, or people keep answering a run that is already scored.
 
+**EVERY SPRINT ANSWER IS A WHOLE NUMBER, and the percentage branch is where
+that broke.** It drew any even number and rounded — "even, so 25% lands whole"
+is not true, 25% of 158 is 39.5 — so the game asked "10% of 158" and accepted
+only 16. The box takes digits, so there was no way to be right. The percentage
+is now drawn first and the number second, as a multiple it divides exactly.
+The old whole-number test passed throughout: it checked the stored answer was
+an integer, not that it was the right one. Both timed games say what they take
+(**Whole numbers only** / **Whole instructors only — always round up**), the
+second being the actual staffing rule rather than a hint.
+
 **Engines live in `src/lib/games/`, all pure and seeded** (`mathle.js`,
 `connections.js`, `ratioRush.js`). Daily puzzles seed from `centre|date|game`,
 so the whole centre argues about the same board and nobody can reroll; practice

@@ -181,6 +181,13 @@ describe('Sprint 60', () => {
     expect(writes[0].ref.__d).toBe('centers/langley/gameScores/me_sprint60_2026-09-20');
   });
 
+  it('says the box takes whole numbers, before anyone is caught out', () => {
+    // A player met "10% of 158" — 15.8 — and had no way to enter it.
+    setup();
+    startGame('Sprint 60');
+    expect(screen.getByText(/Whole numbers only/)).toBeTruthy();
+  });
+
   it('stops taking answers once the buzzer has gone', () => {
     // It stays on screen now, so it has to stop looking playable — a
     // question and a live box after the score is in is just confusing.
@@ -347,6 +354,12 @@ describe('Ratio Rush', () => {
     setup();
     startGame('Ratio Rush');
     expect(screen.getByText(/at\s*1:4/)).toBeTruthy();
+  });
+
+  it('says the answer is always a whole instructor, rounded up', () => {
+    setup();
+    startGame('Ratio Rush');
+    expect(screen.getByText(/Whole instructors only — always round up/)).toBeTruthy();
   });
 
   it('explains a miss instead of just saying wrong', () => {

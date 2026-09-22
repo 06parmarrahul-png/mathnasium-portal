@@ -91,6 +91,12 @@ export default function SprintGame({ seed, onFinish }) {
             className="w-32 rounded-xl border-2 px-3 py-2 text-center text-2xl font-bold tabular-nums outline-none"
             style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }}
           />
+          {/* The box takes digits only, and every answer is built to come
+              out whole — say so, so a percentage question doesn't read as
+              one you're fluffing. */}
+          <p className="text-[12px]" style={{ color: 'var(--nl-muted)' }}>
+            Whole numbers only — every answer comes out exact.
+          </p>
         </>
       )}
 

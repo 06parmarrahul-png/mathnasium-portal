@@ -115,6 +115,11 @@ export default function RatioRushGame({ seed, onFinish }) {
             className="w-24 rounded-xl border-2 px-3 py-2 text-center text-2xl font-bold tabular-nums outline-none"
             style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }}
           />
+          {/* Not a hint — it IS the rule. You cannot roster 0.75 of a
+              person, so the answer is always the next whole one up. */}
+          <p className="text-[12px]" style={{ color: 'var(--nl-muted)' }}>
+            Whole instructors only — always round up.
+          </p>
           <Btn size="sm" onClick={answer} disabled={typed === ''}>Answer</Btn>
         </>
       ) : (

@@ -413,8 +413,11 @@ export function sprintLevel(streak) {
  * One question. Deterministic given the same rng state, so a run can be
  * replayed exactly — which is what makes the generator testable.
  *
- * Every answer is a whole number or a tidy decimal: this is played on a
- * phone between students, and "13.333…" is a typing puzzle, not a maths one.
+ * EVERY ANSWER IS A WHOLE NUMBER. The box takes digits and nothing else,
+ * so a question whose answer isn't whole is a question that cannot be
+ * answered — see the percentage branch below, which is where that went
+ * wrong. Divisions are built from their own product, percentages from a
+ * number the percentage divides exactly.
  */
 export function sprintQuestion(rng, streak = 0) {
   const level = sprintLevel(streak);
@@ -439,9 +442,18 @@ export function sprintQuestion(rng, streak = 0) {
     return { text: `${a}²`, answer: a * a, level };
   }
   if (roll < 0.67) {
-    const a = pick(rng, 20, 90) * 2;               // even, so 25% lands whole
+    // The PERCENTAGE is drawn first, then a number it divides exactly.
+    //
+    // This used to draw any even number and round the answer, on the
+    // grounds that "even, so 25% lands whole" — which isn't true: 25% of
+    // 158 is 39.5. So the game asked "10% of 158", whose answer is 15.8,
+    // and accepted only 16. There was no way to be right on purpose, and
+    // the box takes whole numbers only, so there was no way to be right
+    // at all. Every percentage question now comes out exact.
     const pct = [10, 20, 25, 50][pick(rng, 0, 3)];
-    return { text: `${pct}% of ${a}`, answer: Math.round((a * pct) / 100), level };
+    const step = { 10: 10, 20: 5, 25: 4, 50: 2 }[pct];
+    const a = pick(rng, Math.ceil(40 / step), Math.floor(180 / step)) * step;
+    return { text: `${pct}% of ${a}`, answer: (a * pct) / 100, level };
   }
   const a = pick(rng, 6, 24);
   const b = pick(rng, 3, 12);

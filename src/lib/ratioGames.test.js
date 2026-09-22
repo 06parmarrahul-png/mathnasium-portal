@@ -213,6 +213,24 @@ describe('Sprint 60 questions', () => {
     }
   });
 
+  it('only asks a percentage that comes out exact', () => {
+    // The whole-number test above passed while this was broken: the
+    // answer to "10% of 158" was STORED as 16, a whole number and the
+    // wrong one. Check the arithmetic, not just the type.
+    const rng = makeRng(seedFrom('seed|percentages'));
+    let asked = 0;
+    for (let i = 0; i < 400; i += 1) {
+      const q = sprintQuestion(rng, 9);
+      const m = q.text.match(/^(\d+)% of (\d+)$/);
+      if (!m) continue;
+      asked += 1;
+      const [, pct, of] = m.map(Number);
+      expect(q.answer).toBe((of * pct) / 100);
+      expect(Number.isInteger((of * pct) / 100)).toBe(true);
+    }
+    expect(asked).toBeGreaterThan(50);      // it does ask them
+  });
+
   it('only divides where it divides exactly', () => {
     const rng = makeRng(seedFrom('seed|division'));
     for (let i = 0; i < 200; i += 1) {
