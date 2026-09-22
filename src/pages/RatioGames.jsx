@@ -30,6 +30,13 @@ import RatioRushGame from '../components/games/RatioRushGame';
  * THE PAGE OWNS SAVING; each game just plays and reports an outcome. That
  * keeps the write in one place, so a new game cannot invent its own way of
  * scoring itself onto the board.
+ *
+ * A FINISHED GAME STAYS ON SCREEN. It used to be torn down the instant it
+ * reported its outcome, which threw away the part that matters most when
+ * you lose — Connections revealing the four sets, Mathle showing the
+ * equation. You were dropped back on the roster with a score and no idea
+ * what the answer had been. The run now ends in place, board and all, and
+ * the player decides when to leave it.
  */
 
 const COMPONENTS = {
@@ -52,7 +59,9 @@ export default function RatioGames() {
 
   const [scores, setScores] = useState(null);       // null = still loading
   const [saving, setSaving] = useState(false);
-  // { gameId, ranked, seed } while a game is being played, else null.
+  // { gameId, ranked, seed, done } while a game is on screen, else null.
+  // `done` is a finished run still being looked at — the board is up, the
+  // answers are showing, and nothing is cleared until they say so.
   const [playing, setPlaying] = useState(null);
   const [lastRun, setLastRun] = useState(null);
 
@@ -98,9 +107,11 @@ export default function RatioGames() {
 
   const finish = useCallback(async (outcome) => {
     const run = playing;
-    if (!run) return;
+    if (!run || run.done) return;
     const game = GAMES[run.gameId];
-    setPlaying(null);
+    // Mark it finished rather than unmounting it: the game is showing the
+    // answers now, and taking them away is the one thing not to do.
+    setPlaying(p => (p ? { ...p, done: true } : p));
     setLastRun({ gameId: run.gameId, ranked: run.ranked, outcome });
 
     if (!run.ranked || !uid || !activeCenterId) return;
@@ -165,7 +176,7 @@ export default function RatioGames() {
         <Pill tone="brand"><Trophy size={12} /> {monthName(month)}</Pill>
       </div>
 
-      {/* ── Playing ───────────────────────────────────────────── */}
+      {/* ── Playing, and still here once it's over ────────────── */}
       {playing && Active && (
         <Card>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -175,17 +186,20 @@ export default function RatioGames() {
             </div>
             <Pill tone={playing.ranked ? 'brand' : 'flat'}>{playing.ranked ? 'Ranked' : 'Practice'}</Pill>
           </div>
+          {/* The finished game stays mounted: this is where the answers are. */}
           <Active seed={playing.seed} onFinish={finish} />
-          <div className="mt-3 text-center">
-            <Btn size="sm" variant="quiet" onClick={() => { setPlaying(null); setLastRun(null); }}>
-              Leave it
-            </Btn>
-          </div>
+          {!playing.done && (
+            <div className="mt-3 text-center">
+              <Btn size="sm" variant="quiet" onClick={() => { setPlaying(null); setLastRun(null); }}>
+                Leave it
+              </Btn>
+            </div>
+          )}
         </Card>
       )}
 
       {/* ── How that run went ─────────────────────────────────── */}
-      {!playing && lastRun && lastGame && (
+      {lastRun && lastGame && (
         <Card tone="ok">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
@@ -196,7 +210,12 @@ export default function RatioGames() {
                   : `${lastGame.score(lastRun.outcome)} points — practice, not counted.`}
               </p>
             </div>
-            <Btn size="sm" variant="ghost" onClick={() => start(lastRun.gameId, false)}>Play again</Btn>
+            <div className="flex flex-wrap gap-2">
+              {playing?.done && (
+                <Btn size="sm" variant="quiet" onClick={() => setPlaying(null)}>Back to the games</Btn>
+              )}
+              <Btn size="sm" variant="ghost" onClick={() => start(lastRun.gameId, false)}>Play again</Btn>
+            </div>
           </div>
         </Card>
       )}

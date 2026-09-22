@@ -57,7 +57,13 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, us
 
 const { default: SupplyDemand } = await import('./SupplyDemand');
 
-const TODAY = new Date().toISOString().slice(0, 10);
+// LOCAL date, the way the page builds its key — not toISOString(), which
+// is UTC and rolls over to tomorrow at 5pm here. Every fixture below is
+// filed under this, so after 5pm the page was looking up a day the test
+// hadn't written and eight assertions failed for the time of day.
+const p2 = (n) => String(n).padStart(2, '0');
+const localDay = (d = new Date()) => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+const TODAY = localDay();
 const CENTRE = 'langley';
 
 // Instructional hours give the chart its half hours: 3:00–5:00pm = 4 slots.

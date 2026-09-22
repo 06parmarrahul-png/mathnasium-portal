@@ -138,14 +138,15 @@ export const GAMES = {
   ratioRush: {
     id: 'ratioRush',
     name: 'Ratio Rush',
-    blurb: 'A half hour of bookings appears. How many instructors does the floor need?',
+    blurb: 'A half hour of bookings appears. How many instructors does the floor need, at 1:4?',
     kind: 'timed',
     seconds: 60,
     par: 8,
     unit: 'right',
     minutes: 2,
-    // Ten rounds; par is eight right. It is the centre's own maths —
-    // aim 1:3.5, floor 1:4 — so the game teaches the thing it tests.
+    // Ten rounds; par is eight right. It is the centre's own maths, asked
+    // at the floor of 1:4 — the ratio you can divide by in your head —
+    // so the game teaches the thing it tests.
     score: ({ correct = 0 } = {}) => clampPoints((100 * correct) / 8),
     resultOf: ({ correct = 0 } = {}) => Math.max(0, Math.round(correct)),
     summary: ({ correct = 0, asked = 10 } = {}) => `${correct} of ${asked} right`,

@@ -13,8 +13,16 @@ import {
  * character has earned, because holding six guesses' worth of greys in
  * your head is memory work, not arithmetic.
  *
+ * RUNNING OUT OF GUESSES SHOWS THE EQUATION. Six tries and no answer is
+ * the ending that teaches nothing, so the answer is spelled out — in the
+ * × and ÷ the tiles use, not the * and / that are only there because
+ * that is what a keyboard has.
+ *
  * Calls onFinish exactly once, with { solved, guesses }.
  */
+
+/** The way the tiles write it: 1+2×3=7, not 1+2*3=7. */
+const pretty = (equation) => String(equation).replace(/\*/g, '×').replace(/\//g, '÷');
 
 const MARK_STYLE = {
   exact:   { background: 'var(--nl-ok)', color: '#fff', borderColor: 'var(--nl-ok)' },
@@ -51,7 +59,7 @@ export default function MathleGame({ seed, onFinish }) {
     }
     if (next.length >= TRIES) {
       setOver(true);
-      setMessage(`Out of guesses — it was ${answer}.`);
+      setMessage(`Out of guesses. The answer was ${pretty(answer)}.`);
       onFinish({ solved: false, guesses: TRIES });
       return;
     }
@@ -148,7 +156,9 @@ export default function MathleGame({ seed, onFinish }) {
 
       {over && (
         <Pill tone={rows[rows.length - 1] === answer ? 'ok' : 'flat'}>
-          {rows[rows.length - 1] === answer ? `Solved in ${rows.length}` : answer}
+          {rows[rows.length - 1] === answer
+            ? `Solved in ${rows.length}`
+            : `Answer: ${pretty(answer)}`}
         </Pill>
       )}
     </div>

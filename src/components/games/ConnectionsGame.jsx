@@ -10,13 +10,19 @@ import { dailyBoard, judgeGuess, GROUP_SIZE, LIVES } from '../../lib/games/conne
  * and only one split of the board works. "One away" says the idea was
  * right without saying which tile to move, which is the whole difficulty.
  *
+ * RUNNING OUT OF LIVES SHOWS THE ANSWER, the way the newspaper one does.
+ * The sets you found keep their colour; the ones you didn't are laid out
+ * underneath, named, so you leave knowing what the board was. Losing and
+ * being told nothing is the one ending worth avoiding.
+ *
  * Calls onFinish exactly once, with { groups, mistakes }.
  */
 export default function ConnectionsGame({ seed, onFinish }) {
   const board = useMemo(() => dailyBoard(seed), [seed]);
   const [tiles, setTiles] = useState(board.tiles);
   const [picked, setPicked] = useState([]);
-  const [solved, setSolved] = useState([]);
+  const [solved, setSolved] = useState([]);      // the ones they got
+  const [revealed, setRevealed] = useState([]);  // the rest, after a loss
   const [mistakes, setMistakes] = useState(0);
   const [message, setMessage] = useState('Pick four, then submit.');
   const [over, setOver] = useState(false);
@@ -52,9 +58,15 @@ export default function ConnectionsGame({ seed, onFinish }) {
     setPicked([]);
     if (used >= LIVES) {
       setOver(true);
-      setSolved(board.groups);
+      // Everything they didn't find, named — not merged into the solved
+      // list, because "you got this one" and "here is the one you missed"
+      // are different things and should not look the same.
+      const missed = board.groups.filter(g => !solved.some(s => s.id === g.id));
+      setRevealed(missed);
       setTiles([]);
-      setMessage('Out of lives. The full board is above.');
+      setMessage(solved.length === 0
+        ? 'Out of lives. Here was the whole board.'
+        : `Out of lives. ${missed.length === 1 ? 'The last set was' : 'The rest of the board was'} this.`);
       onFinish({ groups: solved.length, mistakes: used });
       return;
     }
@@ -70,6 +82,16 @@ export default function ConnectionsGame({ seed, onFinish }) {
           style={{ background: 'var(--nl-okw)', border: '1px solid var(--nl-ok)' }}>
           <b className="text-[13px]" style={{ color: 'var(--nl-ok)' }}>{group.name}</b>
           <span className="ml-2 text-[13px] tabular-nums" style={{ color: 'var(--nl-ink2)' }}>
+            {group.items.join('  ·  ')}
+          </span>
+        </div>
+      ))}
+
+      {revealed.map(group => (
+        <div key={group.id} className="rounded-xl px-3 py-2"
+          style={{ background: 'var(--nl-raised)', border: '1px dashed var(--nl-rule)' }}>
+          <b className="text-[13px]" style={{ color: 'var(--nl-ink2)' }}>{group.name}</b>
+          <span className="ml-2 text-[13px] tabular-nums" style={{ color: 'var(--nl-muted)' }}>
             {group.items.join('  ·  ')}
           </span>
         </div>

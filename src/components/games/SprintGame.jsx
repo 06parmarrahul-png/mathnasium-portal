@@ -23,11 +23,16 @@ export default function SprintGame({ seed, onFinish }) {
   const startedAt = useRef(null);
   const done = useRef(false);
   const tick = useRef(null);
+  // The timer reports the score, and it can't read state from inside a
+  // setState updater without telling the parent to re-render mid-render.
+  const correctRef = useRef(0);
+  const [over, setOver] = useState(false);
 
   const finish = useCallback((correct) => {
     if (done.current) return;
     done.current = true;
     if (tick.current) clearInterval(tick.current);
+    setOver(true);
     onFinish({ correct });
   }, [onFinish]);
 
@@ -37,20 +42,20 @@ export default function SprintGame({ seed, onFinish }) {
     // renders of the same state.
     startedAt.current = Date.now();
     tick.current = setInterval(() => {
-      setState(prev => {
-        const left = GAME.seconds - Math.round((Date.now() - startedAt.current) / 1000);
-        if (left <= 0) { finish(prev.correct); return { ...prev, left: 0 }; }
-        return { ...prev, left };
-      });
+      const left = GAME.seconds - Math.round((Date.now() - startedAt.current) / 1000);
+      setState(prev => ({ ...prev, left: Math.max(0, left) }));
+      if (left <= 0) finish(correctRef.current);
     }, 250);
     return () => { if (tick.current) clearInterval(tick.current); };
   }, [finish]);
 
   const onType = (value) => {
+    if (over) return;
     setState(prev => {
       const typed = value.replace(/[^0-9-]/g, '').slice(0, 6);
       if (typed !== '' && typed !== '-' && Number(typed) === prev.question.answer) {
         const streak = prev.streak + 1;
+        correctRef.current = prev.correct + 1;
         return { ...prev, correct: prev.correct + 1, streak, question: sprintQuestion(prev.rng, streak), typed: '' };
       }
       return { ...prev, typed };
@@ -72,16 +77,22 @@ export default function SprintGame({ seed, onFinish }) {
         0:{String(Math.max(0, state.left)).padStart(2, '0')}
       </div>
 
-      <div className="nl-display text-[38px] font-bold leading-none tabular-nums">{state.question.text} =</div>
-      <input
-        autoFocus
-        inputMode="numeric"
-        value={state.typed}
-        onChange={e => onType(e.target.value)}
-        aria-label="Your answer"
-        className="w-32 rounded-xl border-2 px-3 py-2 text-center text-2xl font-bold tabular-nums outline-none"
-        style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }}
-      />
+      {over ? (
+        <div className="nl-display text-[26px] font-bold leading-none">Time.</div>
+      ) : (
+        <>
+          <div className="nl-display text-[38px] font-bold leading-none tabular-nums">{state.question.text} =</div>
+          <input
+            autoFocus
+            inputMode="numeric"
+            value={state.typed}
+            onChange={e => onType(e.target.value)}
+            aria-label="Your answer"
+            className="w-32 rounded-xl border-2 px-3 py-2 text-center text-2xl font-bold tabular-nums outline-none"
+            style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }}
+          />
+        </>
+      )}
 
       <div className="flex items-center gap-4">
         <span className="text-[13px]" style={{ color: 'var(--nl-muted)' }}>
@@ -93,12 +104,14 @@ export default function SprintGame({ seed, onFinish }) {
         <Pill tone="flat">Level {sprintLevel(state.streak)} of 3</Pill>
       </div>
 
-      <div className="flex items-center gap-2">
-        <Btn size="sm" variant="quiet" onClick={skip}>Skip</Btn>
-        <Btn size="sm" variant="quiet" onClick={() => finish(state.correct)}>
-          <Timer size={13} /> Stop
-        </Btn>
-      </div>
+      {!over && (
+        <div className="flex items-center gap-2">
+          <Btn size="sm" variant="quiet" onClick={skip}>Skip</Btn>
+          <Btn size="sm" variant="quiet" onClick={() => finish(state.correct)}>
+            <Timer size={13} /> Stop
+          </Btn>
+        </div>
+      )}
     </div>
   );
 }

@@ -943,6 +943,16 @@ new game cannot invent its own way onto the board. `clampPoints`/`clampResult`
 guard the row, because a game returning NaN is a value Firestore cannot store
 and the rules would refuse.
 
+**A FINISHED GAME STAYS ON SCREEN.** The page used to unmount it the moment
+it reported its outcome, which threw away the part that matters most when you
+lose: Connections laying out the sets, Mathle spelling out the equation. You
+got a score and no answer. A finished run is now `playing.done` — board still
+up, result card beside it, roster hidden until **Back to the games**. Both
+games reveal in the same shape: what you found keeps its colour, what you
+missed is named underneath. The timed two close themselves off when they end
+(**Time.** / **That's the ten.**, input gone) — a board that stays up has to
+stop looking playable, or people keep answering a run that is already scored.
+
 **Engines live in `src/lib/games/`, all pure and seeded** (`mathle.js`,
 `connections.js`, `ratioRush.js`). Daily puzzles seed from `centre|date|game`,
 so the whole centre argues about the same board and nobody can reroll; practice
@@ -957,7 +967,11 @@ adds a nonce. Two things worth knowing:
   valid answers is unfair, and there's a prize attached to the month.
 - **Ratio Rush uses `requiredForSlot()` from demand-staffing.js** — the same
   function the Staffing Board sizes real days with, so the game teaches the
-  thing it tests. A miss shows the division, not just "wrong".
+  thing it tests. It asks at the **floor, 1:4**, not the 1:3.5 aim: four is
+  a number you can divide by standing on the floor, three and a half
+  against a sixty-second clock is a different skill. A miss shows the
+  division, and `aimNote()` adds what the aim would have wanted whenever
+  that is a different number — so the easy ratio never reads as the target.
 
 **Still unbuilt, and deliberately:** the bank-based games (Riddle of the Day,
 Spot the Error, Close Enough) and the weekly Cross-number. Those need real

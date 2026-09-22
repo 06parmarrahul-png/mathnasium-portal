@@ -71,6 +71,64 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
+/** Type a Mathle guess on the on-screen keyboard and submit it. */
+function typeGuess(guess) {
+  for (const ch of guess) {
+    fireEvent.click(screen.getByRole('button', {
+      name: ch === '*' ? 'times' : ch === '/' ? 'divide' : ch,
+    }));
+  }
+  fireEvent.click(screen.getByRole('button', { name: 'Enter' }));
+}
+
+/**
+ * Six equations that are TRUE (Mathle rejects anything else) and are not
+ * the answer — the only way to lose the game on purpose.
+ */
+function wrongButTrue(answer) {
+  const candidates = [];
+  for (let n = 11; candidates.length < 7; n += 1) {
+    const eq = `${n}+${n}=${2 * n}`;
+    if (eq.length === 8 && eq !== answer) candidates.push(eq);
+  }
+  return candidates.slice(0, 6);
+}
+
+/**
+ * Four tiles drawn from across the sets: never a set, and never one away
+ * either, so it always costs a life. Spread over as many groups as are
+ * left, topping up from the front when fewer than four remain.
+ */
+function crossPick(groups) {
+  const pick = groups.map(g => g.items[0]);
+  let depth = 1;
+  while (pick.length < 4) {
+    pick.push(groups[pick.length % groups.length].items[depth]);
+    depth += 1;
+  }
+  return pick.slice(0, 4);
+}
+
+/** Spend every life on picks like that. */
+function loseConnections(board, groups = board.groups) {
+  const pick = crossPick(groups);
+  for (let life = 0; life < 4; life += 1) {
+    for (const value of pick) {
+      fireEvent.click(screen.getByRole('button', { name: String(value) }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+  }
+}
+
+/** Answer every Ratio Rush slot correctly, to the end of the run. */
+function playAllRounds() {
+  for (const round of roundsFor('langley|2026-09-20|ratioRush', ROUNDS)) {
+    fireEvent.change(screen.getByLabelText('Instructors needed'), { target: { value: String(round.answer) } });
+    fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
+    fireEvent.click(screen.getByRole('button', { name: /Next slot|Finish/ }));
+  }
+}
+
 /** Start a game, ranked or for practice, from its card. */
 function startGame(name, { practice = false } = {}) {
   const card = screen.getByText(name).closest('div').parentElement;
@@ -122,6 +180,17 @@ describe('Sprint 60', () => {
     expect(writes[0].payload.gameId).toBe('sprint60');
     expect(writes[0].ref.__d).toBe('centers/langley/gameScores/me_sprint60_2026-09-20');
   });
+
+  it('stops taking answers once the buzzer has gone', () => {
+    // It stays on screen now, so it has to stop looking playable — a
+    // question and a live box after the score is in is just confusing.
+    setup();
+    startGame('Sprint 60');
+    runClock(61000);
+    expect(screen.getByText('Time.')).toBeTruthy();
+    expect(screen.queryByLabelText('Your answer')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Skip/ })).toBeNull();
+  });
 });
 
 describe('Mathle', () => {
@@ -162,6 +231,19 @@ describe('Mathle', () => {
     expect(dailyEquation('langley|2026-09-20|mathle'))
       .toBe(dailyEquation('langley|2026-09-20|mathle'));
   });
+
+  it('spells the equation out when the guesses run out', () => {
+    // Six wrong goes used to end with a score and no answer. Being told
+    // nothing is the one ending worth avoiding.
+    setup();
+    startGame('Mathle');
+    const answer = dailyEquation('langley|2026-09-20|mathle');
+    for (const guess of wrongButTrue(answer)) typeGuess(guess);
+
+    expect(screen.getByText(/The answer was/)).toBeTruthy();
+    expect(screen.getByText(`Answer: ${answer.replace(/\*/g, '×').replace(/\//g, '÷')}`)).toBeTruthy();
+    expect(writes).toHaveLength(1);
+  });
 });
 
 describe('Connections', () => {
@@ -201,6 +283,56 @@ describe('Connections', () => {
     expect(writes[0].payload.result).toBe(4);
     expect(writes[0].payload.points).toBe(120);        // clean sweep
   });
+
+  it('lays the whole board out when the lives run out', () => {
+    // The newspaper one shows you the sets you missed. This used to throw
+    // the board away the moment the last life went.
+    setup();
+    startGame('Connections');
+    const board = dailyBoard('langley|2026-09-20|connections');
+    loseConnections(board);
+
+    for (const group of board.groups) {
+      expect(screen.getByText(group.name)).toBeTruthy();
+      expect(screen.getByText(new RegExp(group.items.join('\\s+·\\s+')))).toBeTruthy();
+    }
+    expect(screen.getByText(/Out of lives/)).toBeTruthy();
+    expect(writes).toHaveLength(1);
+    expect(writes[0].payload.result).toBe(0);
+  });
+
+  it('keeps a set you did find apart from the ones it had to show you', () => {
+    setup();
+    startGame('Connections');
+    const board = dailyBoard('langley|2026-09-20|connections');
+    for (const value of board.groups[0].items) {
+      fireEvent.click(screen.getByRole('button', { name: String(value) }));
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    loseConnections(board, board.groups.slice(1));
+
+    expect(screen.getByText(/The rest of the board was/)).toBeTruthy();
+    expect(writes[0].payload.result).toBe(1);
+  });
+});
+
+describe('a finished run stays on screen', () => {
+  it('waits to be dismissed instead of dropping you back on the roster', () => {
+    setup();
+    startGame('Connections');
+    const board = dailyBoard('langley|2026-09-20|connections');
+    loseConnections(board);
+
+    // Still looking at the board, with the score alongside it.
+    expect(screen.getByText(/Connections — 0 of 4/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Play for points/ })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Back to the games' }));
+    expect(screen.queryByText(/Out of lives/)).toBeNull();
+    expect(screen.getAllByRole('button', { name: /Play for points/ }).length).toBeGreaterThan(0);
+    // The run it just played is still summarised above the roster.
+    expect(screen.getByText(/Connections — 0 of 4/)).toBeTruthy();
+  });
 });
 
 describe('Ratio Rush', () => {
@@ -211,27 +343,37 @@ describe('Ratio Rush', () => {
     expect(screen.getByText(/how many instructors/)).toBeTruthy();
   });
 
+  it('asks at the floor of 1:4, the ratio you can do in your head', () => {
+    setup();
+    startGame('Ratio Rush');
+    expect(screen.getByText(/at\s*1:4/)).toBeTruthy();
+  });
+
   it('explains a miss instead of just saying wrong', () => {
     setup();
     startGame('Ratio Rush');
     fireEvent.change(screen.getByLabelText('Instructors needed'), { target: { value: '999' } });
     fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
-    expect(screen.getByText(/÷ 3.5 =/)).toBeTruthy();
+    expect(screen.getByText(/÷ 4 =/)).toBeTruthy();
   });
 
   it('writes the run when the rounds are done', () => {
     setup();
     startGame('Ratio Rush');
-    const rounds = roundsFor('langley|2026-09-20|ratioRush', ROUNDS);
-    for (const round of rounds) {
-      fireEvent.change(screen.getByLabelText('Instructors needed'), { target: { value: String(round.answer) } });
-      fireEvent.click(screen.getByRole('button', { name: 'Answer' }));
-      fireEvent.click(screen.getByRole('button', { name: /Next slot|Finish/ }));
-    }
+    playAllRounds();
     expect(writes).toHaveLength(1);
     expect(writes[0].payload.gameId).toBe('ratioRush');
     expect(writes[0].payload.result).toBe(ROUNDS);
     expect(writes[0].payload.points).toBe(120);
+  });
+
+  it('closes off the last slot instead of showing it again', () => {
+    setup();
+    startGame('Ratio Rush');
+    playAllRounds();
+    expect(screen.getByText(/That’s the ten/)).toBeTruthy();
+    expect(screen.queryByLabelText('Instructors needed')).toBeNull();
+    expect(screen.getByText(new RegExp(`right of ${ROUNDS}`))).toBeTruthy();
   });
 });
 

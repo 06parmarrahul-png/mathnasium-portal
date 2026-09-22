@@ -2,15 +2,18 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Users } from 'lucide-react';
 import { Btn, Pill } from '../newlook/ui';
 import { GAMES } from '../../lib/ratioGames';
-import { roundsFor, explain, ROUNDS } from '../../lib/games/ratioRush';
+import { roundsFor, explain, aimNote, ROUNDS } from '../../lib/games/ratioRush';
 
 /**
  * Ratio Rush — how many instructors does this half hour need?
  *
  * The centre's own maths, against the clock: students in, instructors out,
- * at the aim ratio, always rounding up. A miss shows the division rather
- * than just saying "wrong" — the point is to leave people better at
- * reading a booking curve than they were a minute ago.
+ * at the FLOOR ratio of 1:4, always rounding up. Four is the number you
+ * can divide by while standing on the floor; three and a half against a
+ * sixty-second clock is a different skill. A miss shows the division
+ * rather than just saying "wrong", and says what the 1:3.5 aim would have
+ * wanted when that is a different number — the point is to leave people
+ * better at reading a booking curve than they were a minute ago.
  *
  * Calls onFinish exactly once, with { correct, asked }.
  */
@@ -23,6 +26,7 @@ export default function RatioRushGame({ seed, onFinish }) {
   const [correct, setCorrect] = useState(0);
   const [feedback, setFeedback] = useState(null);
   const [left, setLeft] = useState(GAME.seconds);
+  const [over, setOver] = useState(false);
   const startedAt = useRef(null);
   const done = useRef(false);
   const tick = useRef(null);
@@ -34,6 +38,9 @@ export default function RatioRushGame({ seed, onFinish }) {
     if (done.current) return;
     done.current = true;
     if (tick.current) clearInterval(tick.current);
+    // The run stays on screen once it's over, so it has to stop looking
+    // like a slot waiting for an answer.
+    setOver(true);
     onFinish({ correct: got, asked });
   }, [onFinish]);
 
@@ -51,7 +58,7 @@ export default function RatioRushGame({ seed, onFinish }) {
   const round = rounds[at];
 
   const answer = () => {
-    if (!round || feedback) return;
+    if (!round || feedback || over) return;
     const given = Number(typed);
     const right = Number.isFinite(given) && given === round.answer;
     if (right) { setCorrect(c => c + 1); correctRef.current += 1; }
@@ -80,15 +87,23 @@ export default function RatioRushGame({ seed, onFinish }) {
           style={{ width: `${(100 * Math.max(0, left)) / GAME.seconds}%`, background: 'var(--nl-brand)' }} />
       </div>
 
-      <div className="flex items-center gap-2">
-        <Users size={18} style={{ color: 'var(--nl-muted)' }} />
-        <span className="nl-display text-[40px] font-bold leading-none tabular-nums">{round.students}</span>
-      </div>
-      <p className="text-[13px]" style={{ color: 'var(--nl-muted)' }}>
-        students booked · aim <b>1:{round.ratio}</b> — how many instructors?
-      </p>
+      {over ? (
+        <div className="nl-display text-[26px] font-bold leading-none">
+          {left <= 0 ? 'Time.' : 'That’s the ten.'}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center gap-2">
+            <Users size={18} style={{ color: 'var(--nl-muted)' }} />
+            <span className="nl-display text-[40px] font-bold leading-none tabular-nums">{round.students}</span>
+          </div>
+          <p className="text-[13px]" style={{ color: 'var(--nl-muted)' }}>
+            students booked · at <b>1:{round.ratio}</b> — how many instructors?
+          </p>
+        </>
+      )}
 
-      {!feedback ? (
+      {over ? null : !feedback ? (
         <>
           <input
             autoFocus
@@ -110,6 +125,11 @@ export default function RatioRushGame({ seed, onFinish }) {
           <p className="text-[13px] tabular-nums" style={{ color: 'var(--nl-muted)' }}>
             {explain(feedback.round)}
           </p>
+          {aimNote(feedback.round) && (
+            <p className="text-[12px]" style={{ color: 'var(--nl-muted)' }}>
+              {aimNote(feedback.round)}
+            </p>
+          )}
           <Btn size="sm" onClick={next}>
             {at + 1 >= rounds.length ? 'Finish' : 'Next slot'}
           </Btn>
@@ -117,7 +137,7 @@ export default function RatioRushGame({ seed, onFinish }) {
       )}
 
       <span className="text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-        <b style={{ color: 'var(--nl-ink)' }}>{correct}</b> right so far
+        <b style={{ color: 'var(--nl-ink)' }}>{correct}</b> right{over ? ` of ${rounds.length}` : ' so far'}
       </span>
     </div>
   );
