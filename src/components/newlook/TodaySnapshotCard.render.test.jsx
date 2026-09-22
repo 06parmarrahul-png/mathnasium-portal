@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 import TodaySnapshotCard from './TodaySnapshotCard';
@@ -59,7 +59,10 @@ const barBox = (name) => {
   return { left: parseFloat(bar.style.left), width: parseFloat(bar.style.width) };
 };
 
-afterEach(() => { cleanup(); });
+afterEach(() => {
+  cleanup();
+  try { localStorage.clear(); } catch { /* not every environment has it */ }
+});
 
 // 570 minutes across the track; one hour is this many percent.
 const HOUR = (60 / 570) * 100;
@@ -224,5 +227,47 @@ describe('the times beside each row', () => {
   it('keeps the minutes on a half-hour shift', () => {
     draw([shift({ startTime: '12:30', endTime: '18:45' })]);
     expect(screen.getByText('12:30 PM – 6:45 PM')).toBeTruthy();
+  });
+});
+
+describe('folding the grid away', () => {
+  const toggle = () => screen.getByRole('button', { name: /hide|show/i });
+
+  it('opens by default — the grid is the card', () => {
+    draw();
+    expect(toggle()).toHaveProperty('ariaExpanded', 'true');
+    expect(screen.getByText('Rachel Rozelle')).toBeTruthy();
+  });
+
+  it('puts the rows away, keeping the headline that answers "are we covered"', () => {
+    draw();
+    fireEvent.click(toggle());
+    expect(screen.queryByText('Rachel Rozelle')).toBeNull();
+    expect(screen.getByText('3 on today')).toBeTruthy();
+    expect(toggle().textContent).toMatch(/show/i);
+  });
+
+  it('brings them back', () => {
+    draw();
+    fireEvent.click(toggle());
+    fireEvent.click(toggle());
+    expect(screen.getByText('Rachel Rozelle')).toBeTruthy();
+    expect(toggle().textContent).toMatch(/hide/i);
+  });
+
+  it('remembers the choice for next time', () => {
+    draw();
+    fireEvent.click(toggle());
+    cleanup();
+    draw();
+    expect(toggle()).toHaveProperty('ariaExpanded', 'false');
+    expect(screen.queryByText('Rachel Rozelle')).toBeNull();
+  });
+
+  it('names the thing it controls, for anyone not using a mouse', () => {
+    draw();
+    const id = toggle().getAttribute('aria-controls');
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id)).toBeTruthy();
   });
 });

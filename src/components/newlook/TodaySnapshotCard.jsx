@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { ArrowRight } from 'lucide-react';
+import { useEffect, useId, useMemo, useState } from 'react';
+import { ArrowRight, ChevronDown } from 'lucide-react';
 import { Btn } from './ui';
 import { fmtDay } from './format';
 import { useTimeFormat } from '../../lib/useTimeFormat';
@@ -42,6 +42,16 @@ import {
  *
  * Every figure is a read of today's shifts and nothing else.
  */
+
+/**
+ * Whether the grid is folded away, remembered per browser.
+ *
+ * The band carries the day's headline figures on its own, so somebody who
+ * only wants "is the floor covered" can put seventeen rows away and still
+ * have the answer. It opens by default — the grid IS the card, and a
+ * collapsed default would hide it from everyone who never thought to ask.
+ */
+const OPEN_KEY = 'nl.todaySnapshot.open';
 
 const NAME_W = 178;
 const TIME_W = 132;
@@ -87,12 +97,25 @@ export default function TodaySnapshotCard({
   shifts, volunteerNames, centerConfig, dateISO, isToday = true, to,
 }) {
   const fmtTime = useTimeFormat();
+  const gridId = useId();
   const rows = useMemo(
     () => snapshotRows(shifts, { volunteerNames }), [shifts, volunteerNames]);
   const axis = useMemo(() => dayAxis(rows), [rows]);
   const totals = useMemo(() => snapshotTotals(rows), [rows]);
   const groups = useMemo(() => groupRows(rows), [rows]);
   const { leads, host } = useMemo(() => whoIsRunningIt(rows), [rows]);
+
+  // Storage can throw (private windows, blocked site data) and can come
+  // back empty. Neither is worth a blank card, so both fall through to
+  // open — see OPEN_KEY.
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(OPEN_KEY) !== '0'; }
+    catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem(OPEN_KEY, open ? '1' : '0'); }
+    catch { /* nothing to do about it, and nothing depends on it */ }
+  }, [open]);
 
   if (!rows.length || !axis.slots.length) return null;
 
@@ -137,16 +160,30 @@ export default function TodaySnapshotCard({
   return (
     <div>
       {/* ── The band ─────────────────────────────────────────────── */}
-      <div className="rounded-t-2xl p-5" style={{ background: 'var(--nl-brand)', color: '#fff' }}>
+      <div className={`p-5 ${open ? 'rounded-t-2xl' : 'rounded-2xl'}`}
+        style={{ background: 'var(--nl-brand)', color: '#fff' }}>
         <div className="flex items-center justify-between gap-3">
           <span className="min-w-0 text-[10px] font-bold uppercase tracking-[0.14em] opacity-85">
             {isToday ? "Today's snapshot" : 'Snapshot'} · {fmtDay(dateISO, { weekday: 'short', month: 'short', day: 'numeric' })}
           </span>
-          {to && (
-            <Btn to={to} size="sm" variant="ghost" className="shrink-0 !border-white/60 !text-white">
-              Full snapshot <ArrowRight size={13} />
-            </Btn>
-          )}
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setOpen(v => !v)}
+              aria-expanded={open}
+              aria-controls={gridId}
+              className="flex min-h-[32px] items-center gap-1.5 rounded-lg border border-white/60 px-2.5 text-[12px] font-semibold text-white"
+            >
+              {open ? 'Hide' : 'Show'}
+              <ChevronDown size={14} aria-hidden="true"
+                className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+            </button>
+            {to && (
+              <Btn to={to} size="sm" variant="ghost" className="!border-white/60 !text-white">
+                Full snapshot <ArrowRight size={13} />
+              </Btn>
+            )}
+          </div>
         </div>
 
         <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-4">
@@ -176,7 +213,8 @@ export default function TodaySnapshotCard({
       </div>
 
       {/* ── The grid ─────────────────────────────────────────────── */}
-      <div className="overflow-x-auto rounded-b-2xl border border-t-0"
+      {open && (
+      <div id={gridId} className="overflow-x-auto rounded-b-2xl border border-t-0"
         style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
         <div className="min-w-[760px] px-4 pb-3 pt-2.5">
 
@@ -291,6 +329,7 @@ export default function TodaySnapshotCard({
           </div>
         </div>
       </div>
+      )}
     </div>
   );
 }
