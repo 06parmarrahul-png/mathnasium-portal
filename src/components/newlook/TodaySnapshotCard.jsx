@@ -44,7 +44,7 @@ import {
  */
 
 const NAME_W = 178;
-const TIME_W = 92;
+const TIME_W = 132;
 
 /**
  * The rules behind the rows: every half hour light, every hour darker.
@@ -178,7 +178,7 @@ export default function TodaySnapshotCard({
       {/* ── The grid ─────────────────────────────────────────────── */}
       <div className="overflow-x-auto rounded-b-2xl border border-t-0"
         style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
-        <div className="min-w-[720px] px-4 pb-3 pt-2.5">
+        <div className="min-w-[760px] px-4 pb-3 pt-2.5">
 
           {/* Hour labels. Built on the same three-part flex as every row
               below, so a label and the bars beneath it are measured off
@@ -270,7 +270,7 @@ export default function TodaySnapshotCard({
                       </div>
                       <div className="shrink-0 whitespace-nowrap text-right text-[12px]"
                         style={{ width: TIME_W, color: 'var(--nl-muted)' }}>
-                        {shortTime(r.startTime, fmtTime)}–{shortTime(r.endTime, fmtTime)}
+                        {fmtTime.range(r.startTime, r.endTime)}
                       </div>
                     </div>
                   );
@@ -298,15 +298,6 @@ export default function TodaySnapshotCard({
 const fromMins = (m) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
 /** An hour mark on the axis: "3p", or "15" on a 24-hour clock. */
 const hourLabel = (h, fmt) => fmt.tick(h * 60);
-/**
- * "15:30" -> "3:30", "19:00" -> "7". The axis above carries the am/pm,
- * so the letter comes off inside a bar — but only on a 12-hour clock,
- * where there is a letter to come off.
- */
-const shortTime = (t, fmt) => {
-  if (!Number.isFinite(mins(t))) return '';
-  const tick = fmt.tick(t);
-  return fmt.is24h ? tick : tick.slice(0, -1);
-};
+/** "Bri & Luke", "Bri, Luke & Sam" — for the line under the headline. */
 const list = (xs) => (xs.length === 1 ? xs[0]
   : `${xs.slice(0, -1).join(', ')} & ${xs[xs.length - 1]}`);

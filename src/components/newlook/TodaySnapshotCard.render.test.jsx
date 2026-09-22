@@ -206,3 +206,23 @@ describe('the hour labels stay inside their own row', () => {
     expect(screen.getByText('7p').style.transform).toBe('translate(-50%, -50%)');
   });
 });
+
+describe('the times beside each row', () => {
+  /**
+   * They read "11–7:30" and "12:30–6:45": no meridiem, and the :00 dropped
+   * on the hour, so "3–7" could as easily have been the morning. They go
+   * through the shared formatter now, which means they also follow whoever
+   * is reading — a 24-hour account sees "11:00 – 19:30" instead.
+   */
+  it('spells both ends out, with AM and PM', () => {
+    draw();
+    expect(screen.getByText('10:00 AM – 2:00 PM')).toBeTruthy();   // Rachel, 10–14
+    expect(screen.getByText('11:00 AM – 7:30 PM')).toBeTruthy();   // Neeru, 11–19:30
+    expect(screen.getByText('3:00 PM – 7:00 PM')).toBeTruthy();    // Homer, 15–19
+  });
+
+  it('keeps the minutes on a half-hour shift', () => {
+    draw([shift({ startTime: '12:30', endTime: '18:45' })]);
+    expect(screen.getByText('12:30 PM – 6:45 PM')).toBeTruthy();
+  });
+});
