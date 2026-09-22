@@ -1169,6 +1169,49 @@ the built-in grant rather than silently removing a page. Without that, every
 centre that had ever opened the role editor would have shipped with no Calendar
 for its Hosts. Pinned in `Layout.render.test.jsx`.
 
+### Importing a Google Calendar
+
+`src/lib/icsImport.js` (pure, tested) + `components/CalendarImport.jsx`.
+
+**AN IMPORTED ASSESSMENT GOES TO `centerIntakes`, NOT TO THE CALENDAR.** That
+collection alone feeds `bookedSlots` in api/intakes.js, so an assessment filed
+as a calendar entry leaves its hour on sale and the public page takes a second
+family for it. It also is the only thing the per-day cap counts and the only
+thing the Intakes page and the Leads funnel read. The Calendar already READS
+centerIntakes, so writing to the right collection shows it on the calendar
+anyway — the wrong one just loses everything else. Mutation-tested: routing
+assessments to the calendar fails four tests.
+
+**A file, not the Google API.** OAuth + refresh tokens + a webhook is two or
+three routes and `api/` is at exactly 12. An exported .ics is parsed in the
+browser for nothing. Google Calendar → Settings → Import & export → Export.
+
+**Times are converted, not copied.** A Google event is a UTC instant or a wall
+clock plus a TZID; everything Ratio stores is the centre's own wall clock.
+`19:00Z` is a noon assessment here — writing "19:00" would move it to the
+evening. `toCentreLocal` / `zonedToUtc` are the same two-pass DST maths as
+api/calendar/[token].js, and the tests check both sides of the November change.
+
+**Nothing is written before somebody reads it.** Guardian and child names are
+not fields in a calendar event; they are prose a booking tool wrote into
+SUMMARY and DESCRIPTION, so every extraction is a guess and every row lands in
+an editable review table first. A guardian is NEVER guessed from the title —
+the name in a title is the child's far more often than not, and a child's name
+in the parent field is worse than a blank somebody fills in.
+
+Skipped rather than imported, and shown with the reason: cancelled events,
+recurring masters (importing one brings a single occurrence and silently loses
+the rest — Ratio has its own recurrence), and anything already brought in.
+Re-running is safe: the event UID is stored as `sourceUid`.
+
+An import **never sets `holdsBooking`**. Closing assessment slots has a cost the
+composer spells out one entry at a time; an import must not make that decision
+silently, forty rows at once.
+
+A VALARM inside a VEVENT has its own DESCRIPTION ("Reminder"). Taking it
+overwrites the parent and child details the import exists for — the parser
+tracks depth so it cannot.
+
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
 

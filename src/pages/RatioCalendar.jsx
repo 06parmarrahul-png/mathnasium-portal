@@ -3,12 +3,13 @@ import {
   collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc, writeBatch,
 } from 'firebase/firestore';
 import {
-  ChevronLeft, ChevronRight, Plus, Lock, Trash2, X, Loader2, CalendarClock,
+  ChevronLeft, ChevronRight, Plus, Lock, Trash2, X, Loader2, CalendarClock, Upload,
 } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
 import { PAGES } from '../lib/pageNames';
+import CalendarImport from '../components/CalendarImport';
 import { resolveInstructionalHours, isOperatingDay } from '../lib/centerConfig';
 import {
   KIND_LIST, kindLabel, kindTone, minutesOf, hhmm, asDate, toISO, addDays,
@@ -109,6 +110,7 @@ export default function RatioCalendar() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [hidden, setHidden] = useState(() => new Set());
+  const [importing, setImporting] = useState(false);
 
   const today = toISO(new Date());
   const holidays = useMemo(
@@ -214,6 +216,11 @@ export default function RatioCalendar() {
     () => new Set(days.filter(d => !isOperatingDay(asDate(d), centerConfig))),
     [days, centerConfig],
   );
+
+  const importedUids = useMemo(() => new Set([
+    ...(entries || []).map(e => e.sourceUid).filter(Boolean),
+    ...(intakes || []).map(t => t.sourceUid).filter(Boolean),
+  ]), [entries, intakes]);
 
   const holdCount = useMemo(
     () => days.reduce((n, d) => n + byDate[d].filter(r => isEntry(r) && r.holdsBooking).length, 0),
@@ -394,8 +401,13 @@ export default function RatioCalendar() {
           style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>
           {centerConfig?.name || activeCenterId}
         </span>
+        <button type="button" onClick={() => setImporting(true)}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-semibold"
+          style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+          <Upload size={14} /> Import
+        </button>
         <button type="button" onClick={() => openNew(today)}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white"
+          className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white"
           style={{ background: 'var(--nl-brand)' }}>
           <Plus size={14} /> New entry
         </button>
@@ -444,6 +456,13 @@ export default function RatioCalendar() {
       ) : (
         <MonthGrid days={days} byDate={byDate} today={today} cursor={cursor} closedDays={closedDays}
           onNew={openNew} onOpen={(r) => isEntry(r) && setDraft({ ...r })} />
+      )}
+
+      {importing && (
+        <CalendarImport
+          centerId={activeCenterId} profile={profile}
+          timeZone={centerConfig?.intakeSettings?.timezone || 'America/Vancouver'}
+          existingUids={importedUids} onClose={() => setImporting(false)} />
       )}
 
       {draft && (
