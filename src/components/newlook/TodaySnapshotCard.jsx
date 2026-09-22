@@ -216,10 +216,19 @@ export default function TodaySnapshotCard({
 
             {groups.map(g => (
               <div key={g.tier}>
-                <div className="relative flex h-[30px] items-center border-b"
-                  style={{ borderColor: 'var(--nl-hair)' }}>
-                  <div className="sticky left-0 z-[2] shrink-0 whitespace-nowrap pr-3 text-[10px] font-bold uppercase tracking-[0.1em]"
-                    style={{ color: 'var(--nl-muted)', background: 'var(--nl-card)' }}>
+                {/* A tinted band the full width of the grid.
+                    z-[1] lifts it over ColumnLayer, so the rules stop
+                    short of it instead of running through the heading —
+                    "IN-CENTRE INSTRUCTORS · 10" is wider than the name
+                    column and used to sit across the 10a rule. Masking
+                    them is also what turns this from a line of small
+                    text into a divider you can see from a metre away.
+                    In dark the tint equals the card, so the borders
+                    carry it there — same trade the half-hour rules make. */}
+                <div className="relative z-[1] flex h-[30px] items-center border-y"
+                  style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-raised)' }}>
+                  <div className="sticky left-0 shrink-0 whitespace-nowrap pr-3 text-[10px] font-bold uppercase tracking-[0.08em]"
+                    style={{ color: 'var(--nl-muted)', background: 'var(--nl-raised)' }}>
                     {g.label} · {g.rows.length}
                   </div>
                   <div className="flex-1" />

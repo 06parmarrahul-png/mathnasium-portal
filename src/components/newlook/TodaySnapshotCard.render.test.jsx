@@ -143,3 +143,43 @@ describe('what the band no longer carries', () => {
     expect(screen.getByText(/10:00 AM – 7:30 PM/)).toBeTruthy();
   });
 });
+
+describe('the group headings divide the tiers', () => {
+  /**
+   * "IN-CENTRE INSTRUCTORS · 10" is wider than the 178px name column, so it
+   * ran out over the first column rule and read as a line of text lying
+   * across the grid. The heading is a tinted band now, lifted above the
+   * rules layer so nothing shows through it.
+   */
+  const headingFor = (label) => [...document.querySelectorAll('div')]
+    .find(d => d.className.includes('border-y') && d.textContent.trim().startsWith(label));
+
+  // A_DAY has management and in-centre only; add an online instructor so
+  // all three headings the grid actually shows are under test.
+  const THREE_TIERS = [...A_DAY, shift({
+    id: 's4', userName: 'Krishnaja Tikkisetty',
+    role: 'Instructor', subRole: 'Online', startTime: '15:00', endTime: '19:00',
+  })];
+
+  it('gives every tier heading a band, not just a line of text', () => {
+    draw(THREE_TIERS);
+    for (const label of ['Hosts & Management', 'Online Instructors', 'In-Centre Instructors']) {
+      const row = headingFor(label);
+      expect(row, label).toBeTruthy();
+      expect(row.style.background).toBe('var(--nl-raised)');
+    }
+  });
+
+  it('lifts the band over the rules so none run through the heading', () => {
+    draw(THREE_TIERS);
+    // z-0 is the rules layer; the heading has to sit above it.
+    expect(headingFor('In-Centre Instructors').className).toContain('z-[1]');
+  });
+
+  it('counts the people in each tier', () => {
+    draw(THREE_TIERS);
+    expect(headingFor('Hosts & Management').textContent).toContain('· 2');
+    expect(headingFor('Online Instructors').textContent).toContain('· 1');
+    expect(headingFor('In-Centre Instructors').textContent).toContain('· 1');
+  });
+});
