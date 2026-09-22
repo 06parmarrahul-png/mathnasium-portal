@@ -265,3 +265,56 @@ describe('the composer', () => {
     expect(container.querySelector('.fixed')).toBeNull();
   });
 });
+
+describe('the three week rows keep one set of columns', () => {
+  /**
+   * Reported: the all-day band did not line up with the dates above it.
+   *
+   * The header, the all-day band and the hour grid are three SIBLING
+   * grids sharing `54px repeat(7, 1fr)`. `1fr` is minmax(auto, 1fr), and
+   * a grid item's automatic minimum is its min-content — which `truncate`
+   * (white-space: nowrap) makes the entire string. So a long all-day
+   * title widened its own column and squeezed the rest, in that row only:
+   * the header holds three characters and the hour columns hold nothing
+   * but absolutely-positioned children, so both stayed even.
+   *
+   * jsdom does not lay out, so geometry cannot be measured here. What can
+   * be pinned is the thing whose removal causes it.
+   */
+  const LONG = { ...TRAINING, id: 'long', allDay: true, startTime: null, endTime: null,
+    title: 'Rock Paper Scissors Tournament and then some more words' };
+
+  const cellsOf = (container, sel) => [...container.querySelectorAll(sel)];
+
+  it('gives every day cell in all three rows a zero minimum width', () => {
+    snapshots.calendar = [LONG];
+    const { container } = draw();
+    const grids = cellsOf(container, '[style*="repeat(7, 1fr)"]');
+    expect(grids).toHaveLength(3);
+    for (const g of grids) {
+      // Child 0 is the fixed 54px gutter; the seven after it are the days.
+      const days = [...g.children].slice(1);
+      expect(days).toHaveLength(7);
+      for (const d of days) expect(d.className).toMatch(/\bmin-w-0\b/);
+    }
+  });
+
+  it('still truncates the long title rather than letting it set the width', () => {
+    snapshots.calendar = [LONG];
+    const { container } = draw();
+    const chip = [...container.querySelectorAll('button')]
+      .find(b => b.textContent.includes('Rock Paper Scissors'));
+    expect(chip.className).toMatch(/\btruncate\b/);
+  });
+
+  it('gives the month grid the same treatment — same shape, same chips', () => {
+    snapshots.calendar = [LONG];
+    const { container } = draw();
+    fireEvent.click([...container.querySelectorAll('button')]
+      .find(b => b.textContent.trim() === 'month'));
+    const grids = cellsOf(container, '[style*="repeat(7, 1fr)"]');
+    for (const g of grids) {
+      for (const cell of g.children) expect(cell.className).toMatch(/\bmin-w-0\b/);
+    }
+  });
+});

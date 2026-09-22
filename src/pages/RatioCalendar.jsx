@@ -436,13 +436,21 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
     <div className="overflow-x-auto rounded-2xl border"
       style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
       <div className="min-w-[860px]">
+        {/* THE COLUMNS OF ALL THREE ROWS HAVE TO RESOLVE THE SAME WAY.
+            `1fr` is minmax(auto, 1fr), and a grid item's automatic minimum
+            is its min-content — which `truncate` (white-space: nowrap)
+            makes the whole string. One long all-day title therefore widened
+            its own column and squeezed the others, in that row only, while
+            the header and hour rows stayed even because their content is
+            short or absolutely positioned. `min-w-0` on every 1fr cell is
+            what keeps the three in step. Same trap as LeadershipHome. */}
         <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)' }}>
           <div />
           {days.map(d => {
             const dt = asDate(d);
             const isToday = d === today;
             return (
-              <div key={d} className="border-l py-2 text-center" style={{ borderColor: 'var(--nl-rule)' }}>
+              <div key={d} className="min-w-0 border-l py-2 text-center" style={{ borderColor: 'var(--nl-rule)' }}>
                 <div className="text-[9px] font-bold uppercase tracking-[0.1em]"
                   style={{ color: isToday ? 'var(--nl-brand)' : 'var(--nl-muted)' }}>
                   {dt.toLocaleDateString(undefined, { weekday: 'short' })}
@@ -461,7 +469,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
           <div className="pr-2 pt-2 text-right text-[8.5px] font-bold uppercase tracking-[0.08em]"
             style={{ color: 'var(--nl-muted)' }}>All day</div>
           {days.map(d => (
-            <div key={d} className="min-h-[30px] space-y-1 border-l p-1"
+            <div key={d} className="min-w-0 min-h-[30px] space-y-1 border-l p-1"
               style={{ borderColor: 'var(--nl-rule)' }}>
               {byDate[d].filter(r => r.allDay).map(r => {
                 const tone = toneFor(r);
@@ -489,7 +497,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             ))}
           </div>
           {days.map(d => (
-            <div key={d} className="relative border-l"
+            <div key={d} className="relative min-w-0 border-l"
               style={{
                 borderColor: 'var(--nl-rule)', height: (span / 60) * HOUR_PX,
                 ...(closedDays.has(d) ? SHUT : null),
@@ -549,7 +557,7 @@ function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
       style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
       <div className="grid border-b" style={{ gridTemplateColumns: 'repeat(7, 1fr)', borderColor: 'var(--nl-rule)' }}>
         {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
-          <div key={d} className="py-2 text-center text-[9px] font-bold uppercase tracking-[0.12em]"
+          <div key={d} className="min-w-0 py-2 text-center text-[9px] font-bold uppercase tracking-[0.12em]"
             style={{ color: 'var(--nl-muted)' }}>{d}</div>
         ))}
       </div>
@@ -563,7 +571,7 @@ function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
           const show = rest.slice(0, 3);
           return (
             <div key={d}
-              className="min-h-[118px] border-l border-t p-1.5"
+              className="min-w-0 min-h-[118px] border-l border-t p-1.5"
               style={{
                 borderColor: 'var(--nl-hair)',
                 background: closure ? 'var(--nl-brandw)' : out ? 'var(--nl-paper)' : undefined,

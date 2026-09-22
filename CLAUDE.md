@@ -1137,6 +1137,18 @@ for its Hosts. Pinned in `Layout.render.test.jsx`.
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
 
+**`min-w-0` on every 1fr cell is load-bearing, for the second time in this
+codebase.** The week is three SIBLING grids sharing `54px repeat(7, 1fr)` —
+header, all-day band, hour grid. `1fr` is `minmax(auto, 1fr)` and a grid item's
+automatic minimum is its min-content, which `truncate` (white-space: nowrap)
+makes the whole string. One long fun-day title ("Rock Paper Scissors
+Tournament") widened its own column and squeezed the rest, **in the all-day row
+only** — the header holds three characters and the hour columns hold nothing but
+absolutely-positioned children, so both stayed even and the band drifted out of
+line with the dates above it. The month grid has the same shape and the same
+chips. jsdom does not lay out, so the tests pin the class rather than the
+geometry; mutation-tested.
+
 ## A job title is copied onto shifts, like a name
 
 A shift stores the person's `instructorType` at the moment it is created,
