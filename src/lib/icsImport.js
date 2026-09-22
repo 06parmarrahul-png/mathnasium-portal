@@ -308,6 +308,54 @@ export function extractDetails(ev) {
   return out;
 }
 
+/* ── Narrowing the file down ──────────────────────────────────────────── */
+//
+// A real Google Calendar export is the WHOLE calendar — Langley's first
+// run came back with about 2,110 events, most of them years old. Two
+// problems, one fix: nobody can check 2,110 rows, and nobody wants to
+// import a calendar's entire history into a live centre.
+//
+// The range is applied BEFORE the rows are built, not as another skip
+// reason, because a skipped row still renders and 2,110 of them is what
+// made the table unusable in the first place.
+
+/** Is this event inside the window? Dates are plain YYYY-MM-DD strings. */
+export function inDateRange(ev, { from = null, to = null } = {}) {
+  const d = ev?.date;
+  if (!d) return true;              // unreadable dates are reported, not hidden
+  if (from && d < from) return false;
+  if (to && d > to) return false;
+  return true;
+}
+
+export function filterEvents(events, range = {}) {
+  return (events || []).filter(ev => inDateRange(ev, range));
+}
+
+/** The span the file actually covers, so someone can see what they have. */
+export function eventDateSpan(events) {
+  const dates = (events || []).map(e => e?.date).filter(Boolean).sort();
+  return dates.length ? { first: dates[0], last: dates[dates.length - 1] } : null;
+}
+
+/**
+ * The default window: the first of LAST month.
+ *
+ * Recent history plus everything ahead, which is what someone moving off
+ * another calendar actually wants. Not "today", because the assessments
+ * that ran last week are still worth having in the Intakes list.
+ */
+export function defaultImportFrom(todayISO) {
+  const m = /^(\d{4})-(\d{2})/.exec(String(todayISO || ''));
+  if (!m) return '';
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, 1, 12, 0, 0);
+  d.setMonth(d.getMonth() - 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+}
+
+/** Above this the table is a wall of rows nobody will really check. */
+export const REVIEW_COMFORTABLE = 400;
+
 /* ── The review rows ──────────────────────────────────────────────────── */
 
 export const SKIP_REASONS = {
@@ -325,8 +373,11 @@ export const SKIP_REASONS = {
  * reason rather than dropped — "it imported 31 of 40" needs to be able to
  * say which nine and why.
  */
-export function buildRows(events, { existingUids = new Set(), defaultDurationMin = 60 } = {}) {
+export function buildRows(events, {
+  existingUids = new Set(), defaultDurationMin = 60, from = null, to = null,
+} = {}) {
   const uids = existingUids instanceof Set ? existingUids : new Set(existingUids || []);
+  events = filterEvents(events, { from, to });
   const seen = new Set();
   return (events || []).map((ev, i) => {
     const kind = classify(ev);

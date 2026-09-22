@@ -3,6 +3,7 @@ import {
   unfold, unescapeIcal, parseIcsDate, toCentreLocal, zonedToUtc, parseIcs,
   classify, nameFromSummary, normaliseGrade, extractDetails,
   buildRows, importSummary, SKIP_REASONS,
+  inDateRange, eventDateSpan, defaultImportFrom,
 } from './icsImport';
 
 const TZ = 'America/Vancouver';
@@ -309,5 +310,90 @@ describe('the rows someone confirms', () => {
   it('follows what someone unticked in the review table', () => {
     const r = rows().map(x => ({ ...x, include: false }));
     expect(importSummary(r).importing).toBe(0);
+  });
+});
+
+/**
+ * Narrowing a real export down.
+ *
+ * Langley's first run came back with ~2,110 events, most of them years
+ * old. Nobody can check 2,110 rows, and nobody wants a calendar's whole
+ * history written into a live centre.
+ */
+describe('only the part of the file anyone wants', () => {
+  const OLD = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:old1
+DTSTART;TZID=America/Vancouver:20190304T160000
+SUMMARY:Assessment - Ancient History
+END:VEVENT
+BEGIN:VEVENT
+UID:jul
+DTSTART;TZID=America/Vancouver:20260715T160000
+SUMMARY:Assessment - July Family
+END:VEVENT
+BEGIN:VEVENT
+UID:aug
+DTSTART;TZID=America/Vancouver:20260812T160000
+SUMMARY:Assessment - August Family
+END:VEVENT
+BEGIN:VEVENT
+UID:sep
+DTSTART;TZID=America/Vancouver:20260923T160000
+SUMMARY:Assessment - September Family
+END:VEVENT
+END:VCALENDAR`;
+  const evs = () => parseIcs(OLD, { timeZone: TZ });
+
+  it('keeps everything when no range is asked for', () => {
+    expect(buildRows(evs())).toHaveLength(4);
+  });
+
+  it('drops what is before the start date', () => {
+    const r = buildRows(evs(), { from: '2026-08-01' });
+    expect(r.map(x => x.uid)).toEqual(['aug', 'sep']);
+  });
+
+  it('drops what is after the end date', () => {
+    expect(buildRows(evs(), { from: '2026-08-01', to: '2026-08-31' }).map(x => x.uid))
+      .toEqual(['aug']);
+  });
+
+  it('DROPS out-of-range rows rather than skipping them', () => {
+    // A skipped row still renders. 2,110 of those is exactly what made
+    // the table unusable, so the range is applied before the rows exist.
+    const r = buildRows(evs(), { from: '2026-08-01' });
+    expect(r.some(x => x.uid === 'old1')).toBe(false);
+    expect(r.every(x => x.skip === null)).toBe(true);
+  });
+
+  it('includes an event on the boundary itself', () => {
+    expect(buildRows(evs(), { from: '2026-08-12', to: '2026-08-12' }).map(x => x.uid))
+      .toEqual(['aug']);
+  });
+
+  it('never hides an event whose date could not be read', () => {
+    // It has no date to judge, and silently dropping it is how a real
+    // appointment disappears without anyone being told.
+    expect(inDateRange({ date: null }, { from: '2026-08-01' })).toBe(true);
+  });
+
+  it('reports the span the file covers', () => {
+    expect(eventDateSpan(evs())).toEqual({ first: '2019-03-04', last: '2026-09-23' });
+    expect(eventDateSpan([])).toBe(null);
+  });
+
+  it('defaults to the first of last month', () => {
+    // Recent history plus everything ahead — last week's assessments are
+    // still worth having in the Intakes list.
+    expect(defaultImportFrom('2026-09-22')).toBe('2026-08-01');
+    expect(defaultImportFrom('2026-01-15')).toBe('2025-12-01');
+    expect(defaultImportFrom('garbage')).toBe('');
+  });
+
+  it('still counts and dedupes within the range', () => {
+    const r = buildRows(evs(), { from: '2026-08-01', existingUids: new Set(['aug']) });
+    expect(r.find(x => x.uid === 'aug').skip).toBe('duplicate');
+    expect(importSummary(r).importing).toBe(1);
   });
 });

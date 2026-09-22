@@ -243,3 +243,115 @@ END:VCALENDAR`);
     expect(writes[0].data.childName).toBe('Sam Lee');
   });
 });
+
+/**
+ * Narrowing a real export.
+ *
+ * The first live run brought back about 2,110 events, most of them years
+ * old. Nobody checks 2,110 rows, so the range is the difference between a
+ * usable panel and an unusable one.
+ */
+describe('the date range', () => {
+  const SPREAD = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:old1
+DTSTART;TZID=America/Vancouver:20190304T160000
+SUMMARY:Assessment - Ancient History
+END:VEVENT
+BEGIN:VEVENT
+UID:jul
+DTSTART;TZID=America/Vancouver:20260715T160000
+SUMMARY:Assessment - July Family
+END:VEVENT
+BEGIN:VEVENT
+UID:aug
+DTSTART;TZID=America/Vancouver:20260812T160000
+SUMMARY:Assessment - August Family
+END:VEVENT
+BEGIN:VEVENT
+UID:sep
+DTSTART;TZID=America/Vancouver:20260923T160000
+SUMMARY:Assessment - September Family
+END:VEVENT
+END:VCALENDAR`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 22, 12, 0, 0));   // Tue 22 Sep 2026
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('opens on the first of last month, not on the whole history', async () => {
+    const { container } = draw();
+    await drop(container, SPREAD);
+    expect(screen.getByLabelText(/import events from/i).value).toBe('2026-08-01');
+    expect(screen.getByText(/2 of 4 left out by these dates/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^import 2$/i })).toBeTruthy();
+  });
+
+  it('says what the file actually spans, so the range makes sense', async () => {
+    const { container } = draw();
+    await drop(container, SPREAD);
+    expect(screen.getByText(/File covers 2019-03-04 to 2026-09-23/i)).toBeTruthy();
+  });
+
+  it('follows the From date being moved', async () => {
+    const { container } = draw();
+    await drop(container, SPREAD);
+    fireEvent.change(screen.getByLabelText(/import events from/i), { target: { value: '2026-09-01' } });
+    expect(screen.getByRole('button', { name: /^import 1$/i })).toBeTruthy();
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].data.childName).toBe('September Family');
+  });
+
+  it('follows a To date as well', async () => {
+    const { container } = draw();
+    await drop(container, SPREAD);
+    fireEvent.change(screen.getByLabelText(/import events up to/i), { target: { value: '2026-08-31' } });
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(writes).toHaveLength(1);
+    expect(writes[0].data.childName).toBe('August Family');
+  });
+
+  it('brings the whole history back if that is really wanted', async () => {
+    const { container } = draw();
+    await drop(container, SPREAD);
+    fireEvent.click(screen.getByRole('button', { name: /^everything$/i }));
+    expect(screen.getByText(/all 4 in range/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /^import 4$/i })).toBeTruthy();
+  });
+
+  it('leaves out-of-range events out of the table entirely', async () => {
+    // Not as another skipped row — a skipped row still renders, and 2,110
+    // of those is what made this unusable in the first place.
+    const { container } = draw();
+    await drop(container, SPREAD);
+    expect(screen.queryByText(/Ancient History/)).toBeNull();
+    expect(screen.getByText(/August Family/)).toBeTruthy();
+  });
+
+  it('keeps a correction when the range moves', async () => {
+    // Narrowing the dates must not quietly throw away typing.
+    const { container } = draw();
+    await drop(container, SPREAD);
+    const cell = screen.getByLabelText(/^Guardian for Assessment - September Family/i);
+    fireEvent.change(cell, { target: { value: 'Dana Reyes' } });
+    fireEvent.change(screen.getByLabelText(/import events from/i), { target: { value: '2026-09-01' } });
+    expect(screen.getByLabelText(/^Guardian for Assessment - September Family/i).value)
+      .toBe('Dana Reyes');
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(writes[0].data.guardianName).toBe('Dana Reyes');
+  });
+
+  it('says plainly when there is more here than anyone will check', async () => {
+    const many = ['BEGIN:VCALENDAR'];
+    for (let i = 0; i < 420; i += 1) {
+      many.push(`BEGIN:VEVENT\nUID:m${i}\nDTSTART;TZID=America/Vancouver:20260915T1${String(i % 10)}0000\nSUMMARY:Assessment - Family ${i}\nEND:VEVENT`);
+    }
+    many.push('END:VCALENDAR');
+    const { container } = draw();
+    await drop(container, many.join('\n'));
+    expect(screen.getByText(/more than anyone will really check/i)).toBeTruthy();
+  });
+});

@@ -3,8 +3,11 @@ import { collection, doc, writeBatch } from 'firebase/firestore';
 import { Upload, X, AlertTriangle, Check, Loader2 } from 'lucide-react';
 import { db } from '../firebase';
 import { chunk } from '../lib/deskImport';
-import { parseIcs, buildRows, importSummary, SKIP_REASONS } from '../lib/icsImport';
-import { kindLabel } from '../lib/ratioCalendar';
+import {
+  parseIcs, buildRows, importSummary, SKIP_REASONS,
+  eventDateSpan, defaultImportFrom, filterEvents, REVIEW_COMFORTABLE,
+} from '../lib/icsImport';
+import { kindLabel, toISO } from '../lib/ratioCalendar';
 
 /**
  * Bringing a Google Calendar in.
@@ -28,38 +31,60 @@ import { kindLabel } from '../lib/ratioCalendar';
  */
 
 const BATCH = 400;   // Firestore caps a batch at 500 writes.
+const todayISO = () => toISO(new Date());
 
 export default function CalendarImport({
   centerId, timeZone = 'America/Vancouver', profile,
   existingUids = new Set(), onClose,
 }) {
-  const [rows, setRows] = useState(null);
+  // The raw file is kept so the range can be moved without re-reading it.
+  const [events, setEvents] = useState(null);
+  const [range, setRange] = useState(() => ({ from: defaultImportFrom(todayISO()), to: '' }));
+  const [edits, setEdits] = useState({});
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(null);
   const fileRef = useRef(null);
 
+  const span = useMemo(() => eventDateSpan(events), [events]);
+
+  /* Rebuilt whenever the range moves. Corrections someone has already
+     typed are kept by id, so narrowing the dates never quietly throws
+     away work — the row comes back with the name still on it. */
+  const rows = useMemo(() => {
+    if (!events) return null;
+    return buildRows(events, { existingUids, from: range.from || null, to: range.to || null })
+      .map(r => (edits[r.id] ? { ...r, ...edits[r.id] } : r));
+  }, [events, existingUids, range.from, range.to, edits]);
+
+  const outOfRange = useMemo(
+    () => (events ? events.length - filterEvents(events, {
+      from: range.from || null, to: range.to || null,
+    }).length : 0),
+    [events, range.from, range.to],
+  );
+
   const summary = useMemo(() => (rows ? importSummary(rows) : null), [rows]);
 
   const pick = async (file) => {
-    setError(''); setRows(null); setDone(null);
+    setError(''); setEvents(null); setEdits({}); setDone(null);
     if (!file) return;
     try {
       const text = await file.text();
-      const events = parseIcs(text, { timeZone });
-      if (!events.length) {
+      const parsed = parseIcs(text, { timeZone });
+      if (!parsed.length) {
         setError('No events in that file. Google Calendar → Settings → Import & export → Export gives a .ics per calendar.');
         return;
       }
       setFileName(file.name);
-      setRows(buildRows(events, { existingUids }));
+      setEvents(parsed);
     } catch (e) {
       setError(e?.message || 'Could not read that file.');
     }
   };
 
-  const edit = (id, patch) => setRows(rs => rs.map(r => (r.id === id ? { ...r, ...patch } : r)));
+  const edit = (id, patch) => setEdits(e => ({ ...e, [id]: { ...(e[id] || {}), ...patch } }));
 
   const run = async () => {
     const live = rows.filter(r => r.include && !r.skip);
@@ -124,7 +149,7 @@ export default function CalendarImport({
         await batch.commit();
       }
       setDone({ intakes, entries });
-      setRows(null);
+      setEvents(null); setEdits({});
     } catch (e) {
       setError(e?.message || 'Could not import that.');
     } finally {
@@ -177,7 +202,7 @@ export default function CalendarImport({
             <div className="mb-3 rounded-xl border p-3"
               style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-paper)' }}>
               <p className="text-[13px]">
-                <b>{fileName}</b> — {summary.total} events.
+                <b>{fileName}</b> — {summary.total} events in range.
                 {' '}Ready to bring in <b>{summary.importing}</b>:{' '}
                 {summary.assessments} as {summary.assessments === 1 ? 'an assessment' : 'assessments'},
                 {' '}{summary.entries} as calendar {summary.entries === 1 ? 'entry' : 'entries'}.
@@ -200,6 +225,50 @@ export default function CalendarImport({
                 place that takes its slot off the public booking page. It still shows here.
               </p>
             </div>
+
+            <div className="mb-3 flex flex-wrap items-end gap-2.5 rounded-xl border p-3"
+              style={{ borderColor: 'var(--nl-rule)' }}>
+              <label className="flex flex-col gap-1 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+                From
+                <input type="date" value={range.from} aria-label="Import events from"
+                  onChange={e => setRange(r => ({ ...r, from: e.target.value }))}
+                  className="rounded-lg border px-2.5 py-1.5 text-[13px]"
+                  style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }} />
+              </label>
+              <label className="flex flex-col gap-1 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+                To (optional)
+                <input type="date" value={range.to} aria-label="Import events up to"
+                  onChange={e => setRange(r => ({ ...r, to: e.target.value }))}
+                  className="rounded-lg border px-2.5 py-1.5 text-[13px]"
+                  style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-ink)' }} />
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  ['Last month on', () => ({ from: defaultImportFrom(todayISO()), to: '' })],
+                  ['Today on', () => ({ from: todayISO(), to: '' })],
+                  ['Everything', () => ({ from: '', to: '' })],
+                ].map(([label, make]) => (
+                  <button key={label} type="button" onClick={() => setRange(make())}
+                    className="rounded-full border px-2.5 py-1.5 text-[11px] font-medium"
+                    style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <p className="ml-auto text-right text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+                {outOfRange > 0
+                  ? `${outOfRange} of ${events.length} left out by these dates`
+                  : `All ${events.length} in range`}
+                {span && <><br />File covers {span.first} to {span.last}</>}
+              </p>
+            </div>
+
+            {summary.importing > REVIEW_COMFORTABLE && (
+              <p className="mb-2 flex items-start gap-1.5 text-[12px] font-medium" style={{ color: 'var(--nl-warn)' }}>
+                <AlertTriangle size={13} className="mt-[1px] shrink-0" />
+                {summary.importing} rows is more than anyone will really check. Narrow the dates.
+              </p>
+            )}
 
             <div className="max-h-[46vh] overflow-auto rounded-xl border"
               style={{ borderColor: 'var(--nl-rule)' }}>

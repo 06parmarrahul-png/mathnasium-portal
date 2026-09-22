@@ -1182,6 +1182,19 @@ centerIntakes, so writing to the right collection shows it on the calendar
 anyway — the wrong one just loses everything else. Mutation-tested: routing
 assessments to the calendar fails four tests.
 
+**A real export is the WHOLE calendar.** Langley's first run came back with
+about 2,110 events, most of them years old — unusable as a review table and
+not something anyone wants written into a live centre. The panel opens on a
+date range defaulting to **the first of last month** (recent history plus
+everything ahead), shows what the file spans and how many the range leaves
+out, and warns above `REVIEW_COMFORTABLE` (400) rows that it is more than
+anyone will really check.
+
+The range is applied **before the rows are built**, not as another skip
+reason — a skipped row still renders, and 2,110 of those is the original
+problem. Corrections already typed are held by row id, so moving the dates
+never throws away someone's work.
+
 **A file, not the Google API.** OAuth + refresh tokens + a webhook is two or
 three routes and `api/` is at exactly 12. An exported .ics is parsed in the
 browser for nothing. Google Calendar → Settings → Import & export → Export.
