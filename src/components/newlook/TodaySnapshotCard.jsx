@@ -183,21 +183,31 @@ export default function TodaySnapshotCard({
           {/* Hour labels. Built on the same three-part flex as every row
               below, so a label and the bars beneath it are measured off
               one track rather than two that only looked alike. */}
-          <div className="flex h-6 items-center">
+          <div className="relative z-[2] flex h-6 items-center">
             <div className="shrink-0" style={{ width: NAME_W }} />
-            <div className="relative min-w-0 flex-1">
+            {/* The labels had no vertical anchor. Absolute with no `top`
+                falls to the static position — the top of this box, which
+                sits on the row's midline because every child in it is
+                positioned and it therefore measures zero. So each label
+                started halfway down a 24px row and hung ~4px below it,
+                and the first group band, being opaque and above, sliced
+                the descenders off "12p" and "7p". They are centred on the
+                row now; h-full just makes that 50% resolve against the
+                row instead of against nothing. */}
+            <div className="relative h-full min-w-0 flex-1">
               {hours.map(h => {
                 const p = pct(h * 60);
+                // X puts the label on its tick; the two end labels are
+                // pulled inward instead, where centring would hang them
+                // off the track and into the columns either side. Y keeps
+                // it inside the row it belongs to.
+                const dx = p <= 0 ? '0' : p >= 100 ? '-100%' : '-50%';
                 return (
                   <span key={h} className="absolute text-[11px] font-semibold"
                     style={{
                       left: `${p}%`,
-                      // Sits on its tick. The two end labels are pulled
-                      // inward instead, where centring would hang them off
-                      // the track and into the columns either side.
-                      transform: p <= 0 ? 'none'
-                               : p >= 100 ? 'translateX(-100%)'
-                               : 'translateX(-50%)',
+                      top: '50%',
+                      transform: `translate(${dx}, -50%)`,
                       color: 'var(--nl-muted)',
                     }}>
                     {hourLabel(h, fmtTime)}

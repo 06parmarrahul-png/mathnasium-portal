@@ -183,3 +183,26 @@ describe('the group headings divide the tiers', () => {
     expect(headingFor('In-Centre Instructors').textContent).toContain('· 1');
   });
 });
+
+describe('the hour labels stay inside their own row', () => {
+  /**
+   * They were absolutely positioned with no `top`, so they fell to the
+   * static position and hung below a 24px row — where the opaque group
+   * band clipped the descenders off "12p" and "7p". jsdom has no layout
+   * to measure, but the anchor that keeps them in the row is assertable.
+   */
+  it('anchors every label to the middle of the row', () => {
+    draw();
+    for (const t of ['10a', '12p', '7p']) {
+      const el = screen.getByText(t);
+      expect(el.style.top, t).toBe('50%');
+      expect(el.style.transform, t).toContain('-50%');
+    }
+  });
+
+  it('still pulls the two end labels inward rather than centring them', () => {
+    draw();
+    expect(screen.getByText('10a').style.transform).toBe('translate(0, -50%)');
+    expect(screen.getByText('7p').style.transform).toBe('translate(-50%, -50%)');
+  });
+});
