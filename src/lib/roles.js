@@ -115,6 +115,12 @@ export const PERMISSIONS = [
     description: 'Post-it notes, gift cards, receipts, referral rally and student of the month.',
   },
   {
+    id: 'calendar.access',
+    group: 'Administration',
+    label: 'Use the Calendar',
+    description: 'The centre calendar — assign meetings, calls and interviews, and hold time off the public booking page.',
+  },
+  {
     id: 'roles.manage',
     group: 'Enterprise',
     label: 'Manage roles and permissions',
@@ -202,7 +208,7 @@ export function permissionLabel(id) {
 
 const ADMIN_PANEL_BASE = [
   'admin.panel', 'admin.operations', 'analytics.view', 'scheduler.run',
-  'shifts.take', 'chat.access', 'notes.access',
+  'shifts.take', 'chat.access', 'notes.access', 'calendar.access',
 ];
 
 export const PLATFORM_ROLE_PERMISSIONS = {
@@ -257,7 +263,15 @@ const BUILTIN_ROLE_SEEDS = [
   // centre. The Firestore rules mirror it in isAdminOrManagerAt().
   { name: 'Manager',           permissions: [...ADMIN_PANEL_BASE] },
   { name: 'Lead',              permissions: ['scheduler.run'] },
-  { name: 'Host',              permissions: ['scheduler.run', 'admin.operations', 'notes.access'] },
+  // The Calendar goes to the people who actually schedule the centre's
+  // day around itself: owners, both directors, Managers, admin
+  // assistants and Hosts. A Host books the interviews and the parent
+  // calls, so leaving them off would have meant asking someone else to
+  // enter their own work. Lead is off it for the same reason they are
+  // off the Management Desk — a Lead runs the floor for a shift, and
+  // holding time off the public booking page is not that job. Any centre
+  // that disagrees can grant it in Manage Roles.
+  { name: 'Host',              permissions: ['scheduler.run', 'admin.operations', 'notes.access', 'calendar.access'] },
   { name: 'Admin',             permissions: ['notes.access'] },
   { name: 'Instructor',        permissions: [] },
   { name: 'Training',          permissions: [] },

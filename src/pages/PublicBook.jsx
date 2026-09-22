@@ -299,6 +299,14 @@ function SlotGrid({ data, timeRows, weekStart, onWeekStart, selectedSlot, onSele
                         Full
                       </div>
                     )}
+                    {/* A closure is not the same as being full: "full"
+                        sends a parent looking for another time, "closed"
+                        sends them to another day. */}
+                    {d.closed && (
+                      <div className="mt-0.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                        {d.closureName || 'Closed'}
+                      </div>
+                    )}
                   </th>
                 );
               })}

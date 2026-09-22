@@ -18,6 +18,7 @@ import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
+  CalendarClock,
   UserPlus, FileBarChart, Activity, Package, History, LayoutGrid,
   StickyNote, Gamepad2,
 } from 'lucide-react';
@@ -250,6 +251,11 @@ export default function Layout({ children }) {
   // maintained, settled. Same three Admin sub-tabs as before, just
   // re-framed under the right mental bucket.
   const supply = [];
+  // The centre's own calendar. Gated on its own permission rather than on
+  // canSeeAdminPanel, because Hosts hold it and do not hold that.
+  if (useOwnerLayout && auth.can('calendar.access')) {
+    supply.push({ to: PAGES.calendar.path, label: PAGES.calendar.name, icon: CalendarClock });
+  }
   if (useOwnerLayout && canSeeAdminPanel) {
     supply.push(
       { to: PAGES.staffSchedule.path, label: PAGES.staffSchedule.name, icon: CalendarRange },
@@ -304,6 +310,9 @@ export default function Layout({ children }) {
     // Plain Admin, Manager, and Host all land here — same "operational
     // admin" tier, full list. (Owner / AA / Director reach the same
     // pages via Growth / Demand / Supply / Intelligence above instead.)
+    if (auth.can('calendar.access')) {
+      manage.push({ to: PAGES.calendar.path, label: PAGES.calendar.name, icon: CalendarClock });
+    }
     manage.push(
       { to: PAGES.staffSchedule.path,    label: PAGES.staffSchedule.name,    icon: CalendarRange },
       { to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList },

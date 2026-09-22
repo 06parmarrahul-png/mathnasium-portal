@@ -1,0 +1,791 @@
+import { useEffect, useMemo, useState } from 'react';
+import {
+  collection, query, where, onSnapshot, addDoc, updateDoc, deleteDoc, doc,
+} from 'firebase/firestore';
+import {
+  ChevronLeft, ChevronRight, Plus, Lock, Trash2, X, Loader2, CalendarClock,
+} from 'lucide-react';
+import { db } from '../firebase';
+import { useAuth } from '../contexts/AuthContext';
+import { toast, confirmDialog } from '../lib/notify';
+import { PAGES } from '../lib/pageNames';
+import { resolveInstructionalHours, isOperatingDay } from '../lib/centerConfig';
+import {
+  KIND_LIST, kindLabel, kindTone, minutesOf, hhmm, asDate, toISO, addDays,
+  weekStartOf, entrySpan, validateEntry, blockedStarts, closureMap, rowsForDate,
+} from '../lib/ratioCalendar';
+
+/**
+ * The Calendar — management's own view of the centre's dates.
+ *
+ * WHAT IT IS FOR
+ *   Apptoto books a lead into Google Calendar, and Google then refuses
+ *   anything that overlaps it. This is that, for Ratio: an entry can HOLD
+ *   THE BOOKING PAGE, and the booking engine treats the hold exactly like
+ *   an existing appointment.
+ *
+ * WHAT IT READS RATHER THAN OWNS
+ *   Closures and stat holidays (Centre Settings), fun days and meetings
+ *   (Centre Events), approved time off, and booked assessments. None of
+ *   them are re-entered here and none of them are editable here — the
+ *   calendar shows them and links to where they live. Anything else ends
+ *   with the same fact stored twice, disagreeing with itself.
+ *
+ * EVERY FIGURE IS A DIRECT READ. There is no ratio, no budget and no
+ * enrolment on this page.
+ */
+
+const HOUR_PX = 44;
+
+/* A day the centre does not open. Drawn rather than left blank, because
+   an empty column and a shut one look the same and only one of them is
+   worth trying to book a meeting into. */
+const SHUT = {
+  backgroundImage:
+    'repeating-linear-gradient(45deg, transparent, transparent 6px, var(--nl-hair) 6px, var(--nl-hair) 12px)',
+};
+
+/* The hours the week grid draws. Widened to fit whatever is actually on,
+   so an 8am interview is not silently off the top of the page. */
+function dayBounds(rows) {
+  let from = 9 * 60;
+  let to = 20 * 60;
+  for (const r of rows) {
+    const span = entrySpan(r);
+    if (!span) continue;
+    from = Math.min(from, Math.floor(span.start / 60) * 60);
+    to = Math.max(to, Math.ceil(span.end / 60) * 60);
+  }
+  return { from, to };
+}
+
+const shortTime = (t) => {
+  const m = minutesOf(t);
+  if (m == null) return '';
+  const h = ((Math.floor(m / 60) + 11) % 12) + 1;
+  return m % 60 ? `${h}:${String(m % 60).padStart(2, '0')}` : `${h}`;
+};
+const ampm = (t) => {
+  const m = minutesOf(t);
+  if (m == null) return '';
+  return `${shortTime(t)}${m < 12 * 60 ? 'am' : 'pm'}`;
+};
+const hourLabel = (h) => `${((h + 11) % 12) + 1}${h < 12 ? 'a' : 'p'}`;
+
+/** A source that is not an entry cannot be edited from here. */
+const isEntry = (r) => r.source === 'entry';
+
+const SOURCE_TONE = {
+  closure: { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
+  timeoff: { color: 'var(--nl-muted)', wash: 'var(--nl-raised)' },
+  event:   { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
+  intake:  { color: 'var(--nl-ok)',    wash: 'var(--nl-okw)' },
+};
+const toneFor = (r) => SOURCE_TONE[r.source] || kindTone(r.kind);
+
+const BLANK = {
+  title: '', kind: 'meeting', date: '', startTime: '', endTime: '',
+  allDay: false, assignedTo: [], assignedNames: [], holdsBooking: false, note: '',
+};
+
+export default function RatioCalendar() {
+  const { activeCenterId, profile, centerConfig } = useAuth();
+  const [view, setView] = useState('week');
+  const [cursor, setCursor] = useState(toISO(new Date()));
+  const [entries, setEntries] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [intakes, setIntakes] = useState([]);
+  const [timeOff, setTimeOff] = useState([]);
+  const [staff, setStaff] = useState([]);
+  const [draft, setDraft] = useState(null);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [hidden, setHidden] = useState(() => new Set());
+
+  const today = toISO(new Date());
+  const holidays = useMemo(
+    () => (Array.isArray(centerConfig?.holidays) ? centerConfig.holidays : []),
+    [centerConfig],
+  );
+
+  /* The window every listener is scoped to. A month view needs the
+     leading and trailing days of the grid, so both take the wider one. */
+  const { from, to, days } = useMemo(() => {
+    if (view === 'week') {
+      const start = weekStartOf(cursor);
+      return {
+        from: start, to: addDays(start, 6),
+        days: Array.from({ length: 7 }, (_, i) => addDays(start, i)),
+      };
+    }
+    const d = asDate(cursor) || new Date();
+    const first = toISO(new Date(d.getFullYear(), d.getMonth(), 1));
+    const last = toISO(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    const start = weekStartOf(first);
+    const endDow = asDate(last).getDay();
+    const end = addDays(last, 6 - endDow);
+    const out = [];
+    for (let c = start; c <= end; c = addDays(c, 1)) out.push(c);
+    return { from: start, to: end, days: out };
+  }, [view, cursor]);
+
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      collection(db, 'centers', activeCenterId, 'calendar'),
+      snap => setEntries(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setEntries([]),
+    );
+  }, [activeCenterId]);
+
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      collection(db, 'centers', activeCenterId, 'events'),
+      snap => setEvents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setEvents([]),
+    );
+  }, [activeCenterId]);
+
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      query(collection(db, 'centerIntakes'), where('centerId', '==', activeCenterId)),
+      snap => setIntakes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setIntakes([]),
+    );
+  }, [activeCenterId]);
+
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      query(collection(db, 'timeOffRequests'), where('status', '==', 'approved')),
+      snap => setTimeOff(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      () => setTimeOff([]),
+    );
+  }, [activeCenterId]);
+
+  useEffect(() => {
+    if (!activeCenterId) return undefined;
+    return onSnapshot(
+      query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
+      snap => setStaff(snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(u => u.approved && u.displayName)
+        .sort((a, b) => String(a.displayName).localeCompare(String(b.displayName)))),
+      () => setStaff([]),
+    );
+  }, [activeCenterId]);
+
+  const byDate = useMemo(() => {
+    const map = {};
+    for (const d of days) {
+      map[d] = rowsForDate({
+        dateISO: d, entries: entries || [], events, intakes, timeOff, holidays,
+      }).filter(r => !hidden.has(r.source));
+    }
+    return map;
+  }, [days, entries, events, intakes, timeOff, holidays, hidden]);
+
+  /* Days the centre does not open at all. Without this a Saturday reads
+     exactly like a quiet Tuesday, and someone books a meeting on one. */
+  const closedDays = useMemo(
+    () => new Set(days.filter(d => !isOperatingDay(asDate(d), centerConfig))),
+    [days, centerConfig],
+  );
+
+  const holdCount = useMemo(
+    () => days.reduce((n, d) => n + byDate[d].filter(r => isEntry(r) && r.holdsBooking).length, 0),
+    [days, byDate],
+  );
+
+  /* What a hold on the drafted day would actually take off the booking
+     page. Shown while composing, because "Friday has one time left" is
+     the thing someone needs before they save, not after. */
+  const holdPreview = useMemo(() => {
+    if (!draft?.holdsBooking || !draft.date) return null;
+    const d = asDate(draft.date);
+    if (!d) return null;
+    const hours = resolveInstructionalHours(centerConfig, d) || {};
+    const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const h = hours[DOW[d.getDay()]];
+    const windows = h?.start && h?.end ? [{ start: h.start, end: h.end }] : [];
+    const s = centerConfig?.intakeSettings || {};
+    const blocked = blockedStarts({
+      windows,
+      startTime: draft.startTime, endTime: draft.endTime, allDay: draft.allDay,
+      slotDurationMin: s.slotDurationMin || 60,
+      slotIntervalMin: s.slotIntervalMin || 30,
+    });
+    const all = blockedStarts({
+      windows, allDay: true,
+      slotDurationMin: s.slotDurationMin || 60,
+      slotIntervalMin: s.slotIntervalMin || 30,
+    });
+    const booked = intakes.filter(t => String(t.slot || '').slice(0, 10) === draft.date && t.status !== 'cancelled');
+    const left = all.filter(t => !blocked.includes(t)
+      && !booked.some(b => String(b.slot || '').slice(11, 16) === t));
+    return { blocked, left, closure: closureMap(holidays)[draft.date] || null };
+  }, [draft, centerConfig, intakes, holidays]);
+
+  const openNew = (dateISO, startTime = '') => {
+    setError('');
+    setDraft({
+      ...BLANK, date: dateISO || today,
+      startTime, endTime: startTime ? hhmm(minutesOf(startTime) + 60) : '',
+    });
+  };
+
+  const save = async () => {
+    const problem = validateEntry(draft);
+    if (problem) { setError(problem); return; }
+    setSaving(true);
+    try {
+      const body = {
+        title: draft.title.trim(),
+        kind: draft.kind || 'task',
+        date: draft.date,
+        allDay: !!draft.allDay,
+        startTime: draft.allDay ? null : draft.startTime,
+        endTime: draft.allDay ? null : draft.endTime,
+        assignedTo: draft.assignedTo || [],
+        assignedNames: draft.assignedNames || [],
+        holdsBooking: !!draft.holdsBooking,
+        note: (draft.note || '').trim(),
+        updatedAt: new Date().toISOString(),
+        updatedBy: profile?.displayName || profile?.email || null,
+      };
+      if (draft.id) {
+        await updateDoc(doc(db, 'centers', activeCenterId, 'calendar', draft.id), body);
+        toast.success('Updated.');
+      } else {
+        await addDoc(collection(db, 'centers', activeCenterId, 'calendar'), {
+          ...body,
+          createdAt: new Date().toISOString(),
+          createdBy: profile?.displayName || profile?.email || null,
+        });
+        toast.success(body.holdsBooking
+          ? 'Saved — that time is now off the booking page.'
+          : 'Saved.');
+      }
+      setDraft(null);
+      setError('');
+    } catch (e) {
+      setError(e?.message || 'Could not save that.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (entry) => {
+    const ok = await confirmDialog({
+      title: `Delete "${entry.title}"?`,
+      message: entry.holdsBooking
+        ? 'That time goes back on the public booking page straight away.'
+        : 'This cannot be undone.',
+      confirmText: 'Delete', cancelText: 'Keep it', danger: true,
+    });
+    if (!ok) return;
+    try {
+      await deleteDoc(doc(db, 'centers', activeCenterId, 'calendar', entry.id));
+      toast.success('Deleted.');
+    } catch (e) { toast.error(e?.message || 'Could not delete that.'); }
+  };
+
+  const step = (n) => setCursor(view === 'week'
+    ? addDays(cursor, 7 * n)
+    : toISO(new Date(asDate(cursor).getFullYear(), asDate(cursor).getMonth() + n, 1)));
+
+  const rangeLabel = view === 'week'
+    ? `${asDate(from).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${asDate(to).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`
+    : asDate(cursor).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  const toggleLayer = (src) => setHidden((prev) => {
+    const next = new Set(prev);
+    if (next.has(src)) next.delete(src); else next.add(src);
+    return next;
+  });
+
+  return (
+    <div className="nl mx-auto w-full max-w-7xl pb-28 lg:pb-6">
+      <div className="mb-3.5 flex flex-wrap items-center gap-2.5">
+        <CalendarClock size={22} style={{ color: 'var(--nl-brand)' }} />
+        <h1 className="nl-display text-[26px] font-semibold leading-tight">{PAGES.calendar.name}</h1>
+        <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
+          style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>
+          {centerConfig?.name || activeCenterId}
+        </span>
+        <button type="button" onClick={() => openNew(today)}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white"
+          style={{ background: 'var(--nl-brand)' }}>
+          <Plus size={14} /> New entry
+        </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2.5">
+        <div className="flex overflow-hidden rounded-lg border"
+          style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
+          <button type="button" onClick={() => step(-1)} className="px-2.5 py-1.5" aria-label="Previous">
+            <ChevronLeft size={15} />
+          </button>
+          <button type="button" onClick={() => setCursor(today)}
+            className="border-x px-3 py-1.5 text-[12px]" style={{ borderColor: 'var(--nl-rule)' }}>
+            Today
+          </button>
+          <button type="button" onClick={() => step(1)} className="px-2.5 py-1.5" aria-label="Next">
+            <ChevronRight size={15} />
+          </button>
+        </div>
+        <span className="nl-display text-[15px] font-semibold">{rangeLabel}</span>
+
+        <div className="ml-auto flex overflow-hidden rounded-lg border"
+          style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
+          {['week', 'month'].map(v => (
+            <button key={v} type="button" onClick={() => setView(v)}
+              className="px-3.5 py-1.5 text-[11.5px] font-medium capitalize"
+              style={v === view
+                ? { background: 'var(--nl-ink)', color: '#fff', fontWeight: 600 }
+                : { color: 'var(--nl-muted)' }}>
+              {v}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <LayerBar hidden={hidden} onToggle={toggleLayer} holdCount={holdCount} />
+
+      {entries === null ? (
+        <div className="flex items-center gap-2 rounded-2xl border p-6 text-[13px]"
+          style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-muted)' }}>
+          <Loader2 size={15} className="animate-spin" /> Reading the calendar…
+        </div>
+      ) : view === 'week' ? (
+        <WeekGrid days={days} byDate={byDate} today={today} closedDays={closedDays}
+          onNew={openNew} onOpen={(r) => isEntry(r) && setDraft({ ...r })} />
+      ) : (
+        <MonthGrid days={days} byDate={byDate} today={today} cursor={cursor} closedDays={closedDays}
+          onNew={openNew} onOpen={(r) => isEntry(r) && setDraft({ ...r })} />
+      )}
+
+      {draft && (
+        <Composer
+          draft={draft} setDraft={setDraft} staff={staff} error={error}
+          saving={saving} onSave={save} onClose={() => { setDraft(null); setError(''); }}
+          onDelete={draft.id ? () => { remove(draft); setDraft(null); } : null}
+          preview={holdPreview}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── The layer bar ──────────────────────────────────────────────────── */
+
+const LAYER_CHIPS = [
+  { src: 'intake',  label: 'Assessments' },
+  { src: 'entry',   label: 'Entries' },
+  { src: 'event',   label: 'Centre events' },
+  { src: 'timeoff', label: 'Time off' },
+  { src: 'closure', label: 'Closures' },
+];
+
+function LayerBar({ hidden, onToggle, holdCount }) {
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-1.5">
+      {LAYER_CHIPS.map(({ src, label }) => {
+        const on = !hidden.has(src);
+        const tone = SOURCE_TONE[src] || kindTone('meeting');
+        return (
+          <button key={src} type="button" onClick={() => onToggle(src)}
+            className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11.5px] font-medium"
+            style={on
+              ? { borderColor: tone.color, background: tone.wash, color: tone.color }
+              : { borderColor: 'var(--nl-rule)', color: 'var(--nl-muted)' }}>
+            {src === 'closure' ? (
+              <Lock size={10} style={{ opacity: on ? 1 : 0.5 }} />
+            ) : (
+              <span className="inline-block h-[7px] w-[7px] rounded-full"
+                style={{ background: on ? tone.color : 'var(--nl-rule)' }} />
+            )}
+            {label}
+          </button>
+        );
+      })}
+      {holdCount > 0 && (
+        <span className="ml-auto inline-flex items-center gap-1.5 text-[11.5px]"
+          style={{ color: 'var(--nl-muted)' }}>
+          <Lock size={11} />
+          {holdCount} {holdCount === 1 ? 'entry holds' : 'entries hold'} the booking page
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ── Week ───────────────────────────────────────────────────────────── */
+
+function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
+  const all = days.flatMap(d => byDate[d]);
+  const { from, to } = dayBounds(all);
+  const span = to - from;
+  const pct = (m) => ((m - from) / span) * 100;
+  const hours = [];
+  for (let h = from / 60; h * 60 < to; h += 1) hours.push(h);
+
+  return (
+    <div className="overflow-x-auto rounded-2xl border"
+      style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
+      <div className="min-w-[860px]">
+        <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)' }}>
+          <div />
+          {days.map(d => {
+            const dt = asDate(d);
+            const isToday = d === today;
+            return (
+              <div key={d} className="border-l py-2 text-center" style={{ borderColor: 'var(--nl-rule)' }}>
+                <div className="text-[9px] font-bold uppercase tracking-[0.1em]"
+                  style={{ color: isToday ? 'var(--nl-brand)' : 'var(--nl-muted)' }}>
+                  {dt.toLocaleDateString(undefined, { weekday: 'short' })}
+                </div>
+                <div className="nl-display text-[17px] font-semibold"
+                  style={isToday ? { color: 'var(--nl-brand)' } : undefined}>
+                  {dt.getDate()}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* All-day band: closures, time off, fun days and all-day entries. */}
+        <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)', background: 'var(--nl-paper)' }}>
+          <div className="pr-2 pt-2 text-right text-[8.5px] font-bold uppercase tracking-[0.08em]"
+            style={{ color: 'var(--nl-muted)' }}>All day</div>
+          {days.map(d => (
+            <div key={d} className="min-h-[30px] space-y-1 border-l p-1"
+              style={{ borderColor: 'var(--nl-rule)' }}>
+              {byDate[d].filter(r => r.allDay).map(r => {
+                const tone = toneFor(r);
+                return (
+                  <button key={r.id} type="button" onClick={() => onOpen(r)}
+                    className="block w-full truncate rounded px-1.5 py-0.5 text-left text-[10px] font-semibold"
+                    style={{ background: tone.wash, color: tone.color }}
+                    title={r.note || r.title}>
+                    {r.holdsBooking && <Lock size={8} className="mr-1 inline" />}
+                    {r.title}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+
+        <div className="relative grid" style={{ gridTemplateColumns: '54px repeat(7, 1fr)' }}>
+          <div className="relative" style={{ height: (span / 60) * HOUR_PX }}>
+            {hours.map(h => (
+              <span key={h} className="absolute right-2 -translate-y-1 text-[10px] font-semibold"
+                style={{ top: (h - from / 60) * HOUR_PX, color: 'var(--nl-muted)' }}>
+                {hourLabel(h)}
+              </span>
+            ))}
+          </div>
+          {days.map(d => (
+            <div key={d} className="relative border-l"
+              style={{
+                borderColor: 'var(--nl-rule)', height: (span / 60) * HOUR_PX,
+                ...(closedDays.has(d) ? SHUT : null),
+              }}>
+              {closedDays.has(d) && (
+                <span className="absolute inset-x-0 top-2 text-center text-[10px] font-semibold"
+                  style={{ color: 'var(--nl-muted)' }}>Centre closed</span>
+              )}
+              {hours.map(h => (
+                <button key={h} type="button"
+                  onClick={() => onNew(d, hhmm(h * 60))}
+                  className="absolute left-0 right-0 border-t"
+                  style={{ top: (h - from / 60) * HOUR_PX, height: HOUR_PX, borderColor: 'var(--nl-hair)' }}
+                  aria-label={`Add an entry at ${hourLabel(h)}`} />
+              ))}
+              {byDate[d].filter(r => !r.allDay).map(r => {
+                const s = entrySpan(r);
+                if (!s) return null;
+                const tone = toneFor(r);
+                const tall = (s.end - s.start) >= 50;
+                return (
+                  <button key={r.id} type="button" onClick={() => onOpen(r)}
+                    className="absolute left-[3px] right-[3px] overflow-hidden rounded px-1.5 py-1 text-left"
+                    style={{
+                      top: `${pct(s.start)}%`, height: `calc(${pct(s.end) - pct(s.start)}% - 3px)`,
+                      background: tone.wash, color: tone.color,
+                      borderLeft: `3px solid ${tone.color}`,
+                    }}
+                    title={`${ampm(r.startTime)}–${ampm(r.endTime)} · ${r.title}`}>
+                    <div className="flex items-start gap-1">
+                      <span className="flex-1 truncate text-[11px] font-semibold">{r.title}</span>
+                      {r.holdsBooking && <Lock size={9} className="mt-[2px] shrink-0 opacity-70" />}
+                    </div>
+                    {tall && (
+                      <div className="mt-0.5 truncate text-[10px] opacity-85">
+                        {shortTime(r.startTime)}–{shortTime(r.endTime)}
+                        {r.assignedNames?.length ? ` · ${r.assignedNames.join(', ')}` : ''}
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Month ──────────────────────────────────────────────────────────── */
+
+function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
+  const month = asDate(cursor).getMonth();
+  return (
+    <div className="overflow-hidden rounded-2xl border"
+      style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
+      <div className="grid border-b" style={{ gridTemplateColumns: 'repeat(7, 1fr)', borderColor: 'var(--nl-rule)' }}>
+        {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
+          <div key={d} className="py-2 text-center text-[9px] font-bold uppercase tracking-[0.12em]"
+            style={{ color: 'var(--nl-muted)' }}>{d}</div>
+        ))}
+      </div>
+      <div className="grid" style={{ gridTemplateColumns: 'repeat(7, 1fr)' }}>
+        {days.map(d => {
+          const dt = asDate(d);
+          const out = dt.getMonth() !== month;
+          const rows = byDate[d];
+          const closure = rows.find(r => r.source === 'closure');
+          const rest = rows.filter(r => r.source !== 'closure');
+          const show = rest.slice(0, 3);
+          return (
+            <div key={d}
+              className="min-h-[118px] border-l border-t p-1.5"
+              style={{
+                borderColor: 'var(--nl-hair)',
+                background: closure ? 'var(--nl-brandw)' : out ? 'var(--nl-paper)' : undefined,
+                ...(!closure && closedDays.has(d) ? SHUT : null),
+              }}>
+              <button type="button" onClick={() => onNew(d)}
+                className="nl-display mb-1 flex h-[22px] w-[24px] items-center justify-center rounded-md text-[13px] font-semibold"
+                style={d === today
+                  ? { background: 'var(--nl-brand)', color: '#fff' }
+                  : { color: out ? 'var(--nl-rule)' : 'var(--nl-ink2)' }}>
+                {dt.getDate()}
+              </button>
+              {closure && (
+                <div className="mb-1 rounded-md px-1.5 py-1 text-[9.5px] font-bold leading-tight"
+                  style={{ color: 'var(--nl-brand)', background: 'rgba(255,255,255,.6)' }}>
+                  <Lock size={8} className="mr-1 inline" />{closure.title}
+                  <div className="font-medium opacity-85">{closure.note}</div>
+                </div>
+              )}
+              {!closure && show.map(r => {
+                const tone = toneFor(r);
+                return (
+                  <button key={r.id} type="button" onClick={() => onOpen(r)}
+                    className="mb-0.5 flex w-full items-center gap-1.5 truncate rounded px-1.5 py-0.5 text-left text-[10px]"
+                    style={{ background: tone.wash, color: tone.color }}
+                    title={r.title}>
+                    <span className="inline-block h-[5px] w-[5px] shrink-0 rounded-full"
+                      style={{ background: tone.color }} />
+                    <span className="truncate">{r.title}</span>
+                  </button>
+                );
+              })}
+              {!closure && rest.length > show.length && (
+                <div className="px-1.5 text-[9.5px] font-semibold" style={{ color: 'var(--nl-muted)' }}>
+                  +{rest.length - show.length} more
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ── Composer ───────────────────────────────────────────────────────── */
+
+function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDelete, preview }) {
+  const set = (patch) => setDraft(d => ({ ...d, ...patch }));
+  const togglePerson = (u) => {
+    const has = (draft.assignedTo || []).includes(u.id);
+    set({
+      assignedTo: has ? draft.assignedTo.filter(x => x !== u.id) : [...(draft.assignedTo || []), u.id],
+      assignedNames: has
+        ? (draft.assignedNames || []).filter(x => x !== u.displayName)
+        : [...(draft.assignedNames || []), u.displayName],
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/30 p-4 sm:p-8">
+      <div className="nl w-full max-w-lg rounded-2xl border p-5 shadow-xl"
+        style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
+        <div className="mb-4 flex items-center">
+          <h2 className="nl-display text-[19px] font-semibold">
+            {draft.id ? 'Edit entry' : 'New entry'}
+          </h2>
+          <button type="button" onClick={onClose} className="ml-auto p-1" aria-label="Close">
+            <X size={17} style={{ color: 'var(--nl-muted)' }} />
+          </button>
+        </div>
+
+        <Field label="What is it">
+          <input value={draft.title} onChange={e => set({ title: e.target.value })}
+            placeholder="Radius training" autoFocus
+            className="w-full rounded-lg border px-3 py-2.5 text-[15px] font-semibold outline-none"
+            style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+        </Field>
+
+        <Field label="Type">
+          <div className="flex flex-wrap gap-1.5">
+            {KIND_LIST.map(k => {
+              const on = draft.kind === k.key;
+              const tone = kindTone(k.key);
+              return (
+                <button key={k.key} type="button" onClick={() => set({ kind: k.key })}
+                  className="rounded-full border px-3 py-1.5 text-[11.5px] font-medium"
+                  style={on
+                    ? { background: tone.color, borderColor: tone.color, color: '#fff', fontWeight: 600 }
+                    : { borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+                  {kindLabel(k.key)}
+                </button>
+              );
+            })}
+          </div>
+        </Field>
+
+        <Field label="When">
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="date" value={draft.date} onChange={e => set({ date: e.target.value })}
+              className="rounded-lg border px-3 py-2 text-[13.5px]"
+              style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+            {!draft.allDay && (
+              <>
+                <input type="time" value={draft.startTime || ''} onChange={e => set({ startTime: e.target.value })}
+                  className="rounded-lg border px-3 py-2 text-[13.5px]"
+                  style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+                <span style={{ color: 'var(--nl-muted)' }}>→</span>
+                <input type="time" value={draft.endTime || ''} onChange={e => set({ endTime: e.target.value })}
+                  className="rounded-lg border px-3 py-2 text-[13.5px]"
+                  style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+              </>
+            )}
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-[12.5px]">
+              <input type="checkbox" checked={!!draft.allDay}
+                onChange={e => set({ allDay: e.target.checked })} />
+              All day
+            </label>
+          </div>
+        </Field>
+
+        <Field label="Who is on it">
+          <div className="max-h-[132px] overflow-y-auto rounded-lg border p-1.5"
+            style={{ borderColor: 'var(--nl-rule)' }}>
+            {staff.length === 0 && (
+              <p className="px-1.5 py-1 text-[12px]" style={{ color: 'var(--nl-muted)' }}>
+                Nobody to assign yet.
+              </p>
+            )}
+            {staff.map(u => (
+              <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12.5px]">
+                <input type="checkbox" checked={(draft.assignedTo || []).includes(u.id)}
+                  onChange={() => togglePerson(u)} />
+                {u.displayName}
+              </label>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+            Leaving it unassigned is fine — it still shows on the centre&rsquo;s calendar.
+          </p>
+        </Field>
+
+        {/* The one with teeth. */}
+        <div className="mt-3 rounded-xl border p-3.5"
+          style={draft.holdsBooking
+            ? { borderColor: 'var(--nl-ok)', background: 'var(--nl-okw)', borderWidth: 1.5 }
+            : { borderColor: 'var(--nl-rule)' }}>
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" checked={!!draft.holdsBooking}
+              onChange={e => set({ holdsBooking: e.target.checked })} />
+            <span className="text-[13.5px] font-semibold"
+              style={draft.holdsBooking ? { color: 'var(--nl-ok)' } : undefined}>
+              Hold the booking page while this runs
+            </span>
+          </label>
+          {draft.holdsBooking && preview && (
+            <div className="mt-2 text-[12px] leading-relaxed" style={{ color: 'var(--nl-ink2)' }}>
+              {preview.closure ? (
+                <>The centre is already closed that day ({preview.closure.name}), so nothing is bookable anyway.</>
+              ) : preview.blocked.length === 0 ? (
+                <>Nothing to hold — the centre isn&rsquo;t taking assessments then.</>
+              ) : (
+                <>
+                  Families will not be offered{' '}
+                  <b>{preview.blocked.map(t => ampm(t)).join(', ')}</b>.
+                  <div className="mt-1.5 border-t pt-1.5 text-[11.5px]"
+                    style={{ borderColor: 'rgba(23,121,94,.22)', color: 'var(--nl-warn)' }}>
+                    {preview.left.length === 0
+                      ? 'That day will have no bookable times left.'
+                      : `That day will have ${preview.left.length} bookable ${preview.left.length === 1 ? 'time' : 'times'} left.`}
+                  </div>
+                </>
+              )}
+              <div className="mt-1.5 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+                It does <b>not</b> use up the day&rsquo;s assessment limit — only real assessments count against that.
+              </div>
+            </div>
+          )}
+        </div>
+
+        <Field label="Note">
+          <textarea value={draft.note || ''} onChange={e => set({ note: e.target.value })}
+            rows={2} placeholder="Anything the others need to know"
+            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+            style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+        </Field>
+
+        {error && (
+          <p className="mt-2 text-[12.5px] font-medium" style={{ color: 'var(--nl-brand)' }}>{error}</p>
+        )}
+
+        <div className="mt-4 flex items-center gap-2 border-t pt-4" style={{ borderColor: 'var(--nl-rule)' }}>
+          {onDelete && (
+            <button type="button" onClick={onDelete}
+              className="inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-semibold"
+              style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-brand)' }}>
+              <Trash2 size={13} /> Delete
+            </button>
+          )}
+          <button type="button" onClick={onClose}
+            className="ml-auto rounded-lg border px-4 py-2 text-[12.5px] font-semibold"
+            style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
+            Cancel
+          </button>
+          <button type="button" onClick={onSave} disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-[12.5px] font-semibold text-white disabled:opacity-60"
+            style={{ background: 'var(--nl-brand)' }}>
+            {saving && <Loader2 size={13} className="animate-spin" />}
+            {draft.id ? 'Save changes' : 'Save entry'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <div className="mt-3.5">
+      <div className="mb-1.5 text-[9.5px] font-bold uppercase tracking-[0.13em]"
+        style={{ color: 'var(--nl-muted)' }}>{label}</div>
+      {children}
+    </div>
+  );
+}

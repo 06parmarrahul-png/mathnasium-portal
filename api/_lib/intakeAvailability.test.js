@@ -174,3 +174,161 @@ describe('the cap on the server, where it actually counts', () => {
     expect(out.error || '').not.toMatch(/fully booked/i);
   });
 });
+
+/**
+ * Holds and closures — the two lists that are not bookings.
+ *
+ * The fixture is Langley's Friday 25 September 2026: the centre teaches
+ * 3–7pm, an assessment runs 60 minutes and the grid offers one every 30,
+ * so the day has seven start times. A 3–5pm training holds the page.
+ *
+ * src/lib/ratioCalendar.test.js pins the same day from the front-end
+ * side. A Vercel function may not import from src/, so the two
+ * implementations are separate on purpose and the shared fixture is what
+ * stops them drifting apart quietly.
+ */
+describe('a calendar entry that holds the booking page', () => {
+  const half = (over = {}) => settings({ slotIntervalMin: 30, ...over });
+  const hold = (ymd, from, to) => ({ startISO: `${ymd}T${from}:00`, durationMin: to });
+  // 3–5pm on the Friday, as holdBlocks() emits it.
+  const TRAINING = { startISO: `${FRIDAY}T15:00:00`, durationMin: 120 };
+
+  const labels = (day, pick) => day.slots.filter(pick).map(s => s.label);
+
+  it('offers the whole day when nothing holds it', () => {
+    const days = computeWeekSlots(WEEK, half(), [], HOURS, null);
+    expect(labels(dayOf(days, FRIDAY), s => s.available))
+      .toEqual(['3:00pm', '3:30pm', '4:00pm', '4:30pm', '5:00pm', '5:30pm', '6:00pm']);
+  });
+
+  it('takes exactly the overlapping starts off that day', () => {
+    // 4:30 goes because the assessment starting there runs to 5:30 and
+    // overlaps the tail of the training. 5:00 stays because it sits
+    // flush against the end — blocking it would cost a bookable hour.
+    const days = computeWeekSlots(WEEK, half(), [], HOURS, null, { holds: [TRAINING] });
+    const fri = dayOf(days, FRIDAY);
+    expect(labels(fri, s => s.held)).toEqual(['3:00pm', '3:30pm', '4:00pm', '4:30pm']);
+    expect(labels(fri, s => s.available)).toEqual(['5:00pm', '5:30pm', '6:00pm']);
+  });
+
+  it('leaves every other day alone', () => {
+    const days = computeWeekSlots(WEEK, half(), [], HOURS, null, { holds: [TRAINING] });
+    expect(labels(dayOf(days, THURSDAY), s => s.available)).toHaveLength(7);
+  });
+
+  it('DOES NOT use up the day-s assessment allowance', () => {
+    // The whole reason holds travel in their own list. Friday takes two
+    // assessments; one is booked and a training holds two hours. If the
+    // hold counted, the day would read full and the remaining slot would
+    // vanish — a staff meeting would have eaten a family's assessment.
+    const days = computeWeekSlots(
+      WEEK, half({ maxIntakesPerWeekday: { Friday: 2 } }),
+      [booking(FRIDAY, '18:00')], HOURS, null, { holds: [TRAINING] },
+    );
+    const fri = dayOf(days, FRIDAY);
+    expect(fri.dayFull).toBe(false);
+    expect(labels(fri, s => s.available)).toEqual(['5:00pm']);
+  });
+
+  it('still fills the day when the real bookings reach the cap', () => {
+    const days = computeWeekSlots(
+      WEEK, half({ maxIntakesPerWeekday: { Friday: 2 } }),
+      [booking(FRIDAY, '17:00'), booking(FRIDAY, '18:00')], HOURS, null,
+      { holds: [TRAINING] },
+    );
+    expect(dayOf(days, FRIDAY).dayFull).toBe(true);
+    expect(labels(dayOf(days, FRIDAY), s => s.available)).toEqual([]);
+  });
+
+  it('reads a booked slot as booked, not as held', () => {
+    // Both are unavailable, but a family who lost a race and a family
+    // who picked a blocked time need different sentences.
+    const days = computeWeekSlots(WEEK, half(), [booking(FRIDAY, '17:00')], HOURS, null,
+      { holds: [TRAINING] });
+    const five = dayOf(days, FRIDAY).slots.find(s => s.label === '5:00pm');
+    expect(five).toMatchObject({ taken: true, held: false, available: false });
+  });
+
+  it('changes nothing when no holds are passed at all', () => {
+    // Every existing caller passes five arguments. They must keep the
+    // behaviour they had before this parameter existed.
+    const before = computeWeekSlots(WEEK, half(), [booking(FRIDAY, '17:00')], HOURS, null);
+    const after  = computeWeekSlots(WEEK, half(), [booking(FRIDAY, '17:00')], HOURS, null, {});
+    expect(labels(dayOf(after, FRIDAY), s => s.available))
+      .toEqual(labels(dayOf(before, FRIDAY), s => s.available));
+    expect(dayOf(before, FRIDAY).slots.every(s => s.held === false)).toBe(true);
+  });
+
+  it('refuses a held time server-side, with its own message', () => {
+    const v = validateSlot({
+      slotISO: `${FRIDAY}T16:00:00`, settings: half(), bookedSlots: [],
+      instructionalHours: HOURS, holds: [TRAINING],
+    });
+    expect(v.ok).toBe(false);
+    expect(v.error).toMatch(/not taking assessments at that time/i);
+  });
+
+  it('still lets the flush 5pm slot through', () => {
+    expect(validateSlot({
+      slotISO: `${FRIDAY}T17:00:00`, settings: half(), bookedSlots: [],
+      instructionalHours: HOURS, holds: [TRAINING],
+    })).toEqual({ ok: true });
+  });
+
+  it('says "someone else booked it" ahead of "we are not taking any"', () => {
+    const v = validateSlot({
+      slotISO: `${FRIDAY}T16:00:00`, settings: half(),
+      bookedSlots: [booking(FRIDAY, '16:00')], instructionalHours: HOURS,
+      holds: [TRAINING],
+    });
+    expect(v.error).toMatch(/just booked by someone else/i);
+  });
+
+  it('holds a whole day when the entry is all-day', () => {
+    const days = computeWeekSlots(WEEK, half(), [], HOURS, null,
+      { holds: [hold(FRIDAY, '00:00', 24 * 60)] });
+    expect(labels(dayOf(days, FRIDAY), s => s.available)).toEqual([]);
+  });
+});
+
+describe('a centre closure shuts the day', () => {
+  const CLOSURES = { [FRIDAY]: { name: 'Labour Day', stat: true } };
+
+  it('offers no times at all, however open the hours are', () => {
+    // Before closures were read here, nothing in the booking path ever
+    // looked at centerConfig.holidays — the weekday had instructional
+    // hours, so a family could book an assessment on a stat holiday.
+    const days = computeWeekSlots(WEEK, settings(), [], HOURS, null, { closures: CLOSURES });
+    const fri = dayOf(days, FRIDAY);
+    expect(fri.slots).toEqual([]);
+    expect(fri.closed).toBe(true);
+    expect(fri.closureName).toBe('Labour Day');
+  });
+
+  it('leaves the rest of the week open', () => {
+    const days = computeWeekSlots(WEEK, settings(), [], HOURS, null, { closures: CLOSURES });
+    expect(dayOf(days, THURSDAY).closed).toBe(false);
+    expect(dayOf(days, THURSDAY).slots).toHaveLength(4);
+  });
+
+  it('is not the same thing as being full', () => {
+    // "Full" sends a parent looking for another time; "closed" sends
+    // them to another day.
+    expect(dayOf(computeWeekSlots(WEEK, settings(), [], HOURS, null, { closures: CLOSURES }), FRIDAY).dayFull)
+      .toBe(false);
+  });
+
+  it('refuses the booking server-side and names the closure', () => {
+    const v = validateSlot({
+      slotISO: `${FRIDAY}T16:00:00`, settings: settings(), bookedSlots: [],
+      instructionalHours: HOURS, closures: CLOSURES,
+    });
+    expect(v.ok).toBe(false);
+    expect(v.error).toMatch(/closed that day \(Labour Day\)/);
+  });
+
+  it('marks every day open when no closures are passed', () => {
+    const days = computeWeekSlots(WEEK, settings(), [], HOURS, null);
+    expect(days.every(d => d.closed === false)).toBe(true);
+  });
+});

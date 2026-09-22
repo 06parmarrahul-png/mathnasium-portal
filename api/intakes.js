@@ -54,7 +54,68 @@ async function loadCentreContext(fs, centerId) {
   // 10–14 summer window while the rest of the year stays 15–19.
   const instructionalHours = config.instructionalHours || null;
   const summerOverride     = config.summerHours2026   || null;
-  return { centre, settings, instructionalHours, summerOverride };
+  // Statutory holidays and centre closures. Already configured in Centre
+  // Settings, and until now never read on this path — so a family could
+  // book an assessment on a stat holiday, because the weekday had
+  // instructional hours and nothing said the centre was shut.
+  const holidays = Array.isArray(config.holidays) ? config.holidays : [];
+  return { centre, settings, instructionalHours, summerOverride, holidays };
+}
+
+/**
+ * Ratio Calendar entries that hold the booking page, as busy blocks.
+ *
+ * Mirrors holdBlocks() in src/lib/ratioCalendar.js. It is written out
+ * again rather than imported because a Vercel function may not reach into
+ * the front-end bundle (see the note in api/_lib/intakeAvailability.js);
+ * both sides are pinned against the same fixture in their own tests.
+ *
+ * `holdsBooking` is filtered in JS rather than in the query, so this needs
+ * no composite index — the date range alone is a single-field range.
+ */
+async function loadHolds(fs, centerId, fromYmd, toYmd) {
+  const snap = await fs
+    .collection(`centers/${centerId}/calendar`)
+    .where('date', '>=', fromYmd)
+    .where('date', '<=', toYmd)
+    .get()
+    .catch(() => ({ docs: [] }));
+
+  const hm = (t) => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(String(t || '').trim());
+    if (!m) return null;
+    const h = Number(m[1]); const min = Number(m[2]);
+    return (h > 23 || min > 59) ? null : h * 60 + min;
+  };
+
+  const out = [];
+  for (const d of snap.docs) {
+    const e = d.data();
+    if (!e || e.holdsBooking !== true || !e.date) continue;
+    const s = e.allDay ? null : hm(e.startTime);
+    const t = e.allDay ? null : hm(e.endTime);
+    if (s != null && t != null && t > s) {
+      out.push({ startISO: `${e.date}T${e.startTime}:00`, durationMin: t - s });
+    } else {
+      // All-day, or missing either end — covered as the whole day rather
+      // than guessed at. A half-known hold that blocks nothing is worse
+      // than one that blocks too much: nobody notices the first.
+      out.push({ startISO: `${e.date}T00:00:00`, durationMin: 24 * 60 });
+    }
+  }
+  return out;
+}
+
+/** centerConfig.holidays → { 'YYYY-MM-DD': { name, stat } } for the engine. */
+function closuresFrom(holidays, fromYmd, toYmd) {
+  const out = {};
+  for (const h of holidays || []) {
+    if (!h || !h.date) continue;
+    if (fromYmd && h.date < fromYmd) continue;
+    if (toYmd && h.date > toYmd) continue;
+    out[h.date] = { name: h.name || 'Centre closed', stat: h.stat !== false };
+  }
+  return out;
 }
 
 // ── GET: availability grid ─────────────────────────────────────────────
@@ -66,7 +127,7 @@ async function handleAvailability(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ error: 'Centre not found' });
-  const { centre, settings, instructionalHours, summerOverride } = ctx;
+  const { centre, settings, instructionalHours, summerOverride, holidays } = ctx;
 
   if (!settings.enabled) {
     return res.status(200).json({
@@ -98,7 +159,15 @@ async function handleAvailability(req, res) {
     };
   });
 
-  const days = computeWeekSlots(weekStart, settings, bookedSlots, instructionalHours, summerOverride);
+  // The week the grid is drawing, as centre-local dates — which is the
+  // key both the calendar entries and the holiday list are stored under.
+  const weekEnd = new Date(start.getTime() + 6 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const holds = await loadHolds(fs, centerId, weekStart, weekEnd);
+
+  const days = computeWeekSlots(weekStart, settings, bookedSlots, instructionalHours, summerOverride, {
+    holds,
+    closures: closuresFrom(holidays, weekStart, weekEnd),
+  });
   res.status(200).json({
     centre:   { name: centre.name || centerId, timezone: settings.timezone },
     settings: {
@@ -130,7 +199,7 @@ async function handleCreate(req, res) {
   const fs = getFirestore();
   const ctx = await loadCentreContext(fs, centerId);
   if (!ctx) return res.status(404).json({ ok: false, error: 'Centre not found' });
-  const { centre, settings, instructionalHours, summerOverride } = ctx;
+  const { centre, settings, instructionalHours, summerOverride, holidays } = ctx;
   if (!settings.enabled) {
     return res.status(403).json({ ok: false, error: 'Online booking is not enabled for this centre.' });
   }
@@ -153,7 +222,17 @@ async function handleCreate(req, res) {
     };
   });
 
-  const v = validateSlot({ slotISO: slot, settings, bookedSlots, instructionalHours, summerOverride });
+  // Only the chosen day matters here — this is the last check before the
+  // write, not a grid. Read off the string for the same reason
+  // validateSlot does: a zoneless wall clock through Date() shifts the
+  // day by the server's offset.
+  const slotYmd = String(slot).slice(0, 10);
+  const holds = await loadHolds(fs, centerId, slotYmd, slotYmd);
+
+  const v = validateSlot({
+    slotISO: slot, settings, bookedSlots, instructionalHours, summerOverride,
+    holds, closures: closuresFrom(holidays, slotYmd, slotYmd),
+  });
   if (!v.ok) return res.status(409).json({ ok: false, error: v.error });
 
   const cancelToken = (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2)).slice(0, 24);

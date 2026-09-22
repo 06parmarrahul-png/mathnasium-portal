@@ -35,6 +35,7 @@ export const PAGES = {
   announcements:    { path: '/announcements',         name: 'Announcements' },
   notifications:    { path: '/notifications',         name: 'Notifications' },
 
+  calendar:         { path: '/calendar',              name: 'Calendar' },
   studentScheduler: { path: '/scheduler-creation',    name: 'Student Scheduler' },
   staffSchedule:    { path: '/admin?tab=spreadsheet', name: 'Manage Staff Schedule' },
   manageStaff:      { path: '/admin?tab=users',       name: 'Manage Staff' },

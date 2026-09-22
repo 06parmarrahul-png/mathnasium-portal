@@ -31,6 +31,7 @@ const PlatformChat              = lazy(() => import('./pages/PlatformChat'));
 const CenterAnalytics           = lazy(() => import('./pages/CenterAnalytics'));
 const MyPay                     = lazy(() => import('./pages/MyPay'));
 const CentreEvents              = lazy(() => import('./pages/CentreEvents'));
+const RatioCalendar             = lazy(() => import('./pages/RatioCalendar'));
 const ManagementDesk            = lazy(() => import('./pages/ManagementDesk'));
 const ConfirmSignOut            = lazy(() => import('./pages/ConfirmSignOut'));
 const SupplyDemand              = lazy(() => import('./pages/SupplyDemand'));
@@ -133,6 +134,7 @@ function AppRoutes() {
             full admin-panel access — same "operational admin" tier as
             /inventory and /availability-log below. */}
         <Route path="/admin" element={<ProtectedRoute requireOwner allowOps><Layout><Admin /></Layout></ProtectedRoute>} />
+        <Route path="/calendar" element={<ProtectedRoute permission="calendar.access"><Layout><RatioCalendar /></Layout></ProtectedRoute>} />
         <Route path="/super-admin" element={<ProtectedRoute><Layout><SuperAdmin /></Layout></ProtectedRoute>} />
         {/* Platform roles only, Enterprise-only. The CENTRE role editor
             moved to Admin → Manage Staff, where it sits beside the

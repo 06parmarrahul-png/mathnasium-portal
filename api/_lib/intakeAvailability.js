@@ -178,13 +178,39 @@ function slotStartsForDay(windows, slotDurationMin, slotIntervalMin) {
 function isSlotTaken(candidateISO, slotDurationMin, bookedSlots) {
   const candStart = Date.parse(candidateISO);
   const candEnd   = candStart + slotDurationMin * 60 * 1000;
-  for (const b of bookedSlots) {
+  for (const b of bookedSlots || []) {
     const bStart = Date.parse(b.startISO);
     const bEnd   = bStart + (b.durationMin || slotDurationMin) * 60 * 1000;
     if (candStart < bEnd && bStart < candEnd) return true; // overlap
   }
   return false;
 }
+
+/**
+ * HOLDS AND CLOSURES — the two lists that are NOT bookings.
+ *
+ * `holds`    [{ startISO, durationMin }] — Ratio Calendar entries flagged
+ *            holdsBooking. A staff meeting, a training block, a director
+ *            keeping Friday afternoon clear.
+ * `closures` { 'YYYY-MM-DD': { name, stat } } — centerConfig.holidays.
+ *            A closed day offers NO slots at all, whatever its hours say.
+ *
+ * Holds collide with candidate slots exactly like a booking does, and
+ * they are deliberately kept OUT of `bookedSlots`, because countIntakesOn
+ * counts that list against the centre's per-day cap. Merged in, one staff
+ * meeting would eat one of Friday's two assessments — the meeting is not
+ * an assessment and must not consume the allowance for one.
+ *
+ * Until closures were read here the public booking page never looked at
+ * centerConfig.holidays at all, so a family could book an assessment on a
+ * statutory holiday: the weekday had instructional hours and nothing said
+ * the centre was shut.
+ */
+const holdList = (extra) => (extra && Array.isArray(extra.holds)) ? extra.holds : [];
+const closureOn = (extra, ymd) => {
+  const map = (extra && extra.closures) || {};
+  return Object.prototype.hasOwnProperty.call(map, ymd) ? (map[ymd] || {}) : null;
+};
 
 /**
  * Compute the slot grid for a 7-day window starting at `weekStartYMD`.
@@ -194,9 +220,10 @@ function isSlotTaken(candidateISO, slotDurationMin, bookedSlots) {
  * @param {Array}  bookedSlots           - [{ startISO, durationMin, status }]
  * @param {object} instructionalHours    - centerConfig.instructionalHours (fallback source for availability)
  * @param {object} summerOverride        - centerConfig.summerHours2026 (applied per-date when in window)
+ * @param {object} extra                 - { holds, closures } — see the note above isSlotTaken
  * @returns {Array} day rows
  */
-export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instructionalHours = null, summerOverride = null) {
+export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instructionalHours = null, summerOverride = null, extra = {}) {
   const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const slotInt  = s.slotIntervalMin  || 30;
@@ -206,6 +233,7 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
 
   // Ignore cancelled bookings so the slot reopens.
   const active = bookedSlots.filter(b => b.status !== 'cancelled');
+  const holds = holdList(extra);
 
   const out = [];
   const start = ymdToDate(weekStartYMD);
@@ -214,6 +242,18 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
     d.setUTCDate(d.getUTCDate() + i);
     const ymd = dateToYmd(d);
     const weekday = WEEKDAYS[d.getUTCDay()];
+
+    // A closed day offers nothing, however open its hours are. Emitted
+    // with an empty slot list and a reason, so the grid can say "Closed —
+    // Labour Day" instead of a column of silent dashes.
+    const closure = closureOn(extra, ymd);
+    if (closure) {
+      out.push({
+        date: ymd, weekday, dayFull: false, slots: [],
+        closed: true, closureName: closure.name || 'Centre closed',
+      });
+      continue;
+    }
     // Resolve the day's windows per-date. When the owner uses a custom
     // availability override (useCustomAvailability=true), it takes
     // precedence as before. Otherwise we apply the summer override to
@@ -238,17 +278,21 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
       const inPast    = tMs < nowMs;
       const tooFuture = tMs > maxFuture;
       const taken     = isSlotTaken(iso, slotDur, active);
+      // Held by a calendar entry rather than booked by a family. Both are
+      // unavailable; they are separate so the grid can tell them apart.
+      const held      = !taken && isSlotTaken(iso, slotDur, holds);
       slots.push({
         startISO: iso,
         label:    formatTimeLabel(minutes),
         taken,
+        held,
         inPast,
         tooFuture,
         dayFull,
-        available: !taken && !inPast && !tooFuture && !dayFull,
+        available: !taken && !held && !inPast && !tooFuture && !dayFull,
       });
     }
-    out.push({ date: ymd, weekday, dayFull, slots });
+    out.push({ date: ymd, weekday, dayFull, slots, closed: false, closureName: null });
   }
   return out;
 }
@@ -264,7 +308,10 @@ function formatTimeLabel(minutes) {
 // Validate that a candidate slot the parent picked is still bookable —
 // runs server-side before we insert the doc so a stale browser tab can't
 // race to double-book.
-export function validateSlot({ slotISO, settings, bookedSlots, instructionalHours, summerOverride = null }) {
+export function validateSlot({
+  slotISO, settings, bookedSlots, instructionalHours, summerOverride = null,
+  holds = [], closures = {},
+}) {
   const s = { ...DEFAULT_INTAKE_SETTINGS, ...(settings || {}) };
   const slotDur  = s.slotDurationMin  || 60;
   const noticeMs = (s.advanceNoticeHrs || 0) * 3600 * 1000;
@@ -289,6 +336,15 @@ export function validateSlot({ slotISO, settings, bookedSlots, instructionalHour
   if (!parts) return { ok: false, error: 'Invalid slot time.' };
   const ymd     = `${parts[1]}-${parts[2]}-${parts[3]}`;
   const weekday = WEEKDAYS[new Date(`${ymd}T00:00:00Z`).getUTCDay()];
+
+  // Checked before the hours: a statutory holiday overrides them. The
+  // grid never offers a closed day, so reaching here means a stale tab
+  // or a hand-made request.
+  const closure = closureOn({ closures }, ymd);
+  if (closure) {
+    return { ok: false, error: `The centre is closed that day (${closure.name || 'centre closure'}). Please pick another day.` };
+  }
+
   let windows;
   if (s.useCustomAvailability && s.availability) {
     windows = (s.availability[weekday] || []);
@@ -318,6 +374,14 @@ export function validateSlot({ slotISO, settings, bookedSlots, instructionalHour
   // Collision check.
   if (isSlotTaken(slotISO, slotDur, active)) {
     return { ok: false, error: 'That slot was just booked by someone else. Please pick another time.' };
+  }
+
+  // Held by the centre's own calendar. Checked AFTER the booking
+  // collision so a genuine race still reads "someone else just booked
+  // it" — a parent who lost a race and a parent who picked a blocked
+  // time need different sentences.
+  if (isSlotTaken(slotISO, slotDur, holdList({ holds }))) {
+    return { ok: false, error: 'The centre is not taking assessments at that time. Please pick another time.' };
   }
 
   return { ok: true };

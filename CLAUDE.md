@@ -1054,6 +1054,10 @@ form. `src/pages/PublicBook.jsx`, availability engine in
   person, at our centre", on the page and the confirmation. The note shows
   **even with no address saved** — turning up is the part a parent has to
   know.
+- **Calendar holds and centre closures now narrow the grid too** — see
+  "The Calendar" below. A held slot carries `held: true` (distinct from
+  `taken`, so the two can be worded differently); a closed day carries
+  `closed` + `closureName` and no slots at all.
 
 Two traps, both caught by tests:
 
@@ -1065,6 +1069,73 @@ Two traps, both caught by tests:
   Correct only because Vercel runs UTC; on any other runtime a Friday
   evening booking validated as Saturday. Now read straight off the string.
   The engine's tests pass under UTC, Vancouver and Sydney.
+
+## The Calendar (`/calendar`) — management's own dates
+
+A week/month calendar for the people who schedule the centre around itself.
+`src/pages/RatioCalendar.jsx`, model and maths in `src/lib/ratioCalendar.js`
+(pure, tested), rules in `tests/rules/calendar.rules.test.js`.
+
+**The point of it is the hold.** Apptoto books a lead into Google Calendar and
+Google then refuses anything overlapping it. Here, an entry with
+`holdsBooking: true` is handed to the booking engine as one more busy block,
+and the collision check that already refuses a double-booking refuses these the
+same way. No second opinion about who may book when.
+
+**THE TRAP, and it is the reason holds travel in their own list:**
+`countIntakesOn` counts everything in `bookedSlots` against the per-day
+assessment cap. Fold holds in there and one staff meeting eats one of Friday's
+two assessments. `computeWeekSlots(..., { holds, closures })` takes them as a
+SEPARATE argument — they collide, they never count. Pinned by
+"DOES NOT use up the day-s assessment allowance".
+
+**It READS four things it does not own**, and none of them are editable from
+here: closures/stat holidays (`centerConfig.holidays`), fun days and meetings
+(`centers/{id}/events`), approved `timeOffRequests`, booked `centerIntakes`.
+Only entries are stored, at `centers/{centerId}/calendar/{id}`. Anything else
+ends with the same fact in two places disagreeing with itself — which is why
+Centre Events stays exactly where it is and keeps its own (wider) rules.
+
+**The booking page never looked at `centerConfig.holidays`.** Nothing in
+`api/intakes.js`, `intakeAvailability.js` or `PublicBook.jsx` read them, so a
+family could book an assessment on Labour Day — the weekday had instructional
+hours and nothing said the centre was shut. A closed day now emits **no slots
+at all** with `closed: true` and its name, and `validateSlot` refuses it. A
+closure is deliberately NOT `dayFull`: "full" sends a parent to another time,
+"closed" sends them to another day.
+
+**`blockedStarts()` is why the composer can warn before you save.** It mirrors
+`slotStartsForDay` + `isSlotTaken` on the client, so ticking the hold says
+"Families will not be offered 3pm, 3:30pm, 4pm, 4:30pm" and "that day will have
+2 bookable times left" while there is still a Cancel button. A slot flush
+against the end of a hold (5:00 against a hold ending 5:00) is NOT blocked —
+blocking it costs a bookable hour for nothing.
+
+**The two implementations are separate on purpose.** A Vercel function may not
+import from `src/`, so `holdBlocks()` in `ratioCalendar.js` and `loadHolds()` in
+`api/intakes.js` are written out twice. They are pinned against the SAME fixture
+(Langley, Friday 25 Sep 2026, teaching 3–7, 60-minute assessments every 30) in
+both test files. Change one, change the other.
+
+`holdsBooking` is filtered in JS rather than in the Firestore query, so the read
+needs no composite index — the date range alone is a single-field range.
+
+**Who gets it:** a new `calendar.access` permission — owners, both directors,
+Managers, admin assistants, Hosts. Not Leads, for the same reason they are off
+the Management Desk: a Lead runs the floor for a shift, and taking assessment
+slots off the public page is not that job. `canUseCalendarAt()` in the rules
+mirrors the seed list and falls through to `hasPermAt`, so a centre that grants
+it to a Lead in Manage Roles gets it on both sides.
+
+**This is the first NEW permission since the catalogue was written**, and it
+exercised the additive rule for real: a centre whose saved `staffRoles` predate
+`calendar.access` never had the chance to consider it, so `resolveRoles` keeps
+the built-in grant rather than silently removing a page. Without that, every
+centre that had ever opened the role editor would have shipped with no Calendar
+for its Hosts. Pinned in `Layout.render.test.jsx`.
+
+A day the centre does not open is **hatched and labelled**, not left blank — an
+empty column and a shut one look identical and only one is worth booking into.
 
 ## A job title is copied onto shifts, like a name
 

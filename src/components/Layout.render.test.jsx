@@ -26,7 +26,7 @@ const current = { auth: {} };
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOptionalAuth: () => current.auth }));
 
 const { default: Layout } = await import('./Layout');
-const { resolveRoles, resolvePermissions } = await import('../lib/roles');
+const { resolveRoles, resolvePermissions, can: hasPermission } = await import('../lib/roles');
 const { PAGES, PORTAL_SUBTITLE } = await import('../lib/pageNames');
 
 const LANGLEY = {
@@ -64,6 +64,10 @@ function authFor({ role, title, volunteer = false, config = LANGLEY }) {
     isLead: title === 'Lead', isVolunteer: volunteer,
     canTakeShifts: permissions.has('shifts.take'), canSeeAdminPanel: permissions.has('admin.panel'),
     canManageOperations: permissions.has('admin.operations'), permissions, myInstructorType: title,
+    // The nav asks for permissions by id now, the same way AuthContext
+    // answers them. Resolved from the same set rather than stubbed true,
+    // so a link gated on a permission is still really gated here.
+    can: (id) => hasPermission(permissions, id),
   };
 }
 
@@ -199,5 +203,65 @@ describe('job titles', () => {
     expect(draw('trainee').sidebar).not.toContain('Job Board');
     cleanup();
     expect(draw('volunteer').sidebar).not.toContain('Job Board');
+  });
+});
+
+describe('the Calendar reaches management and stops there', () => {
+  // Rahul's ask, in his words: owners, both directors, managers, admin
+  // assistants and hosts, "and they are the only ones to see and access
+  // it". The route enforces it — this is the sidebar agreeing.
+  const CALENDAR = PAGES.calendar.name;
+
+  it.each(['owner', 'director', 'education', 'aa', 'manager', 'managerNow', 'host'])(
+    'is in the sidebar for %s', (who) => {
+      expect(draw(who).sidebar).toContain(CALENDAR);
+    });
+
+  it.each(['lead', 'instructor', 'trainee', 'volunteer'])(
+    'is not in the sidebar for %s', (who) => {
+      expect(draw(who).sidebar).not.toContain(CALENDAR);
+    });
+
+  it('is not on the phone tab bar for anyone — it is a desk tool', () => {
+    for (const who of ['owner', 'manager', 'host', 'instructor']) {
+      expect(draw(who).tabs).not.toContain(CALENDAR);
+    }
+  });
+
+  const sidebarWithConfig = (who, config) => {
+    current.auth = authFor({ ...PEOPLE[who], config });
+    const { container } = render(<MemoryRouter><Layout><div /></Layout></MemoryRouter>);
+    return [...container.querySelectorAll('aside nav a')].map(a => a.textContent.trim());
+  };
+
+  const HOST_WITHOUT = ['scheduler.run', 'admin.operations', 'notes.access'];
+
+  it('disappears when a centre takes calendar.access off a role', () => {
+    // A Host holds it by default. Manage Roles can remove it, and the
+    // link has to follow — it asks for the permission rather than riding
+    // on the operations tier the rest of that group uses.
+    const sidebar = sidebarWithConfig('host', {
+      ...LANGLEY,
+      staffRoles: [{ name: 'Host', permissions: HOST_WITHOUT }],
+      // The centre has SEEN this permission and chosen not to grant it.
+      knownPermissions: [...HOST_WITHOUT, 'calendar.access'],
+    });
+    expect(sidebar).not.toContain(CALENDAR);
+    // Still a Host: the rest of their group is untouched.
+    expect(sidebar.some(x => x.startsWith(PAGES.staffSchedule.name))).toBe(true);
+  });
+
+  it('is kept by a centre whose saved roles predate the permission', () => {
+    // The additive rule in roles.js, which this feature is the first new
+    // permission to exercise: a centre that edited its roles BEFORE
+    // calendar.access existed never had the chance to consider it, so it
+    // keeps the built-in grant rather than silently losing a page. Drop
+    // this and every centre that has ever opened the role editor would
+    // have shipped without the Calendar for its Hosts.
+    expect(sidebarWithConfig('host', {
+      ...LANGLEY,
+      staffRoles: [{ name: 'Host', permissions: HOST_WITHOUT }],
+      knownPermissions: HOST_WITHOUT,
+    })).toContain(CALENDAR);
   });
 });

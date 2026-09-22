@@ -548,6 +548,28 @@ service cloud.firestore {
       );
     }
 
+    // Who may open the Calendar. Same shape as canUseDeskAt above and the
+    // same reasoning: platform role, then centre title, then the registry
+    // so a permission granted in Manage Roles is honoured here too.
+    //
+    // The centre title 'Admin' is on the desk list and NOT on this one,
+    // because the built-in Admin role carries notes.access and not
+    // calendar.access. Lead is off it for the same reason. Both match
+    // BUILTIN_ROLE_SEEDS in src/lib/roles.js.
+    function canUseCalendarAt(centerId) {
+      return profileExists() && (
+        profile().get('role', '') in [
+          'owner', 'super_admin', 'admin_assistant', 'director', 'admin'
+        ]
+        || titleAt(centerId) in [
+          'Manager', 'Host',
+          'Center Director', 'Centre Director',
+          'Dir. of Education', 'Director of Education'
+        ]
+        || hasPermAt(centerId, 'calendar.access')
+      );
+    }
+
     // ─── Centers (top-level identity docs) ─────────────────────────────
     // Public read (needed for signup picker — unauthenticated).
     // Create: super_admin only. Owners CANNOT create new centers — only
@@ -701,6 +723,29 @@ service cloud.firestore {
         allow delete: if isOwnerLike() || isSuperAdmin() || isAdminOrManagerAt(centerId)
                       || (canRunFunDaysAt(centerId)
                           && resource.data.get('type', '') == 'fun-day');
+      }
+
+      // ── The Ratio Calendar ───────────────────────────────────────────
+      //
+      // NOT the same thing as `events` above, and deliberately not stored
+      // with them. An event is an announcement with a date on it, readable
+      // by the whole centre. A calendar entry is a commitment: it names
+      // the people it is assigned to, it can carry a candidate's or a
+      // parent's name in its title, and it can HOLD THE PUBLIC BOOKING
+      // PAGE — api/intakes.js reads holdsBooking entries and hands them to
+      // the slot engine, so a row written here takes real time out of the
+      // grid families book from.
+      //
+      // That last part is why read is NOT widened to the whole centre the
+      // way events is, and why the write tier is management rather than
+      // whoever runs the floor: closing Friday afternoon to bookings is an
+      // owner-tier decision even though adding a fun day is not.
+      //
+      // Mirrors calendar.access in src/lib/roles.js — the same list, so a
+      // centre that grants it to a Lead in Manage Roles gets it here too
+      // via hasPermAt. Keep the two in step.
+      match /calendar/{entryId} {
+        allow read, create, update, delete: if canUseCalendarAt(centerId);
       }
 
       // The fun-day calendar image, one document per month
