@@ -1190,12 +1190,32 @@ whose date has passed goes in as **Assessed**, not New, or a month of history
 lands at the top of the funnel looking like fresh enquiries. There is a switch
 to turn it off.
 
+**Undoing an import:** `scripts/clear-calendar-import.cjs` (dry run unless
+`--apply`). It deletes only documents stamped `source: 'google-import'`, so a
+"clear the calendar" can never erase a family who booked on the website —
+`centerIntakes` holds both. Run 2026-09-22 at Langley: 136 deleted (88
+assessments, 48 entries), 3 real `source: 'web'` bookings and 8 hand-made
+Management Team Meeting entries untouched. `--all-entries` also removes
+hand-made calendar entries.
+
 **The first live import named every child "Booked".** `nameFromSummary` strips
 the words that describe an appointment and keeps the longest thing left — and a
 real calendar is full of booking STATES, so "Booked" survived as a name.
 `NOISE_RE` now eats booked / confirmed / scheduled / cancelled / no-show / not
 coming / available / open / slot / hold / TBD. A title with nothing else in it
 yields `''`, which the panel counts and flags rather than importing.
+
+`looksLikeAName()` then rejects what is left if it is a note rather than a
+person — one to three words, no digits, no "!". The same live run produced
+"Book Your Skills Today!" and "might have 2nd student" as children's names.
+
+**WHAT THAT RUN ACTUALLY PROVED about Langley's calendar:** of 88 imported
+assessments, **zero** had a guardian and **zero** had a grade, and only about a
+dozen titles held a real name. Those events carry no structured family
+details at all. No extractor can fix that, so the review table now shows each
+event's own SUMMARY and DESCRIPTION ("what it read", or "no description"), and
+the original title is stamped on the assessment as `sourceSummary`. The point
+is to make a blank row explainable instead of a mystery.
 
 **An assessment is edited in its own editor** (`components/AssessmentEditor.jsx`,
 pure bits in `lib/assessments.js`), because it is a centerIntakes document and

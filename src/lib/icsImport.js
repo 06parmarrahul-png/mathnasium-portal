@@ -262,7 +262,27 @@ export function nameFromSummary(summary) {
   s = s.split(/\s[-–—|]\s|:\s+|\s{2,}/).map(part => part.replace(NOISE_RE, ' ').trim())
     .filter(part => /[A-Za-z]/.test(part))
     .sort((a, b) => b.length - a.length)[0] || '';
-  return s.replace(/\s{2,}/g, ' ').replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, '').trim();
+  s = s.replace(/\s{2,}/g, ' ').replace(/^[\s,.:;-]+|[\s,.:;-]+$/g, '').trim();
+  return looksLikeAName(s) ? s : '';
+}
+
+/**
+ * Is this plausibly a person, or is it a note somebody left in a title?
+ *
+ * The live import produced "Book Your Skills Today!" and "might have 2nd
+ * student" as children's names. A name is one to three words and does not
+ * shout. Returning '' puts the row in the "needs a name" count, which is
+ * the right place for it — better a blank somebody fills than a sentence
+ * sitting in the Intakes list where a child's name goes.
+ */
+export function looksLikeAName(s) {
+  const t = String(s || '').trim();
+  if (!t) return false;
+  if (/[!?]/.test(t)) return false;
+  const words = t.split(/\s+/);
+  if (words.length > 3) return false;
+  if (/\d/.test(t)) return false;              // "2nd student", "Room 3"
+  return /^[\p{L}][\p{L}'’.-]*$/u.test(words[0]);
 }
 
 /** Normalise whatever they wrote as a grade: "5th", "Gr 5", "K". */
@@ -409,6 +429,11 @@ export function buildRows(events, {
       durationMin: dur,
       ...details,
       note: ev.location ? `Google Calendar · ${ev.location}` : 'Imported from Google Calendar',
+      // What it was actually looking at. Shown in the review table, and
+      // stamped on the assessment, so a title that produced nothing can
+      // be seen rather than guessed at afterwards.
+      rawSummary: ev.summary || '',
+      rawDescription: ev.description || '',
       skip,
       include: !skip,
     };

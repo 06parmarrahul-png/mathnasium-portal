@@ -3,7 +3,7 @@ import {
   unfold, unescapeIcal, parseIcsDate, toCentreLocal, zonedToUtc, parseIcs,
   classify, nameFromSummary, normaliseGrade, extractDetails,
   buildRows, importSummary, SKIP_REASONS,
-  inDateRange, eventDateSpan, defaultImportFrom,
+  inDateRange, eventDateSpan, defaultImportFrom, looksLikeAName,
 } from './icsImport';
 
 const TZ = 'America/Vancouver';
@@ -422,5 +422,40 @@ describe('a booking state is not a child', () => {
     ));
     expect(rows[0].childName).toBe('');
     expect(importSummary(rows).missingNames).toBe(1);
+  });
+});
+
+describe('a note in a title is not a child', () => {
+  // Straight from the live import: 88 events produced these as names.
+  it('rejects the sentences the real calendar produced', () => {
+    for (const s of ['Book Your Skills Today!', 'might have 2nd student',
+      'Assessment - might have 2nd student', 'RESCHEDULED', '[CA] Booked']) {
+      expect(nameFromSummary(s)).toBe('');
+    }
+  });
+
+  it('keeps names up to three words', () => {
+    expect(nameFromSummary('Assessment - Alicia Aby Thomas')).toBe('Alicia Aby Thomas');
+    expect(nameFromSummary('Assessment - Caleb')).toBe('Caleb');
+    expect(nameFromSummary("Assessment - Siobhán O'Brien")).toBe("Siobhán O'Brien");
+  });
+
+  it('knows a name from a note', () => {
+    expect(looksLikeAName('Priya Sharma')).toBe(true);
+    expect(looksLikeAName('Caleb')).toBe(true);
+    expect(looksLikeAName('might have 2nd student')).toBe(false);
+    expect(looksLikeAName('Book Your Skills Today!')).toBe(false);
+    expect(looksLikeAName('Room 3')).toBe(false);
+    expect(looksLikeAName('')).toBe(false);
+  });
+
+  it('keeps the original text so a blank row can be understood', () => {
+    const [r] = buildRows(parseIcs(
+      'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:r1\nDTSTART:20260924T230000Z\nSUMMARY:[CA] Booked\nDESCRIPTION:no details here\nEND:VEVENT\nEND:VCALENDAR',
+      { timeZone: TZ },
+    ));
+    expect(r.childName).toBe('');
+    expect(r.rawSummary).toBe('[CA] Booked');
+    expect(r.rawDescription).toBe('no details here');
   });
 });

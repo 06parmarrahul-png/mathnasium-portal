@@ -147,6 +147,7 @@ export default function CalendarImport({
               status: 'scheduled',
               source: 'google-import',
               sourceUid: r.uid || null,
+              sourceSummary: r.rawSummary || '',
               bookedAt: now,
               importedAt: now,
               importedBy: who,
@@ -348,7 +349,23 @@ export default function CalendarImport({
                           </select>
                         )}
                       </td>
-                      <td className="max-w-[190px] truncate px-2 py-1.5" title={r.title}>{r.title}</td>
+                      <td className="max-w-[190px] px-2 py-1.5">
+                        <span className="block truncate" title={r.title}>{r.title}</span>
+                        {/* What the extractor was actually reading. A row
+                            that came back blank is only fixable if you can
+                            see there was nothing there to find. */}
+                        {r.rawDescription ? (
+                          <details>
+                            <summary className="cursor-pointer text-[10px]" style={{ color: 'var(--nl-muted)' }}>
+                              what it read
+                            </summary>
+                            <pre className="mt-1 max-h-24 max-w-[240px] overflow-auto whitespace-pre-wrap rounded p-1.5 text-[10px]"
+                              style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>{r.rawDescription}</pre>
+                          </details>
+                        ) : (
+                          <span className="text-[10px]" style={{ color: 'var(--nl-muted)' }}>no description</span>
+                        )}
+                      </td>
                       {r.target === 'intake' && !r.skip ? (
                         <>
                           <Cell value={r.childName} placeholder="Child" invalid={!r.childName?.trim()}

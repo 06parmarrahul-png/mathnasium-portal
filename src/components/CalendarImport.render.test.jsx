@@ -438,3 +438,49 @@ END:VCALENDAR`);
     expect(leadWrites()[0].data.parentName).toBe('A. Sharma-Reid');
   });
 });
+
+describe('showing what it was reading', () => {
+  // 88 live events produced 71 blank or wrong names. A blank row is only
+  // fixable if you can see whether there was anything there to find.
+  it('offers the original description next to the row', async () => {
+    const { container } = draw();
+    await drop(container, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:d1
+DTSTART;TZID=America/Vancouver:20260925T160000
+SUMMARY:Assessment [CA] Booked
+DESCRIPTION:Parent said they may bring a sibling
+END:VEVENT
+END:VCALENDAR`);
+    expect(screen.getByText(/what it read/i)).toBeTruthy();
+    expect(screen.getByText(/may bring a sibling/i)).toBeTruthy();
+  });
+
+  it('says plainly when the event carries no description at all', async () => {
+    const { container } = draw();
+    await drop(container, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:d2
+DTSTART;TZID=America/Vancouver:20260925T160000
+SUMMARY:Assessment - Booked
+END:VEVENT
+END:VCALENDAR`);
+    expect(screen.getByText(/no description/i)).toBeTruthy();
+    expect(screen.getByLabelText(/^Child for /i).value).toBe('');
+  });
+
+  it('stamps the original title on the assessment it writes', async () => {
+    const { container } = draw();
+    await drop(container, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:d3
+DTSTART;TZID=America/Vancouver:20260925T160000
+SUMMARY:Assessment [CA] Booked
+END:VEVENT
+END:VCALENDAR`);
+    fireEvent.change(screen.getByLabelText(/^Child for /i), { target: { value: 'Emma' } });
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(intakeWrites()[0].data.sourceSummary).toBe('Assessment [CA] Booked');
+    expect(intakeWrites()[0].data.childName).toBe('Emma');
+  });
+});
