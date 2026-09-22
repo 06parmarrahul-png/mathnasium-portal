@@ -397,3 +397,30 @@ END:VCALENDAR`;
     expect(importSummary(r).importing).toBe(1);
   });
 });
+
+describe('a booking state is not a child', () => {
+  // Reported from the first live import: every assessment came back
+  // titled "Assessment — Booked", because "Booked" was the longest thing
+  // left in the summary once the appointment words were stripped.
+  it('never reads a status word as somebody-s name', () => {
+    for (const s of ['Assessment - Booked', 'Assessment Booked', 'BOOKED - Assessment',
+      'Assessment — Confirmed', '[NOT COMING] Appointment', 'Assessment (Cancelled)',
+      'Open slot', 'Assessment - TBD']) {
+      expect(nameFromSummary(s)).toBe('');
+    }
+  });
+
+  it('still finds a real name sitting next to a status word', () => {
+    expect(nameFromSummary('Assessment - Priya Sharma - Booked')).toBe('Priya Sharma');
+    expect(nameFromSummary('[BOOKED] Assessment — Marcus Lee')).toBe('Marcus Lee');
+  });
+
+  it('flags the nameless ones instead of importing "Booked" as a child', () => {
+    const rows = buildRows(parseIcs(
+      'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:b1\nDTSTART:20260924T230000Z\nSUMMARY:Assessment - Booked\nEND:VEVENT\nEND:VCALENDAR',
+      { timeZone: TZ },
+    ));
+    expect(rows[0].childName).toBe('');
+    expect(importSummary(rows).missingNames).toBe(1);
+  });
+});

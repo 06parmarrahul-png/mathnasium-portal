@@ -249,7 +249,11 @@ const GRADE_RE = /\b(?:grade|gr\.?|year)\s*([k0-9]{1,2})\b|\b(\d{1,2})(?:st|nd|r
 const NOISE_RE = new RegExp(
   '\\b(free|new|initial|math|mathnasium|assessment|assessments|consultation|consult|intake|'
   + 'evaluation|eval|screening|appointment|appt|session|booking|in[\\s-]?cent(?:re|er)|'
-  + 'online|virtual|zoom|langley|with|for|w/)\\b', 'gi');
+  + 'online|virtual|zoom|langley|with|for|w/|'
+  // Booking STATES. A live calendar is full of them, and without these
+  // every imported assessment came back named "Booked".
+  + 'booked|confirmed|scheduled|rescheduled|pending|tentative|cancell?ed|'
+  + 'no[\\s-]?show|not[\\s-]?coming|available|open|slot|hold|held|tbd|tba)\\b', 'gi');
 
 /** "Free Math Assessment - Jane Doe (Grade 5)" → "Jane Doe". */
 export function nameFromSummary(summary) {

@@ -20,11 +20,17 @@ vi.mock('../firebase', () => ({ db: {}, auth: {}, storage: {} }));
 vi.mock('firebase/firestore', () => ({
   collection: (...a) => ({ __c: a.slice(1).join('/') }),
   doc: (col) => ({ __col: col.__c, id: `id-${writes.length}` }),
+  serverTimestamp: () => 'ts',
   writeBatch: () => ({
     set: (ref, data) => writes.push({ col: ref.__col, data }),
     commit: async () => {},
   }),
 }));
+
+/** The writes, split by where they went. Leads ride along with intakes. */
+const intakeWrites = () => writes.filter(w => w.col === 'centerIntakes');
+const entryWrites = () => writes.filter(w => w.col.endsWith('/calendar'));
+const leadWrites = () => writes.filter(w => w.col.endsWith('/leads'));
 
 const { default: CalendarImport } = await import('./CalendarImport');
 
@@ -136,12 +142,9 @@ describe('what actually gets written', () => {
     await drop(container);
     await act(async () => { fireEvent.click(importBtn()); });
 
-    const intake = writes.find(w => w.col === 'centerIntakes');
-    const entry = writes.find(w => w.col === 'centers/langley/calendar');
-    expect(writes).toHaveLength(2);
-    expect(intake).toBeTruthy();
-    expect(entry).toBeTruthy();
-    expect(entry.data.title).toBe('Management team meeting');
+    expect(intakeWrites()).toHaveLength(1);
+    expect(entryWrites()).toHaveLength(1);
+    expect(entryWrites()[0].data.title).toBe('Management team meeting');
   });
 
   it('writes the intake in the shape the booking grid already reads', async () => {
@@ -151,7 +154,7 @@ describe('what actually gets written', () => {
 
     // 19:00Z is noon in Langley, and `slot` is the centre's wall clock —
     // the same string api/intakes.js writes and validateSlot parses.
-    expect(writes.find(w => w.col === 'centerIntakes').data).toMatchObject({
+    expect(intakeWrites()[0].data).toMatchObject({
       centerId: 'langley',
       slot: '2026-09-23T12:00:00',
       durationMin: 60,
@@ -178,7 +181,7 @@ describe('what actually gets written', () => {
     const { container } = draw();
     await drop(container);
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes.find(w => w.col.endsWith('/calendar')).data.holdsBooking).toBe(false);
+    expect(entryWrites()[0].data.holdsBooking).toBe(false);
   });
 
   it('skips what a previous import already brought in', async () => {
@@ -186,8 +189,8 @@ describe('what actually gets written', () => {
     await drop(container);
     expect(screen.getByText(/skipping .*1 already imported/i)).toBeTruthy();
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes).toHaveLength(1);
-    expect(writes[0].col).toBe('centers/langley/calendar');
+    expect(intakeWrites()).toHaveLength(0);
+    expect(entryWrites()).toHaveLength(1);
   });
 
   it('leaves out a row that was unticked', async () => {
@@ -195,7 +198,7 @@ describe('what actually gets written', () => {
     await drop(container);
     fireEvent.click(screen.getByLabelText(/Import Free Math Assessment/i));
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes.every(w => w.col !== 'centerIntakes')).toBe(true);
+    expect(intakeWrites()).toHaveLength(0);
   });
 
   it('honours a correction typed into the table', async () => {
@@ -203,7 +206,7 @@ describe('what actually gets written', () => {
     await drop(container);
     fireEvent.change(screen.getByLabelText(/^Guardian for /i), { target: { value: 'A. Sharma-Reid' } });
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes.find(w => w.col === 'centerIntakes').data.guardianName).toBe('A. Sharma-Reid');
+    expect(intakeWrites()[0].data.guardianName).toBe('A. Sharma-Reid');
   });
 
   it('lets someone re-route a row the classifier got wrong', async () => {
@@ -214,8 +217,8 @@ describe('what actually gets written', () => {
     await drop(container);
     fireEvent.change(screen.getByLabelText(/^Where Free Math Assessment/i), { target: { value: 'entry' } });
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes.every(w => w.col !== 'centerIntakes')).toBe(true);
-    expect(writes).toHaveLength(2);
+    expect(intakeWrites()).toHaveLength(0);
+    expect(entryWrites()).toHaveLength(2);
   });
 
   it('reports what landed where when it is finished', async () => {
@@ -240,7 +243,7 @@ END:VCALENDAR`);
     expect(cell.value).toBe('');
     fireEvent.change(cell, { target: { value: 'Sam Lee' } });
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes[0].data.childName).toBe('Sam Lee');
+    expect(intakeWrites()[0].data.childName).toBe('Sam Lee');
   });
 });
 
@@ -301,8 +304,8 @@ END:VCALENDAR`;
     fireEvent.change(screen.getByLabelText(/import events from/i), { target: { value: '2026-09-01' } });
     expect(screen.getByRole('button', { name: /^import 1$/i })).toBeTruthy();
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes).toHaveLength(1);
-    expect(writes[0].data.childName).toBe('September Family');
+    expect(intakeWrites()).toHaveLength(1);
+    expect(intakeWrites()[0].data.childName).toBe('September Family');
   });
 
   it('follows a To date as well', async () => {
@@ -310,8 +313,8 @@ END:VCALENDAR`;
     await drop(container, SPREAD);
     fireEvent.change(screen.getByLabelText(/import events up to/i), { target: { value: '2026-08-31' } });
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes).toHaveLength(1);
-    expect(writes[0].data.childName).toBe('August Family');
+    expect(intakeWrites()).toHaveLength(1);
+    expect(intakeWrites()[0].data.childName).toBe('August Family');
   });
 
   it('brings the whole history back if that is really wanted', async () => {
@@ -341,7 +344,7 @@ END:VCALENDAR`;
     expect(screen.getByLabelText(/^Guardian for Assessment - September Family/i).value)
       .toBe('Dana Reyes');
     await act(async () => { fireEvent.click(importBtn()); });
-    expect(writes[0].data.guardianName).toBe('Dana Reyes');
+    expect(intakeWrites()[0].data.guardianName).toBe('Dana Reyes');
   });
 
   it('says plainly when there is more here than anyone will check', async () => {
@@ -353,5 +356,85 @@ END:VCALENDAR`;
     const { container } = draw();
     await drop(container, many.join('\n'));
     expect(screen.getByText(/more than anyone will really check/i)).toBeTruthy();
+  });
+});
+
+/**
+ * Leads.
+ *
+ * "When it creates the intake assessment it needs to create and assign it
+ * a lead" — so the family lands on the Leads board and the assessment can
+ * point at it.
+ */
+describe('the family goes on the Leads board too', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 22, 12, 0, 0));   // Tue 22 Sep 2026
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('creates one lead per assessment, and none for a calendar entry', async () => {
+    const { container } = draw();
+    await drop(container);
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(leadWrites()).toHaveLength(1);
+    expect(leadWrites()[0].data).toMatchObject({
+      parentName: 'Anita Sharma',
+      childName: 'Priya Sharma',
+      childGrade: '5',
+      parentPhone: '604-555-0134',
+      source: 'intake-form',
+    });
+  });
+
+  it('points the lead and the assessment at each other', async () => {
+    // The link is what lets an assessment opened on the Calendar say
+    // which family it belongs to.
+    const { container } = draw();
+    await drop(container);
+    await act(async () => { fireEvent.click(importBtn()); });
+    const lead = leadWrites()[0];
+    const intake = intakeWrites()[0];
+    expect(intake.data.leadId).toBeTruthy();
+    expect(lead.data.intakeId).toBeTruthy();
+  });
+
+  it('files an assessment that has already happened as Assessed', async () => {
+    // Otherwise a month of history lands at the top of the funnel looking
+    // like fresh enquiries nobody has rung yet.
+    const { container } = draw();
+    await drop(container, `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:past1
+DTSTART;TZID=America/Vancouver:20260901T160000
+SUMMARY:Assessment - Past Family
+END:VEVENT
+BEGIN:VEVENT
+UID:soon1
+DTSTART;TZID=America/Vancouver:20261001T160000
+SUMMARY:Assessment - Future Family
+END:VEVENT
+END:VCALENDAR`);
+    await act(async () => { fireEvent.click(importBtn()); });
+    const byChild = Object.fromEntries(leadWrites().map(w => [w.data.childName, w.data.status]));
+    expect(byChild).toEqual({ 'Past Family': 'assessed', 'Future Family': 'new' });
+  });
+
+  it('can be turned off without stopping the import', async () => {
+    const { container } = draw();
+    await drop(container);
+    fireEvent.click(screen.getByLabelText(/add each family to/i));
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(leadWrites()).toHaveLength(0);
+    expect(intakeWrites()).toHaveLength(1);
+    expect(intakeWrites()[0].data.leadId).toBe(null);
+  });
+
+  it('carries a correction into the lead as well as the assessment', async () => {
+    const { container } = draw();
+    await drop(container);
+    fireEvent.change(screen.getByLabelText(/^Guardian for /i), { target: { value: 'A. Sharma-Reid' } });
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(leadWrites()[0].data.parentName).toBe('A. Sharma-Reid');
   });
 });

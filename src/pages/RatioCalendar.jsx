@@ -10,6 +10,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { toast, confirmDialog } from '../lib/notify';
 import { PAGES } from '../lib/pageNames';
 import CalendarImport from '../components/CalendarImport';
+import AssessmentEditor from '../components/AssessmentEditor';
 import { resolveInstructionalHours, isOperatingDay } from '../lib/centerConfig';
 import {
   KIND_LIST, kindLabel, kindTone, minutesOf, hhmm, asDate, toISO, addDays,
@@ -98,7 +99,11 @@ const BLANK = {
 };
 
 export default function RatioCalendar() {
-  const { activeCenterId, profile, centerConfig } = useAuth();
+  const { activeCenterId, profile, centerConfig, isOwnerLike, isSuperAdmin } = useAuth();
+  // centerIntakes is owner-tier in the rules, deliberately: an assessment
+  // carries a parent's name, email and phone, and Managers and Hosts are
+  // kept off the PII routes everywhere else in the app.
+  const canSeeFamilies = !!(isOwnerLike || isSuperAdmin);
   const [view, setView] = useState('week');
   const [cursor, setCursor] = useState(toISO(new Date()));
   const [entries, setEntries] = useState(null);
@@ -111,6 +116,8 @@ export default function RatioCalendar() {
   const [saving, setSaving] = useState(false);
   const [hidden, setHidden] = useState(() => new Set());
   const [importing, setImporting] = useState(false);
+  const [openIntake, setOpenIntake] = useState(null);
+  const [intakesDenied, setIntakesDenied] = useState(false);
 
   const today = toISO(new Date());
   const holidays = useMemo(
@@ -161,8 +168,10 @@ export default function RatioCalendar() {
     if (!activeCenterId) return undefined;
     return onSnapshot(
       query(collection(db, 'centerIntakes'), where('centerId', '==', activeCenterId)),
-      snap => setIntakes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => setIntakes([]),
+      snap => { setIntakes(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setIntakesDenied(false); },
+      // Refused rather than empty. Saying so beats an assessment layer
+      // that silently shows nothing and reads as a quiet week.
+      () => { setIntakes([]); setIntakesDenied(true); },
     );
   }, [activeCenterId]);
 
@@ -255,6 +264,15 @@ export default function RatioCalendar() {
       && !booked.some(b => String(b.slot || '').slice(11, 16) === t));
     return { blocked, left, closure: closureMap(holidays)[draft.date] || null };
   }, [draft, centerConfig, intakes, holidays]);
+
+  /** A row is editable where it lives: entries here, assessments as intakes. */
+  const openRow = (r) => {
+    if (isEntry(r)) { setDraft({ ...r }); return; }
+    if (r.source === 'intake') {
+      const full = (intakes || []).find(t => t.id === r.id);
+      if (full) setOpenIntake(full);
+    }
+  };
 
   const openNew = (dateISO, startTime = '') => {
     setError('');
@@ -401,12 +419,15 @@ export default function RatioCalendar() {
           style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>
           {centerConfig?.name || activeCenterId}
         </span>
+        {canSeeFamilies && (
         <button type="button" onClick={() => setImporting(true)}
           className="ml-auto inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-[12.5px] font-semibold"
           style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-ink2)' }}>
           <Upload size={14} /> Import
         </button>
+        )}
         <button type="button" onClick={() => openNew(today)}
+          className={canSeeFamilies ? '' : 'ml-auto'}
           className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-[12.5px] font-semibold text-white"
           style={{ background: 'var(--nl-brand)' }}>
           <Plus size={14} /> New entry
@@ -445,6 +466,18 @@ export default function RatioCalendar() {
 
       <LayerBar hidden={hidden} onToggle={toggleLayer} holdCount={holdCount} />
 
+      {/* Not an empty week — a refused read. centerIntakes is owner-tier
+          because an assessment carries a parent's name, email and phone,
+          and Managers and Hosts are off the PII routes everywhere else.
+          Saying so beats a layer that silently shows nothing. */}
+      {intakesDenied && (
+        <p className="mb-3 rounded-lg border px-3 py-2 text-[12px]"
+          style={{ borderColor: 'var(--nl-rule)', color: 'var(--nl-muted)' }}>
+          Booked assessments are not shown here — they carry families&rsquo; contact details, so
+          they stay with owners, directors and the admin assistant.
+        </p>
+      )}
+
       {entries === null ? (
         <div className="flex items-center gap-2 rounded-2xl border p-6 text-[13px]"
           style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)', color: 'var(--nl-muted)' }}>
@@ -452,10 +485,16 @@ export default function RatioCalendar() {
         </div>
       ) : view === 'week' ? (
         <WeekGrid days={days} byDate={byDate} today={today} closedDays={closedDays}
-          onNew={openNew} onOpen={(r) => isEntry(r) && setDraft({ ...r })} />
+          onNew={openNew} onOpen={openRow} />
       ) : (
         <MonthGrid days={days} byDate={byDate} today={today} cursor={cursor} closedDays={closedDays}
-          onNew={openNew} onOpen={(r) => isEntry(r) && setDraft({ ...r })} />
+          onNew={openNew} onOpen={openRow} />
+      )}
+
+      {openIntake && (
+        <AssessmentEditor intake={openIntake} intakes={intakes}
+          centerConfig={centerConfig} canEdit={canSeeFamilies}
+          onClose={() => setOpenIntake(null)} />
       )}
 
       {importing && (

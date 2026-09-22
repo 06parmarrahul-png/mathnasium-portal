@@ -99,39 +99,49 @@ function clean(input) {
   return out;
 }
 
-export async function createLead(centerId, partial, actor) {
+/**
+ * The document a new lead is, without writing it.
+ *
+ * Pulled out of createLead() so the Google Calendar import can put the
+ * same shape into a writeBatch — dozens of families at once is not dozens
+ * of addDoc round trips. One builder, so the two cannot drift; importing
+ * a lead the funnel cannot read would be a silent loss.
+ */
+export function leadDocFrom(partial, actor) {
   const data = clean(partial);
-  if (!data.parentName && !data.childName) {
-    throw new Error('Lead needs at least a parent or child name.');
-  }
   const now = new Date().toISOString();
   const status = LEAD_STATUSES.includes(data.status) ? data.status : 'new';
-  const leadDoc = {
-    // Identity
+  return {
     parentName:  data.parentName  || '',
     parentEmail: data.parentEmail || '',
     parentPhone: data.parentPhone || '',
     childName:   data.childName   || '',
     childGrade:  data.childGrade  || '',
     childSchool: data.childSchool || '',
-    // Funnel state
     status,
     source:       data.source       || 'other',
     sourceDetail: data.sourceDetail || '',
     notes:        data.notes        || '',
     assignedTo:   data.assignedTo   || '',
-    // Append-only audit of status transitions + free-form events.
+    // The intake this lead was born from, so an assessment edited on the
+    // Calendar can show the family it belongs to and vice versa.
+    intakeId:     data.intakeId     || null,
     history: [{
       at: now,
       by: actor?.displayName || actor?.email || 'system',
       text: `Created as ${LEAD_STATUS_LABELS[status]}`,
     }],
-    // Timestamps (denormalized for sorts; serverTimestamp would be nicer
-    // but we'd need to round-trip to read the value back for history).
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };
-  return await addDoc(colRef(centerId), leadDoc);
+}
+
+export async function createLead(centerId, partial, actor) {
+  const data = clean(partial);
+  if (!data.parentName && !data.childName) {
+    throw new Error('Lead needs at least a parent or child name.');
+  }
+  return await addDoc(colRef(centerId), leadDocFrom(partial, actor));
 }
 
 export async function updateLead(centerId, leadId, patch) {

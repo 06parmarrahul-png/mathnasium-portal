@@ -1182,6 +1182,43 @@ centerIntakes, so writing to the right collection shows it on the calendar
 anyway — the wrong one just loses everything else. Mutation-tested: routing
 assessments to the calendar fails four tests.
 
+**Each imported assessment also creates a LEAD**, and the two point at each
+other (`intake.leadId` / `lead.intakeId`). `leadDocFrom()` was pulled out of
+`createLead()` so the import can put the same shape into a writeBatch —
+importing a lead the funnel cannot read would be a silent loss. An assessment
+whose date has passed goes in as **Assessed**, not New, or a month of history
+lands at the top of the funnel looking like fresh enquiries. There is a switch
+to turn it off.
+
+**The first live import named every child "Booked".** `nameFromSummary` strips
+the words that describe an appointment and keeps the longest thing left — and a
+real calendar is full of booking STATES, so "Booked" survived as a name.
+`NOISE_RE` now eats booked / confirmed / scheduled / cancelled / no-show / not
+coming / available / open / slot / hold / TBD. A title with nothing else in it
+yields `''`, which the panel counts and flags rather than importing.
+
+**An assessment is edited in its own editor** (`components/AssessmentEditor.jsx`,
+pure bits in `lib/assessments.js`), because it is a centerIntakes document and
+the entry composer writes somewhere else entirely. Who / what / where / when, in
+that order. Where is the centre's address from `intakeSettings.address`,
+read-only — it is a Centre Settings field and the family was shown the same
+string. A clash with another booking is a **warning, never a block**: staff
+double-book on purpose, and the public page is where a collision must actually
+be refused, which it already is.
+
+**Editing here never touches Google.** The import is a one-way snapshot. Two
+calendars that both think they are in charge is how a family gets told two
+different times.
+
+**Managers and Hosts hold `calendar.access` but CANNOT read `centerIntakes`** —
+that collection is `isOwnerLike() || isSuperAdmin()` in the rules, deliberately,
+because an assessment carries a parent's name, email and phone and those roles
+are kept off every other PII route (Leads, Case Study, Supply & Demand). So they
+see the Calendar with no assessments on it. The page now SAYS so instead of
+rendering a quiet empty layer, and hides the Import button from them rather than
+offering a write the rules will refuse. Widening the rule would cross a boundary
+that was drawn on purpose — don't, without deciding to.
+
 **A real export is the WHOLE calendar.** Langley's first run came back with
 about 2,110 events, most of them years old — unusable as a review table and
 not something anyone wants written into a live centre. The panel opens on a

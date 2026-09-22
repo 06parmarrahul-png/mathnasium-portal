@@ -8,6 +8,7 @@ import {
   eventDateSpan, defaultImportFrom, filterEvents, REVIEW_COMFORTABLE,
 } from '../lib/icsImport';
 import { kindLabel, toISO } from '../lib/ratioCalendar';
+import { leadDocFrom } from '../lib/leads';
 
 /**
  * Bringing a Google Calendar in.
@@ -41,6 +42,7 @@ export default function CalendarImport({
   const [events, setEvents] = useState(null);
   const [range, setRange] = useState(() => ({ from: defaultImportFrom(todayISO()), to: '' }));
   const [edits, setEdits] = useState({});
+  const [makeLeads, setMakeLeads] = useState(true);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -93,17 +95,44 @@ export default function CalendarImport({
     try {
       const who = profile?.displayName || profile?.email || null;
       const now = new Date().toISOString();
+      const nowLocal = new Date().toISOString().slice(0, 16);
       let intakes = 0;
       let entries = 0;
+      let leads = 0;
 
       for (const group of chunk(live, BATCH)) {
         const batch = writeBatch(db);
         for (const r of group) {
           if (r.target === 'intake') {
+            // Both refs are minted first so the intake and the lead can
+            // point at each other — that link is what lets an assessment
+            // opened on the Calendar show the family it belongs to.
+            const intakeRef = doc(collection(db, 'centerIntakes'));
+            const leadRef = makeLeads ? doc(collection(db, 'centers', centerId, 'leads')) : null;
+            if (leadRef) {
+              // A past assessment has already happened, so it goes in as
+              // Assessed rather than New — otherwise a month of history
+              // lands at the top of the funnel as fresh enquiries.
+              const past = `${r.date}T${r.startTime || '00:00'}` < nowLocal;
+              batch.set(leadRef, leadDocFrom({
+                parentName: (r.guardianName || '').trim(),
+                parentEmail: (r.email || '').trim().toLowerCase(),
+                parentPhone: (r.phone || '').trim(),
+                childName: (r.childName || '').trim(),
+                childGrade: (r.childGrade || '').trim(),
+                childSchool: (r.childSchool || '').trim(),
+                status: past ? 'assessed' : 'new',
+                source: 'intake-form',
+                sourceDetail: `Imported from Google Calendar — assessment ${r.date}`
+                  + (r.startTime ? ` at ${r.startTime}` : ''),
+                intakeId: intakeRef.id,
+              }, profile));
+              leads += 1;
+            }
             // The shape api/intakes.js writes, so the Intakes page, the
             // booking grid and the day cap all read these the same as a
             // booking made on the website.
-            batch.set(doc(collection(db, 'centerIntakes')), {
+            batch.set(intakeRef, {
               centerId,
               slot: `${r.date}T${r.startTime || '00:00'}:00`,
               durationMin: r.durationMin || 60,
@@ -121,6 +150,7 @@ export default function CalendarImport({
               bookedAt: now,
               importedAt: now,
               importedBy: who,
+              leadId: leadRef ? leadRef.id : null,
             });
             intakes += 1;
           } else {
@@ -148,7 +178,7 @@ export default function CalendarImport({
         }
         await batch.commit();
       }
-      setDone({ intakes, entries });
+      setDone({ intakes, entries, leads });
       setEvents(null); setEdits({});
     } catch (e) {
       setError(e?.message || 'Could not import that.');
@@ -176,8 +206,9 @@ export default function CalendarImport({
             </p>
             <p className="mt-1.5 text-[12.5px]" style={{ color: 'var(--nl-ink2)' }}>
               {done.intakes} {done.intakes === 1 ? 'assessment' : 'assessments'} went to the Intakes
-              list — those now occupy their slot on the booking page. {done.entries}{' '}
-              {done.entries === 1 ? 'entry' : 'entries'} went on the calendar.
+              list — those now occupy their slot on the booking page.
+              {done.leads > 0 && ` ${done.leads} ${done.leads === 1 ? 'family' : 'families'} were added to Leads.`}
+              {' '}{done.entries} {done.entries === 1 ? 'entry' : 'entries'} went on the calendar.
             </p>
           </div>
         ) : !rows ? (
@@ -262,6 +293,18 @@ export default function CalendarImport({
                 {span && <><br />File covers {span.first} to {span.last}</>}
               </p>
             </div>
+
+            <label className="mb-2.5 flex cursor-pointer items-start gap-2 text-[12.5px]">
+              <input type="checkbox" checked={makeLeads} className="mt-[3px]"
+                onChange={e => setMakeLeads(e.target.checked)} />
+              <span>
+                Add each family to <b>Leads</b> as well
+                <span className="block text-[11px]" style={{ color: 'var(--nl-muted)' }}>
+                  Assessments still to come go in as New; ones that have already happened go in as
+                  Assessed, so a month of history does not land at the top of the funnel.
+                </span>
+              </span>
+            </label>
 
             {summary.importing > REVIEW_COMFORTABLE && (
               <p className="mb-2 flex items-start gap-1.5 text-[12px] font-medium" style={{ color: 'var(--nl-warn)' }}>

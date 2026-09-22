@@ -70,6 +70,8 @@ const DIRECTOR = {
   activeCenterId: 'langley',
   profile: { uid: 'neeru', displayName: 'Neeru Gill' },
   centerConfig: CONFIG,
+  // centerIntakes is owner-tier in the rules; a director passes it.
+  isOwnerLike: true, isSuperAdmin: false,
 };
 
 const TRAINING = {
@@ -274,11 +276,22 @@ describe('the composer', () => {
     expect(within(dialog).getByRole('button', { name: /delete/i })).toBeTruthy();
   });
 
-  it('will not open a row the calendar does not own', () => {
-    // An assessment is edited where it was booked, a fun day on Centre
-    // Events. Opening them here would offer an edit that goes nowhere.
+  it('opens an assessment in its OWN editor, not the entry composer', () => {
+    // An assessment is a centerIntakes document, so it gets the editor
+    // that writes there. It used to open nothing at all, which meant an
+    // imported booking named "Booked" was wrong forever.
     const { container } = draw();
     fireEvent.click(screen.getByTitle(/Assessment — Sofia K./i));
+    const dialog = container.querySelector('.fixed');
+    expect(dialog).toBeTruthy();
+    expect(within(dialog).getByText(/^Assessment$/)).toBeTruthy();
+    expect(within(dialog).queryByText(/Edit entry/i)).toBeNull();
+    expect(within(dialog).getByLabelText(/child's name/i).value).toBe('Sofia K.');
+  });
+
+  it('still will not open a fun day — that is edited on Centre Events', () => {
+    const { container } = draw();
+    fireEvent.click(screen.getByTitle(/^Bingo$/i));
     expect(container.querySelector('.fixed')).toBeNull();
   });
 });
