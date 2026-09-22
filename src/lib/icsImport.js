@@ -221,6 +221,9 @@ const PATTERNS = [
 
 /** The kind an event looks like. Falls back to a task, never to nothing. */
 export function classify(ev) {
+  // Structure beats prose: a title of "Appointment Booked:" says nothing,
+  // while child_name in the body says everything.
+  if (looksLikeABooking(ev)) return 'assessment';
   const hay = `${ev?.summary || ''} ${ev?.description || ''}`;
   for (const [kind, re] of PATTERNS) if (re.test(hay)) return kind;
   return 'task';
@@ -232,13 +235,62 @@ export function classify(ev) {
 // booking tool wrote, which is exactly why the result is shown for review
 // rather than saved.
 
-const LABELS = {
-  guardianName: /^\s*(?:parent|guardian|parent\/guardian|contact|booked by)\s*(?:name)?\s*[:-]\s*(.+)$/im,
-  childName:    /^\s*(?:child|student|client|kid)\s*(?:name)?\s*[:-]\s*(.+)$/im,
-  childGrade:   /^\s*(?:grade|gr|year|level)\s*[:-]\s*(.+)$/im,
-  childSchool:  /^\s*(?:school)\s*[:-]\s*(.+)$/im,
-  phone:        /^\s*(?:phone|mobile|cell|tel)\s*[:-]\s*(.+)$/im,
-  email:        /^\s*(?:e-?mail)\s*[:-]\s*(.+)$/im,
+/**
+ * Every `key: value` line in the description, keys normalised.
+ *
+ * THE REAL FORMAT, from Langley's own calendar. The booking funnel writes
+ * a mixture of prose and snake_case:
+ *
+ *   Name:
+ *   Phone: 6047167699
+ *   Email: moonf83@gmail.com
+ *   Created: Wednesday September 16, 2026 8:22 PM
+ *   Client Timezone: America/Vancouver
+ *   Start Time: Saturday September 26, 2026 1:30 PM PDT
+ *   Duration: 60.0 minutes
+ *   Appointment Type:
+ *   guardian_name: Francis Moon
+ *   child_name: Catherine Moon
+ *   child_grade_dropdown: 2
+ *   utm_source: google
+ *
+ * The first version matched `guardian\s*name\s*:` and an underscore is
+ * not whitespace, so it read NONE of it — 88 assessments arrived with no
+ * guardian and no grade. Keys are folded to spaces here so `guardian_name`,
+ * `Guardian Name` and `guardian-name` are one thing.
+ *
+ * `Start Time` in that text is DELIBERATELY IGNORED. It is a snapshot from
+ * when the booking was made and can disagree with the event it sits on —
+ * the sample above says Saturday the 26th on an event that runs Tuesday
+ * the 22nd. DTSTART is what the calendar actually shows, so DTSTART wins.
+ */
+export function labelledFields(description) {
+  const out = {};
+  for (const raw of String(description || '').split(/\r?\n/)) {
+    const m = /^\s*([A-Za-z][A-Za-z0-9 _./-]{0,40}?)\s*:\s*(.*)$/.exec(raw);
+    if (!m) continue;
+    const key = m[1].toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const value = m[2].trim();
+    if (!key) continue;
+    if (!(key in out) || (!out[key] && value)) out[key] = value;
+  }
+  return out;
+}
+
+/** The first value whose key matches, or ''. */
+function pick(fields, test) {
+  for (const [k, v] of Object.entries(fields)) if (v && test(k)) return v;
+  return '';
+}
+
+const IS_CONTACT = (k) => /\b(e ?mail|phone|mobile|cell|tel)\b/.test(k);
+const KEY = {
+  guardianName: (k) => /(guardian|parent)/.test(k) && !IS_CONTACT(k),
+  childName:    (k) => /(child|student)/.test(k) && /name/.test(k),
+  childGrade:   (k) => /grade/.test(k),
+  childSchool:  (k) => /school/.test(k),
+  email:        (k) => /e ?mail/.test(k),
+  phone:        (k) => /(phone|mobile|cell|tel)/.test(k),
 };
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/;
@@ -304,18 +356,15 @@ export function normaliseGrade(raw) {
 export function extractDetails(ev) {
   const desc = ev?.description || '';
   const both = `${ev?.summary || ''}\n${desc}`;
-  const grab = (key) => {
-    const m = LABELS[key].exec(desc);
-    return m ? m[1].trim() : '';
-  };
+  const fields = labelledFields(desc);
 
   const out = {
-    guardianName: grab('guardianName'),
-    childName: grab('childName'),
-    childGrade: normaliseGrade(grab('childGrade')),
-    childSchool: grab('childSchool'),
-    email: grab('email') || (EMAIL_RE.exec(both)?.[0] || ''),
-    phone: grab('phone') || (PHONE_RE.exec(both)?.[0] || ''),
+    guardianName: pick(fields, KEY.guardianName),
+    childName: pick(fields, KEY.childName),
+    childGrade: normaliseGrade(pick(fields, KEY.childGrade)),
+    childSchool: pick(fields, KEY.childSchool),
+    email: pick(fields, KEY.email) || (EMAIL_RE.exec(both)?.[0] || ''),
+    phone: pick(fields, KEY.phone) || (PHONE_RE.exec(both)?.[0] || ''),
   };
   if (out.email) out.email = (EMAIL_RE.exec(out.email)?.[0] || out.email).toLowerCase();
   if (out.phone) out.phone = PHONE_RE.exec(out.phone)?.[0] || out.phone;
@@ -324,12 +373,29 @@ export function extractDetails(ev) {
     const g = GRADE_RE.exec(both);
     if (g) out.childGrade = normaliseGrade(g[1] || g[2] || g[3]);
   }
+  // A bare "Name:" is whoever the booking is for. Only consulted when
+  // nothing said "child", and only when it is actually a name — the live
+  // format leaves it empty on every booking.
+  if (!out.childName && looksLikeAName(fields.name)) out.childName = fields.name;
   // Last resort: whatever in the title is not describing the appointment.
   if (!out.childName) out.childName = nameFromSummary(ev?.summary);
-  // A guardian is never guessed from the title — the name in there is
-  // the child's far more often than not, and putting a child's name in
-  // the parent field is worse than leaving it blank for someone to fill.
+  // A guardian is NEVER guessed from the title — the name in there is the
+  // child's far more often than not, and a child's name in the parent
+  // field is worse than a blank somebody fills in.
   return out;
+}
+
+/**
+ * A booking from the centre's own funnel, whatever its title says.
+ *
+ * Every one of Langley's is titled "Appointment Booked:", which contains
+ * no word meaning assessment. The DESCRIPTION is the real evidence: an
+ * event carrying child_name or guardian_name is a family's appointment,
+ * and that beats guessing from prose.
+ */
+export function looksLikeABooking(ev) {
+  const f = labelledFields(ev?.description || '');
+  return Object.keys(f).some(k => KEY.childName(k) || KEY.guardianName(k));
 }
 
 /* ── Narrowing the file down ──────────────────────────────────────────── */
@@ -382,6 +448,16 @@ export const REVIEW_COMFORTABLE = 400;
 
 /* ── The review rows ──────────────────────────────────────────────────── */
 
+/**
+ * "[NOT COMING] Appointment…" — a real title on Langley's calendar.
+ *
+ * The event still exists, so it is not STATUS:CANCELLED and skipping it
+ * would lose the record. Imported as a CANCELLED intake instead: the hour
+ * goes back on the public booking page, where a family who is not coming
+ * should never have been holding one.
+ */
+export const NOT_COMING_RE = /\[?\s*\b(not\s*coming|no[\s-]?show|cancell?ed)\b\s*\]?/i;
+
 export const SKIP_REASONS = {
   duplicate: 'Already imported',
   cancelled: 'Cancelled in Google',
@@ -409,6 +485,8 @@ export function buildRows(events, {
     const dur = ev.durationMin || defaultDurationMin;
     const endTime = ev.endTime || (ev.startTime ? addMinutes(ev.startTime, dur) : null);
 
+    const notComing = NOT_COMING_RE.test(ev.summary || '');
+
     let skip = null;
     if (!ev.date) skip = 'unusable';
     else if (ev.cancelled) skip = 'cancelled';
@@ -427,6 +505,8 @@ export function buildRows(events, {
       startTime: ev.startTime,
       endTime,
       durationMin: dur,
+      // A booking the family has already said they are not attending.
+      status: notComing ? 'cancelled' : 'scheduled',
       ...details,
       note: ev.location ? `Google Calendar · ${ev.location}` : 'Imported from Google Calendar',
       // What it was actually looking at. Shown in the review table, and

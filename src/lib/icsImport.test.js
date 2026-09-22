@@ -4,6 +4,7 @@ import {
   classify, nameFromSummary, normaliseGrade, extractDetails,
   buildRows, importSummary, SKIP_REASONS,
   inDateRange, eventDateSpan, defaultImportFrom, looksLikeAName,
+  labelledFields, looksLikeABooking,
 } from './icsImport';
 
 const TZ = 'America/Vancouver';
@@ -457,5 +458,142 @@ describe('a note in a title is not a child', () => {
     expect(r.childName).toBe('');
     expect(r.rawSummary).toBe('[CA] Booked');
     expect(r.rawDescription).toBe('no details here');
+  });
+});
+
+/**
+ * Langley's REAL format, copied out of the Google Calendar event.
+ *
+ * Every booking is titled "Appointment Booked:" — which contains no word
+ * meaning assessment — and the details are snake_case lines in the body.
+ * The first version matched `guardian\s*name\s*:` and an underscore is not
+ * whitespace, so it read none of it: 88 assessments arrived with no
+ * guardian, no grade, and every child called "Booked".
+ */
+const REAL_DESC = [
+  'Name: ',
+  'Phone: 6047167699',
+  'Email: moonf83@gmail.com',
+  '',
+  'Created: Wednesday September 16, 2026 8:22 PM',
+  '',
+  'Client Timezone: America/Vancouver',
+  'Start Time: Saturday September 26, 2026 1:30 PM PDT',
+  'Duration: 60.0 minutes',
+  'Appointment Type: ',
+  '',
+  'guardian_name: Francis Moon',
+  'child_name: Catherine Moon',
+  'child_grade_dropdown: 2',
+  'utm_source: google',
+  'utm_medium: cpc',
+  'utm_campaign: Google_Search_Brand-Core_CA_Natl_Exact_Tinuiti',
+  'radid: langleybc',
+  'dlmode: postmessage',
+].join('\n');
+
+const REAL_ICS = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:real-1@google.com
+DTSTART;TZID=America/Vancouver:20260922T163000
+DTEND;TZID=America/Vancouver:20260922T173000
+SUMMARY:Appointment Booked:
+DESCRIPTION:${REAL_DESC.replace(/\n/g, '\\n')}
+LOCATION:Mathnasium of Langley
+END:VEVENT
+END:VCALENDAR`;
+
+describe('the real Langley booking', () => {
+  const ev = () => parseIcs(REAL_ICS, { timeZone: TZ })[0];
+
+  it('reads snake_case keys — the bug that broke 88 imports', () => {
+    expect(labelledFields(REAL_DESC)).toMatchObject({
+      'guardian name': 'Francis Moon',
+      'child name': 'Catherine Moon',
+      'child grade dropdown': '2',
+      phone: '6047167699',
+      email: 'moonf83@gmail.com',
+    });
+  });
+
+  it('pulls the whole family off it', () => {
+    expect(extractDetails(ev())).toMatchObject({
+      guardianName: 'Francis Moon',
+      childName: 'Catherine Moon',
+      childGrade: '2',
+      phone: '6047167699',
+      email: 'moonf83@gmail.com',
+    });
+  });
+
+  it('knows it is an assessment although the title never says so', () => {
+    // "Appointment Booked:" contains no word meaning assessment. The
+    // child_name line in the body is the real evidence.
+    expect(ev().summary).toBe('Appointment Booked:');
+    expect(classify(ev())).toBe('assessment');
+    expect(looksLikeABooking(ev())).toBe(true);
+    expect(buildRows([ev()])[0].target).toBe('intake');
+  });
+
+  it('does not let the empty "Name:" line win over child_name', () => {
+    expect(extractDetails(ev()).childName).toBe('Catherine Moon');
+  });
+
+  it('IGNORES the Start Time in the body and believes the event', () => {
+    // That text says Saturday the 26th at 1:30pm on an event that runs
+    // Tuesday the 22nd at 4:30pm. It is a snapshot from booking time and
+    // can be stale; DTSTART is what the calendar actually shows.
+    const r = buildRows([ev()])[0];
+    expect(r.date).toBe('2026-09-22');
+    expect(r.startTime).toBe('16:30');
+    expect(r.endTime).toBe('17:30');
+  });
+
+  it('never mistakes a utm tag or a radid for a person', () => {
+    const d = extractDetails(ev());
+    expect(JSON.stringify(d)).not.toMatch(/google_search|langleybc|postmessage|cpc/i);
+  });
+
+  it('reads a booking with no guardian recorded without inventing one', () => {
+    const bare = { summary: 'Appointment Booked:', description: 'child_name: Emma\nPhone: 6040000000' };
+    expect(extractDetails(bare)).toMatchObject({ childName: 'Emma', guardianName: '', childGrade: '' });
+    expect(classify(bare)).toBe('assessment');
+  });
+
+  it('handles the same keys written any other way', () => {
+    for (const desc of ['Guardian Name: Francis Moon\nChild Name: Catherine Moon',
+      'guardian-name: Francis Moon\nchild-name: Catherine Moon',
+      'GUARDIAN_NAME: Francis Moon\nCHILD_NAME: Catherine Moon']) {
+      expect(extractDetails({ description: desc })).toMatchObject({
+        guardianName: 'Francis Moon', childName: 'Catherine Moon',
+      });
+    }
+  });
+});
+
+describe('a family who is not coming', () => {
+  // "[NOT COMING] Appointment…" is a real title on Langley's calendar.
+  const row = (summary) => buildRows(parseIcs(
+    `BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:nc1\nDTSTART;TZID=America/Vancouver:20260924T173000\nSUMMARY:${summary}\nDESCRIPTION:child_name: Emma\nEND:VEVENT\nEND:VCALENDAR`,
+    { timeZone: TZ },
+  ))[0];
+
+  it('comes in cancelled, so the hour goes back on the booking page', () => {
+    // Skipping it would lose the record; importing it as scheduled would
+    // hold an hour for somebody who already said they are not attending.
+    expect(row('[NOT COMING] Appointment Booked:').status).toBe('cancelled');
+    expect(row('[NOT COMING] Appointment Booked:').skip).toBe(null);
+    expect(row('[NOT COMING] Appointment Booked:').childName).toBe('Emma');
+  });
+
+  it('recognises the other ways staff write it', () => {
+    for (const s of ['NO SHOW - Appointment Booked:', '[Cancelled] Appointment Booked:',
+      'Appointment Booked: no-show']) {
+      expect(row(s).status).toBe('cancelled');
+    }
+  });
+
+  it('leaves an ordinary booking scheduled', () => {
+    expect(row('Appointment Booked:').status).toBe('scheduled');
   });
 });

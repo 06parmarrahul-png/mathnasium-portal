@@ -1209,13 +1209,55 @@ yields `''`, which the panel counts and flags rather than importing.
 person — one to three words, no digits, no "!". The same live run produced
 "Book Your Skills Today!" and "might have 2nd student" as children's names.
 
-**WHAT THAT RUN ACTUALLY PROVED about Langley's calendar:** of 88 imported
-assessments, **zero** had a guardian and **zero** had a grade, and only about a
-dozen titles held a real name. Those events carry no structured family
-details at all. No extractor can fix that, so the review table now shows each
-event's own SUMMARY and DESCRIPTION ("what it read", or "no description"), and
-the original title is stamped on the assessment as `sourceSummary`. The point
-is to make a blank row explainable instead of a mystery.
+### The real Langley booking format
+
+Every booking on that calendar is titled **`Appointment Booked:`** — which
+contains no word meaning assessment — and the details are `key: value` lines
+in the DESCRIPTION, half prose and half **snake_case**:
+
+```
+Name:
+Phone: 6047167699
+Email: moonf83@gmail.com
+Created: Wednesday September 16, 2026 8:22 PM
+Client Timezone: America/Vancouver
+Start Time: Saturday September 26, 2026 1:30 PM PDT
+Duration: 60.0 minutes
+Appointment Type:
+guardian_name: Francis Moon
+child_name: Catherine Moon
+child_grade_dropdown: 2
+utm_source: google
+radid: langleybc
+```
+
+**THE BUG THAT COST 88 IMPORTS:** the labels were matched as
+`guardian\s*name\s*:`, and an underscore is not whitespace. Nothing matched,
+so every assessment arrived with no guardian, no grade, and a child called
+"Booked" (the title's leftovers). `labelledFields()` now folds every key to
+spaces — `guardian_name`, `Guardian Name` and `guardian-name` are one thing —
+and the fields are picked by what the key CONTAINS, so `child_grade_dropdown`
+is a grade. utm tags, `radid` and `dlmode` match nothing and are ignored.
+
+**`Start Time` in that body is deliberately ignored.** It is a snapshot from
+when the booking was made and can disagree with the event it sits on — the
+real sample says Saturday the 26th on an event running Tuesday the 22nd.
+DTSTART is what the calendar actually shows, so DTSTART wins. Pinned by a test.
+
+**Classification is structural, not textual.** `looksLikeABooking()` returns
+true when the description carries a child or guardian key, and `classify()`
+checks that FIRST — "Appointment Booked:" would otherwise fall through every
+keyword to `task` and never reach the Intakes list.
+
+**`[NOT COMING] Appointment Booked:`** is a real title there. The event is not
+STATUS:CANCELLED, so skipping it would lose the record; importing it as
+scheduled would hold an hour for somebody who has already said they are not
+coming. It comes in as a **cancelled** intake, and its lead as **lost**.
+
+The review table also shows each event's own description ("what it read", or
+"no description"), and the original title is stamped on the assessment as
+`sourceSummary`, so a row that still comes back blank is explainable rather
+than a mystery.
 
 **An assessment is edited in its own editor** (`components/AssessmentEditor.jsx`,
 pure bits in `lib/assessments.js`), because it is a centerIntakes document and

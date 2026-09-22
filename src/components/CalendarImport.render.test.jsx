@@ -484,3 +484,66 @@ END:VCALENDAR`);
     expect(intakeWrites()[0].data.childName).toBe('Emma');
   });
 });
+
+describe('Langley-s real booking format, end to end', () => {
+  const REAL = `BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:real1@google.com
+DTSTART;TZID=America/Vancouver:20260922T163000
+DTEND;TZID=America/Vancouver:20260922T173000
+SUMMARY:Appointment Booked:
+DESCRIPTION:Name: \\nPhone: 6047167699\\nEmail: moonf83@gmail.com\\n\\nCreated: Wednesday September 16\\, 2026 8:22 PM\\n\\nClient Timezone: America/Vancouver\\nStart Time: Saturday September 26\\, 2026 1:30 PM PDT\\nDuration: 60.0 minutes\\nAppointment Type: \\n\\nguardian_name: Francis Moon\\nchild_name: Catherine Moon\\nchild_grade_dropdown: 2\\nutm_source: google\\nradid: langleybc
+LOCATION:Mathnasium of Langley
+END:VEVENT
+BEGIN:VEVENT
+UID:real2@google.com
+DTSTART;TZID=America/Vancouver:20260924T173000
+DTEND;TZID=America/Vancouver:20260924T183000
+SUMMARY:[NOT COMING] Appointment Booked:
+DESCRIPTION:guardian_name: Sam Reid\\nchild_name: Ada Reid\\nchild_grade_dropdown: 7
+END:VEVENT
+END:VCALENDAR`;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 8, 22, 12, 0, 0));
+  });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('fills the table in instead of leaving it blank', async () => {
+    const { container } = draw();
+    await drop(container, REAL);
+    expect(screen.getByLabelText(/^Child for Appointment Booked/i).value).toBe('Catherine Moon');
+    expect(screen.getByLabelText(/^Guardian for Appointment Booked/i).value).toBe('Francis Moon');
+    expect(screen.getByLabelText(/^Grade for Appointment Booked/i).value).toBe('2');
+    expect(screen.queryByText(/no child’s name/i)).toBeNull();
+  });
+
+  it('writes the family through to the assessment and the lead', async () => {
+    const { container } = draw();
+    await drop(container, REAL);
+    await act(async () => { fireEvent.click(importBtn()); });
+
+    const booked = intakeWrites().find(w => w.data.childName === 'Catherine Moon');
+    expect(booked.data).toMatchObject({
+      slot: '2026-09-22T16:30:00',          // the EVENT's time, not the body's
+      guardianName: 'Francis Moon',
+      childGrade: '2',
+      phone: '6047167699',
+      email: 'moonf83@gmail.com',
+      status: 'scheduled',
+    });
+    expect(leadWrites().find(w => w.data.childName === 'Catherine Moon').data)
+      .toMatchObject({ parentName: 'Francis Moon', parentEmail: 'moonf83@gmail.com' });
+  });
+
+  it('brings a "not coming" booking in cancelled, and its lead in as lost', async () => {
+    const { container } = draw();
+    await drop(container, REAL);
+    expect(screen.getByText(/^Not coming$/i)).toBeTruthy();
+    await act(async () => { fireEvent.click(importBtn()); });
+    const ada = intakeWrites().find(w => w.data.childName === 'Ada Reid');
+    expect(ada.data.status).toBe('cancelled');
+    expect(leadWrites().find(w => w.data.childName === 'Ada Reid').data.status).toBe('lost');
+  });
+});

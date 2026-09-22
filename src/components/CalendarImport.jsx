@@ -121,7 +121,7 @@ export default function CalendarImport({
                 childName: (r.childName || '').trim(),
                 childGrade: (r.childGrade || '').trim(),
                 childSchool: (r.childSchool || '').trim(),
-                status: past ? 'assessed' : 'new',
+                status: r.status === 'cancelled' ? 'lost' : (past ? 'assessed' : 'new'),
                 source: 'intake-form',
                 sourceDetail: `Imported from Google Calendar — assessment ${r.date}`
                   + (r.startTime ? ` at ${r.startTime}` : ''),
@@ -144,7 +144,7 @@ export default function CalendarImport({
               phone: (r.phone || '').trim(),
               smsOptIn: false,
               notes: r.note || '',
-              status: 'scheduled',
+              status: r.status || 'scheduled',
               source: 'google-import',
               sourceUid: r.uid || null,
               sourceSummary: r.rawSummary || '',
@@ -338,6 +338,10 @@ export default function CalendarImport({
                       <td className="whitespace-nowrap px-2 py-1.5">
                         {r.skip ? (
                           <span style={{ color: 'var(--nl-muted)' }}>{SKIP_REASONS[r.skip]}</span>
+                        ) : r.status === 'cancelled' ? (
+                          <span className="text-[11px] font-semibold" style={{ color: 'var(--nl-warn)' }}>
+                            Not coming
+                          </span>
                         ) : (
                           <select value={r.target}
                             aria-label={`Where ${r.title} goes`}
