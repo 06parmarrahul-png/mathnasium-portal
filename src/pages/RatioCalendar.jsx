@@ -809,7 +809,23 @@ function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
 /* ── Composer ───────────────────────────────────────────────────────── */
 
 function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDelete, preview, run }) {
+  const [peopleSearch, setPeopleSearch] = useState('');
   const set = (patch) => setDraft(d => ({ ...d, ...patch }));
+  /* Type to filter, the same shape the Student Scheduler uses: empty
+     query shows everyone, otherwise a plain substring match on the name.
+     ANYONE ALREADY TICKED STAYS IN THE LIST whatever the query says —
+     tick somebody, type, and watching them disappear reads as "it did not
+     save". They keep their place rather than jumping to the top, so the
+     list does not reshuffle under the cursor. */
+  const query = peopleSearch.trim().toLowerCase();
+  const matches = query
+    ? staff.filter(u => String(u.displayName || '').toLowerCase().includes(query))
+    : staff;
+  const chosen = new Set(draft.assignedTo || []);
+  const visiblePeople = query
+    ? staff.filter(u => chosen.has(u.id) || matches.includes(u))
+    : staff;
+
   const togglePerson = (u) => {
     const has = (draft.assignedTo || []).includes(u.id);
     set({
@@ -936,14 +952,18 @@ function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDe
         </Field>
 
         <Field label="Who is on it">
-          <div className="max-h-[132px] overflow-y-auto rounded-lg border p-1.5"
+          <input value={peopleSearch} onChange={e => setPeopleSearch(e.target.value)}
+            placeholder="Search staff by name…" aria-label="Search staff by name"
+            className="w-full rounded-lg border px-3 py-2 text-[13px] outline-none"
+            style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }} />
+          <div className="mt-1.5 max-h-[132px] overflow-y-auto rounded-lg border p-1.5"
             style={{ borderColor: 'var(--nl-rule)' }}>
             {staff.length === 0 && (
               <p className="px-1.5 py-1 text-[12px]" style={{ color: 'var(--nl-muted)' }}>
                 Nobody to assign yet.
               </p>
             )}
-            {staff.map(u => (
+            {visiblePeople.map(u => (
               <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-[12.5px]">
                 <input type="checkbox" checked={(draft.assignedTo || []).includes(u.id)}
                   onChange={() => togglePerson(u)} />
@@ -951,6 +971,11 @@ function Composer({ draft, setDraft, staff, error, saving, onSave, onClose, onDe
               </label>
             ))}
           </div>
+          {peopleSearch.trim() && matches.length === 0 && (
+            <p className="mt-1.5 text-[11.5px]" style={{ color: 'var(--nl-warn)' }}>
+              Nobody matches &ldquo;{peopleSearch.trim()}&rdquo;.
+            </p>
+          )}
           <p className="mt-1.5 text-[11px]" style={{ color: 'var(--nl-muted)' }}>
             Leaving it unassigned is fine — it still shows on the centre&rsquo;s calendar.
           </p>

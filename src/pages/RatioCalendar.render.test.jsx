@@ -98,6 +98,9 @@ beforeEach(() => {
   snapshots.users = [
     { id: 'neeru', displayName: 'Neeru Gill', approved: true },
     { id: 'rahul', displayName: 'Rahul Parmar', approved: true },
+    { id: 'rishi', displayName: 'Rishi Mukerji', approved: true },
+    { id: 'rushan', displayName: 'Rushan Zavid', approved: true },
+    { id: 'sabrina', displayName: 'Sabrina Kedzior', approved: true },
     { id: 'ghost', displayName: 'Not Approved', approved: false },
   ];
 });
@@ -803,5 +806,100 @@ describe('the range label matches the grid', () => {
     snapshots.calendar = [{ ...TRAINING, id: 'sun', date: '2026-09-20', title: 'Sunday catch-up' }];
     draw();
     expect(screen.getByText(/20 Sep – 26 Sep 2026|Sep 20 – Sep 26, 2026/)).toBeTruthy();
+  });
+});
+
+describe('finding the person to assign', () => {
+  // A scroll list of fifty names is a scroll list. Same shape as the
+  // Student Scheduler: type, and it narrows.
+  const openIt = (container) => { openComposer(); return container.querySelector('.fixed'); };
+  const type = (dialog, q) =>
+    fireEvent.change(within(dialog).getByLabelText(/search staff by name/i), { target: { value: q } });
+  const names = (dialog) => [...dialog.querySelectorAll('label')]
+    .map(l => l.textContent.trim())
+    .filter(t => /Gill|Parmar|Mukerji|Zavid|Kedzior/.test(t));
+
+  it('shows everybody before anything is typed', () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    expect(names(dialog)).toHaveLength(5);
+  });
+
+  it('narrows to the people whose name contains what was typed', () => {
+    // A substring, like the Student Scheduler — "ru" is in Nee-ru as well
+    // as Ru-shan, and both are right.
+    const { container } = draw();
+    const dialog = openIt(container);
+    type(dialog, 'ru');
+    expect(names(dialog)).toEqual(['Neeru Gill', 'Rushan Zavid']);
+    type(dialog, 'rus');
+    expect(names(dialog)).toEqual(['Rushan Zavid']);
+  });
+
+  it('does not care about case', () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    type(dialog, 'SABRINA');
+    expect(names(dialog)).toEqual(['Sabrina Kedzior']);
+  });
+
+  it('matches anywhere in the name, not just the start', () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    type(dialog, 'gill');
+    expect(names(dialog)).toEqual(['Neeru Gill']);
+  });
+
+  it('KEEPS somebody already ticked in the list while you search', () => {
+    // Tick a person, type a name that does not match them, and watching
+    // them disappear reads as "it did not save".
+    const { container } = draw();
+    const dialog = openIt(container);
+    fireEvent.click(within(dialog).getByLabelText('Rahul Parmar'));
+    type(dialog, 'sabrina');
+    expect(names(dialog)).toEqual(['Rahul Parmar', 'Sabrina Kedzior']);
+    expect(within(dialog).getByLabelText('Rahul Parmar').checked).toBe(true);
+  });
+
+  it('does not reshuffle the list when somebody is ticked', () => {
+    // Floating the selected to the top moves the row out from under the
+    // cursor mid-click.
+    const { container } = draw();
+    const dialog = openIt(container);
+    const before = names(dialog);
+    fireEvent.click(within(dialog).getByLabelText('Sabrina Kedzior'));
+    expect(names(dialog)).toEqual(before);
+  });
+
+  it('says so when nothing matches, naming what was typed', () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    type(dialog, 'zzzz');
+    expect(within(dialog).getByText(/nobody matches “zzzz”/i)).toBeTruthy();
+  });
+
+  it('still keeps unapproved accounts out of the list entirely', () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    type(dialog, 'approved');
+    expect(within(dialog).queryByLabelText('Not Approved')).toBeNull();
+  });
+
+  it('assigns whoever was picked through the search', async () => {
+    const { container } = draw();
+    const dialog = openIt(container);
+    fireEvent.change(within(dialog).getByPlaceholderText(/radius training/i), { target: { value: 'Huddle' } });
+    fireEvent.change(dialog.querySelector('input[type="date"]'), { target: { value: '2026-09-25' } });
+    const times = dialog.querySelectorAll('input[type="time"]');
+    fireEvent.change(times[0], { target: { value: '15:00' } });
+    fireEvent.change(times[1], { target: { value: '16:00' } });
+    type(dialog, 'mukerji');
+    fireEvent.click(within(dialog).getByLabelText('Rishi Mukerji'));
+    await act(async () => {
+      fireEvent.click(within(dialog).getByRole('button', { name: /^save entry$/i }));
+    });
+    expect(writes.added[0]).toMatchObject({
+      title: 'Huddle', assignedTo: ['rishi'], assignedNames: ['Rishi Mukerji'],
+    });
   });
 });

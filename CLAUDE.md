@@ -1369,6 +1369,17 @@ signal that something is there. The range label reads off the days SHOWN for
 the same reason: "Sep 20 – Sep 26" over a grid that opens on Monday the 21st
 is a small lie, and it is the line people read to know where they are.
 
+**The assignee picker is type-to-filter**, the same shape the Student
+Scheduler's roster search uses: empty query shows everyone, otherwise a plain
+case-insensitive substring on the display name. Not a new widget — the one that
+already existed. Two behaviours the tests pin:
+
+- **Anybody already ticked stays in the list** whatever the query says. Tick
+  somebody, type a name that does not match them, and watching them vanish
+  reads as "it did not save".
+- **The list never reshuffles.** Floating the selected to the top moves the row
+  out from under the cursor mid-click, so a ticked person keeps their place.
+
 **Two things at the same time sit SIDE BY SIDE.** Reported as "I cannot put
 multiple things on the same day at the same time" — they saved perfectly well,
 and every entry was drawn full width and absolutely positioned, so the later
