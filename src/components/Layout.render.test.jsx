@@ -251,6 +251,59 @@ describe('the Calendar reaches management and stops there', () => {
     expect(sidebar.some(x => x.startsWith(PAGES.staffSchedule.name))).toBe(true);
   });
 
+  /**
+   * Which SECTION it sits in, not just whether it is there.
+   *
+   * It used to be filed under SUPPLY on the owner-shaped sidebar — a
+   * section about staff hours — and under MANAGE on the other one. It is
+   * a daily surface, so it lives in GENERAL on both, directly above Ratio
+   * Games.
+   */
+  const sectionsOf = (who, config) => {
+    current.auth = config
+      ? { ...authFor(PEOPLE[who]), centerConfig: config }
+      : authFor(PEOPLE[who]);
+    const { container } = render(<MemoryRouter><Layout><div /></Layout></MemoryRouter>);
+    return [...container.querySelectorAll('aside nav > div')].map(d => ({
+      label: d.querySelector('p')?.textContent.trim(),
+      items: [...d.querySelectorAll('a')].map(a => a.textContent.trim().replace(/\d+$/, '')),
+    }));
+  };
+
+  it.each(['owner', 'director', 'aa', 'manager', 'host'])(
+    'sits in General for %s, on either sidebar shape', (who) => {
+      const general = sectionsOf(who).find(s => s.label === 'General');
+      expect(general, 'no General section').toBeTruthy();
+      expect(general.items).toContain(CALENDAR);
+    });
+
+  it.each(['owner', 'director', 'aa'])('has left Supply for %s', (who) => {
+    const supply = sectionsOf(who).find(s => s.label === 'Supply');
+    if (supply) expect(supply.items).not.toContain(CALENDAR);
+  });
+
+  it.each(['manager', 'host'])('has left Manage for %s', (who) => {
+    const manage = sectionsOf(who).find(s => s.label === 'Manage');
+    if (manage) expect(manage.items).not.toContain(CALENDAR);
+  });
+
+  it('sits directly above Ratio Games when the centre has games on', () => {
+    // Games are off by default, so this is the only way to see the pair.
+    const general = sectionsOf('owner', { ...LANGLEY, gamesEnabled: true })
+      .find(s => s.label === 'General');
+    const cal = general.items.indexOf(CALENDAR);
+    const games = general.items.indexOf(PAGES.ratioGames.name);
+    expect(cal).toBeGreaterThan(-1);
+    expect(games).toBe(cal + 1);
+  });
+
+  it('appears exactly once in the whole sidebar', () => {
+    // Two entries under two gates is what this replaced.
+    for (const who of ['owner', 'director', 'aa', 'manager', 'host']) {
+      expect(draw(who).sidebar.filter(x => x === CALENDAR)).toHaveLength(1);
+    }
+  });
+
   it('is kept by a centre whose saved roles predate the permission', () => {
     // The additive rule in roles.js, which this feature is the first new
     // permission to exercise: a centre that edited its roles BEFORE

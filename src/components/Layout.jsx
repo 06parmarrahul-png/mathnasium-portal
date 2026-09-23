@@ -212,6 +212,23 @@ export default function Layout({ children }) {
   if (!isOwnerLikeNav && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
+  // The centre calendar — meetings, calls, interviews, and holding time
+  // off the public booking page.
+  //
+  // It used to sit in SUPPLY on the owner-shaped sidebar and in MANAGE on
+  // the other one: two entries, two gates, and on the owner sidebar it was
+  // filed under staff hours, which is not what the calendar is. It is a
+  // daily surface for everyone who holds it, so it belongs with the other
+  // daily surfaces.
+  //
+  // Gated on the permission alone. That is already exactly the people who
+  // should have it — owner, director, admin assistant, admin, Manager and
+  // Host all carry calendar.access; Lead, Instructor, Training and
+  // Volunteer carry none — so the old extra useOwnerLayout test only
+  // decided WHICH section it landed in, never who saw it.
+  if (auth.can('calendar.access')) {
+    general.push({ to: PAGES.calendar.path, label: PAGES.calendar.name, icon: CalendarClock });
+  }
   // Ratio Games. Off until the owner switches it on for the centre; once
   // it is on, EVERY account gets it — volunteers and trainees included,
   // which is the whole point of it.
@@ -251,11 +268,6 @@ export default function Layout({ children }) {
   // maintained, settled. Same three Admin sub-tabs as before, just
   // re-framed under the right mental bucket.
   const supply = [];
-  // The centre's own calendar. Gated on its own permission rather than on
-  // canSeeAdminPanel, because Hosts hold it and do not hold that.
-  if (useOwnerLayout && auth.can('calendar.access')) {
-    supply.push({ to: PAGES.calendar.path, label: PAGES.calendar.name, icon: CalendarClock });
-  }
   if (useOwnerLayout && canSeeAdminPanel) {
     supply.push(
       { to: PAGES.staffSchedule.path, label: PAGES.staffSchedule.name, icon: CalendarRange },
@@ -310,9 +322,6 @@ export default function Layout({ children }) {
     // Plain Admin, Manager, and Host all land here — same "operational
     // admin" tier, full list. (Owner / AA / Director reach the same
     // pages via Growth / Demand / Supply / Intelligence above instead.)
-    if (auth.can('calendar.access')) {
-      manage.push({ to: PAGES.calendar.path, label: PAGES.calendar.name, icon: CalendarClock });
-    }
     manage.push(
       { to: PAGES.staffSchedule.path,    label: PAGES.staffSchedule.name,    icon: CalendarRange },
       { to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList },
