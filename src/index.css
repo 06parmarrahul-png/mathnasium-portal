@@ -24,10 +24,15 @@
      which is a card edge — one token for both made the columns as heavy
      as the card itself. */
   --nl-hair:   #F2ECE7;
-  /* Today's column on the Calendar. Lighter than --nl-brandw, which is a
-     chip background — a whole column at that strength fights the entries
-     sitting on it. */
-  --nl-today:  #FDF4F5;
+  /* Today's column on the Calendar. NEUTRAL on purpose: brand red is
+     identity and actions, and a pink column next to pink fun days, a pink
+     closure chip and a red button made the page read as one alarm. */
+  --nl-today:  #F1EDE9;
+
+  /* Centre events — a fun day is daily texture, not an alert. It used to
+     borrow the brand, which put six pink chips across the all-day band. */
+  --nl-info:   #2F6FB5;
+  --nl-infow:  #E8F0F9;
 
   /* Mathnasium red. Identity and actions ONLY — never "error", or it
      stops meaning either. */
@@ -57,7 +62,9 @@
   --nl-muted:  #9A8B82;
   --nl-rule:   #33291F;
   --nl-hair:   #241D19;
-  --nl-today:  #2A1B1E;
+  --nl-today:  #2B241F;
+  --nl-info:   #7FB3EB;
+  --nl-infow:  #16283A;
   --nl-brand:  #FF7A8A;
   --nl-brandw: #3A1C21;
   --nl-ok:     #57C2A3;

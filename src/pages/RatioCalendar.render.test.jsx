@@ -602,7 +602,8 @@ describe('turning a meeting that already exists into a recurring one', () => {
 describe('knowing which day you are on', () => {
   // Reported: red text on the date alone was easy to miss on a
   // seven-column grid — the eye has nothing to follow down the page.
-  const todayCells = (container) => [...container.querySelectorAll('[style*="--nl-today"]')];
+  const todayCells = (container) => [...container.querySelectorAll('*')]
+    .filter(el => (el.getAttribute('style') || '').includes('--nl-today'));
 
   it('tints today down all three rows of the week', () => {
     // Header, all-day band and hour column are three sibling grids. Any
@@ -611,12 +612,37 @@ describe('knowing which day you are on', () => {
     expect(todayCells(container)).toHaveLength(3);
   });
 
-  it('marks the date with the same filled pill the month grid uses', () => {
+  it('marks the date with a filled INK pill, not a fourth red thing', () => {
+    // Brand red is identity and actions. It is spent on the now line and
+    // on a closure; "selected" is filled ink, the same idiom the Week /
+    // Month toggle uses.
     const { container } = draw();
     const pill = [...container.querySelectorAll('div')]
-      .find(el => el.textContent === '22' && /--nl-brand/.test(el.getAttribute('style') || ''));
+      .find(el => el.textContent === '22' && /--nl-ink/.test(el.getAttribute('style') || ''));
     expect(pill).toBeTruthy();
-    expect(pill.getAttribute('style')).toMatch(/background/);
+    expect(pill.getAttribute('style')).not.toMatch(/--nl-brand/);
+  });
+
+  it('keeps brand red for the now line alone inside the grid', () => {
+    const { container } = draw();
+    const grid = container.querySelector('.overflow-x-auto');
+    const reds = [...grid.querySelectorAll('*')]
+      .filter(el => (el.getAttribute('style') || '').includes('--nl-brand'));
+    // The line and its dot — and nothing else. A closure would add its
+    // own, which is the other thing red is allowed to mean here.
+    expect(reds).toHaveLength(2);
+    for (const el of reds) {
+      expect(el.closest('[data-now-line]')).toBeTruthy();
+    }
+  });
+
+  it('draws a fun day in its own colour rather than borrowing the brand', () => {
+    // Six pink chips across the all-day band was most of the red on the
+    // page, and a fun day is daily texture, not an alert.
+    const { container } = draw();
+    const bingo = [...container.querySelectorAll('button')].find(b => b.textContent.includes('Bingo'));
+    expect(bingo.getAttribute('style')).toMatch(/--nl-info/);
+    expect(bingo.getAttribute('style')).not.toMatch(/--nl-brand/);
   });
 
   it('draws a now line, on today and nowhere else', () => {

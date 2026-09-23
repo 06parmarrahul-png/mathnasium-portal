@@ -54,8 +54,10 @@ const SHUT = {
 
 /* Today, down the whole column. Red text on the date alone was easy to
    miss on a seven-column grid — the eye has nothing to follow down the
-   page. Only backgroundColor, so a day that is BOTH today and closed
-   keeps the hatch from SHUT on top of the tint. */
+   page. The tint is NEUTRAL: red is identity and actions, and a pink
+   column under pink chips made the whole page read as one alarm. Only
+   backgroundColor, so a day that is BOTH today and closed keeps the
+   hatch from SHUT on top of the tint. */
 const TODAY = { backgroundColor: 'var(--nl-today)' };
 
 /* The hours the week grid draws. Widened to fit whatever is actually on,
@@ -90,9 +92,12 @@ const fmtLong = (iso) => asDate(iso)?.toLocaleDateString(undefined,
 /** A source that is not an entry cannot be edited from here. */
 const isEntry = (r) => r.source === 'entry';
 
+/* Brand red is identity and actions (index.css), so it is spent here on
+   exactly two things: a CLOSURE, which is a stop, and the now line, which
+   is this instant. Everything else takes a semantic colour of its own. */
 const SOURCE_TONE = {
   closure: { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
-  event:   { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
+  event:   { color: 'var(--nl-info)',  wash: 'var(--nl-infow)' },
   intake:  { color: 'var(--nl-ok)',    wash: 'var(--nl-okw)' },
 };
 const toneFor = (r) => SOURCE_TONE[r.source] || kindTone(r.kind);
@@ -594,13 +599,14 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
               <div key={d} className="min-w-0 border-l py-2 text-center"
                 style={{ borderColor: 'var(--nl-rule)', ...(isToday ? TODAY : null) }}>
                 <div className="text-[9px] font-bold uppercase tracking-[0.1em]"
-                  style={{ color: isToday ? 'var(--nl-brand)' : 'var(--nl-muted)' }}>
+                  style={{ color: isToday ? 'var(--nl-ink)' : 'var(--nl-muted)' }}>
                   {dt.toLocaleDateString(undefined, { weekday: 'short' })}
                 </div>
-                {/* The same filled pill the month grid uses, so today
-                    looks like today in both views. */}
+                {/* Filled INK, the same "selected" idiom as the Week /
+                    Month toggle — not a fourth red thing on the page. The
+                    month grid uses the identical pill. */}
                 <div className="nl-display mx-auto mt-0.5 flex h-[26px] w-[30px] items-center justify-center rounded-lg text-[17px] font-semibold"
-                  style={isToday ? { background: 'var(--nl-brand)', color: '#fff' } : undefined}>
+                  style={isToday ? { background: 'var(--nl-ink)', color: '#fff' } : undefined}>
                   {dt.getDate()}
                 </div>
               </div>
@@ -733,7 +739,7 @@ function MonthGrid({ days, byDate, today, cursor, closedDays, onNew, onOpen }) {
               <button type="button" onClick={() => onNew(d)}
                 className="nl-display mb-1 flex h-[22px] w-[24px] items-center justify-center rounded-md text-[13px] font-semibold"
                 style={d === today
-                  ? { background: 'var(--nl-brand)', color: '#fff' }
+                  ? { background: 'var(--nl-ink)', color: '#fff' }
                   : { color: out ? 'var(--nl-rule)' : 'var(--nl-ink2)' }}>
                 {dt.getDate()}
               </button>

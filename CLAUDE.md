@@ -1337,14 +1337,28 @@ empty column and a shut one look identical and only one is worth booking into.
 
 **Today is a whole tinted COLUMN**, not red text on the date. Red type alone on
 a seven-column grid was easy to miss — the eye has nothing to follow down the
-page. The tint (`--nl-today`, lighter than `--nl-brandw`, which is a chip
-background) goes on all three of the week's sibling grids; leave it off one and
-the column the eye follows breaks. It sets only `backgroundColor`, so a day
-that is both today and closed keeps its hatch on top. The date itself gets the
-same filled brand pill the month grid uses, so today looks like today in both
-views, and a red **now line** crosses today's column — drawn only when this
-week is on screen and the time is inside the hours drawn, because a marker
-pinned to the top edge at 7am reports a time that is not on the grid.
+page. `--nl-today` goes on all three of the week's sibling grids; leave it off
+one and the column the eye follows breaks. It sets only `backgroundColor`, so a
+day that is both today and closed keeps its hatch on top. A **now line** crosses
+today's column, drawn only when this week is on screen and the time is inside
+the hours drawn — a marker pinned to the top edge at 7am reports a time that is
+not on the grid.
+
+**THE RED BUDGET.** `index.css` says brand red is *identity and actions only*,
+and the first pass spent it on today's tint, today's pill, the now line, every
+closure AND every fun day — six pink chips across the all-day band under a pink
+column beside a red button. The whole page read as one alarm. Inside the grid,
+brand red now means exactly two things:
+
+- a **closure** — the centre is shut, which is a stop
+- the **now line** — this instant
+
+Everything else took a colour of its own. Today's tint is a warm NEUTRAL; the
+date is a filled **ink** pill, the same "selected" idiom as the Week / Month
+toggle, in both views. Centre events and fun days moved to `--nl-info` (blue),
+a fifth semantic colour added for them: a fun day is daily texture, not an
+alert. A render test counts the brand-coloured elements inside the grid and
+fails if anything but the now line claims one.
 
 **`min-w-0` on every 1fr cell is load-bearing, for the second time in this
 codebase.** The week is three SIBLING grids sharing `54px repeat(7, 1fr)` —
