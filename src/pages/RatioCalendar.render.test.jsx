@@ -93,10 +93,8 @@ beforeEach(() => {
     id: 'i1', centerId: 'langley', slot: '2026-09-25T18:00:00', durationMin: 60,
     childName: 'Sofia K.', guardianName: 'A. Kovac', status: 'scheduled',
   }];
-  snapshots.timeOffRequests = [{
-    id: 't1', userName: 'Luke Huang', status: 'approved',
-    startDate: '2026-09-24', endDate: '2026-09-24',
-  }];
+  // timeOffRequests is deliberately NOT subscribed any more; rows here
+  // would prove nothing except that the listener is gone.
   snapshots.users = [
     { id: 'neeru', displayName: 'Neeru Gill', approved: true },
     { id: 'rahul', displayName: 'Rahul Parmar', approved: true },
@@ -109,12 +107,23 @@ const draw = () => render(<MemoryRouter><RatioCalendar /></MemoryRouter>);
 const openComposer = () => fireEvent.click(screen.getByRole('button', { name: /new entry/i }));
 
 describe('the week everything lands on', () => {
-  it('shows the entry, the booking, the fun day and the time off together', () => {
+  it('shows the entry, the booking and the fun day together', () => {
     draw();
     expect(screen.getByText('Radius training')).toBeTruthy();
     expect(screen.getByText('Assessment — Sofia K.')).toBeTruthy();
     expect(screen.getByText('Bingo')).toBeTruthy();
-    expect(screen.getByText('Luke Huang — time off')).toBeTruthy();
+  });
+
+  it('has no time-off layer at all — the centre asked for it gone', () => {
+    // Not merely empty: the chip is gone and nothing subscribes to
+    // timeOffRequests, so an approved day off cannot reach this page.
+    snapshots.timeOffRequests = [{
+      id: 't1', userName: 'Luke Huang', status: 'approved',
+      startDate: '2026-09-24', endDate: '2026-09-24',
+    }];
+    draw();
+    expect(screen.queryByRole('button', { name: /time off/i })).toBeNull();
+    expect(screen.queryByText(/Luke Huang/)).toBeNull();
   });
 
   it('counts what is holding the booking page', () => {

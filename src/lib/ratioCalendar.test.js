@@ -242,16 +242,27 @@ describe('one day, everything on it, from where it already lives', () => {
       id: 'i1', slot: `${FRI}T18:00:00`, durationMin: 60,
       childName: 'Sofia K.', guardianName: 'A. Kovac', status: 'scheduled',
     }],
-    timeOff: [{ id: 't1', userName: 'Luke Huang', status: 'approved', startDate: FRI, endDate: FRI }],
     holidays: [{ date: '2026-09-07', name: 'Labour Day' }],
   };
 
-  it('merges the five sources into one ordered day', () => {
+  it('merges the sources into one ordered day', () => {
     const rows = rowsForDate(DAY);
-    expect(rows.map(r => r.source)).toEqual(['event', 'timeoff', 'entry', 'intake']);
+    expect(rows.map(r => r.source)).toEqual(['event', 'entry', 'intake']);
     expect(rows.map(r => r.title)).toEqual([
-      'Bingo', 'Luke Huang — time off', 'Radius training', 'Assessment — Sofia K.',
+      'Bingo', 'Radius training', 'Assessment — Sofia K.',
     ]);
+  });
+
+  it('ignores time off entirely — the centre asked for it gone', () => {
+    // It used to draw an all-day band per person. This page answers "what
+    // is booked into the building"; who is away is a staffing question,
+    // and the weekly grid already paints it on the cell it belongs to.
+    const rows = rowsForDate({
+      ...DAY,
+      timeOff: [{ id: 't1', userName: 'Luke Huang', status: 'approved', startDate: FRI, endDate: FRI }],
+    });
+    expect(rows.every(r => r.source !== 'timeoff')).toBe(true);
+    expect(rows).toHaveLength(3);
   });
 
   it('gives an assessment its real end time from the booking length', () => {
@@ -264,21 +275,6 @@ describe('one day, everything on it, from where it already lives', () => {
   it('leaves a cancelled booking off the day', () => {
     const rows = rowsForDate({ ...DAY, intakes: [{ ...DAY.intakes[0], status: 'cancelled' }] });
     expect(rows.some(r => r.source === 'intake')).toBe(false);
-  });
-
-  it('shows only APPROVED time off', () => {
-    for (const status of ['pending', 'denied', undefined]) {
-      const rows = rowsForDate({ ...DAY, timeOff: [{ ...DAY.timeOff[0], status }] });
-      expect(rows.some(r => r.source === 'timeoff')).toBe(false);
-    }
-  });
-
-  it('spreads a multi-day leave across each of its days', () => {
-    const off = [{ id: 't2', userName: 'Luke Huang', status: 'approved', startDate: '2026-09-23', endDate: '2026-09-27' }];
-    for (const d of ['2026-09-23', FRI, '2026-09-27']) {
-      expect(rowsForDate({ dateISO: d, timeOff: off }).some(r => r.source === 'timeoff')).toBe(true);
-    }
-    expect(rowsForDate({ dateISO: '2026-09-28', timeOff: off })).toEqual([]);
   });
 
   it('puts the closure at the top of a closed day and marks it holding', () => {

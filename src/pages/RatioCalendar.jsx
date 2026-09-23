@@ -30,10 +30,13 @@ import {
  *
  * WHAT IT READS RATHER THAN OWNS
  *   Closures and stat holidays (Centre Settings), fun days and meetings
- *   (Centre Events), approved time off, and booked assessments. None of
- *   them are re-entered here and none of them are editable here — the
- *   calendar shows them and links to where they live. Anything else ends
- *   with the same fact stored twice, disagreeing with itself.
+ *   (Centre Events), and booked assessments. None of them are re-entered
+ *   here — the calendar shows them and links to where they live. Anything
+ *   else ends with the same fact stored twice, disagreeing with itself.
+ *
+ *   Approved time off was here and was REMOVED at the centre's request:
+ *   this page answers "what is booked into the building", and who is away
+ *   is a staffing question the weekly grid already paints on its own cell.
  *
  * EVERY FIGURE IS A DIRECT READ. There is no ratio, no budget and no
  * enrolment on this page.
@@ -83,7 +86,6 @@ const isEntry = (r) => r.source === 'entry';
 
 const SOURCE_TONE = {
   closure: { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
-  timeoff: { color: 'var(--nl-muted)', wash: 'var(--nl-raised)' },
   event:   { color: 'var(--nl-brand)', wash: 'var(--nl-brandw)' },
   intake:  { color: 'var(--nl-ok)',    wash: 'var(--nl-okw)' },
 };
@@ -109,7 +111,6 @@ export default function RatioCalendar() {
   const [entries, setEntries] = useState(null);
   const [events, setEvents] = useState([]);
   const [intakes, setIntakes] = useState([]);
-  const [timeOff, setTimeOff] = useState([]);
   const [staff, setStaff] = useState([]);
   const [draft, setDraft] = useState(null);
   const [error, setError] = useState('');
@@ -178,15 +179,6 @@ export default function RatioCalendar() {
   useEffect(() => {
     if (!activeCenterId) return undefined;
     return onSnapshot(
-      query(collection(db, 'timeOffRequests'), where('status', '==', 'approved')),
-      snap => setTimeOff(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => setTimeOff([]),
-    );
-  }, [activeCenterId]);
-
-  useEffect(() => {
-    if (!activeCenterId) return undefined;
-    return onSnapshot(
       query(collection(db, 'users'), where('centerIds', 'array-contains', activeCenterId)),
       snap => setStaff(snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
@@ -200,11 +192,11 @@ export default function RatioCalendar() {
     const map = {};
     for (const d of days) {
       map[d] = rowsForDate({
-        dateISO: d, entries: entries || [], events, intakes, timeOff, holidays,
+        dateISO: d, entries: entries || [], events, intakes, holidays,
       }).filter(r => !hidden.has(r.source));
     }
     return map;
-  }, [days, entries, events, intakes, timeOff, holidays, hidden]);
+  }, [days, entries, events, intakes, holidays, hidden]);
 
   /* Every closure the centre has configured, as bare dates. The series
      generator skips these: a meeting does not happen on a day the centre
@@ -522,7 +514,6 @@ const LAYER_CHIPS = [
   { src: 'intake',  label: 'Assessments' },
   { src: 'entry',   label: 'Entries' },
   { src: 'event',   label: 'Centre events' },
-  { src: 'timeoff', label: 'Time off' },
   { src: 'closure', label: 'Closures' },
 ];
 
@@ -601,7 +592,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
           })}
         </div>
 
-        {/* All-day band: closures, time off, fun days and all-day entries. */}
+        {/* All-day band: closures, fun days and all-day entries. */}
         <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)', background: 'var(--nl-paper)' }}>
           <div className="pr-2 pt-2 text-right text-[8.5px] font-bold uppercase tracking-[0.08em]"
             style={{ color: 'var(--nl-muted)' }}>All day</div>

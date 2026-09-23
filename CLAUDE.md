@@ -1089,10 +1089,18 @@ two assessments. `computeWeekSlots(..., { holds, closures })` takes them as a
 SEPARATE argument — they collide, they never count. Pinned by
 "DOES NOT use up the day-s assessment allowance".
 
-**It READS four things it does not own**, and none of them are editable from
-here: closures/stat holidays (`centerConfig.holidays`), fun days and meetings
-(`centers/{id}/events`), approved `timeOffRequests`, booked `centerIntakes`.
-Only entries are stored, at `centers/{centerId}/calendar/{id}`. Anything else
+**It READS three things it does not own**: closures/stat holidays
+(`centerConfig.holidays`), fun days and meetings (`centers/{id}/events`), and
+booked `centerIntakes`. Only entries are stored, at
+`centers/{centerId}/calendar/{id}`.
+
+**Approved time off was a fourth layer and was REMOVED (2026-09-22)** at the
+centre's request — "not useful for us". This page answers "what is booked into
+the building"; who is away is a staffing question, and Manage Staff Schedule
+already paints an approved day off on the cell it belongs to. Nothing was
+deleted from `timeOffRequests`; the calendar stopped subscribing to it. Don't
+re-add it as an oversight — `LAYERS` and `rowsForDate` both say so, and a test
+asserts an approved day off cannot reach the page. Anything else
 ends with the same fact in two places disagreeing with itself — which is why
 Centre Events stays exactly where it is and keeps its own (wider) rules.
 

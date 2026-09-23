@@ -18,7 +18,6 @@
  * NOTHING HERE IS TYPED TWICE. The calendar READS what already exists:
  *   stat holidays / closures  centerConfig.holidays
  *   fun days, meetings        centers/{centerId}/events
- *   time off                  timeOffRequests (approved only)
  *   assessments               centerIntakes
  *   shifts                    shifts
  * Only entries — the assignable things — are stored here.
@@ -417,7 +416,7 @@ export function closureMap(holidays, from = null, to = null) {
  * two places disagreeing with itself.
  */
 export function rowsForDate({
-  dateISO, entries = [], events = [], intakes = [], timeOff = [], holidays = [],
+  dateISO, entries = [], events = [], intakes = [], holidays = [],
 }) {
   const rows = [];
 
@@ -462,26 +461,21 @@ export function rowsForDate({
     });
   }
 
-  for (const r of timeOff || []) {
-    if (r?.status !== 'approved') continue;
-    const from = r.startDate || r.date;
-    const to = r.endDate || r.date;
-    if (!from || dateISO < from || dateISO > (to || from)) continue;
-    rows.push({
-      source: 'timeoff', id: `off-${r.id}-${dateISO}`, date: dateISO, allDay: true,
-      title: `${r.userName || 'Someone'} — time off`,
-      kind: 'timeoff',
-    });
-  }
-
   return rows.sort(byWhen);
 }
 
-/** The layers the rail can switch off. Order is the order they're listed. */
+/**
+ * The layers the rail can switch off. Order is the order they're listed.
+ *
+ * APPROVED TIME OFF IS DELIBERATELY NOT ONE OF THEM. It was, and the
+ * centre found it no use here: this calendar answers "what is booked into
+ * the building", and who is away is a staffing question that Manage Staff
+ * Schedule already paints on the cell it belongs to. Nothing was deleted
+ * from timeOffRequests — the calendar simply stopped reading it.
+ */
 export const LAYERS = [
   { id: 'assessment', label: 'Assessments',        sources: ['intake'] },
   { id: 'entry',      label: 'Entries',            sources: ['entry'] },
   { id: 'event',      label: 'Centre events',      sources: ['event'] },
-  { id: 'timeoff',    label: 'Time off',           sources: ['timeoff'] },
   { id: 'closure',    label: 'Closures & holidays', sources: ['closure'] },
 ];
