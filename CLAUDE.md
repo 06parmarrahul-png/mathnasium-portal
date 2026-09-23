@@ -1357,6 +1357,18 @@ tracks depth so it cannot.
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
 
+**A day the centre never opens is DROPPED from the week grid**, so the rest
+take its width — Langley is shut on Sundays and that dead seventh column was
+squeezing the six that matter. It follows `operatingDays`, not the weekend: a
+centre closed on Mondays loses Monday instead.
+
+**It comes back the moment something is on it.** The composer takes any date,
+so a permanently hidden column would hide a real entry — and an entry you
+cannot see is worse than a narrow one. The column reappearing is itself the
+signal that something is there. The range label reads off the days SHOWN for
+the same reason: "Sep 20 – Sep 26" over a grid that opens on Monday the 21st
+is a small lie, and it is the line people read to know where they are.
+
 **Two things at the same time sit SIDE BY SIDE.** Reported as "I cannot put
 multiple things on the same day at the same time" — they saved perfectly well,
 and every entry was drawn full width and absolutely positioned, so the later

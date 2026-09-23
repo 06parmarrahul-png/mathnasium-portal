@@ -323,17 +323,20 @@ describe('the three week rows keep one set of columns', () => {
   const LONG = { ...TRAINING, id: 'long', allDay: true, startTime: null, endTime: null,
     title: 'Rock Paper Scissors Tournament and then some more words' };
 
-  const cellsOf = (container, sel) => [...container.querySelectorAll(sel)];
+  /* The template is built from however many days are shown, so match on
+     `repeat(` rather than a fixed seven. */
+  const gridsOf = (container) => [...container.querySelectorAll('div')]
+    .filter(el => /grid-template-columns:\s*54px repeat\(/.test(el.getAttribute('style') || ''));
 
   it('gives every day cell in all three rows a zero minimum width', () => {
     snapshots.calendar = [LONG];
     const { container } = draw();
-    const grids = cellsOf(container, '[style*="repeat(7, 1fr)"]');
+    const grids = gridsOf(container);
     expect(grids).toHaveLength(3);
     for (const g of grids) {
-      // Child 0 is the fixed 54px gutter; the seven after it are the days.
+      // Child 0 is the fixed 54px gutter; the rest are the days.
       const days = [...g.children].slice(1);
-      expect(days).toHaveLength(7);
+      expect(days.length).toBeGreaterThan(0);
       for (const d of days) expect(d.className).toMatch(/\bmin-w-0\b/);
     }
   });
@@ -351,7 +354,9 @@ describe('the three week rows keep one set of columns', () => {
     const { container } = draw();
     fireEvent.click([...container.querySelectorAll('button')]
       .find(b => b.textContent.trim() === 'month'));
-    const grids = cellsOf(container, '[style*="repeat(7, 1fr)"]');
+    const grids = [...container.querySelectorAll('div')]
+      .filter(el => /grid-template-columns:\s*repeat\(7, 1fr\)/.test(el.getAttribute('style') || ''));
+    expect(grids.length).toBeGreaterThan(0);
     for (const g of grids) {
       for (const cell of g.children) expect(cell.className).toMatch(/\bmin-w-0\b/);
     }
@@ -731,5 +736,72 @@ describe('two things at the same time', () => {
     const btn = [...container.querySelectorAll('button')].find(b => b.textContent.includes('One'));
     expect(btn.textContent).not.toMatch(/3–5/);
     expect(boxOf(container, 'One')).toMatch(/width:\s*calc\(33\./);
+  });
+});
+
+describe('a day the centre never opens', () => {
+  // Langley is shut on Sundays. A dead column that still had to be drawn
+  // cut a seventh off the width of the six days that matter.
+  const dayHeads = (container) => [...container.querySelectorAll('div')]
+    .filter(el => /grid-template-columns:\s*54px repeat\(/.test(el.getAttribute('style') || ''))[0]
+    ?.children;
+
+  it('is dropped, and the rest of the week takes the width', () => {
+    const { container } = draw();
+    const heads = dayHeads(container);
+    expect(heads.length - 1).toBe(6);                    // Mon–Sat
+    expect([...heads].some(h => h.textContent.includes('Sun'))).toBe(false);
+    expect(container.innerHTML).toMatch(/54px repeat\(6, 1fr\)/);
+  });
+
+  it('COMES BACK the moment something is on it', () => {
+    // The composer takes any date. A hidden column would hide a real
+    // entry, and an entry you cannot see is worse than a narrow one.
+    snapshots.calendar = [{
+      ...TRAINING, id: 'sun', date: '2026-09-20', title: 'Sunday catch-up',
+    }];
+    const { container } = draw();
+    expect(dayHeads(container).length - 1).toBe(7);
+    expect(screen.getByText('Sunday catch-up')).toBeTruthy();
+  });
+
+  it('follows the centre-s own operating days, not the weekend', () => {
+    // A centre that closes on Mondays loses the Monday column instead.
+    authValue.current = {
+      ...DIRECTOR,
+      centerConfig: {
+        ...CONFIG,
+        operatingDays: ['Sunday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+      },
+    };
+    const { container } = draw();
+    const heads = [...dayHeads(container)];
+    expect(heads.some(h => h.textContent.includes('Mon'))).toBe(false);
+    expect(heads.some(h => h.textContent.includes('Sun'))).toBe(true);
+  });
+
+  it('falls back to Mon–Sat for a centre that never set its days', () => {
+    // isOperatingDay treats an empty operatingDays as the default week, so
+    // "no days open" is unreachable from config — Sunday still goes and
+    // the other six stay. The empty-grid guard in weekDays is belt and
+    // braces for a future caller, not a state this can reach.
+    authValue.current = { ...DIRECTOR, centerConfig: { ...CONFIG, operatingDays: [] } };
+    const { container } = draw();
+    expect(dayHeads(container).length - 1).toBe(6);
+  });
+});
+
+describe('the range label matches the grid', () => {
+  it('starts on the first day actually shown', () => {
+    // "Sep 20 – Sep 26" over a grid that opens on Monday the 21st is a
+    // small lie, and it is the line people read to know where they are.
+    draw();
+    expect(screen.getByText(/21 Sep – 26 Sep 2026|Sep 21 – Sep 26, 2026/)).toBeTruthy();
+  });
+
+  it('stretches back to Sunday when Sunday is back', () => {
+    snapshots.calendar = [{ ...TRAINING, id: 'sun', date: '2026-09-20', title: 'Sunday catch-up' }];
+    draw();
+    expect(screen.getByText(/20 Sep – 26 Sep 2026|Sep 20 – Sep 26, 2026/)).toBeTruthy();
   });
 });

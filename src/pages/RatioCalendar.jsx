@@ -140,7 +140,9 @@ export default function RatioCalendar() {
 
   /* The window every listener is scoped to. A month view needs the
      leading and trailing days of the grid, so both take the wider one. */
-  const { from, to, days } = useMemo(() => {
+  // `from`/`to` come back on the memo for callers that want the whole
+  // week; the grid and its label both read `days`.
+  const { days } = useMemo(() => {
     if (view === 'week') {
       const start = weekStartOf(cursor);
       return {
@@ -234,6 +236,16 @@ export default function RatioCalendar() {
     ...(entries || []).map(e => e.sourceUid).filter(Boolean),
     ...(intakes || []).map(t => t.sourceUid).filter(Boolean),
   ]), [entries, intakes]);
+
+  /* The week grid drops a day the centre never opens — Sunday at Langley —
+     so the six that are left get the width back. But NOT if something is
+     on it: the composer takes any date, so a hidden column would hide a
+     real entry, and an entry you cannot see is worse than a narrow one.
+     The column coming back is itself the signal that something is there. */
+  const weekDays = useMemo(() => {
+    const shown = days.filter(d => !closedDays.has(d) || (byDate[d] || []).length > 0);
+    return shown.length ? shown : days;
+  }, [days, closedDays, byDate]);
 
   const holdCount = useMemo(
     () => days.reduce((n, d) => n + byDate[d].filter(r => isEntry(r) && r.holdsBooking).length, 0),
@@ -404,8 +416,10 @@ export default function RatioCalendar() {
     ? addDays(cursor, 7 * n)
     : toISO(new Date(asDate(cursor).getFullYear(), asDate(cursor).getMonth() + n, 1)));
 
+  // Reads off the days SHOWN, not the calendar week — "Sep 20 – Sep 26"
+  // over a grid that starts on Monday the 21st is a small lie.
   const rangeLabel = view === 'week'
-    ? `${asDate(from).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${asDate(to).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`
+    ? `${asDate(weekDays[0]).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} – ${asDate(weekDays[weekDays.length - 1]).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })}`
     : asDate(cursor).toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 
   const toggleLayer = (src) => setHidden((prev) => {
@@ -488,7 +502,7 @@ export default function RatioCalendar() {
           <Loader2 size={15} className="animate-spin" /> Reading the calendar…
         </div>
       ) : view === 'week' ? (
-        <WeekGrid days={days} byDate={byDate} today={today} closedDays={closedDays}
+        <WeekGrid days={weekDays} byDate={byDate} today={today} closedDays={closedDays}
           onNew={openNew} onOpen={openRow} />
       ) : (
         <MonthGrid days={days} byDate={byDate} today={today} cursor={cursor} closedDays={closedDays}
@@ -572,6 +586,10 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
   const hours = [];
   for (let h = from / 60; h * 60 < to; h += 1) hours.push(h);
 
+  /* Sized to the days actually shown — a closed Sunday is dropped, so the
+     rest of the week gets its width back. */
+  const cols = `54px repeat(${days.length}, 1fr)`;
+
   /* Which lane each timed entry gets, per day. */
   const lanes = {};
   for (const d of days) lanes[d] = layoutOverlaps(byDate[d]);
@@ -586,7 +604,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
   return (
     <div className="overflow-x-auto rounded-2xl border"
       style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
-      <div className="min-w-[860px]">
+      <div style={{ minWidth: Math.max(620, 120 * days.length + 54) }}>
         {/* THE COLUMNS OF ALL THREE ROWS HAVE TO RESOLVE THE SAME WAY.
             `1fr` is minmax(auto, 1fr), and a grid item's automatic minimum
             is its min-content — which `truncate` (white-space: nowrap)
@@ -595,7 +613,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             the header and hour rows stayed even because their content is
             short or absolutely positioned. `min-w-0` on every 1fr cell is
             what keeps the three in step. Same trap as LeadershipHome. */}
-        <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)' }}>
+        <div className="grid border-b" style={{ gridTemplateColumns: cols, borderColor: 'var(--nl-rule)' }}>
           <div />
           {days.map(d => {
             const dt = asDate(d);
@@ -620,7 +638,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
         </div>
 
         {/* All-day band: closures, fun days and all-day entries. */}
-        <div className="grid border-b" style={{ gridTemplateColumns: '54px repeat(7, 1fr)', borderColor: 'var(--nl-rule)', background: 'var(--nl-paper)' }}>
+        <div className="grid border-b" style={{ gridTemplateColumns: cols, borderColor: 'var(--nl-rule)', background: 'var(--nl-paper)' }}>
           <div className="pr-2 pt-2 text-right text-[8.5px] font-bold uppercase tracking-[0.08em]"
             style={{ color: 'var(--nl-muted)' }}>All day</div>
           {days.map(d => (
@@ -642,7 +660,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
           ))}
         </div>
 
-        <div className="relative grid" style={{ gridTemplateColumns: '54px repeat(7, 1fr)' }}>
+        <div className="relative grid" style={{ gridTemplateColumns: cols }}>
           <div className="relative" style={{ height: (span / 60) * HOUR_PX }}>
             {hours.map(h => (
               <span key={h} className="absolute right-2 -translate-y-1 text-[10px] font-semibold"
