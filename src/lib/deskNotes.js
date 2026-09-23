@@ -511,9 +511,18 @@ export function recipientChips(note, { nameByUid = {}, uid = null } = {}) {
     return [{ key: 'all', label: 'Everyone', initials: '∀', color: EVERYONE_COLOR, isEveryone: true }];
   }
 
+  // Initials the centre uses that have no Ratio account behind them —
+  // "MY", "JW". They ride ALONGSIDE the real people rather than instead of
+  // them: "VB/MY, can you…" is addressed to two, and showing only Vin made
+  // the note look like it had been taken off Mary.
+  const codeChips = (note?.unknownCodes || []).map(code => ({
+    key: `code-${code}`, label: code, initials: code.slice(0, 2).toUpperCase(),
+    color: UNKNOWN_COLOR, isUnknown: true,
+  }));
+
   const uids = note?.toUids || [];
   if (uids.length > 0) {
-    return uids.map(to => {
+    return [...uids.map(to => {
       const name = nameByUid[to];
       if (to === uid) {
         return {
@@ -532,8 +541,10 @@ export function recipientChips(note, { nameByUid = {}, uid = null } = {}) {
         key: to, label: firstNameOf(name), initials: initialsOf(name),
         color: personColor(to), full: name,
       };
-    });
+    }), ...codeChips];
   }
+
+  if (codeChips.length > 0) return codeChips;
 
   const label = String(note?.toLabel || '').trim();
   if (!label) {
@@ -562,4 +573,127 @@ export function recipientNames(note, nameByUid = {}) {
   const named = (note?.toUids || []).map(u => nameByUid[u]).filter(Boolean);
   if (named.length > 0) return named.join(', ');
   return note?.toLabel || 'Unassigned';
+}
+
+// ─── Editing a note ──────────────────────────────────────────────────────
+//
+// WHY THIS IS NOT THE COMPOSER AGAIN.
+//
+// A note is WRITTEN as one line — "NG, can you please complete a care call
+// for Lexie" — and deskParse.js reads the address off the front of it. That
+// is a good way to write and a bad way to correct, because the commonest
+// reason to reach for an edit at all is that the reading was wrong: the
+// initials matched the wrong person, or matched nobody, or the note was
+// meant for two people and went to one. Re-parsing the text would just make
+// the same guess a second time.
+//
+// So editing is the explicit form of the same note: tick who it is for,
+// type what it says. No grammar, nothing inferred. The body stored on a
+// note has already had the address stripped off it, so feeding it back
+// through the parser would also re-address the note to any two capitals
+// that happened to start the sentence.
+//
+// EVERY EDIT IS STAMPED. Anyone who can open the desk can edit anything on
+// it — that is what the Firestore rules allow, and it is what the shared
+// spreadsheet allowed before them, where every cell was every manager's to
+// change. A restriction in the page that the rules do not back is theatre.
+// What makes it honest instead is `editedAt` / `editedByName` on the note
+// and a line on the card saying so, the same way settling stamps itself.
+
+/**
+ * The editable shape of a stored note.
+ *
+ * `codes` is the piece that needs care. An imported note is addressed to
+ * initials and nothing else — "MY", "VB/NG" — for people who may have left
+ * and have no Ratio account to tick. Those live in `toLabel`, so they are
+ * read back out of it when there is nothing else, and they survive an edit
+ * that adds a real person alongside them. A note must never lose who it
+ * was for just because the editor had no checkbox for them.
+ */
+export function noteDraft(note) {
+  const uids = [...(note?.toUids || [])];
+  const codes = [...(note?.unknownCodes || [])];
+  return {
+    toAll: !!note?.toAll,
+    toUids: uids,
+    // Only when the note has no other idea who it is for, which is what
+    // an imported row looks like. A live note's label is first names
+    // ("Vin & Neeru") and splitting that would invent two codes.
+    codes: codes.length > 0 || uids.length > 0 || note?.toAll
+      ? codes
+      : labelCodes(note?.toLabel),
+    body: String(note?.body || ''),
+    loggedAt: String(note?.loggedAt || '').slice(0, 10),
+  };
+}
+
+/** "VB/NG" → ['VB', 'NG']. The separators the spreadsheet actually used. */
+export function labelCodes(label) {
+  return String(label ?? '').split(/[/,&+]/).map(s => s.trim()).filter(Boolean);
+}
+
+/**
+ * Who a draft is for, written the way the composer writes it, so an edited
+ * note and a new one are indistinguishable in storage.
+ */
+export function draftLabel(draft, nameByUid = {}) {
+  if (draft?.toAll) return 'Everyone';
+  const names = (draft?.toUids || []).map(u => firstNameOf(nameByUid[u]) || nameByUid[u]).filter(Boolean);
+  return [...names, ...(draft?.codes || [])].join(' & ');
+}
+
+/** What an edit needs before it can be saved. Returns an error, or null. */
+export function validateDraft(draft) {
+  if (!String(draft?.body || '').trim()) return 'Say what the note is.';
+  if (!draft?.toAll && (draft?.toUids || []).length === 0 && (draft?.codes || []).length === 0) {
+    return 'Pick who it’s for.';
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(draft?.loggedAt || ''))) return 'Pick the date it was logged.';
+  return null;
+}
+
+/**
+ * The fields an edit writes.
+ *
+ * `subject` is kept in step with the body ON PURPOSE. It is not shown on
+ * the desk — the card renders the body — but it IS what the home card
+ * shows and what search reads, so a note whose body was corrected and
+ * whose subject was not would carry on saying the old thing in the two
+ * places people are most likely to see it from.
+ *
+ * Addressing it to everyone CLEARS the individual list rather than keeping
+ * it underneath. Everyone already includes them; a leftover sub-list is
+ * only ever a question about which of the two wins.
+ */
+export function editFields(draft, note, { nameByUid = {}, who = '' } = {}) {
+  const toAll = !!draft?.toAll;
+  const toUids = toAll ? [] : [...new Set(draft?.toUids || [])];
+  const codes = toAll ? [] : [...new Set(draft?.codes || [])];
+  const body = String(draft?.body || '').trim();
+  return {
+    toAll,
+    toUids,
+    unknownCodes: codes,
+    toLabel: draftLabel({ toAll, toUids, codes }, nameByUid),
+    body,
+    // Matches what the composer stores: who it is about when that is
+    // known, otherwise the opening of the note itself.
+    subject: note?.about || body.slice(0, 60),
+    loggedAt: String(draft?.loggedAt || note?.loggedAt || ''),
+    editedAt: new Date().toISOString(),
+    editedByName: who || 'Someone',
+  };
+}
+
+/** Did somebody change this after it was written? */
+export function wasEdited(note) {
+  return !!note?.editedAt;
+}
+
+/** "edited by Vin · Wed 23 Sep", or '' when it never was. */
+export function editLabel(note) {
+  if (!wasEdited(note)) return '';
+  const who = firstNameOf(note?.editedByName);
+  const when = shortDate(String(note.editedAt).slice(0, 10));
+  return ['edited', who && `by ${who}`, when && `· ${when}`].filter(Boolean).join(' ');
 }

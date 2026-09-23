@@ -25,6 +25,13 @@ import {
   deskSummary,
   canDeleteNotes,
   recipientChips,
+  noteDraft,
+  labelCodes,
+  draftLabel,
+  validateDraft,
+  editFields,
+  wasEdited,
+  editLabel,
 } from './deskNotes';
 
 /**
@@ -633,6 +640,26 @@ describe('who a note is for, as chips', () => {
     expect(c.isUnknown).toBe(true);
   });
 
+  it('shows an initial with no account BESIDE the real person, not instead', () => {
+    // "VB/MY, can you…" is addressed to two people. Showing only Vin made
+    // the note look as though it had been taken off Mary.
+    const both = chips({ toUids: ['vin'], unknownCodes: ['MY'] });
+    expect(both.map(c => c.label)).toEqual(['Vin', 'MY']);
+    expect(both[1].color).toBe(UNKNOWN_COLOR);
+  });
+
+  it('shows a code on its own when that is all the note has', () => {
+    const [c] = chips({ toUids: [], unknownCodes: ['JW'] });
+    expect(c.label).toBe('JW');
+    expect(c.isUnknown).toBe(true);
+  });
+
+  it('Everyone still beats a leftover code', () => {
+    const all = chips({ toAll: true, unknownCodes: ['MY'] });
+    expect(all).toHaveLength(1);
+    expect(all[0].label).toBe('Everyone');
+  });
+
   it('says Unassigned rather than going blank', () => {
     const [c] = chips({});
     expect(c.label).toBe('Unassigned');
@@ -644,5 +671,190 @@ describe('who a note is for, as chips', () => {
     const after = recipientChips({ toUids: ['neeru'] }, { nameByUid: { neeru: 'Neeru Gupta' }, uid: 'x' });
     expect(after[0].color).toBe(before[0].color);
     expect(after[0].label).toBe('Neeru');
+  });
+});
+
+describe('editing a note', () => {
+  const names = { rahul: 'Rahul Parmar', neeru: 'Neeru Gill', vin: 'Vin Bhatia' };
+  const edit = (draft, note = {}) => editFields(draft, note, { nameByUid: names, who: 'Vin Bhatia' });
+
+  describe('reading a note back into a draft', () => {
+    it('takes who it is for, what it says and when it was logged', () => {
+      const d = noteDraft(note({ toUids: ['neeru'], body: 'Card declined.', loggedAt: '2026-09-01' }));
+      expect(d.toUids).toEqual(['neeru']);
+      expect(d.toAll).toBe(false);
+      expect(d.body).toBe('Card declined.');
+      expect(d.loggedAt).toBe('2026-09-01');
+    });
+
+    it('does not hand back the same arrays the note is holding', () => {
+      // The editor mutates its draft freely; the note it came from is the
+      // live listener's copy and must not move underneath the list.
+      const original = note({ toUids: ['neeru'] });
+      const d = noteDraft(original);
+      d.toUids.push('vin');
+      expect(original.toUids).toEqual(['neeru']);
+    });
+
+    it('rescues an imported note addressed to initials nobody holds', () => {
+      // "MY" is a person who left. There is no account to tick, so the
+      // code is read out of the label and survives the edit.
+      const d = noteDraft({ toLabel: 'MY', body: 'Chase the refund.', loggedAt: '2025-11-04' });
+      expect(d.codes).toEqual(['MY']);
+      expect(d.toUids).toEqual([]);
+    });
+
+    it('splits an imported pair', () => {
+      expect(noteDraft({ toLabel: 'VB/NG' }).codes).toEqual(['VB', 'NG']);
+    });
+
+    it('does NOT read codes out of a live note’s label', () => {
+      // A live note's label is first names — "Vin & Neeru" — and splitting
+      // that on the ampersand would invent two people who left.
+      const d = noteDraft({ toUids: ['vin', 'neeru'], toLabel: 'Vin & Neeru' });
+      expect(d.codes).toEqual([]);
+    });
+
+    it('leaves Everyone alone', () => {
+      const d = noteDraft({ toAll: true, toLabel: 'Everyone' });
+      expect(d.toAll).toBe(true);
+      expect(d.codes).toEqual([]);
+    });
+
+    it('survives a note with nothing on it', () => {
+      expect(() => noteDraft(undefined)).not.toThrow();
+      expect(noteDraft(undefined).toUids).toEqual([]);
+    });
+  });
+
+  describe('what it refuses to save', () => {
+    const ok = { toUids: ['neeru'], codes: [], body: 'Do the thing.', loggedAt: '2026-09-01' };
+
+    it('takes a complete draft', () => {
+      expect(validateDraft(ok)).toBeNull();
+    });
+
+    it('refuses an empty body — a note that says nothing is not a note', () => {
+      expect(validateDraft({ ...ok, body: '   ' })).toMatch(/say what/i);
+    });
+
+    it('refuses a note addressed to nobody', () => {
+      expect(validateDraft({ ...ok, toUids: [] })).toMatch(/who it/i);
+    });
+
+    it('counts Everyone as somebody', () => {
+      expect(validateDraft({ ...ok, toUids: [], toAll: true })).toBeNull();
+    });
+
+    it('counts a leftover initial as somebody — that is who it is for', () => {
+      expect(validateDraft({ ...ok, toUids: [], codes: ['MY'] })).toBeNull();
+    });
+
+    it('refuses a missing or malformed logged date', () => {
+      expect(validateDraft({ ...ok, loggedAt: '' })).toMatch(/date/i);
+      expect(validateDraft({ ...ok, loggedAt: '1 Sep 2026' })).toMatch(/date/i);
+    });
+  });
+
+  describe('what it writes', () => {
+    it('writes the label the way the composer writes it, on first-name terms', () => {
+      const f = edit({ toUids: ['vin', 'neeru'], codes: [], body: 'x', loggedAt: '2026-09-01' });
+      expect(f.toLabel).toBe('Vin & Neeru');
+    });
+
+    it('keeps a leftover initial in the label beside the real person', () => {
+      const f = edit({ toUids: ['vin'], codes: ['MY'], body: 'x', loggedAt: '2026-09-01' });
+      expect(f.toLabel).toBe('Vin & MY');
+      expect(f.unknownCodes).toEqual(['MY']);
+    });
+
+    it('clears the individual list when it goes to Everyone', () => {
+      // Everyone already includes them. A sub-list left underneath is only
+      // ever a question about which of the two wins.
+      const f = edit({ toAll: true, toUids: ['vin'], codes: ['MY'], body: 'x', loggedAt: '2026-09-01' });
+      expect(f.toAll).toBe(true);
+      expect(f.toUids).toEqual([]);
+      expect(f.unknownCodes).toEqual([]);
+      expect(f.toLabel).toBe('Everyone');
+    });
+
+    it('does not let the same person on twice', () => {
+      const f = edit({ toUids: ['vin', 'vin'], codes: [], body: 'x', loggedAt: '2026-09-01' });
+      expect(f.toUids).toEqual(['vin']);
+    });
+
+    it('trims the body', () => {
+      expect(edit({ toUids: ['vin'], body: '  tidy me  ', loggedAt: '2026-09-01' }).body).toBe('tidy me');
+    });
+
+    it('KEEPS THE SUBJECT IN STEP WITH THE BODY', () => {
+      // The desk renders the body, but the home card and the search index
+      // read the subject. A corrected note whose subject still said the old
+      // thing would carry on saying it in the two places people see it from.
+      const f = edit(
+        { toUids: ['vin'], body: 'Actually it went through.', loggedAt: '2026-09-01' },
+        { subject: 'Card was declined', body: 'Card was declined' },
+      );
+      expect(f.subject).toBe('Actually it went through.');
+    });
+
+    it('leaves the subject as the student when the note is about one', () => {
+      const f = edit(
+        { toUids: ['vin'], body: 'Rebooked for Thursday.', loggedAt: '2026-09-01' },
+        { about: 'Lexie Liu', subject: 'Lexie Liu' },
+      );
+      expect(f.subject).toBe('Lexie Liu');
+    });
+
+    it('stamps who changed it and when', () => {
+      const f = edit({ toUids: ['vin'], body: 'x', loggedAt: '2026-09-01' });
+      expect(f.editedByName).toBe('Vin Bhatia');
+      expect(Date.parse(f.editedAt)).toBeGreaterThan(0);
+    });
+
+    it('says Someone rather than going blank when the name has not loaded', () => {
+      const f = editFields({ toUids: ['vin'], body: 'x', loggedAt: '2026-09-01' }, {}, {});
+      expect(f.editedByName).toBe('Someone');
+    });
+
+    it('can correct the logged date — the desk sorts on it', () => {
+      const f = edit({ toUids: ['vin'], body: 'x', loggedAt: '2026-08-13' }, { loggedAt: '2026-09-01' });
+      expect(f.loggedAt).toBe('2026-08-13');
+    });
+
+    it('does not touch the status, the due date or the replies', () => {
+      const f = edit({ toUids: ['vin'], body: 'x', loggedAt: '2026-09-01' });
+      for (const field of ['status', 'dueDate', 'replies', 'settledAt', 'fromUid']) {
+        expect(f).not.toHaveProperty(field);
+      }
+    });
+  });
+
+  describe('saying it was changed', () => {
+    it('says nothing about a note nobody has touched', () => {
+      expect(wasEdited(note())).toBe(false);
+      expect(editLabel(note())).toBe('');
+    });
+
+    it('names the person and the day, on first-name terms', () => {
+      const label = editLabel({ editedAt: '2026-09-23T18:30:00.000Z', editedByName: 'Vin Bhatia' });
+      expect(label).toMatch(/^edited by Vin · /);
+      expect(label).toContain('Sep');
+    });
+
+    it('still reads when the name was lost', () => {
+      expect(editLabel({ editedAt: '2026-09-23T18:30:00.000Z' })).toMatch(/^edited ·/);
+    });
+  });
+
+  it('labelCodes ignores an empty label rather than inventing a blank person', () => {
+    expect(labelCodes('')).toEqual([]);
+    expect(labelCodes(null)).toEqual([]);
+    expect(labelCodes(' VB / NG ')).toEqual(['VB', 'NG']);
+  });
+
+  it('draftLabel falls back to the full name when there is no first name to take', () => {
+    expect(draftLabel({ toUids: ['ghost'] }, {})).toBe('');
+    expect(draftLabel({ toUids: ['vin'] }, names)).toBe('Vin');
   });
 });

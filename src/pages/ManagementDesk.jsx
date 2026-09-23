@@ -16,8 +16,9 @@ import {
   isOpen, initialsOf, deskMembers, canUseDesk, matchesQuery, sortSettled, applyToArchive,
   LIVE_STATUSES, NOTE_STATUSES, normaliseStatus, statusFields, statusLabel,
   dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays, canDeleteNotes,
-  recipientChips,
+  recipientChips, noteDraft, validateDraft, editFields, wasEdited, editLabel,
 } from '../lib/deskNotes';
+import { personColor, YOU_COLOR, EVERYONE_COLOR } from '../lib/personColor';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
 import { suggestStudents } from '../lib/deskLink';
 import { rowMatches, parseAmount } from '../lib/deskTrackers';
@@ -381,6 +382,19 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     await write(note, { dueDate: dueDate || null });
   };
 
+  /**
+   * Rewrite a note — who it is for, what it says, the day it was logged.
+   *
+   * Anyone on the desk may, which is what the rules allow and what the
+   * spreadsheet allowed before them. What keeps that honest is the stamp:
+   * editFields() records who did it and when, and the card says so.
+   */
+  const saveEdit = async (note, draft) => {
+    await write(note, editFields(draft, note, {
+      nameByUid, who: profile?.displayName || profile?.email,
+    }));
+  };
+
   const canDelete = canDeleteNotes({
     platformRole: profile?.role,
     instructorType: profile?.instructorType,
@@ -518,9 +532,9 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
       ) : (
         <div className="space-y-2.5">
           {rows.map(n => (
-            <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid}
+            <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid} members={members}
               students={students} onReply={reply} onStatus={setStatus}
-              onSetAbout={setAbout} onSetDue={setDue} today={today}
+              onSetAbout={setAbout} onSetDue={setDue} onEdit={saveEdit} today={today}
               tidy={tidy} picked={picked.has(n.id)} onPick={togglePick} />
           ))}
         </div>
@@ -535,11 +549,14 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
 }
 
 
-function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, onSetDue, today,
-  tidy = false, picked = false, onPick }) {
+function Msg({ note, uid, nameByUid, members = [], students, onReply, onStatus, onSetAbout,
+  onSetDue, onEdit, today, tidy = false, picked = false, onPick }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
-  const [editing, setEditing] = useState(false);
+  const [pickingAbout, setPickingAbout] = useState(false);
+  // Rewriting the note itself — who it's for and what it says — as opposed
+  // to the about/due/status controls, which each edit one field in place.
+  const [rewriting, setRewriting] = useState(false);
   const live = isOpen(note);
   const mine = live && (note.toAll || (note.toUids || []).includes(uid));
   const replies = note.replies || [];
@@ -582,107 +599,262 @@ function Msg({ note, uid, nameByUid, students, onReply, onStatus, onSetAbout, on
           <span className="text-[12.5px]">
             from <b className="text-[13px] text-gray-900">{firstNameOf(note.fromName) || note.fromInitials || '—'}</b>
           </span>
-          <ArrowRight size={11} className="text-gray-400" />
-          {recipientChips(note, { nameByUid, uid }).map(chip => (
-            <PersonChip key={chip.key} chip={chip} />
-          ))}
-          <span className="whitespace-nowrap text-[11.5px]">{fmtDate(note.loggedAt)}</span>
+          {rewriting ? (
+            /* The editor below owns who it's for now. Showing the old chips
+               here as well would put the before and the after a few pixels
+               apart and leave it to the reader to work out which is live. */
+            <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11.5px] font-bold uppercase tracking-wide text-gray-500">
+              editing
+            </span>
+          ) : (
+            <>
+              <ArrowRight size={11} className="text-gray-400" />
+              {recipientChips(note, { nameByUid, uid }).map(chip => (
+                <PersonChip key={chip.key} chip={chip} />
+              ))}
+              <span className="whitespace-nowrap text-[11.5px]">{fmtDate(note.loggedAt)}</span>
+            </>
+          )}
           {/* The state, where the eye lands: top right, and the control
               for changing it is the thing itself. */}
           <StatusPill note={note} onStatus={onStatus} />
         </div>
 
-        <p className={`mt-1 whitespace-pre-line text-[14.5px] leading-relaxed ${
-          live ? 'text-gray-700' : 'text-gray-500'}`}>{note.body}</p>
+        {rewriting ? (
+          <NoteEditor note={note} members={members} uid={uid}
+            onSave={async (d) => { await onEdit(note, d); setRewriting(false); }}
+            onCancel={() => setRewriting(false)} />
+        ) : (
+          <>
+          <p className={`mt-1 whitespace-pre-line text-[14.5px] leading-relaxed ${
+            live ? 'text-gray-700' : 'text-gray-500'}`}>{note.body}</p>
 
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <DueChip note={note} today={today} onSetDue={onSetDue} />
-            {note.about ? (
-              <button onClick={() => setEditing(true)} title="Change who this is about"
-                className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${
-                  note.aboutLinked
-                    ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
-                    : 'border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
-                {note.about}{note.family ? ' · family' : ''}
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <DueChip note={note} today={today} onSetDue={onSetDue} />
+              {note.about ? (
+                <button onClick={() => setPickingAbout(true)} title="Change who this is about"
+                  className={`rounded-full px-2 py-0.5 text-[11.5px] font-semibold ${
+                    note.aboutLinked
+                      ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                      : 'border border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
+                  {note.about}{note.family ? ' · family' : ''}
+                </button>
+              ) : (
+                /* The whole point of the ask: an old note that names nobody
+                   can be given a name in one click. */
+                <button onClick={() => setPickingAbout(true)}
+                  className="rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[11.5px] font-medium text-gray-400 hover:border-gray-400 hover:text-gray-600">
+                  + who's this about?
+                </button>
+              )}
+              {note.topic && (
+                <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11.5px] font-semibold text-red-700">
+                  {note.topic}
+                </span>
+              )}
+              {labels.map(l => (
+                <span key={l} className="rounded-full border bg-gray-50 px-2 py-0.5 text-[11.5px] font-medium text-gray-500">
+                  {l}
+                </span>
+              ))}
+          </div>
+
+          {pickingAbout && (
+            <AboutPicker note={note} students={students}
+              onPick={(name, linked) => { onSetAbout(note, name, linked); setPickingAbout(false); }}
+              onCancel={() => setPickingAbout(false)} />
+          )}
+
+          {replies.length > 0 && (
+            <div className="mt-2.5 space-y-1.5 border-t border-dashed pt-2">
+              {replies.map((r, i) => (
+                <p key={`${r.at}-${i}`} className="text-[13.5px] leading-relaxed text-gray-700">
+                  <b className="mr-1.5 text-[12px] font-bold text-gray-500">
+                    {firstNameOf(r.name) || r.initials || 'Someone'}
+                  </b>
+                  {r.text}
+                </p>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-2">
+            {live ? (
+              <button onClick={() => onStatus(note, 'closed')}
+                className="rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-bold text-emerald-700 hover:bg-emerald-100">
+                Mark done
               </button>
             ) : (
-              /* The whole point of the ask: an old note that names nobody
-                 can be given a name in one click. */
-              <button onClick={() => setEditing(true)}
-                className="rounded-full border border-dashed border-gray-300 px-2 py-0.5 text-[11.5px] font-medium text-gray-400 hover:border-gray-400 hover:text-gray-600">
-                + who's this about?
+              <button onClick={() => onStatus(note, 'open')}
+                className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-100">
+                <RotateCcw size={12} /> Reopen
               </button>
             )}
-            {note.topic && (
-              <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11.5px] font-semibold text-red-700">
-                {note.topic}
+            {/* Correcting the note itself, as opposed to its state. Most
+                often because the address was read off the front of the
+                line and read wrong — so this is the un-guessed version of
+                the same note: tick who, type what. */}
+            <button onClick={() => setRewriting(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-100">
+              <Pencil size={12} /> Edit
+            </button>
+            {/* How old it is, the way the spreadsheet's readers counted it. */}
+            {live && Number.isFinite(ageInDays(note, today)) && (
+              <span className="text-[11px] text-gray-400">day {ageInDays(note, today)}</span>
+            )}
+            {/* Anyone on the desk may rewrite anything on it, so the note
+                says when somebody did. Same bargain as settling. */}
+            {wasEdited(note) && (
+              <span className="text-[11px] italic text-gray-400">{editLabel(note)}</span>
+            )}
+            {/* Settled is ordered by this, so say it. Imported notes have no
+                settle date — the spreadsheet never kept one. */}
+            {!live && (note.settledByName || note.settledAt) && (
+              <span className="text-[11px] text-gray-400">
+                {[note.settledByName && `by ${firstNameOf(note.settledByName)}`,
+                  fmtInstant(note.settledAt)].filter(Boolean).join(' · ')}
               </span>
             )}
-            {labels.map(l => (
-              <span key={l} className="rounded-full border bg-gray-50 px-2 py-0.5 text-[11.5px] font-medium text-gray-500">
-                {l}
-              </span>
-            ))}
-        </div>
-
-        {editing && (
-          <AboutPicker note={note} students={students}
-            onPick={(name, linked) => { onSetAbout(note, name, linked); setEditing(false); }}
-            onCancel={() => setEditing(false)} />
-        )}
-
-        {replies.length > 0 && (
-          <div className="mt-2.5 space-y-1.5 border-t border-dashed pt-2">
-            {replies.map((r, i) => (
-              <p key={`${r.at}-${i}`} className="text-[13.5px] leading-relaxed text-gray-700">
-                <b className="mr-1.5 text-[12px] font-bold text-gray-500">
-                  {firstNameOf(r.name) || r.initials || 'Someone'}
-                </b>
-                {r.text}
-              </p>
-            ))}
           </div>
+
+          <div className="mt-2 flex gap-1.5">
+            <input value={draft} onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && draft.trim()) send(); }}
+              placeholder="Reply…"
+              className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[13px] focus:border-red-400 focus:outline-none" />
+            {draft.trim() && (
+              <button onClick={send} disabled={busy} title="Send reply"
+                className="shrink-0 rounded-lg px-2 text-red-600 hover:bg-red-50 disabled:opacity-50">
+                <Send size={14} />
+              </button>
+            )}
+          </div>
+          </>
         )}
-
-        <div className="mt-2.5 flex flex-wrap items-center gap-2">
-          {live ? (
-            <button onClick={() => onStatus(note, 'closed')}
-              className="rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-1.5 text-[12.5px] font-bold text-emerald-700 hover:bg-emerald-100">
-              Mark done
-            </button>
-          ) : (
-            <button onClick={() => onStatus(note, 'open')}
-              className="flex items-center gap-1.5 rounded-lg border border-gray-300 px-3 py-1.5 text-[12.5px] font-semibold text-gray-600 hover:bg-gray-100">
-              <RotateCcw size={12} /> Reopen
-            </button>
-          )}
-          {/* How old it is, the way the spreadsheet's readers counted it. */}
-          {live && Number.isFinite(ageInDays(note, today)) && (
-            <span className="text-[11px] text-gray-400">day {ageInDays(note, today)}</span>
-          )}
-          {/* Settled is ordered by this, so say it. Imported notes have no
-              settle date — the spreadsheet never kept one. */}
-          {!live && (note.settledByName || note.settledAt) && (
-            <span className="text-[11px] text-gray-400">
-              {[note.settledByName && `by ${firstNameOf(note.settledByName)}`,
-                fmtInstant(note.settledAt)].filter(Boolean).join(' · ')}
-            </span>
-          )}
-        </div>
-
-        <div className="mt-2 flex gap-1.5">
-          <input value={draft} onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && draft.trim()) send(); }}
-            placeholder="Reply…"
-            className="min-w-0 flex-1 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[13px] focus:border-red-400 focus:outline-none" />
-          {draft.trim() && (
-            <button onClick={send} disabled={busy} title="Send reply"
-              className="shrink-0 rounded-lg px-2 text-red-600 hover:bg-red-50 disabled:opacity-50">
-              <Send size={14} />
-            </button>
-          )}
-        </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Rewriting a note — who it's for, what it says, the day it was logged.
+ *
+ * DELIBERATELY NOT THE COMPOSER AGAIN. A note is written as one line and
+ * deskParse reads the address off the front of it, which is a good way to
+ * write and a bad way to correct: the commonest reason to reach for an
+ * edit is that the reading was wrong — the initials matched the wrong
+ * person, or matched nobody, or it was meant for two people and went to
+ * one. Offering the same grammar would make the same guess again. So
+ * nothing here is inferred: the people are a list you tick, the body is a
+ * box you type in.
+ *
+ * The chips carry the SAME colours the card does, so choosing somebody
+ * looks like the thing you are about to see.
+ */
+function NoteEditor({ note, members = [], uid, onSave, onCancel }) {
+  const [draft, setDraft] = useState(() => noteDraft(note));
+  const [busy, setBusy] = useState(false);
+  const problem = validateDraft(draft);
+
+  // Everyone is exclusive. Ticking a person while it is on means "no, just
+  // them" — which is what narrowing a note down to one person looks like.
+  const toggle = (id) => setDraft(d => (d.toAll
+    ? { ...d, toAll: false, toUids: [id] }
+    : { ...d, toUids: d.toUids.includes(id) ? d.toUids.filter(u => u !== id) : [...d.toUids, id] }));
+
+  const save = async () => {
+    if (problem || busy) return;
+    setBusy(true);
+    try { await onSave(draft); }
+    catch (e) { toast.error(e?.message || 'Could not save that.'); setBusy(false); }
+  };
+
+  return (
+    <div className="mt-2 rounded-xl border border-gray-300 bg-gray-50 p-3">
+      <p className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">
+        Who it’s for
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" aria-pressed={draft.toAll}
+          onClick={() => setDraft(d => ({ ...d, toAll: !d.toAll }))}
+          className={`rounded-full px-2.5 py-1 text-[12.5px] font-bold ${draft.toAll
+            ? 'text-white' : 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}
+          style={draft.toAll ? { background: EVERYONE_COLOR } : undefined}>
+          Everyone
+        </button>
+        {members.map(m => {
+          const on = !draft.toAll && draft.toUids.includes(m.uid);
+          return (
+            <button key={m.uid} type="button" aria-pressed={on} title={m.displayName}
+              onClick={() => toggle(m.uid)}
+              className={`rounded-full px-2.5 py-1 text-[12.5px] font-bold ${on
+                ? 'text-white' : 'border border-gray-300 bg-white text-gray-600 hover:bg-gray-100'}`}
+              style={on ? { background: m.uid === uid ? YOU_COLOR : personColor(m.uid) } : undefined}>
+              {m.uid === uid ? 'You' : firstNameOf(m.displayName) || m.email}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Initials carried over from the spreadsheet for people who have no
+          Ratio account — there is no checkbox to tick, so they stay as they
+          are until somebody takes them off on purpose. */}
+      {draft.codes.length > 0 && (
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+          {draft.codes.map(c => (
+            <span key={c}
+              className="inline-flex items-center gap-1 rounded-full bg-gray-200 py-0.5 pl-2.5 pr-1 text-[11.5px] font-bold text-gray-600">
+              {c}
+              <button type="button" aria-label={`Take ${c} off this note`}
+                onClick={() => setDraft(d => ({ ...d, codes: d.codes.filter(x => x !== c) }))}
+                className="rounded-full p-0.5 text-gray-500 hover:bg-gray-300 hover:text-gray-800">
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+          <span className="text-[11px] text-gray-400">from the old sheet — no Ratio account</span>
+        </div>
+      )}
+
+      <p className="mb-1.5 mt-3 text-[10px] font-bold uppercase tracking-[0.1em] text-gray-400">
+        What it says
+      </p>
+      <textarea value={draft.body} rows={3} autoFocus
+        onChange={e => setDraft(d => ({ ...d, body: e.target.value }))}
+        onKeyDown={e => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); save(); }
+          if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+        }}
+        aria-label="What the note says"
+        className="w-full resize-none rounded-lg border border-gray-300 px-2.5 py-2 text-[14px] leading-relaxed focus:border-red-400 focus:outline-none" />
+
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {/* The desk sorts on this, and an imported row can have it wrong —
+            it is the one thing on the card there was no way to correct. */}
+        <label className="flex items-center gap-1.5 text-[11.5px] font-semibold text-gray-500">
+          Logged
+          <input type="date" value={draft.loggedAt}
+            onChange={e => setDraft(d => ({ ...d, loggedAt: e.target.value }))}
+            aria-label="The date this note was logged"
+            className="rounded-lg border border-gray-300 px-2 py-1 text-[12.5px]" />
+        </label>
+        <span className="flex-1" />
+        <button onClick={onCancel}
+          className="rounded-lg px-3 py-1.5 text-[12.5px] font-semibold text-gray-500 hover:bg-gray-200">
+          Cancel
+        </button>
+        <button onClick={save} disabled={!!problem || busy}
+          className="rounded-lg bg-red-600 px-3.5 py-1.5 text-[12.5px] font-bold text-white hover:bg-red-700 disabled:opacity-40">
+          {busy ? 'Saving…' : 'Save changes'}
+        </button>
+      </div>
+
+      {problem && (
+        <p className="mt-1.5 text-[11.5px] font-semibold text-amber-700">{problem}</p>
+      )}
+      <p className="mt-1.5 text-[11px] text-gray-400">
+        Everyone on the desk can see this was changed, and by whom.
+      </p>
     </div>
   );
 }

@@ -724,3 +724,196 @@ describe('who a note is for, on the card', () => {
     expect(colourOf('Neeru')).not.toBe(colourOf('Sabrina'));
   });
 });
+
+describe('editing a note', () => {
+  // The two people on this desk, so the picker has somebody to offer.
+  const desk = [
+    user('vin', 'Vin Bhatia', { role: 'director' }),
+    user('neeru', 'Neeru Gill', { role: 'director' }),
+  ];
+  const openEditor = () => fireEvent.click(screen.getByRole('button', { name: /^Edit$/ }));
+  const bodyBox = () => screen.getByLabelText('What the note says');
+  const lastUpdate = () => writes.filter(w => w.op === 'update').pop();
+
+  it('the card carries an Edit button', () => {
+    snapshots.notes = [note()];
+    draw();
+    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeTruthy();
+  });
+
+  it('opens on what the note already says, rather than an empty box', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ body: 'Card was declined for this month.' })];
+    draw();
+    openEditor();
+    expect(bodyBox().value).toBe('Card was declined for this month.');
+  });
+
+  it('DOES NOT RE-READ THE ADDRESS OFF THE FRONT OF THE LINE', async () => {
+    // The whole reason to edit is usually that the parser guessed wrong.
+    // A body that opens with two capitals — "NG called back…" — would be
+    // re-addressed by the composer's grammar; here nothing is inferred.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], body: 'NG called back about this.' })];
+    draw();
+    openEditor();
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.toUids).toEqual(['vin']);
+  });
+
+  it('changes who it is for', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], toLabel: 'VB' })];
+    draw();
+    openEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'You' }));     // off Vin
+    fireEvent.click(screen.getByRole('button', { name: 'Neeru' }));   // on to Neeru
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.toUids).toEqual(['neeru']);
+    expect(lastUpdate().data.toLabel).toBe('Neeru');
+  });
+
+  it('changes what it says — AND the subject with it', async () => {
+    // The desk renders the body, but the home card and search read the
+    // subject. Leaving it behind would keep the old wording on the two
+    // surfaces people are most likely to see the note from.
+    snapshots.users = desk;
+    snapshots.notes = [note({ subject: 'Card was declined', about: null })];
+    draw();
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: 'It went through on the second try.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.body).toBe('It went through on the second try.');
+    expect(lastUpdate().data.subject).toBe('It went through on the second try.');
+  });
+
+  it('addresses one to the whole team', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'] })];
+    draw();
+    openEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'Everyone' }));
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.toAll).toBe(true);
+    expect(lastUpdate().data.toUids).toEqual([]);
+  });
+
+  it('keeps an imported note’s initials when there is no account to tick', async () => {
+    // "MY" left years ago. Editing the wording must not quietly take the
+    // note off her.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: [], toLabel: 'MY', unknownCodes: [] })];
+    draw();
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: 'Refund chased.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.unknownCodes).toEqual(['MY']);
+    expect(lastUpdate().data.toLabel).toBe('MY');
+  });
+
+  it('and lets that initial be taken off on purpose', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: [], toLabel: 'MY', unknownCodes: [] })];
+    draw();
+    openEditor();
+    fireEvent.click(screen.getByRole('button', { name: /Take MY off this note/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Neeru' }));
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.unknownCodes).toEqual([]);
+    expect(lastUpdate().data.toUids).toEqual(['neeru']);
+  });
+
+  it('will not save a note addressed to nobody', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'] })];
+    draw();
+    openEditor();
+    fireEvent.click(screen.getByRole('button', { name: 'You' }));     // nobody left
+    expect(screen.getByRole('button', { name: /Save changes/ }).disabled).toBe(true);
+    expect(screen.getByText(/Pick who it/)).toBeTruthy();
+  });
+
+  it('will not save a note that says nothing', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note()];
+    draw();
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: '   ' } });
+    expect(screen.getByRole('button', { name: /Save changes/ }).disabled).toBe(true);
+  });
+
+  it('cancelling writes nothing and puts the note back', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ body: 'Card was declined for this month.' })];
+    draw();
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: 'Something else entirely.' } });
+    fireEvent.click(screen.getByRole('button', { name: /^Cancel$/ }));
+
+    expect(writes.filter(w => w.op === 'update')).toHaveLength(0);
+    expect(screen.getByText(/Card was declined for this month\./)).toBeTruthy();
+  });
+
+  it('stamps who changed it, and the card says so', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note()];
+    draw();
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: 'Corrected.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.editedByName).toBe('Vin Bhatia');
+    // And it is on the card, not only in the document.
+    await waitFor(() => expect(screen.getByText(/^edited by Vin/)).toBeTruthy());
+  });
+
+  it('hides the old recipient chips while the editor is open', () => {
+    // Two sets of chips a few pixels apart, one live and one stale, reads
+    // as a bug rather than as a before and after.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['neeru'], toLabel: 'NG' })];
+    draw();
+    expect(screen.getAllByText('Neeru')).toHaveLength(1);   // the chip
+    openEditor();
+    expect(screen.getByText('editing')).toBeTruthy();
+    // Still exactly one 'Neeru' — the picker's button, not the old chip.
+    expect(screen.getAllByText('Neeru')).toHaveLength(1);
+  });
+
+  it('a Host can edit too — the desk is theirs to run', () => {
+    // The rules let any desk member update a note, so a restriction here
+    // would be a page pretending to enforce something it cannot.
+    snapshots.users = desk;
+    snapshots.notes = [note()];
+    authValue.current = { ...HOST_AUTH };
+    draw();
+    expect(screen.getByRole('button', { name: /^Edit$/ })).toBeTruthy();
+  });
+
+  it('a settled note can be corrected without being reopened', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ status: 'closed', settledAt: '2026-09-10T00:00:00.000Z' })];
+    draw();
+    fireEvent.click(screen.getByText('Settled'));
+    await waitFor(() => expect(screen.getByRole('button', { name: /^Edit$/ })).toBeTruthy());
+    openEditor();
+    fireEvent.change(bodyBox(), { target: { value: 'For the record: it was refunded.' } });
+    fireEvent.click(screen.getByRole('button', { name: /Save changes/ }));
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.body).toBe('For the record: it was refunded.');
+    expect(lastUpdate().data).not.toHaveProperty('status');
+  });
+});

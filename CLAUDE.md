@@ -456,6 +456,45 @@ doesn't even run the query for them; `canUseDesk()` is asked exactly the way the
 rules ask it. **No rules change was needed** — `status` and `dueDate` are just
 fields on a note the desk tier could already write.
 
+### The desk: editing a note
+
+A note can be rewritten — **who it's for, what it says, the day it was logged**
+— from an Edit button on the card. `NoteEditor` in `ManagementDesk.jsx`, with
+the pure parts in `deskNotes.js`: `noteDraft()`, `validateDraft()`,
+`editFields()`, `editLabel()`.
+
+**IT IS DELIBERATELY NOT THE COMPOSER AGAIN.** A note is written as one line and
+`deskParse.js` reads the address off the front of it, which is a good way to
+write and a bad way to correct: the commonest reason to edit at all is that the
+reading was wrong — the initials matched the wrong person, or nobody. Offering
+the same grammar would make the same guess twice, and the stored `body` has
+already had the address stripped off it, so re-parsing would re-address a note
+whose sentence happens to open with two capitals. So nothing in the editor is
+inferred: tick who, type what.
+
+Three things worth knowing before changing it:
+
+- **`subject` is kept in step with `body`.** The desk renders the body, but
+  `DeskHomeCard` and `searchBlob()` read the subject, so a corrected note whose
+  subject was left behind would carry on saying the old thing in the two places
+  people are most likely to see it from. When a note is *about* somebody, the
+  subject stays that name — same rule the composer uses.
+- **Imported initials survive an edit.** A note addressed to "MY" or "VB/NG" has
+  no account to tick, so `noteDraft()` reads those codes back out of `toLabel`
+  and they ride alongside any real person picked. They only come off when
+  somebody takes them off. `recipientChips()` now shows them beside the real
+  recipients rather than dropping them, which the create path could already
+  produce ("VB/MY, can you…") and the card was quietly hiding.
+- **Every edit is stamped** — `editedAt` / `editedByName`, shown on the card.
+  Anyone who can open the desk can edit anything on it, which is what the rules
+  allow and what the shared spreadsheet allowed before them; a restriction in
+  the page the rules don't back would be theatre. The stamp is what makes it
+  honest instead. **Edits overwrite** — there is no version history, so the
+  previous wording is gone. Settled notes can be corrected without reopening.
+
+**No rules change was needed**: `allow update: if canUseDeskAt(centerId)` was
+always field-free.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk
