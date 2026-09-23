@@ -634,6 +634,24 @@ and a Director carry the same permissions apart from `centre.settings`, so
 the differences are gated cards rather than separate files: Directors and
 above get the Centre settings shortcut and the availability count.
 
+**Assessments this week names the family.** It was a time and a bare grade —
+"Today 3:00 PM … 2" — which answered *when* and never *who*. It now leads with
+the child, carries the guardian and the time on the second line, shows a note
+when there is one, and links to Intakes. `gradeLabel()` gives a bare number its
+word ("Grade 2"), because a lone "2" beside a time in a column headed by
+nothing reads as a count; PreK and K are left exactly as the family typed them.
+A booking with no name says **"Name not recorded"** rather than rendering a
+blank row — imported ones can arrive that way and the blank looks like a fault.
+
+**A REFUSED READ IS NOT AN EMPTY WEEK, and this was live.** `centerIntakes` is
+owner-tier in the rules (a parent's name, email and phone), and **Managers reach
+this home** — so the listener's error path set `[]` and the card told them
+"None booked this week" when the week was full. That is precisely the
+confidently-wrong figure this page exists to avoid. It now says the assessments
+are not shown to them, and why. Mutation-tested. The same shape is on the
+Calendar. If you add another owner-tier read to this page, give it the same
+treatment.
+
 Two traps it hit in the building, both worth knowing:
 
 - **There is no "submitted availability" flag on a person.** Availability

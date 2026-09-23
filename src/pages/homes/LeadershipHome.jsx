@@ -13,6 +13,7 @@ import DeskHomeCard from '../../components/DeskHomeCard';
 import Mascot from '../../components/Mascot';
 import { mascotFor } from '../../lib/mascots';
 import { Card, Btn, Lbl, AllClear, Loading } from '../../components/newlook/ui';
+import { gradeLabel, whoFor } from '../../lib/assessments';
 import TodaySnapshotCard from '../../components/newlook/TodaySnapshotCard';
 import { fmtDay, todayISO } from '../../components/newlook/format';
 import { useTimeFormat } from '../../lib/useTimeFormat';
@@ -80,6 +81,7 @@ export default function LeadershipHome() {
   const [people, setPeople] = useState([]);
   const [timeOff, setTimeOff] = useState([]);
   const [intakes, setIntakes] = useState([]);
+  const [intakesDenied, setIntakesDenied] = useState(false);
   const [leads, setLeads] = useState([]);
   const [events, setEvents] = useState([]);
 
@@ -130,8 +132,13 @@ export default function LeadershipHome() {
     if (!activeCenterId) return undefined;
     return onSnapshot(
       query(collection(db, 'centerIntakes'), where('centerId', '==', activeCenterId)),
-      snap => setIntakes(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => setIntakes([]),
+      snap => { setIntakes(snap.docs.map(d => ({ id: d.id, ...d.data() }))); setIntakesDenied(false); },
+      // A REFUSED read is not an empty week. centerIntakes is owner-tier
+      // because it carries a parent's name, email and phone — and Managers
+      // reach this home. Reporting "none booked" to somebody who simply
+      // may not see them is the confidently-wrong figure this whole page
+      // exists to avoid.
+      () => { setIntakes([]); setIntakesDenied(true); },
     );
   }, [activeCenterId]);
 
@@ -314,26 +321,55 @@ export default function LeadershipHome() {
           {/* ── Assessments ──────────────────────────────────────────── */}
           <div>
             <Lbl className="mb-1.5">Assessments this week</Lbl>
-            {weekIntakes.length === 0 ? (
+            {intakesDenied ? (
+              <AllClear title="Not shown to you"
+                note="Booked assessments carry families’ contact details, so they stay with owners, directors and the admin assistant." />
+            ) : weekIntakes.length === 0 ? (
               <AllClear title="None booked this week"
                 note="Families book these themselves from your public booking page." />
             ) : (
               <Card className="!p-0 overflow-hidden">
-                {weekIntakes.slice(0, 5).map((i, n) => (
-                  <div key={i.id}
-                    className={`flex items-baseline justify-between gap-3 px-4 py-2.5 ${n ? 'border-t' : ''}`}
-                    style={{ borderColor: 'var(--nl-rule)' }}>
-                    <span className="text-[13.5px]">
-                      <span style={{ color: 'var(--nl-muted)' }}>
-                        {i.date === today ? 'Today' : fmtDay(i.date, { weekday: 'short' })}
-                      </span>
-                      {' '}{fmtTime(i.slot.slice(11, 16))}
-                    </span>
-                    <span className="text-[12.5px]" style={{ color: 'var(--nl-muted)' }}>
-                      {i.childGrade || '—'}
-                    </span>
-                  </div>
-                ))}
+                {weekIntakes.slice(0, 5).map((i, n) => {
+                  const who = whoFor(i);
+                  const grade = gradeLabel(i.childGrade);
+                  return (
+                    <div key={i.id} className={`px-4 py-2.5 ${n ? 'border-t' : ''}`}
+                      style={{ borderColor: 'var(--nl-rule)' }}>
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-[13.5px] font-semibold"
+                          style={who.named ? undefined : { color: 'var(--nl-muted)', fontWeight: 400 }}>
+                          {who.childLabel}
+                        </span>
+                        {grade && (
+                          <span className="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold"
+                            style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>
+                            {grade}
+                          </span>
+                        )}
+                      </div>
+                      <div className="mt-0.5 truncate text-[12px]" style={{ color: 'var(--nl-muted)' }}>
+                        <span style={{ color: 'var(--nl-ink2)' }}>
+                          {i.date === today ? 'Today' : fmtDay(i.date, { weekday: 'short' })}
+                          {' '}{fmtTime(i.slot.slice(11, 16))}
+                        </span>
+                        {who.guardian && ` · ${who.guardian}`}
+                      </div>
+                      {i.notes && (
+                        <div className="mt-1 truncate text-[11.5px]" style={{ color: 'var(--nl-muted)' }}
+                          title={i.notes}>
+                          {i.notes}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="border-t px-4 py-2" style={{ borderColor: 'var(--nl-rule)' }}>
+                  <Btn to={PAGES.intakes.path} size="sm" variant="ghost">
+                    {weekIntakes.length > 5
+                      ? `All ${weekIntakes.length} ${PAGES.intakes.name.toLowerCase()}`
+                      : PAGES.intakes.name} <ArrowRight size={13} />
+                  </Btn>
+                </div>
               </Card>
             )}
           </div>

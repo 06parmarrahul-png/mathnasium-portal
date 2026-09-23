@@ -221,6 +221,17 @@ describe('what actually gets written', () => {
     expect(entryWrites()).toHaveLength(2);
   });
 
+  it('leaves the family notes field alone', async () => {
+    // `notes` is what staff write about a family. Import boilerplate
+    // there shows on every assessment row on the leadership home; the
+    // source is already recorded in its own fields.
+    const { container } = draw();
+    await drop(container);
+    await act(async () => { fireEvent.click(importBtn()); });
+    expect(intakeWrites()[0].data.notes).toBe('');
+    expect(intakeWrites()[0].data.source).toBe('google-import');
+  });
+
   it('reports what landed where when it is finished', async () => {
     const { container } = draw();
     await drop(container);

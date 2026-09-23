@@ -20,6 +20,8 @@ import { MemoryRouter } from 'react-router-dom';
 // Firestore, routed BY COLLECTION — a mock that hands every listener the
 // same rows lets a test pass for the wrong reason.
 const snapshots = {};
+/** Collections the rules refuse — the listener gets its error callback. */
+const denied = new Set();
 /** Which collections the page actually subscribed to, this render. */
 const asked = [];
 const rowsFor = (q) => {
@@ -36,8 +38,14 @@ vi.mock('firebase/firestore', () => ({
   orderBy: () => ({}),
   limit: () => ({}),
   doc: (...a) => ({ __d: a.slice(1).join('/') }),
-  onSnapshot: (ref, next) => {
+  onSnapshot: (ref, next, onError) => {
     if (typeof next === 'function' && !ref?.__d) {
+      const key = String(ref?.__c || '').split('/').pop();
+      if (denied.has(key)) {
+        asked.push(key);
+        if (typeof onError === 'function') onError(new Error('permission-denied'));
+        return () => {};
+      }
       const rows = rowsFor(ref);
       next({ docs: rows.map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
     }
@@ -77,6 +85,7 @@ const draw = (auth = MANAGER) => {
 
 beforeEach(() => {
   asked.length = 0;
+  denied.clear();
   for (const k of Object.keys(snapshots)) delete snapshots[k];
   Object.assign(snapshots, {
     shifts: [], openShifts: [], users: [], timeOffRequests: [],
@@ -295,5 +304,70 @@ describe('what is deliberately not on it', () => {
     for (const banned of [/ratio/i, /budget/i, /attendance/i, /revenue/i, /\d+\s*%/]) {
       expect(text).not.toMatch(banned);
     }
+  });
+});
+
+/**
+ * Assessments this week.
+ *
+ * It used to be a time and a bare grade — "Today 3:00 PM … 2" — which
+ * answered when but never who. And it reported "None booked this week" to
+ * a Manager who simply may not read `centerIntakes`, which is the
+ * confidently-wrong figure this whole page exists to avoid.
+ */
+describe('assessments this week', () => {
+  const booking = (over = {}) => ({
+    id: 'i1', centerId: 'langley', slot: `${TODAY}T15:00:00`, durationMin: 60,
+    childName: 'Catherine Moon', childGrade: '2', guardianName: 'Francis Moon',
+    status: 'scheduled', notes: '', ...over,
+  });
+
+  it('leads with the child, not the clock', () => {
+    snapshots.centerIntakes = [booking()];
+    draw();
+    expect(screen.getByText('Catherine Moon')).toBeTruthy();
+    expect(screen.getByText(/Francis Moon/)).toBeTruthy();
+  });
+
+  it('gives a bare grade its word', () => {
+    // "2" beside a time, in a column headed by nothing, reads as a count.
+    snapshots.centerIntakes = [booking()];
+    draw();
+    expect(screen.getByText('Grade 2')).toBeTruthy();
+  });
+
+  it('leaves PreK and K exactly as the family typed them', () => {
+    snapshots.centerIntakes = [booking({ childGrade: 'PreK' })];
+    draw();
+    expect(screen.getByText('PreK')).toBeTruthy();
+  });
+
+  it('shows a note when there is one', () => {
+    snapshots.centerIntakes = [booking({ notes: 'may bring a sibling' })];
+    draw();
+    expect(screen.getByText('may bring a sibling')).toBeTruthy();
+  });
+
+  it('says a name is missing rather than rendering a blank row', () => {
+    snapshots.centerIntakes = [booking({ childName: '' })];
+    draw();
+    expect(screen.getByText(/name not recorded/i)).toBeTruthy();
+  });
+
+  it('never says "none booked" to somebody who may not read them', () => {
+    // centerIntakes is owner-tier; Managers reach this home. Reporting an
+    // empty week to them is a figure that is confidently wrong.
+    denied.add('centerIntakes');
+    snapshots.centerIntakes = [booking()];
+    draw();
+    expect(screen.queryByText(/none booked this week/i)).toBeNull();
+    expect(screen.getByText(/not shown to you/i)).toBeTruthy();
+    expect(screen.getByText(/families’ contact details/i)).toBeTruthy();
+  });
+
+  it('still says "none booked" when the read worked and the week is empty', () => {
+    snapshots.centerIntakes = [];
+    draw();
+    expect(screen.getByText(/none booked this week/i)).toBeTruthy();
   });
 });

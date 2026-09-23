@@ -57,3 +57,31 @@ export function clashWith(draft, intakes) {
   return null;
 }
 
+
+/**
+ * A grade as somebody says it out loud.
+ *
+ * The booking form stores whatever the family picked — "2", "PreK", "K",
+ * "11". A bare "2" in a column headed by nothing reads as a count, so a
+ * number gets its word and everything else is left exactly as typed.
+ */
+export function gradeLabel(raw) {
+  const g = String(raw || '').trim();
+  if (!g) return '';
+  return /^\d{1,2}$/.test(g) ? `Grade ${g}` : g;
+}
+
+/** The one-line summary of who an assessment is for. */
+export function whoFor(intake) {
+  const child = String(intake?.childName || '').trim();
+  const guardian = String(intake?.guardianName || '').trim();
+  return {
+    child,
+    guardian,
+    // An imported booking can arrive with nobody's name on it. Saying so
+    // beats a blank row that looks like a rendering fault, and it is the
+    // prompt to go and fill it in.
+    childLabel: child || 'Name not recorded',
+    named: !!child,
+  };
+}

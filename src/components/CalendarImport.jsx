@@ -143,7 +143,11 @@ export default function CalendarImport({
               email: (r.email || '').trim().toLowerCase(),
               phone: (r.phone || '').trim(),
               smsOptIn: false,
-              notes: r.note || '',
+              // Deliberately blank. `notes` is what staff write about a
+              // family; where the row came from is already recorded in
+              // `source` and `sourceSummary`, and boilerplate here would
+              // show on every assessment row on the leadership home.
+              notes: '',
               status: r.status || 'scheduled',
               source: 'google-import',
               sourceUid: r.uid || null,

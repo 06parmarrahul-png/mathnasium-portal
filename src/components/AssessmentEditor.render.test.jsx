@@ -2,7 +2,7 @@
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, act } from '@testing-library/react';
-import { validateAssessment, clashWith, slotOf } from '../lib/assessments';
+import { validateAssessment, clashWith, slotOf, gradeLabel, whoFor } from '../lib/assessments';
 
 /**
  * Editing a booked assessment.
@@ -218,5 +218,28 @@ describe('the slot string', () => {
   it('is the centre-s wall clock with no zone on it', () => {
     expect(slotOf('2026-09-23', '12:00')).toBe('2026-09-23T12:00:00');
     expect(slotOf('2026-09-23', '')).toBe('2026-09-23T00:00:00');
+  });
+});
+
+describe('how an assessment reads at a glance', () => {
+  it('gives a bare number its word', () => {
+    // "2" on its own, in a column headed by nothing, reads as a count.
+    expect(gradeLabel('2')).toBe('Grade 2');
+    expect(gradeLabel('11')).toBe('Grade 11');
+  });
+
+  it('leaves anything that is not a number exactly as the family typed it', () => {
+    expect(gradeLabel('PreK')).toBe('PreK');
+    expect(gradeLabel('K')).toBe('K');
+    expect(gradeLabel('')).toBe('');
+    expect(gradeLabel(null)).toBe('');
+  });
+
+  it('says a name is missing rather than rendering a blank row', () => {
+    expect(whoFor({ childName: 'Catherine Moon', guardianName: 'Francis Moon' }))
+      .toMatchObject({ childLabel: 'Catherine Moon', guardian: 'Francis Moon', named: true });
+    expect(whoFor({ childName: '   ' }))
+      .toMatchObject({ childLabel: 'Name not recorded', named: false });
+    expect(whoFor(null).named).toBe(false);
   });
 });
