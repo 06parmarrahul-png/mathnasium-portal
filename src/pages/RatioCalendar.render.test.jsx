@@ -605,11 +605,14 @@ describe('knowing which day you are on', () => {
   const todayCells = (container) => [...container.querySelectorAll('*')]
     .filter(el => (el.getAttribute('style') || '').includes('--nl-today'));
 
-  it('tints today down all three rows of the week', () => {
-    // Header, all-day band and hour column are three sibling grids. Any
-    // one of them left untinted breaks the column the eye follows.
+  it('tints the header cell and NOTHING below it', () => {
+    // A tint running the whole column put a solid stripe behind every
+    // entry on the busiest day of the week. The date is where the eye
+    // looks for the day, so the mark belongs there and stops there.
     const { container } = draw();
-    expect(todayCells(container)).toHaveLength(3);
+    const cells = todayCells(container);
+    expect(cells).toHaveLength(1);
+    expect(cells[0].textContent).toContain('22');
   });
 
   it('marks the date with a filled INK pill, not a fourth red thing', () => {
@@ -667,6 +670,6 @@ describe('knowing which day you are on', () => {
     vi.setSystemTime(new Date(2026, 8, 22, 7, 0, 0));
     const { container } = draw();
     expect(container.querySelectorAll('[data-now-line]')).toHaveLength(0);
-    expect(todayCells(container)).toHaveLength(3);      // still tinted
+    expect(todayCells(container)).toHaveLength(1);      // header still marked
   });
 });

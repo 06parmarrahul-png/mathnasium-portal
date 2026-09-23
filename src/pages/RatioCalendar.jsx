@@ -52,12 +52,12 @@ const SHUT = {
     'repeating-linear-gradient(45deg, transparent, transparent 6px, var(--nl-hair) 6px, var(--nl-hair) 12px)',
 };
 
-/* Today, down the whole column. Red text on the date alone was easy to
-   miss on a seven-column grid — the eye has nothing to follow down the
-   page. The tint is NEUTRAL: red is identity and actions, and a pink
-   column under pink chips made the whole page read as one alarm. Only
-   backgroundColor, so a day that is BOTH today and closed keeps the
-   hatch from SHUT on top of the tint. */
+/* Today — the HEADER CELL ONLY.
+   Red text on the date alone was too quiet, but a tint running the whole
+   column was worse: a solid stripe behind every entry on the busiest day
+   of the week, fighting the things you are actually reading. The date and
+   its filled pill are where the eye looks for the day anyway, so the mark
+   belongs there and stops there. */
 const TODAY = { backgroundColor: 'var(--nl-today)' };
 
 /* The hours the week grid draws. Widened to fit whatever is actually on,
@@ -620,7 +620,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             style={{ color: 'var(--nl-muted)' }}>All day</div>
           {days.map(d => (
             <div key={d} className="min-w-0 min-h-[30px] space-y-1 border-l p-1"
-              style={{ borderColor: 'var(--nl-rule)', ...(d === today ? TODAY : null) }}>
+              style={{ borderColor: 'var(--nl-rule)' }}>
               {byDate[d].filter(r => r.allDay).map(r => {
                 const tone = toneFor(r);
                 return (
@@ -650,7 +650,6 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             <div key={d} className="relative min-w-0 border-l"
               style={{
                 borderColor: 'var(--nl-rule)', height: (span / 60) * HOUR_PX,
-                ...(d === today ? TODAY : null),
                 ...(closedDays.has(d) ? SHUT : null),
               }}>
               {closedDays.has(d) && (

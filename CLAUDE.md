@@ -1335,14 +1335,16 @@ tracks depth so it cannot.
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
 
-**Today is a whole tinted COLUMN**, not red text on the date. Red type alone on
-a seven-column grid was easy to miss — the eye has nothing to follow down the
-page. `--nl-today` goes on all three of the week's sibling grids; leave it off
-one and the column the eye follows breaks. It sets only `backgroundColor`, so a
-day that is both today and closed keeps its hatch on top. A **now line** crosses
-today's column, drawn only when this week is on screen and the time is inside
-the hours drawn — a marker pinned to the top edge at 7am reports a time that is
-not on the grid.
+**Today is marked on the HEADER CELL ONLY**, and this took two goes to get
+right. Red text on the date alone was too quiet on a seven-column grid; a tint
+running the whole column was worse — a solid stripe behind every entry on the
+busiest day of the week, fighting the things you are actually reading. The
+date and its filled pill are where the eye looks for the day anyway, so the
+mark belongs there and stops there. `--nl-today` goes on the header cell; a
+render test asserts exactly one element carries it and that it is the one
+holding the date. A **now line** still crosses today's column, drawn only when
+this week is on screen and the time is inside the hours drawn — a marker pinned
+to the top edge at 7am reports a time that is not on the grid.
 
 **THE RED BUDGET.** `index.css` says brand red is *identity and actions only*,
 and the first pass spent it on today's tint, today's pill, the now line, every

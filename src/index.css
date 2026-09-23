@@ -24,9 +24,9 @@
      which is a card edge — one token for both made the columns as heavy
      as the card itself. */
   --nl-hair:   #F2ECE7;
-  /* Today's column on the Calendar. NEUTRAL on purpose: brand red is
-     identity and actions, and a pink column next to pink fun days, a pink
-     closure chip and a red button made the page read as one alarm. */
+  /* Today's HEADER CELL on the Calendar. Neutral on purpose: brand red is
+     identity and actions. Deliberately not the whole column — a stripe
+     behind every entry on the busiest day fights what you are reading. */
   --nl-today:  #F1EDE9;
 
   /* Centre events — a fun day is daily texture, not an alert. It used to
