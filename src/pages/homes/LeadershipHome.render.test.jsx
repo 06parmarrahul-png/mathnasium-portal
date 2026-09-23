@@ -308,14 +308,17 @@ describe('what is deliberately not on it', () => {
 });
 
 /**
- * Assessments this week.
+ * Assessments today.
  *
  * It used to be a time and a bare grade — "Today 3:00 PM … 2" — which
  * answered when but never who. And it reported "None booked this week" to
  * a Manager who simply may not read `centerIntakes`, which is the
  * confidently-wrong figure this whole page exists to avoid.
+ *
+ * It is TODAY only now, at the centre's request: a week of them pushed the
+ * rest of the page down to answer a question nobody opens this home to ask.
  */
-describe('assessments this week', () => {
+describe('assessments today', () => {
   const booking = (over = {}) => ({
     id: 'i1', centerId: 'langley', slot: `${TODAY}T15:00:00`, durationMin: 60,
     childName: 'Catherine Moon', childGrade: '2', guardianName: 'Francis Moon',
@@ -354,20 +357,42 @@ describe('assessments this week', () => {
     expect(screen.getByText(/name not recorded/i)).toBeTruthy();
   });
 
+  it('shows only today — tomorrow is not this card-s question', () => {
+    const tomorrow = todayStr(new Date(Date.now() + 24 * 3600 * 1000));
+    snapshots.centerIntakes = [
+      booking(),
+      booking({ id: 'i2', slot: `${tomorrow}T15:00:00`, childName: 'Tomorrow Child' }),
+    ];
+    draw();
+    expect(screen.getByText('Catherine Moon')).toBeTruthy();
+    expect(screen.queryByText('Tomorrow Child')).toBeNull();
+  });
+
+  it('drops the day prefix, because every row is today', () => {
+    // The time and the guardian sit in separate elements, so match on the
+    // row's own text rather than a single node.
+    snapshots.centerIntakes = [booking()];
+    const { container } = draw();
+    const row = [...container.querySelectorAll('div')]
+      .find(el => el.textContent === '3:00 PM · Francis Moon');
+    expect(row).toBeTruthy();
+    expect(screen.queryByText(/\bToday\b/)).toBeNull();
+  });
+
   it('never says "none booked" to somebody who may not read them', () => {
     // centerIntakes is owner-tier; Managers reach this home. Reporting an
     // empty week to them is a figure that is confidently wrong.
     denied.add('centerIntakes');
     snapshots.centerIntakes = [booking()];
     draw();
-    expect(screen.queryByText(/none booked this week/i)).toBeNull();
+    expect(screen.queryByText(/none booked today/i)).toBeNull();
     expect(screen.getByText(/not shown to you/i)).toBeTruthy();
     expect(screen.getByText(/families’ contact details/i)).toBeTruthy();
   });
 
-  it('still says "none booked" when the read worked and the week is empty', () => {
+  it('still says "none booked" when the read worked and the day is empty', () => {
     snapshots.centerIntakes = [];
     draw();
-    expect(screen.getByText(/none booked this week/i)).toBeTruthy();
+    expect(screen.getByText(/none booked today/i)).toBeTruthy();
   });
 });

@@ -634,10 +634,14 @@ and a Director carry the same permissions apart from `centre.settings`, so
 the differences are gated cards rather than separate files: Directors and
 above get the Centre settings shortcut and the availability count.
 
-**Assessments this week names the family.** It was a time and a bare grade —
-"Today 3:00 PM … 2" — which answered *when* and never *who*. It now leads with
-the child, carries the guardian and the time on the second line, shows a note
-when there is one, and links to Intakes. `gradeLabel()` gives a bare number its
+**Assessments TODAY names the family.** It was a week of them showing a time
+and a bare grade — "Today 3:00 PM … 2" — which answered *when* and never *who*,
+and pushed the rest of the page down to answer a question nobody opens this
+home to ask. Today only, at the centre's request (2026-09-22): "who is coming
+in today" is the one that changes what anybody does before 3pm, and the whole
+list is one click away on Intakes. Each row leads with the child, carries the
+guardian and the time beneath — no day prefix, since every row is today — and
+shows a note when there is one. `gradeLabel()` gives a bare number its
 word ("Grade 2"), because a lone "2" beside a time in a column headed by
 nothing reads as a count; PreK and K are left exactly as the family typed them.
 A booking with no name says **"Name not recorded"** rather than rendering a
@@ -1352,6 +1356,20 @@ tracks depth so it cannot.
 
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
+
+**Two things at the same time sit SIDE BY SIDE.** Reported as "I cannot put
+multiple things on the same day at the same time" — they saved perfectly well,
+and every entry was drawn full width and absolutely positioned, so the later
+one covered the earlier one's title, its time and its click target.
+`layoutOverlaps()` is the usual calendar packing in two passes: CLUSTER the
+day in start order, cutting a new cluster whenever an entry starts after
+everything before it has ended, then give each entry the first COLUMN whose
+last entry has already finished. Overlap is transitive — A over B over C is one
+cluster even when A and C never touch, or A and C would be drawn in the same
+place. Back-to-back (3–4 then 4–5) is deliberately NOT a clash; halving those
+would shrink every entry on a normally busy afternoon for nothing. Three to a
+column drops the second line, because a clipped half-line is worse than none.
+Mutation-tested.
 
 **Today is marked on the HEADER CELL ONLY**, and this took two goes to get
 right. Red text on the date alone was too quiet on a seven-column grid; a tint

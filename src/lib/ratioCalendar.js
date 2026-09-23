@@ -383,6 +383,68 @@ export function blockedStarts({
   return starts.filter(t => t < he && hs < t + slotDurationMin).map(hhmm);
 }
 
+/* ── Two things at once ───────────────────────────────────────────────── */
+
+/**
+ * Where each timed entry sits ACROSS the day's column, so two things at
+ * the same time are side by side instead of one on top of the other.
+ *
+ * Every event was drawn full width, absolutely positioned, so a 3:00
+ * assessment and a 3:30 call stacked — the later one covered the earlier
+ * one's time and half its title, and the covered one could not be
+ * clicked. "I cannot put two things at the same time" was the symptom;
+ * they saved perfectly well and one was hidden under the other.
+ *
+ * The usual calendar packing, in two passes:
+ *   1. CLUSTER — walk the day in start order and cut a new cluster
+ *      whenever an entry starts at or after everything before it has
+ *      ended. Overlap is transitive: A overlaps B and B overlaps C puts
+ *      all three in one cluster even if A and C never touch, because
+ *      otherwise A and C would be drawn in the same place.
+ *   2. COLUMN — inside a cluster, put each entry in the first column
+ *      whose last entry has already finished.
+ *
+ * Every entry in a cluster gets the same width, which is what keeps the
+ * column edges lined up down the day.
+ *
+ * @returns Map id → { col, cols }   0-based column, and how many there are
+ */
+export function layoutOverlaps(rows) {
+  const out = new Map();
+  const timed = (rows || [])
+    .map(r => ({ r, span: entrySpan(r) }))
+    .filter(x => x.span)
+    // Start time, then longest first — a long entry picked up early keeps
+    // the short ones that sit inside it out of its own column.
+    .sort((a, b) => a.span.start - b.span.start || b.span.end - a.span.end);
+
+  let cluster = [];
+  let clusterEnd = -Infinity;
+
+  const flush = () => {
+    if (!cluster.length) return;
+    const colEnds = [];            // when each column last finished
+    const placed = [];
+    for (const { r, span } of cluster) {
+      let col = colEnds.findIndex(end => end <= span.start);
+      if (col === -1) { col = colEnds.length; colEnds.push(span.end); }
+      else colEnds[col] = span.end;
+      placed.push({ id: r.id, col });
+    }
+    for (const p of placed) out.set(p.id, { col: p.col, cols: colEnds.length });
+    cluster = [];
+    clusterEnd = -Infinity;
+  };
+
+  for (const item of timed) {
+    if (item.span.start >= clusterEnd) flush();
+    cluster.push(item);
+    clusterEnd = Math.max(clusterEnd, item.span.end);
+  }
+  flush();
+  return out;
+}
+
 /* ── Closures ─────────────────────────────────────────────────────────── */
 
 /**

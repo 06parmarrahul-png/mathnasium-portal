@@ -673,3 +673,63 @@ describe('knowing which day you are on', () => {
     expect(todayCells(container)).toHaveLength(1);      // header still marked
   });
 });
+
+describe('two things at the same time', () => {
+  // Reported as "I cannot put multiple things on the same day at the same
+  // time". They saved fine — every entry was drawn full width, so the
+  // later one covered the earlier one's title, time and click target.
+  const at = (id, title, start, end) => ({
+    id, title, kind: 'meeting', date: '2026-09-25',
+    startTime: start, endTime: end, allDay: false,
+    assignedTo: [], assignedNames: [], holdsBooking: false,
+  });
+  const boxOf = (container, title) => [...container.querySelectorAll('button')]
+    .find(b => b.textContent.includes(title))?.getAttribute('style') || '';
+
+  it('gives a lone entry the full column', () => {
+    snapshots.calendar = [at('a', 'Alone', '15:00', '16:00')];
+    const { container } = draw();
+    expect(boxOf(container, 'Alone')).toMatch(/width:\s*calc\(100% - 6px\)/);
+  });
+
+  it('halves and offsets two that clash', () => {
+    snapshots.calendar = [at('a', 'First', '15:00', '16:00'), at('b', 'Second', '15:30', '16:30')];
+    const { container } = draw();
+    expect(boxOf(container, 'First')).toMatch(/left:\s*calc\(0% \+ 3px\)/);
+    expect(boxOf(container, 'First')).toMatch(/width:\s*calc\(50% - 6px\)/);
+    expect(boxOf(container, 'Second')).toMatch(/left:\s*calc\(50% \+ 3px\)/);
+  });
+
+  it('leaves both clickable, which is the actual complaint', () => {
+    snapshots.calendar = [at('a', 'First', '15:00', '16:00'), at('b', 'Second', '15:30', '16:30')];
+    const { container } = draw();
+    for (const title of ['First', 'Second']) {
+      const btn = [...container.querySelectorAll('button')].find(b => b.textContent.includes(title));
+      fireEvent.click(btn);
+      const dialog = container.querySelector('.fixed');
+      expect(within(dialog).getByPlaceholderText(/radius training/i).value).toBe(title);
+      fireEvent.click(within(dialog).getByRole('button', { name: /^cancel$/i }));
+    }
+  });
+
+  it('does not split the width for back-to-back entries', () => {
+    // 3–4 and 4–5 sit flush. Halving those would shrink every entry on a
+    // normally busy afternoon for nothing.
+    snapshots.calendar = [at('a', 'Early', '15:00', '16:00'), at('b', 'Later', '16:00', '17:00')];
+    const { container } = draw();
+    expect(boxOf(container, 'Early')).toMatch(/width:\s*calc\(100% - 6px\)/);
+    expect(boxOf(container, 'Later')).toMatch(/width:\s*calc\(100% - 6px\)/);
+  });
+
+  it('drops the second line once three share a column', () => {
+    // A third of a column has no room for it, and a clipped half-line is
+    // worse than none.
+    snapshots.calendar = [
+      at('a', 'One', '15:00', '17:00'), at('b', 'Two', '15:00', '17:00'), at('c', 'Three', '15:00', '17:00'),
+    ];
+    const { container } = draw();
+    const btn = [...container.querySelectorAll('button')].find(b => b.textContent.includes('One'));
+    expect(btn.textContent).not.toMatch(/3–5/);
+    expect(boxOf(container, 'One')).toMatch(/width:\s*calc\(33\./);
+  });
+});

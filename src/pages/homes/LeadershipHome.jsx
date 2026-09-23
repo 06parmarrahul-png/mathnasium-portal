@@ -190,15 +190,18 @@ export default function LeadershipHome() {
       .sort((a, b) => String(a.from || '').localeCompare(String(b.from || ''))),
     [timeOff]);
 
-  // ── Assessments, this week ─────────────────────────────────────────────
-  const weekIntakes = useMemo(() => {
-    const w = weekWindow(today);
-    return intakes
-      .filter(i => i.status !== 'cancelled' && typeof i.slot === 'string')
-      .map(i => ({ ...i, date: i.slot.slice(0, 10) }))
-      .filter(i => i.date >= today && i.date <= w.to)
-      .sort((a, b) => a.slot.localeCompare(b.slot));
-  }, [intakes, today]);
+  // ── Assessments, TODAY ─────────────────────────────────────────────────
+  //
+  // Today only, at the centre's request. A week of them pushed the rest of
+  // the page down and answered a question nobody opens this home to ask —
+  // "who is coming in today" is the one that changes what anybody does
+  // before 3pm. The whole list is one click away on Intakes.
+  const todayIntakes = useMemo(() => intakes
+    .filter(i => i.status !== 'cancelled' && typeof i.slot === 'string')
+    .map(i => ({ ...i, date: i.slot.slice(0, 10) }))
+    .filter(i => i.date === today)
+    .sort((a, b) => a.slot.localeCompare(b.slot)),
+  [intakes, today]);
 
   // ── The funnel. Straight counts of a status field nobody derives. ──────
   const funnel = useMemo(() => {
@@ -320,16 +323,16 @@ export default function LeadershipHome() {
         <div className="min-w-0 space-y-3.5">
           {/* ── Assessments ──────────────────────────────────────────── */}
           <div>
-            <Lbl className="mb-1.5">Assessments this week</Lbl>
+            <Lbl className="mb-1.5">Assessments today</Lbl>
             {intakesDenied ? (
               <AllClear title="Not shown to you"
                 note="Booked assessments carry families’ contact details, so they stay with owners, directors and the admin assistant." />
-            ) : weekIntakes.length === 0 ? (
-              <AllClear title="None booked this week"
+            ) : todayIntakes.length === 0 ? (
+              <AllClear title="None booked today"
                 note="Families book these themselves from your public booking page." />
             ) : (
               <Card className="!p-0 overflow-hidden">
-                {weekIntakes.slice(0, 5).map((i, n) => {
+                {todayIntakes.slice(0, 6).map((i, n) => {
                   const who = whoFor(i);
                   const grade = gradeLabel(i.childGrade);
                   return (
@@ -349,8 +352,7 @@ export default function LeadershipHome() {
                       </div>
                       <div className="mt-0.5 truncate text-[12px]" style={{ color: 'var(--nl-muted)' }}>
                         <span style={{ color: 'var(--nl-ink2)' }}>
-                          {i.date === today ? 'Today' : fmtDay(i.date, { weekday: 'short' })}
-                          {' '}{fmtTime(i.slot.slice(11, 16))}
+                          {fmtTime(i.slot.slice(11, 16))}
                         </span>
                         {who.guardian && ` · ${who.guardian}`}
                       </div>
@@ -365,8 +367,8 @@ export default function LeadershipHome() {
                 })}
                 <div className="border-t px-4 py-2" style={{ borderColor: 'var(--nl-rule)' }}>
                   <Btn to={PAGES.intakes.path} size="sm" variant="ghost">
-                    {weekIntakes.length > 5
-                      ? `All ${weekIntakes.length} ${PAGES.intakes.name.toLowerCase()}`
+                    {todayIntakes.length > 6
+                      ? `All ${todayIntakes.length} today`
                       : PAGES.intakes.name} <ArrowRight size={13} />
                   </Btn>
                 </div>

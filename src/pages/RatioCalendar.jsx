@@ -15,6 +15,7 @@ import { resolveInstructionalHours, isOperatingDay } from '../lib/centerConfig';
 import {
   KIND_LIST, kindLabel, kindTone, minutesOf, hhmm, asDate, toISO, addDays,
   weekStartOf, entrySpan, validateEntry, blockedStarts, closureMap, rowsForDate,
+  layoutOverlaps,
   REPEAT_LIST, repeatLabel, isRepeating, occurrenceDates, describeSeries,
   defaultUntil,
 } from '../lib/ratioCalendar';
@@ -571,6 +572,10 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
   const hours = [];
   for (let h = from / 60; h * 60 < to; h += 1) hours.push(h);
 
+  /* Which lane each timed entry gets, per day. */
+  const lanes = {};
+  for (const d of days) lanes[d] = layoutOverlaps(byDate[d]);
+
   /* Where "now" falls, and only while it is on screen — a marker pinned to
      the top edge at 7am says nothing, and one on a week nobody is in says
      something false. */
@@ -676,11 +681,17 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
                 if (!s) return null;
                 const tone = toneFor(r);
                 const tall = (s.end - s.start) >= 50;
+                // Two things at once sit side by side. Full width each
+                // meant the later one covered the earlier one's time,
+                // half its title and its click target.
+                const { col = 0, cols = 1 } = lanes[d].get(r.id) || {};
+                const w = 100 / cols;
                 return (
                   <button key={r.id} type="button" onClick={() => onOpen(r)}
-                    className="absolute left-[3px] right-[3px] overflow-hidden rounded px-1.5 py-1 text-left"
+                    className="absolute overflow-hidden rounded px-1.5 py-1 text-left"
                     style={{
                       top: `${pct(s.start)}%`, height: `calc(${pct(s.end) - pct(s.start)}% - 3px)`,
+                      left: `calc(${col * w}% + 3px)`, width: `calc(${w}% - 6px)`,
                       background: tone.wash, color: tone.color,
                       borderLeft: `3px solid ${tone.color}`,
                     }}
@@ -689,7 +700,9 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
                       <span className="flex-1 truncate text-[11px] font-semibold">{r.title}</span>
                       {r.holdsBooking && <Lock size={9} className="mt-[2px] shrink-0 opacity-70" />}
                     </div>
-                    {tall && (
+                    {/* Three to a column leaves no room for a second line,
+                        and a clipped half-line is worse than none. */}
+                    {tall && cols < 3 && (
                       <div className="mt-0.5 truncate text-[10px] opacity-85">
                         {shortTime(r.startTime)}–{shortTime(r.endTime)}
                         {r.assignedNames?.length ? ` · ${r.assignedNames.join(', ')}` : ''}

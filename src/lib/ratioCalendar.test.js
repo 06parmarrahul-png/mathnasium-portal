@@ -5,6 +5,7 @@ import {
   rowsForDate, kindLabel, kindTone,
   occurrenceDates, nextOccurrence, nthWeekdayOfMonth, weekdayOrdinal,
   defaultUntil, describeSeries, repeatLabel, isRepeating, MAX_OCCURRENCES,
+  layoutOverlaps,
 } from './ratioCalendar';
 
 /**
@@ -473,5 +474,91 @@ describe('repeat labels', () => {
     expect(isRepeating('weekly')).toBe(true);
     expect(isRepeating('none')).toBe(false);
     expect(isRepeating('nonsense')).toBe(false);
+  });
+});
+
+/**
+ * Two things at once.
+ *
+ * Reported as "I cannot put multiple things on the same day at the same
+ * time". They saved fine — every entry was drawn full width and
+ * absolutely positioned, so the later one covered the earlier one's time,
+ * half its title, and its click target.
+ */
+describe('laying overlapping entries side by side', () => {
+  const at = (id, start, end) => ({ id, title: id, date: FRI, startTime: start, endTime: end });
+  const layout = (...rows) => layoutOverlaps(rows);
+
+  it('gives a day with nothing overlapping one column each', () => {
+    const m = layout(at('a', '15:00', '16:00'), at('b', '16:00', '17:00'));
+    expect(m.get('a')).toEqual({ col: 0, cols: 1 });
+    expect(m.get('b')).toEqual({ col: 0, cols: 1 });
+  });
+
+  it('splits two that genuinely clash', () => {
+    const m = layout(at('a', '15:00', '16:00'), at('b', '15:30', '16:30'));
+    expect(m.get('a')).toEqual({ col: 0, cols: 2 });
+    expect(m.get('b')).toEqual({ col: 1, cols: 2 });
+  });
+
+  it('is the real Friday from the report', () => {
+    // Assessment 3–4, ECT 3:30–4:30, Assessment 4:30–5:30. The first two
+    // clash and share the width; the third starts after both and gets the
+    // column to itself.
+    const m = layout(
+      at('liam', '15:00', '16:00'), at('ect', '15:30', '16:30'), at('aaron', '16:30', '17:30'),
+    );
+    expect(m.get('liam')).toEqual({ col: 0, cols: 2 });
+    expect(m.get('ect')).toEqual({ col: 1, cols: 2 });
+    expect(m.get('aaron')).toEqual({ col: 0, cols: 1 });
+  });
+
+  it('packs three at once into three columns', () => {
+    const m = layout(at('a', '15:00', '17:00'), at('b', '15:00', '17:00'), at('c', '15:00', '17:00'));
+    expect([...m.values()].map(v => v.col).sort()).toEqual([0, 1, 2]);
+    for (const v of m.values()) expect(v.cols).toBe(3);
+  });
+
+  it('reuses a column the moment it is free', () => {
+    // b and c both sit inside a, but never touch each other, so they
+    // share the second column rather than opening a third.
+    const m = layout(at('a', '15:00', '18:00'), at('b', '15:00', '16:00'), at('c', '16:00', '17:00'));
+    expect(m.get('a').col).toBe(0);
+    expect(m.get('b').col).toBe(1);
+    expect(m.get('c').col).toBe(1);
+    expect(m.get('a').cols).toBe(2);
+  });
+
+  it('keeps a chain together even when the ends never meet', () => {
+    // A overlaps B, B overlaps C, A and C never touch. They still share
+    // one cluster — drawn independently, A and C would land in the same
+    // place and cover each other.
+    const m = layout(at('a', '15:00', '16:00'), at('b', '15:30', '16:30'), at('c', '16:00', '17:00'));
+    for (const id of ['a', 'b', 'c']) expect(m.get(id).cols).toBe(2);
+    expect(m.get('a').col).toBe(0);
+    expect(m.get('c').col).toBe(0);
+  });
+
+  it('does not treat back-to-back as a clash', () => {
+    // 3–4 and 4–5 sit flush. Splitting the width there would halve every
+    // entry on a normally busy afternoon.
+    const m = layout(at('a', '15:00', '16:00'), at('b', '16:00', '17:00'), at('c', '17:00', '18:00'));
+    for (const id of ['a', 'b', 'c']) expect(m.get(id)).toEqual({ col: 0, cols: 1 });
+  });
+
+  it('ignores all-day and unreadable entries rather than throwing', () => {
+    const m = layout(
+      at('a', '15:00', '16:00'),
+      { id: 'allday', title: 'x', date: FRI, allDay: true },
+      { id: 'junk', title: 'x', date: FRI, startTime: 'soon', endTime: 'later' },
+    );
+    expect(m.get('a')).toEqual({ col: 0, cols: 1 });
+    expect(m.has('allday')).toBe(false);
+    expect(m.has('junk')).toBe(false);
+  });
+
+  it('survives an empty day', () => {
+    expect(layoutOverlaps([]).size).toBe(0);
+    expect(layoutOverlaps(null).size).toBe(0);
   });
 });
