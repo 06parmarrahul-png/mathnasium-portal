@@ -598,3 +598,49 @@ describe('turning a meeting that already exists into a recurring one', () => {
     for (const w of writes.set) expect(w.data.seriesId).toBe('mtg');
   });
 });
+
+describe('knowing which day you are on', () => {
+  // Reported: red text on the date alone was easy to miss on a
+  // seven-column grid — the eye has nothing to follow down the page.
+  const todayCells = (container) => [...container.querySelectorAll('[style*="--nl-today"]')];
+
+  it('tints today down all three rows of the week', () => {
+    // Header, all-day band and hour column are three sibling grids. Any
+    // one of them left untinted breaks the column the eye follows.
+    const { container } = draw();
+    expect(todayCells(container)).toHaveLength(3);
+  });
+
+  it('marks the date with the same filled pill the month grid uses', () => {
+    const { container } = draw();
+    const pill = [...container.querySelectorAll('div')]
+      .find(el => el.textContent === '22' && /--nl-brand/.test(el.getAttribute('style') || ''));
+    expect(pill).toBeTruthy();
+    expect(pill.getAttribute('style')).toMatch(/background/);
+  });
+
+  it('draws a now line, on today and nowhere else', () => {
+    // System time in these tests is 22 Sep at 12:00, inside the 9–8 axis.
+    const { container } = draw();
+    const lines = container.querySelectorAll('[data-now-line]');
+    expect(lines).toHaveLength(1);
+    expect(lines[0].getAttribute('style')).toMatch(/top:\s*27\./);   // 12:00 of 9–20
+  });
+
+  it('draws no now line on a week that is not this one', () => {
+    // A marker on a week nobody is in says something false.
+    const { container } = draw();
+    fireEvent.click(screen.getByRole('button', { name: /next/i }));
+    expect(container.querySelectorAll('[data-now-line]')).toHaveLength(0);
+    expect(todayCells(container)).toHaveLength(0);
+  });
+
+  it('draws no now line outside the hours on screen', () => {
+    // Pinned to the top edge at 7am it would report a time that is not
+    // on the grid at all.
+    vi.setSystemTime(new Date(2026, 8, 22, 7, 0, 0));
+    const { container } = draw();
+    expect(container.querySelectorAll('[data-now-line]')).toHaveLength(0);
+    expect(todayCells(container)).toHaveLength(3);      // still tinted
+  });
+});

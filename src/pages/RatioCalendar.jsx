@@ -52,6 +52,12 @@ const SHUT = {
     'repeating-linear-gradient(45deg, transparent, transparent 6px, var(--nl-hair) 6px, var(--nl-hair) 12px)',
 };
 
+/* Today, down the whole column. Red text on the date alone was easy to
+   miss on a seven-column grid — the eye has nothing to follow down the
+   page. Only backgroundColor, so a day that is BOTH today and closed
+   keeps the hatch from SHUT on top of the tint. */
+const TODAY = { backgroundColor: 'var(--nl-today)' };
+
 /* The hours the week grid draws. Widened to fit whatever is actually on,
    so an 8am interview is not silently off the top of the page. */
 function dayBounds(rows) {
@@ -560,6 +566,13 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
   const hours = [];
   for (let h = from / 60; h * 60 < to; h += 1) hours.push(h);
 
+  /* Where "now" falls, and only while it is on screen — a marker pinned to
+     the top edge at 7am says nothing, and one on a week nobody is in says
+     something false. */
+  const clock = new Date();
+  const nowMin = clock.getHours() * 60 + clock.getMinutes();
+  const nowAt = (days.includes(today) && nowMin >= from && nowMin < to) ? nowMin : null;
+
   return (
     <div className="overflow-x-auto rounded-2xl border"
       style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
@@ -578,13 +591,16 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             const dt = asDate(d);
             const isToday = d === today;
             return (
-              <div key={d} className="min-w-0 border-l py-2 text-center" style={{ borderColor: 'var(--nl-rule)' }}>
+              <div key={d} className="min-w-0 border-l py-2 text-center"
+                style={{ borderColor: 'var(--nl-rule)', ...(isToday ? TODAY : null) }}>
                 <div className="text-[9px] font-bold uppercase tracking-[0.1em]"
                   style={{ color: isToday ? 'var(--nl-brand)' : 'var(--nl-muted)' }}>
                   {dt.toLocaleDateString(undefined, { weekday: 'short' })}
                 </div>
-                <div className="nl-display text-[17px] font-semibold"
-                  style={isToday ? { color: 'var(--nl-brand)' } : undefined}>
+                {/* The same filled pill the month grid uses, so today
+                    looks like today in both views. */}
+                <div className="nl-display mx-auto mt-0.5 flex h-[26px] w-[30px] items-center justify-center rounded-lg text-[17px] font-semibold"
+                  style={isToday ? { background: 'var(--nl-brand)', color: '#fff' } : undefined}>
                   {dt.getDate()}
                 </div>
               </div>
@@ -598,7 +614,7 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             style={{ color: 'var(--nl-muted)' }}>All day</div>
           {days.map(d => (
             <div key={d} className="min-w-0 min-h-[30px] space-y-1 border-l p-1"
-              style={{ borderColor: 'var(--nl-rule)' }}>
+              style={{ borderColor: 'var(--nl-rule)', ...(d === today ? TODAY : null) }}>
               {byDate[d].filter(r => r.allDay).map(r => {
                 const tone = toneFor(r);
                 return (
@@ -628,11 +644,20 @@ function WeekGrid({ days, byDate, today, closedDays, onNew, onOpen }) {
             <div key={d} className="relative min-w-0 border-l"
               style={{
                 borderColor: 'var(--nl-rule)', height: (span / 60) * HOUR_PX,
+                ...(d === today ? TODAY : null),
                 ...(closedDays.has(d) ? SHUT : null),
               }}>
               {closedDays.has(d) && (
                 <span className="absolute inset-x-0 top-2 text-center text-[10px] font-semibold"
                   style={{ color: 'var(--nl-muted)' }}>Centre closed</span>
+              )}
+              {d === today && nowAt != null && (
+                <div aria-hidden="true" data-now-line
+                  className="pointer-events-none absolute inset-x-0 z-10 border-t-2"
+                  style={{ top: `${pct(nowAt)}%`, borderColor: 'var(--nl-brand)' }}>
+                  <span className="absolute -left-[3.5px] -top-[4.5px] block h-[7px] w-[7px] rounded-full"
+                    style={{ background: 'var(--nl-brand)' }} />
+                </div>
               )}
               {hours.map(h => (
                 <button key={h} type="button"

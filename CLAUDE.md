@@ -1335,6 +1335,17 @@ tracks depth so it cannot.
 A day the centre does not open is **hatched and labelled**, not left blank — an
 empty column and a shut one look identical and only one is worth booking into.
 
+**Today is a whole tinted COLUMN**, not red text on the date. Red type alone on
+a seven-column grid was easy to miss — the eye has nothing to follow down the
+page. The tint (`--nl-today`, lighter than `--nl-brandw`, which is a chip
+background) goes on all three of the week's sibling grids; leave it off one and
+the column the eye follows breaks. It sets only `backgroundColor`, so a day
+that is both today and closed keeps its hatch on top. The date itself gets the
+same filled brand pill the month grid uses, so today looks like today in both
+views, and a red **now line** crosses today's column — drawn only when this
+week is on screen and the time is inside the hours drawn, because a marker
+pinned to the top edge at 7am reports a time that is not on the grid.
+
 **`min-w-0` on every 1fr cell is load-bearing, for the second time in this
 codebase.** The week is three SIBLING grids sharing `54px repeat(7, 1fr)` —
 header, all-day band, hour grid. `1fr` is `minmax(auto, 1fr)` and a grid item's
