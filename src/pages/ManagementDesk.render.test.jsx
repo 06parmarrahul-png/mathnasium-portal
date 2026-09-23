@@ -917,3 +917,158 @@ describe('editing a note', () => {
     expect(lastUpdate().data).not.toHaveProperty('status');
   });
 });
+
+describe('acknowledging a note — did she actually see it?', () => {
+  const desk = [
+    user('vin', 'Vin Bhatia', { role: 'director' }),
+    user('neeru', 'Neeru Gill', { role: 'director' }),
+  ];
+  const ackButton = () => screen.queryByRole('button', { name: /Acknowledge/i });
+  const lastUpdate = () => writes.filter(w => w.op === 'update').pop();
+
+  it('is offered to the person it was addressed to', () => {
+    // BASE_AUTH is Vin.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'] })];
+    draw();
+    expect(ackButton()).toBeTruthy();
+  });
+
+  it('is NOT offered to somebody it was not addressed to', () => {
+    // The line it writes names a person; nobody gets to say it for them.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['neeru'] })];
+    draw();
+    expect(ackButton()).toBeNull();
+  });
+
+  it('is offered on a note to Everyone', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: [], toAll: true })];
+    draw();
+    expect(ackButton()).toBeTruthy();
+  });
+
+  it('is not offered on an imported note addressed to somebody who left', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: [], toLabel: 'MY' })];
+    draw();
+    expect(ackButton()).toBeNull();
+  });
+
+  it('writes only your own tick, and touches nothing else', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], status: 'open' })];
+    draw();
+    fireEvent.click(ackButton());
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(Object.keys(lastUpdate().data)).toEqual(['acks']);
+    expect(lastUpdate().data.acks).toHaveLength(1);
+    expect(lastUpdate().data.acks[0].uid).toBe('vin');
+    expect(lastUpdate().data.acks[0].name).toBe('Vin Bhatia');
+  });
+
+  it('tells the rest of the team, by name, on the card', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'] })];
+    draw();
+    fireEvent.click(ackButton());
+    // It is Vin's own screen, so it reads "You" — the write carries his
+    // name so it reads "Vin" on everybody else's.
+    await waitFor(() => expect(screen.getByText(/You acknowledged this/)).toBeTruthy());
+  });
+
+  it('reads as somebody else’s name on everybody else’s screen', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({
+      toUids: ['neeru'],
+      acks: [{ uid: 'neeru', name: 'Neeru Gill', at: '2026-09-23T18:00:00.000Z' }],
+    })];
+    draw();     // Vin looking at a note he sent to Neeru
+    expect(screen.getByText(/Neeru acknowledged this/)).toBeTruthy();
+  });
+
+  it('says nothing at all on a note nobody has ticked', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['neeru'] })];
+    draw();
+    expect(screen.queryByText(/acknowledged this/)).toBeNull();
+  });
+
+  it('names who is still outstanding once one of two has ticked', () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({
+      toUids: ['vin', 'neeru'],
+      acks: [{ uid: 'neeru', name: 'Neeru Gill', at: '2026-09-23T18:00:00.000Z' }],
+    })];
+    draw();
+    expect(screen.getByText(/not yet Vin/)).toBeTruthy();
+  });
+
+  it('takes it back on a second press', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({
+      toUids: ['vin'],
+      acks: [{ uid: 'vin', name: 'Vin Bhatia', at: '2026-09-23T18:00:00.000Z' }],
+    })];
+    draw();
+    expect(screen.getByRole('button', { name: /^Acknowledged$/ })).toBeTruthy();
+    fireEvent.click(ackButton());
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.acks).toEqual([]);
+  });
+
+  it('REPLYING COUNTS AS READING IT', async () => {
+    // Otherwise the card shows Vin's reply above "nobody has acknowledged
+    // this", which is the contradiction that makes people distrust a tick.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], replies: [] })];
+    draw();
+    const box = screen.getByPlaceholderText('Reply…');
+    fireEvent.change(box, { target: { value: 'On it.' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.replies).toHaveLength(1);
+    expect(lastUpdate().data.acks[0].uid).toBe('vin');
+  });
+
+  it('a reply from somebody it was NOT addressed to acknowledges nothing', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['neeru'] })];
+    draw();
+    const box = screen.getByPlaceholderText('Reply…');
+    fireEvent.change(box, { target: { value: 'Adding context.' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.acks).toBeUndefined();
+  });
+
+  it('a second reply does not tick it twice', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({
+      toUids: ['vin'],
+      acks: [{ uid: 'vin', name: 'Vin Bhatia', at: '2026-09-20T18:00:00.000Z' }],
+    })];
+    draw();
+    const box = screen.getByPlaceholderText('Reply…');
+    fireEvent.change(box, { target: { value: 'Still on it.' } });
+    fireEvent.keyDown(box, { key: 'Enter' });
+
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.acks).toBeUndefined();
+  });
+
+  it('acknowledging does NOT settle it — seen is not done', async () => {
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], status: 'open' })];
+    draw();
+    fireEvent.click(ackButton());
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.status).toBeUndefined();
+    // Still on the Open board, and still counted as waiting on you.
+    expect(screen.getByText(/Card was declined/)).toBeTruthy();
+  });
+});

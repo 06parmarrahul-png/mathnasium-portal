@@ -495,6 +495,48 @@ Three things worth knowing before changing it:
 **No rules change was needed**: `allow update: if canUseDeskAt(centerId)` was
 always field-free.
 
+### The desk: acknowledging a note
+
+A note addressed to you carries an **Acknowledge** button; pressing it puts
+*"Neeru acknowledged this · Tue, Sep 22"* on the card for everyone. `acksOf()`,
+`canAcknowledge()`, `toggleAck()`, `ackSummary()` and `ackLine()` in
+`deskNotes.js`; `AckButton` / `AckLine` in `ManagementDesk.jsx`. Stored as
+`acks: [{ uid, name, at }]`, the same shape as `replies`.
+
+**IT IS NOT A FIFTH STATUS, and that is the point.** Open / In progress /
+Waiting / Settled describe the WORK; this describes the READING, and the two
+come apart constantly — a note can sit acknowledged and untouched for a week
+(seen, not started), or be settled by somebody it was never addressed to (done,
+never read by the person it was for). Folding it into `NOTE_STATUSES` would lose
+exactly the case worth knowing about. Nothing about `isOpen()`, the badge or the
+"for me" inbox changes.
+
+- **Only the people a note is addressed to can tick it** (`canAcknowledge()` is
+  `isForMe()`), because the line it writes names them — anyone else pressing it
+  would be putting words in somebody's mouth. A note to Everyone is addressed to
+  the whole desk, so everyone may. An imported note addressed to "MY" offers it
+  to nobody: there is no account behind those initials.
+- **It toggles.** The tick is a claim about a person, so that person can take it
+  back. The write only ever carries their own uid.
+- **Replying acknowledges, once.** Otherwise the card could show Neeru's reply
+  above "nobody has acknowledged this", which is the contradiction that makes
+  people stop trusting a tick. Only for a recipient, only the first time.
+- **Nothing is shown until somebody ticks.** A board of 121 notes each saying
+  "nobody has read this" is a board people stop reading — the absence of the
+  line is the answer and its appearance is the news. The "not yet Rachel" tail
+  appears only once *somebody* has ticked, which is the genuinely ambiguous
+  state; it never lists a whole-team note's recipients, and never names somebody
+  with no live account, because a "not yet" that can never clear teaches people
+  to ignore the line.
+- **Sky, not green.** Green on this card means settled. Giving the tick its own
+  colour is what stops "acknowledged" being read as "done" at a glance.
+
+**NOT ENFORCED BY THE RULES, deliberately.** `/notes` allows any desk member to
+update any field, so a determined person could already rewrite the note itself;
+one narrow rule for this field while the rest of the document stays open would
+buy nothing and cost a chunk of the per-request expression budget
+`canUseDeskAt()` already lives inside. **No rules change was needed.**
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk

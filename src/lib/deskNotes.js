@@ -697,3 +697,110 @@ export function editLabel(note) {
   const when = shortDate(String(note.editedAt).slice(0, 10));
   return ['edited', who && `by ${who}`, when && `· ${when}`].filter(Boolean).join(' ');
 }
+
+// ─── Acknowledging ───────────────────────────────────────────────────────
+//
+// "Did she see it?" — the one question the spreadsheet answered by somebody
+// walking over and asking out loud.
+//
+// IT IS NOT A STATUS, AND THAT IS THE WHOLE POINT. Open / In progress /
+// Waiting / Settled all describe the WORK. This describes the READING, and
+// the two come apart constantly: a note can sit acknowledged and untouched
+// for a week (seen, not started), or be settled by somebody it was never
+// addressed to (done, never read by the person it was for). Folding it into
+// the status list would lose exactly the case worth knowing about.
+//
+// ONLY THE PEOPLE IT IS ADDRESSED TO can tick it, because the claim on the
+// card names them: "Neeru acknowledged this". Anyone else pressing it would
+// be putting words in somebody's mouth. A note to Everyone is addressed to
+// everybody on the desk, so everybody may.
+//
+// NOT ENFORCED BY THE RULES, and deliberately so: /notes allows any desk
+// member to update any field, so a determined person could already rewrite
+// the note itself. Adding one narrow rule for this field while the rest of
+// the document stays open would buy nothing and cost a chunk of the
+// per-request expression budget that canUseDeskAt() already lives inside.
+
+/** The acknowledgements on a note, ignoring anything malformed. */
+export function acksOf(note) {
+  return (note?.acks || []).filter(a => a && a.uid);
+}
+
+export function hasAcked(note, uid) {
+  return !!uid && acksOf(note).some(a => a.uid === uid);
+}
+
+/**
+ * May this person tick it? Only somebody it was addressed to — see above.
+ * Notice this does NOT exclude the sender: a note addressed to two people
+ * by one of them is still addressed to them.
+ */
+export function canAcknowledge(note, uid) {
+  return isForMe(note, uid);
+}
+
+/**
+ * On, or off again.
+ *
+ * Taking it back matters more than it sounds: the tick is a claim about a
+ * person, so the person it names has to be able to withdraw it. Only ever
+ * your own — the button is not offered on anybody else's.
+ */
+export function toggleAck(note, uid, name) {
+  const acks = acksOf(note);
+  if (acks.some(a => a.uid === uid)) return { acks: acks.filter(a => a.uid !== uid) };
+  return { acks: [...acks, { uid, name: name || 'Someone', at: new Date().toISOString() }] };
+}
+
+/**
+ * Who has read it and who has not.
+ *
+ * `waiting` is deliberately narrow. It counts only recipients with a live
+ * account, because:
+ *   - a note to Everyone would otherwise list the whole desk, which is
+ *     noise rather than news;
+ *   - "MY" and the other imported initials belong to people who left, and
+ *     they are never going to tick anything — a "not yet" that can never
+ *     clear teaches people to ignore the line.
+ */
+export function ackSummary(note, { nameByUid = {}, uid = null } = {}) {
+  const seen = acksOf(note).map(a => ({
+    ...a,
+    name: nameByUid[a.uid] || a.name,
+    isYou: !!uid && a.uid === uid,
+  }));
+  const waiting = note?.toAll ? [] : (note?.toUids || [])
+    .filter(u => nameByUid[u] && !seen.some(s => s.uid === u))
+    .map(u => nameByUid[u]);
+  return { seen, waiting };
+}
+
+/**
+ * The line on the card, or null when nobody has ticked it yet.
+ *
+ * NOTHING IS SHOWN UNTIL SOMEBODY ACKNOWLEDGES. A board of 121 notes each
+ * carrying "nobody has read this" is a board people stop reading. The
+ * absence of the line is the answer; the appearance of it is the news.
+ *
+ * The date rides along only when one person has ticked it — with several
+ * there are several dates, and the useful fact has become who rather
+ * than when.
+ */
+export function ackLine(note, { nameByUid = {}, uid = null } = {}) {
+  const { seen, waiting } = ackSummary(note, { nameByUid, uid });
+  if (seen.length === 0) return null;
+
+  const names = seen.map(s => (s.isYou ? 'You' : firstNameOf(s.name) || 'Someone'));
+  // Yours first: on your own list it is the one you are checking for.
+  const ordered = [...names.filter(n => n === 'You'), ...names.filter(n => n !== 'You')];
+  const others = ordered.length - 2;
+  const who = ordered.length === 1 ? ordered[0]
+    : ordered.length === 2 ? `${ordered[0]} and ${ordered[1]}`
+    : `${ordered[0]}, ${ordered[1]} and ${others} ${others === 1 ? 'other' : 'others'}`;
+
+  const when = seen.length === 1 ? shortDate(String(seen[0].at || '').slice(0, 10)) : '';
+  return {
+    text: [`${who} acknowledged this`, when].filter(Boolean).join(' · '),
+    waiting,
+  };
+}

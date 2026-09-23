@@ -32,6 +32,12 @@ import {
   editFields,
   wasEdited,
   editLabel,
+  acksOf,
+  hasAcked,
+  canAcknowledge,
+  toggleAck,
+  ackSummary,
+  ackLine,
 } from './deskNotes';
 
 /**
@@ -856,5 +862,173 @@ describe('editing a note', () => {
   it('draftLabel falls back to the full name when there is no first name to take', () => {
     expect(draftLabel({ toUids: ['ghost'] }, {})).toBe('');
     expect(draftLabel({ toUids: ['vin'] }, names)).toBe('Vin');
+  });
+});
+
+describe('acknowledging a note', () => {
+  const names = { rahul: 'Rahul Parmar', neeru: 'Neeru Gill', vin: 'Vin Bhatia' };
+  const ack = (uid, at = '2026-09-23T18:00:00.000Z') => ({ uid, name: names[uid], at });
+
+  describe('who may tick it', () => {
+    it('the person it was addressed to', () => {
+      expect(canAcknowledge({ toUids: ['neeru'] }, 'neeru')).toBe(true);
+    });
+
+    it('NOT somebody it was not addressed to', () => {
+      // The line on the card says "Neeru acknowledged this". Anybody else
+      // pressing it would be putting words in her mouth.
+      expect(canAcknowledge({ toUids: ['neeru'] }, 'vin')).toBe(false);
+    });
+
+    it('not the sender, unless they are also on it', () => {
+      expect(canAcknowledge({ toUids: ['neeru'], fromUid: 'vin' }, 'vin')).toBe(false);
+      expect(canAcknowledge({ toUids: ['neeru', 'vin'], fromUid: 'vin' }, 'vin')).toBe(true);
+    });
+
+    it('anybody, when it went to Everyone', () => {
+      expect(canAcknowledge({ toAll: true }, 'rahul')).toBe(true);
+    });
+
+    it('nobody, on an imported note addressed to initials', () => {
+      // "MY" has no account to sign in with, so nobody holds that claim.
+      expect(canAcknowledge({ toUids: [], toLabel: 'MY' }, 'vin')).toBe(false);
+    });
+
+    it('nobody at all when there is no signed-in uid', () => {
+      expect(canAcknowledge({ toAll: true }, null)).toBe(false);
+    });
+  });
+
+  describe('ticking and un-ticking', () => {
+    it('adds you, with your name and the time', () => {
+      const { acks } = toggleAck({ toUids: ['neeru'] }, 'neeru', 'Neeru Gill');
+      expect(acks).toHaveLength(1);
+      expect(acks[0].uid).toBe('neeru');
+      expect(acks[0].name).toBe('Neeru Gill');
+      expect(Date.parse(acks[0].at)).toBeGreaterThan(0);
+    });
+
+    it('takes it back on a second press — the tick names a person, so they can withdraw it', () => {
+      const note = { acks: [ack('neeru')] };
+      expect(toggleAck(note, 'neeru', 'Neeru Gill').acks).toEqual([]);
+    });
+
+    it('leaves everybody else’s alone', () => {
+      const note = { acks: [ack('neeru'), ack('vin')] };
+      const { acks } = toggleAck(note, 'neeru', 'Neeru Gill');
+      expect(acks.map(a => a.uid)).toEqual(['vin']);
+    });
+
+    it('never records it twice', () => {
+      let note = { acks: [] };
+      note = { acks: toggleAck(note, 'neeru', 'Neeru Gill').acks };
+      note = { acks: toggleAck(note, 'neeru', 'Neeru Gill').acks };   // off
+      note = { acks: toggleAck(note, 'neeru', 'Neeru Gill').acks };   // on
+      expect(note.acks).toHaveLength(1);
+    });
+
+    it('says Someone rather than going blank', () => {
+      expect(toggleAck({}, 'neeru', '').acks[0].name).toBe('Someone');
+    });
+
+    it('does not touch the note’s other fields', () => {
+      const fields = toggleAck({ status: 'open', replies: [] }, 'neeru', 'Neeru Gill');
+      expect(Object.keys(fields)).toEqual(['acks']);
+    });
+
+    it('ignores junk left in the array', () => {
+      expect(acksOf({ acks: [null, {}, ack('neeru')] })).toHaveLength(1);
+      expect(hasAcked({ acks: [null] }, 'neeru')).toBe(false);
+    });
+  });
+
+  describe('who has seen it and who has not', () => {
+    const summary = (note, uid = 'rahul') => ackSummary(note, { nameByUid: names, uid });
+
+    it('names the readers, freshly — a rename does not leave a stale name on the card', () => {
+      const { seen } = summary({ acks: [{ uid: 'neeru', name: 'Neeru Sandhu', at: '2026-09-23' }] });
+      expect(seen[0].name).toBe('Neeru Gill');
+    });
+
+    it('keeps the stored name for somebody who has since left', () => {
+      const { seen } = summary({ acks: [{ uid: 'gone', name: 'Mary Young', at: '2026-09-23' }] });
+      expect(seen[0].name).toBe('Mary Young');
+    });
+
+    it('lists the recipients who have not', () => {
+      const { waiting } = summary({ toUids: ['neeru', 'vin'], acks: [ack('neeru')] });
+      expect(waiting).toEqual(['Vin Bhatia']);
+    });
+
+    it('DOES NOT list the whole desk for a note to Everyone', () => {
+      // "not yet: everybody" is noise, not news. Written with toUids AS
+      // WELL, because the composer's parser can set both — "@Neeru
+      // Everyone, …" — so an empty toUids would pass this by accident.
+      const { waiting } = summary({ toAll: true, toUids: ['neeru', 'vin'], acks: [ack('neeru')] });
+      expect(waiting).toEqual([]);
+    });
+
+    it('DOES NOT wait on somebody who no longer has an account', () => {
+      // A "not yet" that can never clear teaches people to ignore the line.
+      const { waiting } = summary({ toUids: ['neeru', 'left-in-2024'], acks: [ack('neeru')] });
+      expect(waiting).toEqual([]);
+    });
+  });
+
+  describe('the line on the card', () => {
+    const line = (note, uid = 'rahul') => ackLine(note, { nameByUid: names, uid });
+
+    it('says NOTHING until somebody ticks it', () => {
+      // 121 notes each saying "nobody has read this" is a board people
+      // stop reading. The absence of the line is the answer.
+      expect(line({ toUids: ['neeru'] })).toBeNull();
+      expect(line({ toUids: ['neeru'], acks: [] })).toBeNull();
+    });
+
+    it('names one reader, and when', () => {
+      const l = line({ toUids: ['neeru'], acks: [ack('neeru')] });
+      expect(l.text).toMatch(/^Neeru acknowledged this · /);
+      expect(l.text).toContain('Sep');
+    });
+
+    it('says You for your own, and puts it first', () => {
+      const l = line({ toUids: ['neeru', 'rahul'], acks: [ack('neeru'), ack('rahul')] }, 'rahul');
+      expect(l.text).toBe('You and Neeru acknowledged this');
+    });
+
+    it('drops the date once there are several — there are several dates', () => {
+      const l = line({ toAll: true, acks: [ack('neeru'), ack('vin')] });
+      expect(l.text).toBe('Neeru and Vin acknowledged this');
+    });
+
+    it('counts the rest past two', () => {
+      const l = line({ toAll: true, acks: [ack('neeru'), ack('vin'), ack('rahul')] }, 'x');
+      expect(l.text).toBe('Neeru, Vin and 1 other acknowledged this');
+    });
+
+    it('says others, plural, past three', () => {
+      const l = line({
+        toAll: true,
+        acks: [ack('neeru'), ack('vin'), ack('rahul'), { uid: 'z', name: 'Zoe Tan', at: '2026-09-23' }],
+      }, 'x');
+      expect(l.text).toBe('Neeru, Vin and 2 others acknowledged this');
+    });
+
+    it('carries who is still outstanding', () => {
+      const l = line({ toUids: ['neeru', 'vin'], acks: [ack('neeru')] });
+      expect(l.waiting).toEqual(['Vin Bhatia']);
+    });
+
+    it('has nobody outstanding once they have all ticked', () => {
+      const l = line({ toUids: ['neeru', 'vin'], acks: [ack('neeru'), ack('vin')] });
+      expect(l.waiting).toEqual([]);
+    });
+  });
+
+  it('is NOT a status — ticking it says nothing about whether the work is done', () => {
+    const note = { status: 'open', toUids: ['neeru'] };
+    const fields = toggleAck(note, 'neeru', 'Neeru Gill');
+    expect(fields.status).toBeUndefined();
+    expect(isOpen({ ...note, ...fields })).toBe(true);
   });
 });

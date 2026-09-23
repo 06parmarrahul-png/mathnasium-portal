@@ -3,7 +3,7 @@ import {
   collection, onSnapshot, addDoc, updateDoc, doc, query, where, getDocs, writeBatch,
 } from 'firebase/firestore';
 import {
-  StickyNote, Gift, Receipt, Users, Star, Plus, Search, Check,
+  StickyNote, Gift, Receipt, Users, Star, Plus, Search, Check, CheckCheck,
   RotateCcw, X, Pencil, Send, ArrowRight, ChevronDown, Flag, Trash2,
 } from 'lucide-react';
 import { db } from '../firebase';
@@ -17,6 +17,7 @@ import {
   LIVE_STATUSES, NOTE_STATUSES, normaliseStatus, statusFields, statusLabel,
   dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays, canDeleteNotes,
   recipientChips, noteDraft, validateDraft, editFields, wasEdited, editLabel,
+  canAcknowledge, hasAcked, toggleAck, ackLine,
 } from '../lib/deskNotes';
 import { personColor, YOU_COLOR, EVERYONE_COLOR } from '../lib/personColor';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
@@ -353,7 +354,14 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
       text: body.trim(),
       at: new Date().toISOString(),
     }];
-    await write(note, { replies: next });
+    // Answering a note you were sent IS reading it. Without this the card
+    // could show Neeru's reply above "nobody has acknowledged this", which
+    // is the sort of contradiction that makes people stop trusting a tick.
+    // Only for somebody it was addressed to, and only the first time.
+    const alsoAck = canAcknowledge(note, uid) && !hasAcked(note, uid)
+      ? toggleAck(note, uid, profile?.displayName || profile?.email)
+      : null;
+    await write(note, { replies: next, ...alsoAck });
   };
 
   /**
@@ -380,6 +388,17 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
       the person doing the work usually knows the real deadline. */
   const setDue = async (note, dueDate) => {
     await write(note, { dueDate: dueDate || null });
+  };
+
+  /**
+   * "I've seen this."
+   *
+   * Only ever your own tick — canAcknowledge() gates the button, and the
+   * write only ever names `uid`. It says nothing about whether the work is
+   * done; that is what the status is for.
+   */
+  const acknowledge = async (note) => {
+    await write(note, toggleAck(note, uid, profile?.displayName || profile?.email));
   };
 
   /**
@@ -534,7 +553,8 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           {rows.map(n => (
             <Msg key={n.id} note={n} uid={uid} nameByUid={nameByUid} members={members}
               students={students} onReply={reply} onStatus={setStatus}
-              onSetAbout={setAbout} onSetDue={setDue} onEdit={saveEdit} today={today}
+              onSetAbout={setAbout} onSetDue={setDue} onEdit={saveEdit} onAck={acknowledge}
+              today={today}
               tidy={tidy} picked={picked.has(n.id)} onPick={togglePick} />
           ))}
         </div>
@@ -550,7 +570,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
 
 
 function Msg({ note, uid, nameByUid, members = [], students, onReply, onStatus, onSetAbout,
-  onSetDue, onEdit, today, tidy = false, picked = false, onPick }) {
+  onSetDue, onEdit, onAck, today, tidy = false, picked = false, onPick }) {
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [pickingAbout, setPickingAbout] = useState(false);
@@ -629,6 +649,8 @@ function Msg({ note, uid, nameByUid, members = [], students, onReply, onStatus, 
           <p className={`mt-1 whitespace-pre-line text-[14.5px] leading-relaxed ${
             live ? 'text-gray-700' : 'text-gray-500'}`}>{note.body}</p>
 
+          <AckLine note={note} nameByUid={nameByUid} uid={uid} />
+
           <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <DueChip note={note} today={today} onSetDue={onSetDue} />
               {note.about ? (
@@ -690,6 +712,11 @@ function Msg({ note, uid, nameByUid, members = [], students, onReply, onStatus, 
                 <RotateCcw size={12} /> Reopen
               </button>
             )}
+            {/* Seen, as opposed to done. Offered only to the people it was
+                addressed to, because the line it writes names them. */}
+            {canAcknowledge(note, uid) && (
+              <AckButton note={note} uid={uid} onAck={onAck} />
+            )}
             {/* Correcting the note itself, as opposed to its state. Most
                 often because the address was read off the front of the
                 line and read wrong — so this is the un-guessed version of
@@ -733,6 +760,72 @@ function Msg({ note, uid, nameByUid, members = [], students, onReply, onStatus, 
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * "I've seen this."
+ *
+ * SKY, NOT GREEN. Green on this card means SETTLED, and the whole reason
+ * this exists is that the two are different: a note can be read and not
+ * started, or settled by somebody it was never addressed to. Giving the
+ * tick its own colour is what stops "acknowledged" being read as "done" at
+ * a glance — which would be worse than not having it.
+ *
+ * It is a toggle because the line it writes names a person, so that person
+ * has to be able to take it back. Nobody can tick it for anybody else: the
+ * button is only rendered for people the note is addressed to, and the
+ * write only ever carries their own uid.
+ */
+function AckButton({ note, uid, onAck }) {
+  const [busy, setBusy] = useState(false);
+  const done = hasAcked(note, uid);
+  const press = async () => {
+    setBusy(true);
+    try { await onAck(note); }
+    catch (e) { toast.error(e?.message || 'Could not do that.'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <button onClick={press} disabled={busy}
+      aria-pressed={done}
+      title={done
+        ? 'You have acknowledged this — press again to take it back'
+        : 'Tell the team you have seen this'}
+      className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[12.5px] font-bold disabled:opacity-50 ${done
+        ? 'border-sky-600 bg-sky-600 text-white hover:bg-sky-700'
+        : 'border-sky-300 bg-white text-sky-700 hover:bg-sky-50'}`}>
+      <CheckCheck size={13} /> {done ? 'Acknowledged' : 'Acknowledge'}
+    </button>
+  );
+}
+
+/**
+ * Who has read it — the question the spreadsheet answered by somebody
+ * walking over and asking out loud.
+ *
+ * Nothing at all until somebody ticks it. A board of 121 notes each saying
+ * "nobody has read this" is a board people stop reading, so the absence of
+ * this line is the answer and its appearance is the news.
+ *
+ * "not yet" rides along only once SOMEBODY has ticked, because that is the
+ * genuinely ambiguous state: one of the two people it went to has seen it,
+ * and it is worth naming which one has not.
+ */
+function AckLine({ note, nameByUid, uid }) {
+  const line = ackLine(note, { nameByUid, uid });
+  if (!line) return null;
+  return (
+    <p className="mt-1.5 flex flex-wrap items-center gap-x-1.5 text-[11.5px]">
+      <span className="inline-flex items-center gap-1 font-semibold text-sky-700">
+        <CheckCheck size={12} /> {line.text}
+      </span>
+      {line.waiting.length > 0 && (
+        <span className="text-gray-400">
+          · not yet {line.waiting.map(firstNameOf).join(', ')}
+        </span>
+      )}
+    </p>
   );
 }
 
