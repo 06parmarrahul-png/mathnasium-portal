@@ -26,12 +26,16 @@ const rowsFor = (q) => {
 
 const docData = {};          // keyed by document path
 const writes = [];           // every setDoc the page makes
+// Every collection listener the page opens, with its where() clauses. The
+// page runs on a phone, so what it subscribes to is part of what it does —
+// a whole-centre query added by accident is a real regression.
+const listenerQueries = [];
 
 vi.mock('../../firebase', () => ({ db: {}, auth: {} }));
 vi.mock('firebase/firestore', () => ({
-  collection: (...a) => ({ __c: a.slice(1).join('/') }),
-  query: (c) => c,
-  where: () => ({}),
+  collection: (...a) => ({ __c: a.slice(1).join('/'), __w: [] }),
+  query: (c, ...rest) => ({ ...c, __w: rest.filter(r => r?.__w).map(r => r.__w) }),
+  where: (field, op, value) => ({ __w: [field, op, value] }),
   orderBy: () => ({}),
   limit: () => ({}),
   doc: (...a) => ({ __d: a.slice(1).join('/') }),
@@ -45,6 +49,7 @@ vi.mock('firebase/firestore', () => ({
         const value = docData[ref.__d];
         next({ exists: () => value !== undefined, data: () => value });
       } else {
+        listenerQueries.push({ path: String(ref?.__c || ''), where: ref?.__w || [] });
         const rows = rowsFor(ref);
         next({ docs: rows.map((r, i) => ({ id: r.id || `d${i}`, data: () => r })) });
       }
@@ -93,6 +98,7 @@ beforeEach(() => {
   for (const k of ['shifts', 'openShifts', 'announcements', 'users', 'events']) snapshots[k] = [];
   for (const k of Object.keys(docData)) delete docData[k];
   writes.length = 0;
+  listenerQueries.length = 0;
 });
 afterEach(() => { cleanup(); });
 
@@ -647,5 +653,126 @@ describe('the uploaded fun-day sheet', () => {
     snapshots.shifts = [shift({ date: DAY })];
     draw();
     expect(screen.queryByAltText("This month's fun days")).toBeNull();
+  });
+});
+
+describe('the shift card does not name a side of the room', () => {
+  // It used to read the side off shift.subRole — set weeks ago, when the
+  // schedule was built. Neeru sets the real one in the Student Scheduler on
+  // the day, and "Your day" below already shows it. Kaitlyn was reading
+  // "Highschool" in the big red box and "You're on Elementary the whole
+  // shift" three centimetres underneath.
+
+  it('says what the JOB is, not which desk', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Highschool', role: 'Instructor' })];
+    draw();
+    expect(screen.getByText(/Instructor/)).toBeTruthy();
+    expect(screen.queryByText(/Highschool/)).toBeNull();
+  });
+
+  it('does not say Elementary either — same problem, other side', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Elementary', role: 'Instructor' })];
+    draw();
+    // Nothing on the card claims a side. ("Your day" would, but there is no
+    // sheet in this test, so any Elementary here came from the shift.)
+    // Matched loosely on purpose: an exact-string query passes by accident
+    // against "Instructor · Elementary", which is the bug.
+    expect(screen.queryByText(/Elementary/)).toBeNull();
+  });
+
+  it('handles "High School" spelled with the space', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'High School', role: 'Instructor' })];
+    draw();
+    expect(screen.queryByText(/High School/)).toBeNull();
+  });
+
+  it('KEEPS Online — that is a different axis', () => {
+    // Elementary and Highschool are sides of the floor and the Student
+    // Scheduler owns them. Online is whether you are in the building at
+    // all, which no desk assignment overrides.
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Online', role: 'Instructor' })];
+    draw();
+    expect(screen.getByText(/Instructor · Online/)).toBeTruthy();
+  });
+
+  it('does not repeat itself when the role already says Online', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Online', role: 'Online Instructor' })];
+    draw();
+    expect(screen.getByText(/Online Instructor/)).toBeTruthy();
+    expect(screen.queryByText(/Online Instructor · Online/)).toBeNull();
+  });
+
+  it('names the job when it is not instructing', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Elementary', role: 'Lead' })];
+    draw();
+    expect(screen.getByText(/Lead/)).toBeTruthy();
+  });
+
+  it('falls back to the title on a shift with no role', () => {
+    snapshots.shifts = [shift({ date: todayStr(), role: undefined, instructorType: 'Lead' })];
+    draw();
+    expect(screen.getByText(/Lead/)).toBeTruthy();
+  });
+
+  it('says Instructor rather than going blank when the shift says neither', () => {
+    snapshots.shifts = [shift({
+      date: todayStr(), role: undefined, instructorType: undefined, subRole: undefined,
+    })];
+    draw();
+    expect(screen.getByText(/Instructor/)).toBeTruthy();
+  });
+});
+
+describe('"This week" does not name a side either', () => {
+  it('lists the shift without guessing next week’s desk', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Highschool' })];
+    draw();
+    expect(screen.getByText(/^Shift$/)).toBeTruthy();
+    expect(screen.queryByText(/Shift · Highschool/)).toBeNull();
+  });
+
+  it('but still says Online, because that decides whether you travel', () => {
+    snapshots.shifts = [shift({ date: todayStr(), subRole: 'Online' })];
+    draw();
+    expect(screen.getByText(/Shift · Online/)).toBeTruthy();
+  });
+});
+
+describe('the head-count is gone', () => {
+  it('does not tell somebody about to work a shift how many others are on', () => {
+    // Nothing they do changes because of it, and it crowded the one button
+    // on the card that does something.
+    snapshots.shifts = [
+      shift({ id: 's1', date: todayStr() }),
+      shift({ id: 's2', date: todayStr(), userId: 'u2', userName: 'Jason Soo' }),
+      shift({ id: 's3', date: todayStr(), userId: 'u3', userName: 'Rachel Rai' }),
+    ];
+    draw();
+    expect(screen.queryByText(/rostered that day/)).toBeNull();
+    expect(screen.queryByText(/people rostered/)).toBeNull();
+  });
+
+  it('keeps the way through to the whole sheet', () => {
+    snapshots.shifts = [shift({ date: todayStr() })];
+    draw();
+    expect(screen.getByText(/Full schedule/)).toBeTruthy();
+  });
+
+  it('shows Full schedule even on a day nobody else is rostered', () => {
+    // It used to be gated behind the head-count being above zero, so on a
+    // quiet day the link vanished along with the number.
+    snapshots.shifts = [shift({ date: todayStr() })];
+    draw();
+    expect(screen.getByText(/Full schedule/)).toBeTruthy();
+  });
+
+  it('no longer reads the whole centre’s roster to render a home page', () => {
+    // The listener existed only to produce that number. A whole-centre
+    // query on every instructor's phone, for one line nobody acted on.
+    snapshots.shifts = [shift({ date: todayStr() })];
+    draw();
+    const roster = listenerQueries.filter(q =>
+      q.path === 'shifts' && q.where.some(([f, op]) => f === 'date' && op === '=='));
+    expect(roster).toEqual([]);
   });
 });

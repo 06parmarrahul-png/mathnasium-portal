@@ -500,12 +500,15 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
           <Chip key={v.key} on={view === v.key} onClick={() => setView(v.key)}
             label={v.label} n={counts[v.key]} />
         ))}
-        {/* "For me" sits apart from the two that describe the whole board,
-            because it asks a different question: not what is live, but
-            what is live AND waiting on you. */}
-        <span className="flex-1" />
+        {/* "For me" is the fifth view, and it sits with the other four. It
+            used to be pushed to the far side because it asks a different
+            question — not what is live, but what is live AND yours — but
+            stranded over by the search box it read as a filter on whatever
+            was already showing rather than as a view of its own. The red
+            keeps it distinct without moving it out of the row. */}
         <Chip on={view === 'mine'} onClick={() => setView('mine')}
           label="For me" n={counts.mine} accent />
+        <span className="flex-1" />
         <SearchBox value={q} onChange={setQ} />
         {canDelete && !tidy && (
           <button onClick={() => setTidy(true)} title="Delete notes — test rows, or one typed into the wrong centre"

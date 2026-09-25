@@ -19,6 +19,7 @@ import Mascot from '../../components/Mascot';
 import { mascotFor } from '../../lib/mascots';
 import { gamesEnabled } from '../../lib/ratioGames';
 import { watchInstructorAssignments } from '../../lib/scheduler-data';
+import { sideOfSubRole } from '../../lib/floorSupply';
 import {
   blocksForPerson, blockAt, nextSwitch, hasSwitch, sideLabel,
 } from '../../lib/sideAssignments';
@@ -61,7 +62,6 @@ export default function InstructorHome() {
   const { profile, activeCenterId, mySubRoles, canTakeShifts, centerConfig } = useAuth();
   const fmtTime = useTimeFormat();
   const [shifts, setShifts] = useState(null);        // null = still loading
-  const [dayRoster, setDayRoster] = useState({ date: null, rows: null });
   const [openShifts, setOpenShifts] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [seenAt, setSeenAt] = useState(null);        // their own read marker
@@ -92,22 +92,11 @@ export default function InstructorHome() {
 
   const next = upcoming[0] || null;
 
-  // Everyone rostered the same day, so she knows how busy the floor will be
-  // before she walks in. Stamped with its date so staleness is derived
-  // rather than reset from inside an effect.
-  useEffect(() => {
-    const date = next?.date;
-    if (!activeCenterId || !date) return undefined;
-    return onSnapshot(
-      query(
-        collection(db, 'shifts'),
-        where('centerId', '==', activeCenterId),
-        where('date', '==', date),
-      ),
-      snap => setDayRoster({ date, rows: snap.docs.map(d => ({ id: d.id, ...d.data() })) }),
-      () => setDayRoster({ date, rows: [] }),
-    );
-  }, [activeCenterId, next?.date]);
+  // NOTE: there was a listener here on every shift rostered the same day,
+  // and the only thing it produced was the "20 people rostered that day"
+  // line on the shift card. That line is gone, so the read is too — it was
+  // a whole-centre query running on every instructor's phone for one
+  // number nobody acted on.
 
   // Which side of the room, per half hour. Neeru sets this in the Student
   // Scheduler before the day; until now the only copies were her screen and
@@ -269,8 +258,6 @@ export default function InstructorHome() {
   const funToday = useMemo(() => funDayOn(events, today), [events, today]);
   const funSoon = useMemo(() => funDaysAhead(events, today, 4), [events, today]);
 
-  const dayShifts = dayRoster.date === next?.date ? dayRoster.rows : null;
-  const onFloor = (dayShifts || []).filter(s => s.status !== 'draft').length;
   const first = (profile?.displayName || '').split(' ')[0] || 'there';
   const isToday = next?.date === today;
 
@@ -326,22 +313,23 @@ export default function InstructorHome() {
               {fmtTime.range(next.startTime, next.endTime)}
             </div>
             <div className="mt-2 text-[14px] opacity-90">
-              {[next.subRole, next.instructorType].filter(Boolean).join(' · ') || 'Floor'}
+              {shiftLabel(next)}
               {isToday && startsIn(next.startTime)}
             </div>
 
-            {dayShifts && onFloor > 0 && (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3"
-                style={{ borderColor: 'rgba(255,255,255,.3)' }}>
-                <span className="text-[13px] opacity-90">
-                  {onFloor} {onFloor === 1 ? 'person' : 'people'} rostered that day
-                </span>
-                <Btn to="/schedule" size="sm" variant="ghost"
-                  className="!border-white/60 !text-white">
-                  Full schedule <ArrowRight size={13} />
-                </Btn>
-              </div>
-            )}
+            {/* It used to say "20 people rostered that day" here. How busy
+                the floor will be is a question the people STAFFING it ask;
+                somebody about to walk in and work a shift has no decision
+                riding on the number, and it crowded the one thing on this
+                card that does something. The way through to the whole
+                sheet stays. */}
+            <div className="mt-4 flex justify-end border-t pt-3"
+              style={{ borderColor: 'rgba(255,255,255,.3)' }}>
+              <Btn to="/schedule" size="sm" variant="ghost"
+                className="!border-white/60 !text-white">
+                Full schedule <ArrowRight size={13} />
+              </Btn>
+            </div>
           </div>
         ) : (
           <AllClear title="No shifts booked"
@@ -523,8 +511,12 @@ export default function InstructorHome() {
 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13.5px] font-semibold">
+                      {/* Not the side of the room — see shiftLabel(). Next
+                          Tuesday's desk has not been decided yet, so
+                          naming one here is a guess the reader would
+                          take for a plan. */}
                       {r.kind === 'shift'
-                        ? `Shift${r.subRole ? ` · ${r.subRole}` : ''}`
+                        ? `Shift${stillTrueOnTheDay(r.subRole) ? ` · ${stillTrueOnTheDay(r.subRole)}` : ''}`
                         : r.title}
                     </span>
                     <span className="block truncate text-[11.5px]" style={{ color: 'var(--nl-muted)' }}>
@@ -712,6 +704,57 @@ function sideColour(side) {
 /** Is this ISO date today? Compared as strings — both are centre-local. */
 function isTodayDate(date, today) {
   return !!date && date === today;
+}
+
+/**
+ * What this shift is — WITHOUT naming a side of the room.
+ *
+ * IT USED TO SAY "Highschool", AND IT CONTRADICTED THE CARD BELOW IT.
+ *
+ * Two different things describe which side you're on, and only one of them
+ * is right on the day:
+ *
+ *   shift.subRole          set weeks ago, when the schedule was built. It
+ *                          is a scheduling INPUT — which side this shift
+ *                          was costed and staffed against.
+ *   instructorAssignments  what Neeru actually sets in the Student
+ *                          Scheduler, per half hour, the morning of.
+ *
+ * The second one wins, always, and it is what "Your day" underneath this
+ * card already shows. So an instructor was reading "Highschool" in the big
+ * red box and "You're on Elementary the whole shift" three centimetres
+ * below it. Whichever they believed, the card had taught them that one of
+ * the two was lying.
+ *
+ * The fix is not to reconcile them — it is for this card to stop answering
+ * a question it does not have the answer to. It says what your JOB is that
+ * shift, which is true whichever desk you end up on.
+ *
+ * 'Online' SURVIVES, because it is a different axis. Elementary and
+ * Highschool are sides of the floor and the Student Scheduler owns them;
+ * online is whether you are in the building at all, which no desk
+ * assignment overrides.
+ */
+function shiftLabel(shift) {
+  const role = String(shift?.role || shift?.instructorType || '').trim() || 'Instructor';
+  const tag = stillTrueOnTheDay(shift?.subRole, role);
+  return tag ? `${role} · ${tag}` : role;
+}
+
+/**
+ * The part of a sub-role that will still be true when the day arrives, or
+ * '' when it is a side of the floor.
+ *
+ * Elementary and Highschool are the Student Scheduler's to say. Online is
+ * not — it decides whether you travel to the centre, which no desk
+ * assignment overrides — so it survives.
+ */
+function stillTrueOnTheDay(subRole, role = '') {
+  const sub = String(subRole ?? '').trim();
+  if (!sub || sideOfSubRole(sub)) return '';
+  // "Online Instructor · Online" reads like a stutter.
+  if (String(role).toLowerCase().includes(sub.toLowerCase())) return '';
+  return sub;
 }
 
 /** " · starts in 2h 15m", or " · underway" once it has begun. */
