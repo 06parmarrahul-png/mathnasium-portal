@@ -595,6 +595,35 @@ exported for `SchedulerCreation.render.test.jsx` — the page needs a parsed
 feed day, check-ins, assignments, a ratio config and a roster before it
 renders anything, but one row stands alone.
 
+### The sidebar folds, and the home is no longer a fork
+
+**Sections collapse and it remembers** — `src/lib/navSections.js`, rendered
+in `Layout.jsx`. An owner sees ~20 links with everything open; folding the
+sections they are not using takes it to single figures. Three rules, and
+the last two beat the stored preference:
+
+1. Collapsed if they collapsed it.
+2. **Always open if it holds the current page** — otherwise the sidebar has
+   nothing highlighted and no clue where you are.
+3. **Always open if it is first.** General is Home and the everyday links;
+   a sidebar whose top section is shut looks broken.
+
+Two things that are easy to get wrong and are pinned by tests: the CLOSED
+sections are what gets stored (so a section added in a later release
+arrives open, rather than being invisible to everyone with a saved
+preference), and **a collapsed section still shows its badges**, rolled up
+to the header — the open-shift and Desk counts are the whole reason
+somebody looks, and a tidier sidebar that loses them is a worse one.
+
+**The new home is the default since 2026-09-25.** `isNewLookOn()` now asks
+"did they turn it OFF", so absent or blocked storage lands on the new home
+— a private window should show what everyone else sees. The classic Home,
+the sidebar toggle and the HomeSwitch error boundary all stay for now; the
+boundary writes the explicit `'off'` if a new home ever throws. **Delete
+the classic home once nothing has fallen back to it for a while** — that is
+the whole point of having moved everybody, and until it goes every change
+to a home is still two changes.
+
 ### Holidays & closures — one list, two views
 
 `centers/{id}/config/main.holidays`, entries of `{ date, name, stat? }`.

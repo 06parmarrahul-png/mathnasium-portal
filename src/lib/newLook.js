@@ -23,9 +23,26 @@
  *   revenue are deliberately absent, and stay absent until the Radius API
  *   in Ratio_Radius_API_Request_Brief.docx exists to make them true.
  *
- * OFF BY DEFAULT, PER PERSON
- *   Nobody meets a redesigned portal because a deploy landed. The
- *   preference is keyed by uid, so signing out of one account and into
+ * ON BY DEFAULT SINCE 2026-09-25, AND THE DEFAULT IS THE POINT
+ *   It shipped off by default — nobody should meet a redesigned portal
+ *   because a deploy landed — and it stayed that way long enough to be
+ *   trusted. Opt-in was the right way to arrive and the wrong way to live:
+ *   two homes meant every change to a home was two changes, forever, and
+ *   the better of the two was the one most people never saw.
+ *
+ *   So the check is now "did this person turn it OFF", not "did they turn
+ *   it on". Absent, blocked or unreadable storage all mean the new home,
+ *   which matters because localStorage is exactly the thing that comes
+ *   back empty in a private window or on a borrowed laptop — and the
+ *   answer there should be the home everyone else is looking at.
+ *
+ *   The way back is still there: "Classic view" on the new home, the
+ *   toggle in the sidebar, and the error boundary in HomeSwitch, which
+ *   writes the explicit 'off' if a new home ever throws. The classic Home
+ *   goes when nothing has fallen back to it for a while — not the same day
+ *   everyone lands on the new one.
+ *
+ *   The preference is keyed by uid, so signing out of one account and into
  *   another on the same laptop does not carry it across.
  */
 
@@ -43,9 +60,16 @@ export function newLookKey(uid) {
   return `${KEY_PREFIX}${uid || 'anon'}`;
 }
 
-/** Is it on for this person? Off unless they turned it on. */
+/**
+ * Is it on for this person? ON unless they explicitly turned it off.
+ *
+ * Only the exact string 'off' opts out. Anything else — never set, storage
+ * blocked, a value from an older build — lands on the new home, because a
+ * person whose browser forgets things should still see what everyone else
+ * sees rather than quietly getting the old portal back.
+ */
 export function isNewLookOn(uid) {
-  return read(newLookKey(uid)) === 'on';
+  return read(newLookKey(uid)) !== 'off';
 }
 
 /** Turn it on or off for this person. Returns the new state. */
@@ -81,7 +105,7 @@ export function newLookHomeFor(auth = {}) {
 
 /**
  * Should this person be shown their new home right now? Everyone has one,
- * so this is only ever about whether they opted in.
+ * so this is only ever about whether they opted OUT.
  */
 export function newLookActive(auth = {}) {
   return isNewLookOn(auth?.profile?.uid);

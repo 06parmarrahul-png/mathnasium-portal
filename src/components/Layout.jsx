@@ -7,6 +7,9 @@ import Mascot from './Mascot';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
 import { isNewLookOn, setNewLook } from '../lib/newLook';
+import {
+  readCollapsed, toggleCollapsed, isSectionOpen, rollUpBadge, sectionHasActive,
+} from '../lib/navSections';
 import { myOpenCount, canUseDesk, LIVE_STATUSES } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { gamesEnabled } from '../lib/ratioGames';
@@ -20,7 +23,7 @@ import {
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
   CalendarClock,
   UserPlus, FileBarChart, Activity, Package, History, LayoutGrid,
-  StickyNote, Gamepad2,
+  StickyNote, Gamepad2, ChevronDown,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -394,6 +397,22 @@ export default function Layout({ children }) {
     settingsSection.push({ to: PAGES.centreSettings.path, label: PAGES.centreSettings.name, icon: Settings });
   }
 
+  // Which sections are folded away. An owner's sidebar is fifty links and
+  // all fifty on screen at once is what makes it feel like a filing
+  // cabinet — see navSections.js. Held in state as well as storage so a
+  // click repaints without a reload.
+  // Stamped with the uid rather than reset by an effect: when somebody
+  // signs into a different account the stamp stops matching and the read
+  // below picks up THEIR preference, with no render in between showing
+  // the previous person's sidebar.
+  const [flipped, setFlipped] = useState(null);
+  const storedCollapsed = useMemo(() => readCollapsed(profile?.uid), [profile?.uid]);
+  const collapsed = flipped && flipped.uid === profile?.uid ? flipped.set : storedCollapsed;
+  const flipSection = (label) => setFlipped({
+    uid: profile?.uid,
+    set: new Set(toggleCollapsed(profile?.uid, label)),
+  });
+
   const navSections = useOwnerLayout
     ? [
         { label: 'General',      items: general      },
@@ -468,14 +487,45 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="mt-3 flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 px-3 pb-4">
-          {navSections.map((section, idx) => (
+          {navSections.map((section, idx) => {
+            const hasActive = sectionHasActive(section.items, isActive);
+            const open = isSectionOpen({ label: section.label, index: idx, collapsed, hasActive });
+            // What the section is still shouting about while it is shut.
+            // Open shifts and the Desk carry the counts that are the whole
+            // reason somebody looks; a tidier sidebar that loses them is a
+            // worse sidebar.
+            const folded = open ? 0 : rollUpBadge(section.items);
+            return (
             <div key={section.label || `sec-${idx}`} className={idx > 0 ? 'mt-4' : ''}>
               {section.label && (
-                <p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
-                  {section.label}
-                </p>
+                idx === 0 || hasActive ? (
+                  // The top section and the one you are standing in do not
+                  // fold, so they are a label rather than a control — a
+                  // button that cannot do anything is worse than no button.
+                  <p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                    {section.label}
+                  </p>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => flipSection(section.label)}
+                    aria-expanded={open}
+                    className="mb-1 flex w-full items-center gap-1.5 rounded px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-gray-500 transition-colors hover:text-gray-300"
+                  >
+                    <ChevronDown
+                      size={12}
+                      className={`shrink-0 transition-transform ${open ? '' : '-rotate-90'}`}
+                    />
+                    <span className="flex-1 text-left">{section.label}</span>
+                    {folded > 0 && (
+                      <span className="rounded-full bg-orange-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
+                        {folded}
+                      </span>
+                    )}
+                  </button>
+                )
               )}
-              {section.items.map(item => {
+              {open && section.items.map(item => {
                 const active = isActive(item);
                 return (
                   <Link
@@ -495,7 +545,8 @@ export default function Layout({ children }) {
                 );
               })}
             </div>
-          ))}
+            );
+          })}
         </nav>
         <div className="shrink-0 border-t border-gray-700 p-4">
           {/* User card — clickable. Goes to /account for self-service
@@ -529,23 +580,19 @@ export default function Layout({ children }) {
               <p className="truncate text-xs text-gray-400">{roleLabel}</p>
             </div>
           </Link>
-          {/* Opt-in preview of the role-shaped home pages.
-              Deliberately down here with the other preferences rather than
-              in the nav: it changes ONE page (Home), and dressing it up as a
-              destination would oversell it. Off by default for everybody —
-              nobody meets a redesigned portal because a deploy landed. */}
+          {/* The way back to the classic home.
+              It was an opt-IN preview until 2026-09-25; everybody is on the
+              new home now and this is the escape hatch, kept here with the
+              other preferences rather than in the nav because it changes
+              ONE page. The classic home goes when nothing has fallen back
+              to it for a while. */}
           {(
             <button
               onClick={() => { setNewLook(profile?.uid, !newLookOn); window.location.reload(); }}
               className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
               title="A home page built for a phone: your next shift, anything Ratio needs from you, and open shifts. Nothing else in the portal changes, and you can switch back here.">
               <Sparkles size={16} />
-              <span className="flex-1">{newLookOn ? 'Back to classic home' : 'Try the new home'}</span>
-              {!newLookOn && (
-                <span className="rounded-full bg-gray-700 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-gray-300">
-                  New
-                </span>
-              )}
+              <span className="flex-1">{newLookOn ? 'Back to classic home' : 'Back to the new home'}</span>
             </button>
           )}
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
