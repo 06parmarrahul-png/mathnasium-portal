@@ -29,7 +29,7 @@ import { ShieldAlert, Settings, CalendarX, Palette, Plug, CalendarCheck } from '
 const TABS = [
   { key: 'general',     label: 'General',     icon: Settings },
   { key: 'booking',     label: 'Booking',     icon: CalendarCheck },
-  { key: 'holidays',    label: 'Holidays',    icon: CalendarX },
+  { key: 'holidays',    label: 'Holidays & closures', icon: CalendarX },
   { key: 'colours',     label: 'Colours',     icon: Palette  },
   { key: 'connections', label: 'Connections', icon: Plug     },
 ];

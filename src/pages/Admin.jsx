@@ -5664,7 +5664,7 @@ export default function Admin() {
     requests:    { label: 'Time Off',       icon: CalendarRange },
     users:       { label: PAGES.manageStaff.name, icon: UserCheck },
     payroll:     { label: 'Payroll',        icon: DollarSign },
-    holidays:    { label: 'Holidays',       icon: CalendarX },
+    holidays:    { label: 'Holidays & closures', icon: CalendarX },
   };
   const visibleTabKeys = TAB_GROUPS[tab] || Object.keys(TAB_DEFS);
   const tabs = visibleTabKeys.map(k => ({ key: k, ...TAB_DEFS[k] }));
@@ -5678,7 +5678,7 @@ export default function Admin() {
     scheduler:   { title: 'Auto-Scheduler',  subtitle: 'Generate a draft schedule from availability',   icon: Wand2,            bg: 'bg-purple-100 text-purple-600' },
     payroll:     { title: PAGES.managePayroll.name, subtitle: 'Hourly summary + Radius timesheet compare',     icon: DollarSign,       bg: 'bg-amber-100 text-amber-600' },
     requests:    { title: 'Time Off Requests', subtitle: 'Approve or deny time off',                    icon: CalendarRange,    bg: 'bg-orange-100 text-orange-600' },
-    holidays:    { title: 'Holidays',        subtitle: 'Stat holidays + centre closures',               icon: CalendarX,        bg: 'bg-purple-100 text-purple-600' },
+    holidays:    { title: 'Holidays & closures', subtitle: 'The twelve stats, plus any day you shut',    icon: CalendarX,        bg: 'bg-purple-100 text-purple-600' },
   };
   const pageHeader = pageTitleByTab[tab] || { title: PAGES.staffSchedule.name, subtitle: 'Manage instructors and shifts', icon: Settings, bg: 'bg-purple-100 text-purple-600' };
   const PageIcon = pageHeader.icon;

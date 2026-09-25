@@ -2,6 +2,16 @@ import { useState, useEffect } from 'react';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from '../lib/notify';
+// The stat list and the "is this a stat" test both live in statPay.js.
+// This file used to carry its own copy of the list — the same eleven
+// holidays and the same Easter algorithm, written out a second time — and
+// the two quietly fell out of step: neither had the National Day for Truth
+// and Reconciliation. One list now, and payroll reads the same one the
+// auto-fill button writes.
+import { bcStatHolidays } from '../lib/statPay';
+import {
+  datesInRange, rangeProblem, rangeSummary, addClosures, partitionClosures, isStat,
+} from '../lib/centreClosures';
 import {
   Plus, AlertTriangle, CalendarDays, CalendarX, Trash2,
 } from 'lucide-react';
@@ -18,80 +28,17 @@ import {
  * Holiday shape: { date: 'YYYY-MM-DD', name: 'Christmas Day' }.
  */
 
-// ─── Canadian stat-holiday math (used by the auto-fill button) ──────────
-
-// Anonymous Gregorian (Meeus/Jones/Butcher) Easter algorithm — returns the
-// Date of Western Easter Sunday for the given year. Good Friday is 2 days
-// before; everything else is a fixed date or an Nth weekday.
-function easterDate(year) {
-  const a = year % 19;
-  const b = Math.floor(year / 100);
-  const c = year % 100;
-  const d = Math.floor(b / 4);
-  const e = b % 4;
-  const f = Math.floor((b + 8) / 25);
-  const g = Math.floor((b - f + 1) / 3);
-  const h = (19 * a + b - d - g + 15) % 30;
-  const i = Math.floor(c / 4);
-  const k = c % 4;
-  const l = (32 + 2 * e + 2 * i - h - k) % 7;
-  const m = Math.floor((a + 11 * h + 22 * l) / 451);
-  const month = Math.floor((h + l - 7 * m + 114) / 31);
-  const day = ((h + l - 7 * m + 114) % 31) + 1;
-  return new Date(year, month - 1, day);
-}
-
-// Nth occurrence of weekday (0=Sun..6=Sat) in monthIdx (0=Jan..11=Dec).
-function nthWeekdayOfMonth(year, monthIdx, weekday, n) {
-  const first = new Date(year, monthIdx, 1);
-  const offset = (weekday - first.getDay() + 7) % 7;
-  return new Date(year, monthIdx, 1 + offset + (n - 1) * 7);
-}
-
-// The Monday falling on or before a given date — Victoria Day's definition.
-function mondayOnOrBefore(year, monthIdx, day) {
-  const d = new Date(year, monthIdx, day);
-  const back = (d.getDay() + 6) % 7;
-  d.setDate(d.getDate() - back);
-  return d;
-}
-
-function toDateKey(d) {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${dd}`;
-}
-
-/**
- * BC statutory holidays for the given year, chronological order. Covers
- * New Year's, Family Day, Good Friday, Victoria Day, Canada Day, BC Day,
- * Labour Day, Thanksgiving, Remembrance Day, Christmas, Boxing Day.
- */
-function canadianStatHolidays(year) {
-  const easter = easterDate(year);
-  const goodFriday = new Date(easter);
-  goodFriday.setDate(easter.getDate() - 2);
-  return [
-    { date: `${year}-01-01`, name: "New Year's Day" },
-    { date: toDateKey(nthWeekdayOfMonth(year, 1, 1, 3)), name: 'Family Day' },
-    { date: toDateKey(goodFriday),                       name: 'Good Friday' },
-    { date: toDateKey(mondayOnOrBefore(year, 4, 24)),    name: 'Victoria Day' },
-    { date: `${year}-07-01`, name: 'Canada Day' },
-    { date: toDateKey(nthWeekdayOfMonth(year, 7, 1, 1)), name: 'BC Day' },
-    { date: toDateKey(nthWeekdayOfMonth(year, 8, 1, 1)), name: 'Labour Day' },
-    { date: toDateKey(nthWeekdayOfMonth(year, 9, 1, 2)), name: 'Thanksgiving' },
-    { date: `${year}-11-11`, name: 'Remembrance Day' },
-    { date: `${year}-12-25`, name: 'Christmas Day' },
-    { date: `${year}-12-26`, name: 'Boxing Day' },
-  ];
-}
-
 // ─── Component ───────────────────────────────────────────────────────────
 
 export default function HolidaysEditor({ activeCenterId, centerConfig, activeCenterName }) {
   const [date, setDate] = useState('');
+  // Optional. Empty means one day, which is what it is most of the time.
+  const [until, setUntil] = useState('');
   const [name, setName] = useState('');
+  // 'closures' first: it is the whole list, and adding a closed day is the
+  // reason people open this. "Holidays" answers a narrower question — are
+  // the twelve stats in? — and is one click away.
+  const [view, setView] = useState('closures');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [showPast, setShowPast] = useState(false);
@@ -110,7 +57,18 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   })();
-  const sorted = [...holidays].sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
+  // Holidays are a SUBSET of closures, not a sibling — same array, one
+  // filter. See centreClosures.js for why that matters.
+  const parts = partitionClosures(holidays);
+  // The counts on the switch are UPCOMING ones, because that is what the
+  // list below shows. A chip reading 10 above a list of 9 sends people
+  // hunting for the tenth; the past ones have their own toggle.
+  const counts = {
+    closures: parts.closures.filter(h => h.date >= todayStr).length,
+    holidays: parts.holidays.filter(h => h.date >= todayStr).length,
+  };
+  const shown = view === 'holidays' ? parts.holidays : parts.closures;
+  const sorted = [...shown].sort((a, b) => (a?.date || '').localeCompare(b?.date || ''));
   const upcoming = sorted.filter(h => (h?.date || '') >= todayStr);
   const past     = sorted.filter(h => (h?.date || '') <  todayStr);
 
@@ -143,14 +101,26 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
 
   const handleAdd = async () => {
     setError('');
-    if (!date) { setError('Pick a date.'); return; }
-    if (holidays.some(h => h.date === date)) {
-      setError('That date is already on the list.');
+    const problem = rangeProblem(date, until);
+    if (problem) { setError(problem); return; }
+
+    const dates = datesInRange(date, until);
+    const { list, added, skipped } = addClosures(holidays, dates, name);
+    if (added === 0) {
+      setError(dates.length === 1
+        ? 'That date is already on the list.'
+        : 'Every day in that stretch is already on the list.');
       return;
     }
-    const next = [...holidays, { date, name: name.trim() || 'Closed' }];
-    await saveList(next);
+    await saveList(list);
+    // Say when some of the stretch was already closed, rather than
+    // silently adding four of five days and looking like it worked.
+    if (skipped > 0) {
+      toast.success(`${added} ${added === 1 ? 'day' : 'days'} closed · `
+        + `${skipped} already ${skipped === 1 ? 'was' : 'were'}`);
+    }
     setDate('');
+    setUntil('');
     setName('');
   };
 
@@ -163,7 +133,7 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
   // Dedupes against whatever's already on the list, so clicking twice is a no-op.
   const autoFillYears = [new Date().getFullYear(), new Date().getFullYear() + 1];
   const handleAutoFill = async () => {
-    const all = autoFillYears.flatMap(y => canadianStatHolidays(y));
+    const all = autoFillYears.flatMap(y => bcStatHolidays(y));
     const existing = new Set(holidays.map(h => h?.date));
     const toAdd = all.filter(h => !existing.has(h.date));
     if (toAdd.length === 0) {
@@ -185,22 +155,69 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
     <div className="rounded-2xl border bg-white p-5 shadow-sm">
       <div className="mb-1 flex items-center gap-2">
         <CalendarX size={18} className="text-purple-600" />
-        <h3 className="font-semibold text-gray-900">Holidays</h3>
+        <h3 className="font-semibold text-gray-900">Holidays &amp; closures</h3>
       </div>
-      <p className="mb-4 text-sm text-gray-500">
-        One-off days <strong>{activeCenterName || 'this centre'}</strong> is closed (stat holidays,
-        renovations, etc.). Holiday dates show as <em>Closed</em> on the admin grid, grey out on
-        the Schedule calendar, and are skipped by the auto-scheduler.
+      <p className="mb-3 text-sm text-gray-500">
+        Days <strong>{activeCenterName || 'this centre'}</strong> is shut. They show as{' '}
+        <em>Closed</em> on the admin grid, grey out on the Schedule calendar, and are skipped
+        by the auto-scheduler.
       </p>
 
-      {/* Add form */}
-      <div className="mb-4 grid gap-2 sm:grid-cols-[auto_1fr_auto] sm:items-end">
+      {/* Two views over ONE list, because a statutory holiday is a closure
+          — the centre is shut either way. Keeping them as separate stored
+          lists would mean writing the stats into both, and the day
+          somebody edited one and not the other is the day payroll and the
+          schedule disagreed. */}
+      <div className="mb-4 inline-flex rounded-lg border border-gray-200 bg-gray-50 p-0.5">
+        {[
+          { key: 'closures', label: 'Closures', n: counts.closures,
+            hint: 'Every day the centre is shut — stat holidays and your own' },
+          { key: 'holidays', label: 'Holidays', n: counts.holidays,
+            hint: 'Statutory holidays only — the ones payroll pays' },
+        ].map(v => (
+          <button
+            key={v.key}
+            type="button"
+            onClick={() => setView(v.key)}
+            title={v.hint}
+            aria-pressed={view === v.key}
+            className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
+              view === v.key ? 'bg-white text-purple-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            {v.label} <span className="ml-0.5 tabular-nums opacity-60">{v.n}</span>
+          </button>
+        ))}
+      </div>
+      <p className="mb-4 text-xs text-gray-400">
+        {view === 'holidays'
+          ? 'The twelve BC statutory holidays. Payroll pays these; the rest of the list it doesn’t.'
+          : 'Everything, statutory or not. Add renovations, a burst pipe, the week between Christmas and New Year.'}
+      </p>
+
+      {/* Add form. The "to" box is what turns ten adds into one — closing
+          for winter break used to mean typing each day in on its own. */}
+      <div className="mb-4 grid gap-2 sm:grid-cols-[auto_auto_1fr_auto] sm:items-end">
         <div>
-          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">Date</label>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {until ? 'First day' : 'Date'}
+          </label>
           <input
             type="date"
             value={date}
             onChange={(e) => setDate(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+            To <span className="font-normal normal-case text-gray-400">(optional)</span>
+          </label>
+          <input
+            type="date"
+            value={until}
+            min={date || undefined}
+            onChange={(e) => setUntil(e.target.value)}
+            aria-label="Last day of the closure, if it runs more than one day"
             className="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-purple-500 focus:outline-none"
           />
         </div>
@@ -220,7 +237,7 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
           disabled={saving || !date}
           className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-50"
         >
-          <Plus size={14} /> Add
+          <Plus size={14} /> Add{rangeSummary(date, until) && until ? ` ${rangeSummary(date, until)}` : ''}
         </button>
       </div>
       {error && (
@@ -248,7 +265,9 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
       {/* Upcoming */}
       {upcoming.length === 0 ? (
         <p className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-4 py-6 text-center text-sm text-gray-400">
-          No upcoming holidays.
+          {view === 'holidays'
+            ? 'No statutory holidays on the list yet — Auto-fill puts all twelve in.'
+            : 'No upcoming closures.'}
         </p>
       ) : (
         <div className="space-y-1.5">
@@ -256,7 +275,17 @@ export default function HolidaysEditor({ activeCenterId, centerConfig, activeCen
             <div key={h.date} className="flex items-center gap-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
               <CalendarX size={14} className="shrink-0 text-purple-500" />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-gray-800">{h.name || 'Closed'}</p>
+                <p className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-gray-800">
+                  <span className="truncate">{h.name || 'Closed'}</span>
+                  {/* Only in the mixed view. In Holidays every row is one,
+                      so a chip on all of them says nothing. */}
+                  {view === 'closures' && isStat(h) && (
+                    <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-700"
+                      title="A BC statutory holiday — payroll pays this one">
+                      Stat
+                    </span>
+                  )}
+                </p>
                 <p className="text-xs text-gray-500">{fmt(h.date)}</p>
               </div>
               <button

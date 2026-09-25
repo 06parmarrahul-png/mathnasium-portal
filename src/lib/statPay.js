@@ -64,7 +64,21 @@ function toDateKey(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-/** BC statutory holidays for a year, chronological. */
+/**
+ * BC statutory holidays for a year, chronological.
+ *
+ * THE ONE COPY. HolidaysEditor's auto-fill button used to carry its own
+ * identical list — same eleven holidays, same Easter algorithm, written
+ * out twice. They agreed only because they were both out of date: neither
+ * had the National Day for Truth and Reconciliation, which has been a BC
+ * statutory holiday since 2023. Two lists that must agree and don't
+ * announce when they stop is how that happens, so now there is one.
+ *
+ * Twelve, not eleven. Sept 30 pays like any other stat, and because
+ * isPaidStatHoliday() falls back to THIS list when a holiday entry carries
+ * no explicit flag, a centre that had already closed for the 30th by hand
+ * starts paying it correctly with no edit and no migration.
+ */
 export function bcStatHolidays(year) {
   const easter = easterDate(year);
   const goodFriday = new Date(easter);
@@ -77,6 +91,8 @@ export function bcStatHolidays(year) {
     { date: `${year}-07-01`, name: 'Canada Day' },
     { date: toDateKey(nthWeekdayOfMonth(year, 7, 1, 1)), name: 'BC Day' },
     { date: toDateKey(nthWeekdayOfMonth(year, 8, 1, 1)), name: 'Labour Day' },
+    // A BC statutory holiday since 2023. Fixed date, like Canada Day.
+    { date: `${year}-09-30`, name: 'National Day for Truth and Reconciliation' },
     { date: toDateKey(nthWeekdayOfMonth(year, 9, 1, 2)), name: 'Thanksgiving' },
     { date: `${year}-11-11`, name: 'Remembrance Day' },
     { date: `${year}-12-25`, name: 'Christmas Day' },

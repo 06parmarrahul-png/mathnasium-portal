@@ -595,6 +595,35 @@ exported for `SchedulerCreation.render.test.jsx` — the page needs a parsed
 feed day, check-ins, assignments, a ratio config and a roster before it
 renders anything, but one row stands alone.
 
+### Holidays & closures — one list, two views
+
+`centers/{id}/config/main.holidays`, entries of `{ date, name, stat? }`.
+`HolidaysEditor` shows it two ways: **Closures** (everything — the door is
+shut) and **Holidays** (the statutory subset payroll pays). Holidays are a
+FILTER, not a second stored list — two lists would need the stats written
+into both, and the day somebody edits one and not the other is the day
+payroll and the schedule disagree. Pure parts in `src/lib/centreClosures.js`.
+
+**What makes a day statutory** is `isPaidStatHoliday()` in `statPay.js`:
+`stat === true` pays, `stat === false` doesn't, and **no flag falls back to
+whether the DATE is a real BC stat**. That fallback is why the list
+self-corrects and needs no migration.
+
+**Twelve, not eleven.** The National Day for Truth and Reconciliation
+(Sept 30) has been a BC statutory holiday since 2023 and was missing. It
+was missing in TWO places: `statPay.bcStatHolidays()` and a byte-identical
+copy inside HolidaysEditor, Easter algorithm and all, feeding the Auto-fill
+button. They agreed only because both were stale. **There is now one list**
+and the editor imports it. If BC adds a thirteenth, `statPay.js` is the only
+file to touch.
+
+**Closing a stretch is one action.** The add form takes an optional "to"
+date and writes every day between. Days already on the list are left alone
+rather than overwritten — closing the week around Christmas must not rename
+Christmas Day to "Winter break", because that entry is the stat one. Ranges
+are capped at `MAX_RANGE_DAYS` (60): not a policy, a guard against a
+mis-keyed year writing three thousand entries with no undo.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk
