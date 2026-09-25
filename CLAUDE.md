@@ -537,6 +537,44 @@ one narrow rule for this field while the rest of the document stays open would
 buy nothing and cost a chunk of the per-request expression budget
 `canUseDeskAt()` already lives inside. **No rules change was needed.**
 
+### Which side of the floor a booking lands on
+
+Order, strongest evidence first (`categorizeOne` in
+`api/scheduler/appointments.js`):
+
+1. Powerplay → HS. 2. `@home` / online / virtual → Online.
+3. Alias → the aliased student's category.
+4. **The student tracker** — matched on the booking name, and the right
+   answer every time it is available.
+5. **The appointment TYPE**, via `sideFromTypeName()` in
+   `api/_lib/appointmentSide.js`. Only reached when the name matched no
+   student: a first session, a booking in a parent's name, a spelling the
+   tracker doesn't hold.
+6. Otherwise `Unknown`, which staff place by hand.
+
+**The half-hour block (live 1 Oct 2026).** Acuity type *"Langley In-Centre
+30 minute math tutoring"*, on the hour — 3/4/5/6 weekdays, 10/11/12/1/2
+Saturdays, capped at 2 bookings a block **in Acuity** (Ratio neither knows
+nor enforces that). It is young students only, Great Foundations to about
+grade 2, so unlike the 60 and 90 minute types its name IS evidence of a
+side and `sideFromTypeName()` reads it as Elementary. Without that a new
+Great Foundations student's first session lands in Unknown.
+
+`tutor` is required alongside the length — a 30 minute *assessment* is not
+this block. And the rule is tried **last**, so it can only ever turn an
+Unknown into Elementary; a type that says "High School" is still HS.
+
+**Nothing else needed changing for it.** The feed floors duration at 30
+(`Math.max(30, …)`, appointments.js) and Acuity always sends `DTEND`, so a
+half-hour booking arrives as 30 rather than rounding to an hour;
+`spanOf()` then covers exactly one 30-minute slot, so demand counts it once
+and the 1:3.5 / 1:4 maths is untouched. The grid's on-hour column already
+takes any duration on the EM side.
+
+**The HS side would need work** if half-hour sessions are ever opened
+there: its on-hour column filters to `duration === 60` and sweeps
+everything else into the 1.5-hour column.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk

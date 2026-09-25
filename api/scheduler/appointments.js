@@ -14,6 +14,7 @@
 // all OK — the UI gates visibility separately).
 
 import { getFirestore, authenticateRequest } from '../_lib/firebase-admin.js';
+import { sideFromTypeName } from '../_lib/appointmentSide.js';
 
 // ───── iCal parser ──────────────────────────────────────────────────────
 // Same logic as scheduler-app/src/ical.js, inlined here so this function
@@ -134,9 +135,9 @@ function toAppointment(eventMap) {
 
 // ───── Categorization ───────────────────────────────────────────────────
 const POWERPLAY_RE = /\bpower\s*play\b/i;
-const HS_RE = /\b(hs|high\s*school|grade\s*(8|9|10|11|12))\b/i;
-const EM_RE = /\b(em|elementary|grade\s*[1-7])\b/i;
-const ONLINE_RE = /\b(online|@?home|virtual)\b/i;
+// The side a TYPE NAME implies now lives in ../_lib/appointmentSide.js,
+// so it can be tested — this route is a Vercel function and the project
+// sits on the Hobby 12-function cap, so a test file cannot sit beside it.
 
 // Must match src/lib/scheduler-data.js nameKey character-for-character so
 // the in-memory lookup Maps line up with the Firestore doc IDs the
@@ -166,11 +167,9 @@ function resolveAliasReplacement(appt, alias, studentsByKey, dayState) {
   let state = dayState.get(k);
   if (!state) { state = { used: new Set(), cycled: 0 }; dayState.set(k, state); }
 
-  const hay = (appt.type || '').toLowerCase();
-  const hint =
-    ONLINE_RE.test(hay) ? 'Online' :
-    HS_RE.test(hay)     ? 'HS' :
-    EM_RE.test(hay)     ? 'EM' : null;
+  // Read the same way the fallback reads it, so a booking that would be
+  // filed Elementary also picks the Elementary sibling.
+  const hint = sideFromTypeName(appt.type);
 
   // 1. Smart match: pick an UNUSED replacement whose category matches the hint.
   if (hint) {
@@ -245,11 +244,9 @@ function categorizeOne(appt, studentsByKey, aliasesByKey, dayState) {
     return s.category;
   }
 
-  // 3. Keyword fallback
-  if (ONLINE_RE.test(haystack)) return 'Online';
-  if (HS_RE.test(haystack)) return 'HS';
-  if (EM_RE.test(haystack)) return 'EM';
-  return 'Unknown';
+  // 3. What the appointment type itself says. Includes the half-hour
+  //     in-centre block, which is young students only — see the module.
+  return sideFromTypeName(haystack) || 'Unknown';
 }
 
 // Categorize every appointment. CRITICAL: the alias counter is scoped to
