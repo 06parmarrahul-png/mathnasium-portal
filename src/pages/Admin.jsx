@@ -56,6 +56,9 @@ import {
 import { attachEmails } from '../lib/userContact';
 import { weekdayBudgetTotal, resolveWeekdayModel } from '../lib/budgetBuckets';
 import { isPaidStatHoliday, statPayForHoliday, minusDays } from '../lib/statPay';
+import {
+  paidSickDates, probationState, startDateOf, PROBATION_DAYS, SICK_DAYS_PER_YEAR,
+} from '../lib/probation';
 import { periodFor, stepPeriod, payDateFor, upcomingPayroll, todayISO as localTodayISO } from '../lib/payProjection';
 import {
   holidayCards, defaultHolidayDate, holidayYears, windowIsLoaded, windowIsClosed, buildStatRows,
@@ -167,40 +170,11 @@ function GapHoursInput({ onSave }) {
 }
 
 // ─── Sick-pay policy (BC ESA minimum) ──────────────────────────────────
-// 5 paid sick days per calendar year, available once the 90-day probation
-// is served. Module-scope because BOTH the payroll summary and the Sick
-// Days tab need them, and the payroll summary runs first — declaring them
-// inside the component below the summary would put them in the temporal
-// dead zone.
-const SICK_DAYS_PER_YEAR = 5;
-const PROBATION_DAYS = 90;
-
-// Which of a person's sick DATES are actually payable.
-//
-// Entitlement is consumed chronologically across the WHOLE calendar year,
-// not per pay period — whether today's sick day is paid depends on how many
-// were taken before it. A date is unpaid when the person was still on
-// probation that day, or when the 5-day allowance is already spent.
-//
-// A missing hire date counts as ELIGIBLE: withholding pay because nobody
-// filled in a form is the worse failure mode. Those rows are flagged in the
-// export so the gap gets fixed.
-function paidSickDates(sickDates, hireDate) {
-  const paid = new Set();
-  let used = 0;
-  for (const ds of [...sickDates].sort()) {
-    if (used >= SICK_DAYS_PER_YEAR) break;
-    if (hireDate) {
-      const daysIn = Math.floor(
-        (new Date(ds + 'T00:00:00') - new Date(hireDate + 'T00:00:00')) / 86400000,
-      );
-      if (daysIn < PROBATION_DAYS) continue; // on probation that day → unpaid
-    }
-    paid.add(ds);
-    used += 1;
-  }
-  return paid;
-}
+// The rule lives in src/lib/probation.js. It used to be written out twice
+// — once here and once in the Sick Days tab below — reading the start date
+// through two fallbacks that BOTH silently did nothing, and then
+// disagreeing about what the resulting null meant. Payroll paid the day;
+// the tab said "On probation". See that file for the whole story.
 
 function shiftHours(s) {
   if (!s.startTime || !s.endTime) return 0;
@@ -1945,7 +1919,18 @@ export function PeriodSickDays({ start, end, isDefault, onStep, onReset, people 
             <tbody>
               {withSick.map(p => (
                 <tr key={p.name} className="border-t border-gray-100">
-                  <td className="px-4 py-2 font-medium text-gray-900">{p.name}</td>
+                  <td className="px-4 py-2 font-medium text-gray-900">
+                    {p.name}
+                    {/* The gap that caused this to be wrong in the first
+                        place, said on the screen where the money is read
+                        rather than only on the payroll card. */}
+                    {p.noHireDate && (
+                      <span className="ml-1.5 rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700"
+                        title="No start date on file, so probation can't be worked out — their sick days stay unpaid until one is set under Sick Days.">
+                        no start date
+                      </span>
+                    )}
+                  </td>
                   <td className="px-4 py-2 text-xs text-gray-600">{p.role}</td>
                   <td className="px-4 py-2 text-xs">
                     {p.dates.map(d => (
@@ -2114,6 +2099,8 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate, onA
   // Roll-up tallies for the header summary.
   const eligibleCount = rows.filter(r => r.eligible).length;
   const onProbationCount = rows.length - eligibleCount;
+  const missingDates = rows.filter(r => !r.hireDateKnown && !r.hireDateAssumed).length;
+  const assumedDates = rows.filter(r => !r.hireDateKnown && r.hireDateAssumed).length;
   const totalUsed = rows.reduce((s, r) => s + r.used, 0);
   const totalRemaining = rows.reduce((s, r) => s + r.remaining, 0);
 
@@ -2133,6 +2120,18 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate, onA
           <div className="flex items-center gap-2 text-xs">
             <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-1 font-semibold">{eligibleCount} eligible</span>
             <span className="rounded-full bg-gray-100 text-gray-700 px-2 py-1 font-semibold">{onProbationCount} on probation</span>
+            {missingDates > 0 && (
+              <span className="rounded-full bg-red-100 text-red-800 px-2 py-1 font-semibold"
+                title="Nobody has entered a start date for these people. Probation can't be worked out, so their sick days stay unpaid until it is.">
+                {missingDates} missing a start date
+              </span>
+            )}
+            {assumedDates > 0 && (
+              <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-1 font-semibold"
+                title="Start date taken from when their Ratio account was made. Right for anyone added the day they started, late for everyone else.">
+                {assumedDates} assumed
+              </span>
+            )}
             <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-1 font-semibold">{totalUsed} used</span>
             <span className="rounded-full bg-blue-100 text-blue-800 px-2 py-1 font-semibold">{totalRemaining} remaining</span>
           </div>
@@ -2163,12 +2162,38 @@ function SickDaysTab({ rows, year, maxPerYear, probationDays, onSetHireDate, onA
               <tr key={r.uid} className="border-t border-gray-100 hover:bg-gray-50">
                 <td className="px-4 py-2 font-medium text-gray-900">{r.name}</td>
                 <td className="px-4 py-2 text-xs text-gray-600">{r.role}</td>
-                <td className="px-4 py-2">
+                {/* A start date nobody entered is the reason this whole
+                    thing went wrong, so the row says so rather than
+                    sitting there looking like a blank field somebody
+                    might get round to. Two different gaps:
+                      - nothing at all  → red, and they cannot earn sick
+                        pay until it is filled in;
+                      - read off the account-creation date → amber, it is
+                        a stand-in and may be later than the real start. */}
+                <td className={`px-4 py-2 ${!r.hireDateKnown ? (r.hireDateAssumed ? 'bg-amber-50' : 'bg-red-50') : ''}`}>
                   <input type="date" defaultValue={r.hireDate || ''}
                     onBlur={e => onSetHireDate(r.uid, e.target.value)}
-                    className="rounded border border-gray-200 px-1.5 py-0.5 text-xs text-gray-700" />
-                  {r.hireDate && (
+                    aria-label={`Start date for ${r.name}`}
+                    className={`rounded px-1.5 py-0.5 text-xs text-gray-700 ${
+                      r.hireDateKnown
+                        ? 'border border-gray-200'
+                        : r.hireDateAssumed
+                          ? 'border-[1.5px] border-amber-400 bg-white'
+                          : 'border-[1.5px] border-red-400 bg-white'}`} />
+                  {r.hireDateKnown && (
                     <div className="text-[10px] text-gray-400 mt-0.5">{r.daysIn} day{r.daysIn === 1 ? '' : 's'} in</div>
+                  )}
+                  {!r.hireDateKnown && r.hireDateAssumed && (
+                    <div className="mt-0.5 text-[10px] font-semibold text-amber-700"
+                      title="Taken from the date their Ratio account was made. If they started before that, sick pay will begin later than it should — set their real start date.">
+                      assumed · {r.daysIn} day{r.daysIn === 1 ? '' : 's'} in
+                    </div>
+                  )}
+                  {!r.hireDateKnown && !r.hireDateAssumed && (
+                    <div className="mt-0.5 text-[10px] font-bold text-red-700"
+                      title="No start date on file, so probation cannot be worked out. Sick days stay unpaid until this is set.">
+                      no start date
+                    </div>
                   )}
                 </td>
                 <td className="px-4 py-2">
@@ -4273,10 +4298,12 @@ export default function Admin() {
         const user = usersForCentre.find(u =>
           (p.userId && u.uid === p.userId) || normName(u.displayName) === normName(p.name),
         );
-        const hire = user?.hireDate
-          || (user?.approvedAt?.toDate ? user.approvedAt.toDate().toISOString().slice(0, 10) : null)
-          || (user?.createdAt?.toDate  ? user.createdAt.toDate().toISOString().slice(0, 10)  : null);
-        p.noHireDate = !hire;
+        // `user` can be undefined when the shift's name doesn't match a
+        // roster row; startDateOf() treats that as "nothing known", which
+        // now means probation rather than a free pass.
+        const start = startDateOf(user);
+        p.noHireDate = !start.known;
+        p.assumedHireDate = start.assumed ? start.date : null;
         // Sick days taken outside Ratio spend entitlement too — without them
         // someone who's actually used all 5 still looks like they have one
         // left, and the day gets paid when it shouldn't be.
@@ -4286,7 +4313,7 @@ export default function Admin() {
           ...(yearSickByName.get(normName(p.name)) || new Set()),
           ...external,
         ]);
-        const paid = paidSickDates(allDates, hire);
+        const paid = paidSickDates(allDates, user);
         let paidH = 0, unpaidH = 0;
         for (const [ds, hrs] of p.sickDatesInPeriod) {
           if (paid.has(ds)) paidH += hrs; else unpaidH += hrs;
@@ -4456,17 +4483,8 @@ export default function Admin() {
       // Skip people we already exclude from payroll (volunteers, hidden).
       if (volunteerNames.has(u.displayName) || hiddenFromOps.has(u.displayName)) continue;
 
-      // Probation calculation
-      const hire = u.hireDate
-        || (u.approvedAt?.toDate ? u.approvedAt.toDate().toISOString().slice(0,10) : null)
-        || (u.createdAt?.toDate  ? u.createdAt.toDate().toISOString().slice(0,10)  : null);
-      let onProbation = true, daysIn = 0;
-      if (hire) {
-        const d1 = new Date(hire + 'T00:00:00');
-        const d2 = new Date(today + 'T00:00:00');
-        daysIn = Math.floor((d2 - d1) / (24 * 3600 * 1000));
-        onProbation = daysIn < PROBATION_DAYS;
-      }
+      // Probation, from the same rule payroll uses — see lib/probation.js.
+      const { onProbation, daysIn, startDate: hire, assumed, known } = probationState(u, today);
 
       // Days taken outside Ratio (previous employer's records, a day nobody
       // logged, a centre transfer) have no shift to count, but they still
@@ -4486,6 +4504,10 @@ export default function Admin() {
         name: u.displayName,
         role: roleDisplayName(u.instructorType || 'Instructor'),
         hireDate: hire,
+        // Whether anybody actually told us, as opposed to it being read
+        // off the account-creation date. Drives the highlight on the tab.
+        hireDateKnown: known,
+        hireDateAssumed: assumed,
         daysIn,
         onProbation,
         used,
@@ -4635,6 +4657,7 @@ export default function Admin() {
       byName.set(p.name, {
         name: p.name,
         role: roleDisplayName(p.role),
+        noHireDate: !!p.noHireDate,
         paidHours: p.sickPaidHours || 0,
         unpaidHours: p.sickUnpaidHours || 0,
         dates: [...p.sickDatesInPeriod].map(([date, hrs]) => ({ date, hours: round2(hrs), paid: paidSet.has(date), external: false })),

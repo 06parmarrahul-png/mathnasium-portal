@@ -624,6 +624,44 @@ the classic home once nothing has fallen back to it for a while** — that is
 the whole point of having moved everybody, and until it goes every change
 to a home is still two changes.
 
+### Probation and paid sick leave — one rule, in `src/lib/probation.js`
+
+BC ESA: five paid sick days a year, earned after **90 consecutive days**.
+
+**THE BUG THIS REPLACED, because it cost real money.** The rule was written
+twice — in the payroll calculation and in the Sick Days tab — and both read
+the start date as:
+
+```js
+u.hireDate || (u.approvedAt?.toDate ? … ) || (u.createdAt?.toDate ? … )
+```
+
+Both fallbacks were dead. **`approvedAt` is read in two places and written
+in none.** **`createdAt` is stored as an ISO string** (by
+`api/users/create-staff.js` and by the signup path in `AuthContext`) and
+`.toDate` is a Firestore Timestamp method, which a string has not got. So
+the start date was `null` for everyone who had never had one typed in by
+hand — and the two copies then disagreed about what `null` meant:
+
+- Sick Days tab: `let onProbation = true` → **"On probation"**
+- Payroll: `if (hireDate) { …only then check… }` → **paid the day**
+
+The same new starter showed as probationary on one screen and was paid on
+the next. Fixed 2026-09-25.
+
+**Now:** `asDay()` reads a day out of a string, a Timestamp, a `{seconds}`
+or a Date. **No start date means on probation** — the safer wrong answer,
+since money that has already left is harder to recover than a day paid
+late. A probationary sick day also does **not** spend one of the five; it
+was never payable.
+
+**`createdAt` is a STAND-IN, and the tab says so.** Right for anyone added
+to Ratio the day they started, late for anyone whose account came later —
+so `startDateOf()` returns `assumed: true` and the Sick Days tab marks the
+row amber. A missing date is red. Both are counted in the header so nobody
+has to scan the list. **The fix for both is a real start date**, not a
+better default.
+
 ### Holidays & closures — one list, two views
 
 `centers/{id}/config/main.holidays`, entries of `{ date, name, stat? }`.
