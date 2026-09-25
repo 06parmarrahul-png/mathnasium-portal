@@ -34,6 +34,7 @@ import {
   setSlotOverride, clearSlotOverride,
   enableSheetSync, rotateSheetSyncToken, disableSheetSync,
 } from '../lib/scheduler-data';
+import { shortSessionLabel, sessionEndMinutes } from '../lib/sessionLength';
 // Legacy hardcoded fixed-staff map (Sabrina, Neeru, Rachel). Used as a
 // fallback so the Today tab knows about them even when the live Firestore
 // config doc has no `fixedStaff` key. Same fallback the auto-scheduler
@@ -1561,7 +1562,12 @@ function StudentList({ students, checkIns, centerId, date, onStatusClick, onStat
   );
 }
 
-function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded, slotPickerOptions, onMoveStudent, currentSlot }) {
+// Exported for tests. This page has no harness of its own — it needs a
+// parsed feed day, check-ins, assignments, a ratio config and a roster
+// before it renders a single name — but one student's row is small enough
+// to stand on its own, and it is where the sheet says who is in front of
+// you.
+export function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onRemoveWalkIn, slotEnded, slotPickerOptions, onMoveStudent, currentSlot }) {
   // Move picker handler — onChange of the ↔ <select>. Sends '' to clear
   // an existing override, the new slot key otherwise. The select is
   // hidden for walk-ins (they're stored at one slot only; remove + re-add
@@ -1575,6 +1581,10 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
     else if (next) onMoveStudent(s.id, next);
   };
   const canMove = !s.isWalkIn && typeof onMoveStudent === 'function';
+  // Whether "3:30 PM" or "15:30" reaches the reader is their own setting,
+  // and this is the only place that knows it — see src/lib/timeFormat.js.
+  const fmtTime = useTimeFormat();
+  const endsAt = sessionEndMinutes(currentSlot, s.duration);
   const status = entry.status || '';
   // classifyStudent decides 'present' / 'absent' / 'presumed-absent' /
   // 'pending'. Presumed-absent gets a SOFT visual (low-contrast gray,
@@ -1655,6 +1665,20 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
           (W)
         </span>
       )}
+      {/* Leaves early. The half-hour in-centre block sits in this same
+          on-the-hour column as the full-hour students and looked exactly
+          like them, so a Great Foundations student could be kept at a desk
+          half an hour past their session — or a desk could come free
+          without anybody noticing. SOLID, not one of the pale chips
+          beside it: the pale ones describe the student (assessment, first
+          session) and this one describes the clock. */}
+      {shortSessionLabel(s.duration) && (
+        <span className="rounded bg-teal-600 px-1 text-[10px] font-bold text-white shrink-0 print:bg-white print:text-black print:ring-1 print:ring-black"
+          title={`${shortSessionLabel(s.duration)} session${
+            endsAt === null ? '' : ` — leaves at ${fmtTime.compact(endsAt)}`}`}>
+          {shortSessionLabel(s.duration)}
+        </span>
+      )}
       {s.isWalkIn && onRemoveWalkIn && (
         <button onClick={() => onRemoveWalkIn(s.id)}
           title="Remove walk-in"
@@ -1706,13 +1730,19 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
 
       <HighlightPicker value={entry.highlight || ''} onPick={pickHighlight} />
 
-      {/* Note — sits to the RIGHT of the student on the same line so it's
-          obvious whose note it is. basis-[70px] + flex-1 means it takes
-          the leftover width when the column is wide and wraps onto its own
-          line, still inside this student's <li>, when it isn't. Same
-          uncontrolled + save-on-blur pattern as the desk field, and the
-          key remounts it when another device changes the value.
-          On paper it prints as plain text — no box, no placeholder. */}
+      {/* Note — ALWAYS ON ITS OWN LINE, under the student it belongs to.
+          It used to sit beside the name and take whatever width was left
+          over, which meant its size changed with the length of the name
+          above it: a long name left a sliver, a short one left half the
+          column. Notes are the thing staff actually write during a shift,
+          and a box that moves and resizes per row is a box people stop
+          using. `basis-full` puts it on its own line inside this student's
+          <li>, so every note is the same width and unmistakably that
+          student's.
+
+          Same uncontrolled + save-on-blur pattern as the desk field, and
+          the key remounts it when another device changes the value. On
+          paper it prints as plain text — no box, no placeholder. */}
       <input
         key={`note-${entry.note || ''}`}
         type="text"
@@ -1722,7 +1752,7 @@ function StudentRow({ s, entry, centerId, date, onStatusClick, onStatusMenu, onR
         onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); }}
         placeholder="note…"
         title="Note for this student today"
-        className="min-w-0 flex-1 basis-[70px] rounded border border-dashed border-gray-200 bg-transparent px-1 text-[10px] text-gray-700 placeholder:text-gray-300 hover:border-gray-300 focus:border-solid focus:border-blue-400 focus:bg-white focus:outline-none print:border-0 print:placeholder:text-transparent"
+        className="min-w-0 w-full basis-full mt-0.5 rounded border border-dashed border-gray-200 bg-transparent px-1 text-[10px] text-gray-700 placeholder:text-gray-300 hover:border-gray-300 focus:border-solid focus:border-blue-400 focus:bg-white focus:outline-none print:border-0 print:placeholder:text-transparent"
       />
     </li>
   );

@@ -575,6 +575,26 @@ takes any duration on the EM side.
 there: its on-hour column filters to `duration === 60` and sweeps
 everything else into the 1.5-hour column.
 
+**On the sheet, a short session is badged.** A 30-minute student sits in
+the same on-the-hour column as the full-hour students and looked identical
+to them, so they could be kept at a desk half an hour past their session —
+or a desk could free up unnoticed. `shortSessionLabel()` /
+`sessionEndMinutes()` in `src/lib/sessionLength.js`; the teal chip in
+`StudentRow`. **Only SHORTER-than-standard sessions are marked** — a longer
+one already has the HS 1.5 hr column saying so, and a chip repeating a
+column heading is clutter on a sheet that gets printed. `sessionEndMinutes`
+returns MINUTES, not a clock face: `timeFormat.scan.test.js` fails a
+thirteenth hand-rolled AM/PM, and the reader's 12/24h preference lives in
+`useTimeFormat()`.
+
+**Notes sit UNDER each student, full width.** They used to share the line
+with the name and take the leftover width, so the box changed size with the
+length of the name above it. `basis-full` inside the student's `<li>` keeps
+every note the same width and unmistakably that student's. `StudentRow` is
+exported for `SchedulerCreation.render.test.jsx` — the page needs a parsed
+feed day, check-ins, assignments, a ratio config and a roster before it
+renders anything, but one row stands alone.
+
 ### Student Scheduler — notes and highlights
 
 Per-student, PER-DAY, stored on the same check-in entry as status/tag/desk
