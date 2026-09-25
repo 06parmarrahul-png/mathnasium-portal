@@ -100,6 +100,7 @@ const authValue = { current: {} };
 vi.mock('../contexts/AuthContext', () => ({ useAuth: () => authValue.current, useOptionalAuth: () => authValue.current }));
 
 const { default: ManagementDesk } = await import('./ManagementDesk');
+const { isOpen: isOpenStatus } = await import('../lib/deskNotes');
 
 const BASE_AUTH = {
   profile: { uid: 'vin', displayName: 'Vin Bhatia', role: 'director' },
@@ -668,12 +669,17 @@ describe('the composer stays out of the way', () => {
 });
 
 describe('who a note is for, on the card', () => {
+  // The To/From pickers list every desk member as an <option>, so a bare
+  // getByText('Neeru') now matches the dropdown as well as the chip.
+  // These tests are about the CARD, so they say so.
+  const onCard = (text) => screen.getByText(text, { ignore: 'option, script, style' });
+
   it('names the recipient in a chip, and the sender in plain text', () => {
     snapshots.users = [user('neeru', 'Neeru Gill', { role: 'director' })];
     snapshots.notes = [note({ toUids: ['neeru'], toLabel: 'NG', fromName: 'Vin Bhatia' })];
     draw();
-    expect(screen.getByText('Neeru')).toBeTruthy();       // the chip
-    expect(screen.getByText('Vin')).toBeTruthy();         // the sender
+    expect(onCard('Neeru')).toBeTruthy();       // the chip
+    expect(onCard('Vin')).toBeTruthy();         // the sender
     expect(screen.getByText(/^from$/)).toBeTruthy();
   });
 
@@ -689,7 +695,7 @@ describe('who a note is for, on the card', () => {
   it('shows Everyone as its own chip', () => {
     snapshots.notes = [note({ toAll: true, toLabel: 'ALL' })];
     draw();
-    expect(screen.getByText('Everyone')).toBeTruthy();
+    expect(onCard('Everyone')).toBeTruthy();
   });
 
   it('renders one chip per recipient', () => {
@@ -699,8 +705,8 @@ describe('who a note is for, on the card', () => {
     ];
     snapshots.notes = [note({ toUids: ['neeru', 'sabrina'], toLabel: 'NG/SK' })];
     draw();
-    expect(screen.getByText('Neeru')).toBeTruthy();
-    expect(screen.getByText('Sabrina')).toBeTruthy();
+    expect(onCard('Neeru')).toBeTruthy();
+    expect(onCard('Sabrina')).toBeTruthy();
   });
 
   it('keeps an imported note’s initials when the person has no account', () => {
@@ -720,7 +726,7 @@ describe('who a note is for, on the card', () => {
       note({ id: 'n2', toUids: ['sabrina'], toLabel: 'SK' }),
     ];
     draw();
-    const colourOf = (label) => screen.getByText(label).closest('span').getAttribute('style');
+    const colourOf = (label) => onCard(label).closest('span').getAttribute('style');
     expect(colourOf('Neeru')).not.toBe(colourOf('Sabrina'));
   });
 });
@@ -885,11 +891,12 @@ describe('editing a note', () => {
     snapshots.users = desk;
     snapshots.notes = [note({ toUids: ['neeru'], toLabel: 'NG' })];
     draw();
-    expect(screen.getAllByText('Neeru')).toHaveLength(1);   // the chip
+    expect(screen.getAllByText('Neeru', { ignore: 'option, script, style' })).toHaveLength(1);
     openEditor();
     expect(screen.getByText('editing')).toBeTruthy();
-    // Still exactly one 'Neeru' — the picker's button, not the old chip.
-    expect(screen.getAllByText('Neeru')).toHaveLength(1);
+    // Still exactly one 'Neeru' — the editor's own person button, not the
+    // old chip. (The To/From dropdowns are <option>s and excluded.)
+    expect(screen.getAllByText('Neeru', { ignore: 'option, script, style' })).toHaveLength(1);
   });
 
   it('a Host can edit too — the desk is theirs to run', () => {
@@ -956,17 +963,46 @@ describe('acknowledging a note — did she actually see it?', () => {
     expect(ackButton()).toBeNull();
   });
 
-  it('writes only your own tick, and touches nothing else', async () => {
+  it('writes your own tick, and PICKS THE NOTE UP', async () => {
+    // Somebody who has read a note addressed to them has taken it on.
+    // Making them say so twice — tick, then status pill — meant the
+    // second one mostly did not happen and the board stayed all-Open.
     snapshots.users = desk;
     snapshots.notes = [note({ toUids: ['vin'], status: 'open' })];
     draw();
     fireEvent.click(ackButton());
 
     await waitFor(() => expect(lastUpdate()).toBeTruthy());
-    expect(Object.keys(lastUpdate().data)).toEqual(['acks']);
     expect(lastUpdate().data.acks).toHaveLength(1);
     expect(lastUpdate().data.acks[0].uid).toBe('vin');
     expect(lastUpdate().data.acks[0].name).toBe('Vin Bhatia');
+    expect(lastUpdate().data.status).toBe('in_progress');
+  });
+
+  it('does NOT drag it back to Open when the tick comes off', async () => {
+    // The work carries on whether or not the tick is there.
+    snapshots.users = desk;
+    snapshots.notes = [note({
+      toUids: ['vin'], status: 'in_progress',
+      acks: [{ uid: 'vin', name: 'Vin Bhatia', at: '2026-09-20T18:00:00.000Z' }],
+    })];
+    draw();
+    fireEvent.click(ackButton());
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.acks).toEqual([]);
+    expect(lastUpdate().data.status).toBeUndefined();
+  });
+
+  it('NEVER REOPENS A SETTLED NOTE', async () => {
+    // Reading something that is finished does not un-finish it.
+    snapshots.users = desk;
+    snapshots.notes = [note({ toUids: ['vin'], status: 'closed', settledAt: '2026-09-10T00:00:00.000Z' })];
+    draw();
+    fireEvent.click(screen.getByText('Settled'));
+    await waitFor(() => expect(ackButton()).toBeTruthy());
+    fireEvent.click(ackButton());
+    await waitFor(() => expect(lastUpdate()).toBeTruthy());
+    expect(lastUpdate().data.status).toBeUndefined();
   });
 
   it('tells the rest of the team, by name, on the card', async () => {
@@ -1061,14 +1097,134 @@ describe('acknowledging a note — did she actually see it?', () => {
     expect(lastUpdate().data.acks).toBeUndefined();
   });
 
-  it('acknowledging does NOT settle it — seen is not done', async () => {
+  it('acknowledging does NOT SETTLE it — picked up is not done', async () => {
     snapshots.users = desk;
     snapshots.notes = [note({ toUids: ['vin'], status: 'open' })];
     draw();
     fireEvent.click(ackButton());
     await waitFor(() => expect(lastUpdate()).toBeTruthy());
-    expect(lastUpdate().data.status).toBeUndefined();
-    // Still on the Open board, and still counted as waiting on you.
+    expect(lastUpdate().data.status).toBe('in_progress');
+    expect(isOpenStatus(lastUpdate().data.status)).toBe(true);
+    // Still live, still on the board, still counted as yours.
     expect(screen.getByText(/Card was declined/)).toBeTruthy();
+  });
+});
+
+describe('filtering by who it is between', () => {
+  const desk = [
+    user('vin', 'Vin Bhatia', { role: 'director' }),
+    user('neeru', 'Neeru Gill', { role: 'director' }),
+    user('rachel', 'Rachel Rai', { role: 'director' }),
+  ];
+  const toPicker = () => screen.getByLabelText(/who the note is to/i);
+  const fromPicker = () => screen.getByLabelText(/who the note is from/i);
+  const bodies = () => [
+    ...(screen.queryAllByText(/^BODY-/).map(el => el.textContent)),
+  ];
+
+  const threeNotes = () => {
+    snapshots.users = desk;
+    snapshots.notes = [
+      note({ id: 'a', toUids: ['neeru'], fromUid: 'rachel', fromName: 'Rachel Rai', body: 'BODY-A' }),
+      note({ id: 'b', toUids: ['neeru'], fromUid: 'vin', fromName: 'Vin Bhatia', body: 'BODY-B' }),
+      note({ id: 'c', toUids: ['vin'], fromUid: 'rachel', fromName: 'Rachel Rai', body: 'BODY-C' }),
+      note({ id: 'd', toUids: [], toAll: true, fromUid: 'rachel', fromName: 'Rachel Rai', body: 'BODY-D' }),
+    ];
+  };
+
+  it('shows everything when neither is set', () => {
+    threeNotes();
+    draw();
+    expect(bodies().sort()).toEqual(['BODY-A', 'BODY-B', 'BODY-C', 'BODY-D']);
+  });
+
+  it('TO somebody, FROM anyone — everything addressed to them', () => {
+    threeNotes();
+    draw();
+    fireEvent.change(toPicker(), { target: { value: 'neeru' } });
+    expect(bodies().sort()).toEqual(['BODY-A', 'BODY-B']);
+  });
+
+  it('to somebody AND from somebody', () => {
+    threeNotes();
+    draw();
+    fireEvent.change(toPicker(), { target: { value: 'neeru' } });
+    fireEvent.change(fromPicker(), { target: { value: 'rachel' } });
+    expect(bodies()).toEqual(['BODY-A']);
+  });
+
+  it('from somebody, to anyone', () => {
+    threeNotes();
+    draw();
+    fireEvent.change(fromPicker(), { target: { value: 'rachel' } });
+    expect(bodies().sort()).toEqual(['BODY-A', 'BODY-C', 'BODY-D']);
+  });
+
+  it('Everyone is its own choice, not folded into a person', () => {
+    threeNotes();
+    draw();
+    fireEvent.change(toPicker(), { target: { value: '__all__' } });
+    expect(bodies()).toEqual(['BODY-D']);
+  });
+
+  it('clears back to the whole desk', () => {
+    threeNotes();
+    draw();
+    fireEvent.change(toPicker(), { target: { value: 'neeru' } });
+    fireEvent.change(toPicker(), { target: { value: '' } });
+    expect(bodies()).toHaveLength(4);
+  });
+
+  it('THE CHIP COUNTS FOLLOW THE FILTER', () => {
+    // "Open 4" above two rows sends people hunting for the other two.
+    threeNotes();
+    draw();
+    fireEvent.change(toPicker(), { target: { value: 'neeru' } });
+    const openChip = screen.getAllByText('Open')
+      .map(el => el.closest('button'))
+      .find(b => b && !b.getAttribute('aria-label'));
+    expect(openChip.textContent).toMatch(/2/);
+  });
+
+  it('works alongside the view chips, not instead of them', () => {
+    snapshots.users = desk;
+    snapshots.notes = [
+      note({ id: 'a', toUids: ['neeru'], fromUid: 'rachel', body: 'BODY-LIVE', status: 'open' }),
+      note({ id: 'b', toUids: ['neeru'], fromUid: 'rachel', body: 'BODY-DONE', status: 'closed' }),
+    ];
+    draw();
+    fireEvent.change(toPicker(), { target: { value: 'neeru' } });
+    expect(bodies()).toEqual(['BODY-LIVE']);
+    fireEvent.click(screen.getByText('Settled'));
+    expect(bodies()).toEqual(['BODY-DONE']);
+  });
+});
+
+describe('Waiting is gone', () => {
+  it('is not offered as a view', () => {
+    snapshots.notes = [note()];
+    draw();
+    expect(screen.queryByText('Waiting')).toBeNull();
+  });
+
+  it('is not offered on the status pill', () => {
+    snapshots.notes = [note()];
+    draw();
+    fireEvent.click(screen.getByRole('button', { name: /Status: Open/ }));
+    // Three choices now, not four. Scoped to the status menu: the To/From
+    // pickers are <select>s and their <option>s carry the same role.
+    const menu = screen.getByRole('listbox');
+    expect([...menu.querySelectorAll('[role="option"]')].map(o => o.textContent))
+      .toEqual(['Open', 'In progress', 'Settled']);
+    expect(screen.queryByText(/Waiting on someone/)).toBeNull();
+  });
+
+  it('A NOTE SAVED AS WAITING STILL SHOWS, as In progress', () => {
+    // The live query is an exact match on the stored value, so these have
+    // to keep being fetched — and then read as something that exists.
+    snapshots.notes = [note({ status: 'waiting', body: 'BODY-OLD' })];
+    draw();
+    expect(screen.getByText(/BODY-OLD/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Status: In progress/ })).toBeTruthy();
   });
 });

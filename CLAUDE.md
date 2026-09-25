@@ -495,6 +495,35 @@ Three things worth knowing before changing it:
 **No rules change was needed**: `allow update: if canUseDeskAt(centerId)` was
 always field-free.
 
+### The desk: filtering by who it is between
+
+Two `<select>`s beside the view chips — **To** and **From** — and they work
+with the views rather than instead of them, so "settled notes I sent Neeru"
+is two clicks. `noteIsTo()` / `noteIsFrom()` / `matchesParties()` in
+`deskNotes.js`. Empty means anyone.
+
+- **A note to Everyone does NOT match a named person.** Everyone technically
+  includes Neeru, and `isForMe()` counts it that way for her own inbox — but
+  somebody filtering "to Neeru" wants the notes aimed at her, and folding in
+  every team-wide announcement buries them. **Everyone is its own option**,
+  so each choice means one thing.
+- **From falls back to the NAME when there is no uid.** 1,750 imported rows
+  carry `fromName` only; without the fallback, "from Rahul" would hide
+  everything he wrote before the spreadsheet came over.
+- **The chip counts run through the same filter.** "Open 14" above four rows
+  sends people hunting for the other ten.
+
+### The desk: 'waiting' was retired (2026-09-25)
+
+Three statuses now — Open, In progress, Settled. Nobody used Waiting.
+
+**`LIVE_STATUSES` STILL CONTAINS `'waiting'` AND MUST.** The live listener is
+an exact match on the STORED value, and notes saved before the change still
+carry the string. Dropping it from that list would take every one of them
+off the desk — the same failure as the old `status == 'open'` query.
+`normaliseStatus()` maps it to `in_progress`, so they read correctly
+everywhere; they just have to be fetched first. No migration was needed.
+
 ### The desk: acknowledging a note
 
 A note addressed to you carries an **Acknowledge** button; pressing it puts
@@ -518,6 +547,12 @@ exactly the case worth knowing about. Nothing about `isOpen()`, the badge or the
   to nobody: there is no account behind those initials.
 - **It toggles.** The tick is a claim about a person, so that person can take it
   back. The write only ever carries their own uid.
+- **Ticking an OPEN note also moves it to In progress.** Somebody who has
+  read a note addressed to them has picked it up, and making them say so
+  twice — tick, then status pill — meant the second mostly did not happen
+  and the board stayed full of "Open" notes everyone was working on. Only
+  on the way in: un-ticking does not drag it back to Open, and a settled
+  note is never reopened by being read.
 - **Replying acknowledges, once.** Otherwise the card could show Neeru's reply
   above "nobody has acknowledged this", which is the contradiction that makes
   people stop trusting a tick. Only for a recipient, only the first time.

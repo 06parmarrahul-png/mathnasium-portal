@@ -110,11 +110,10 @@ export function deskMembers(users, centerId, centreRoles) {
  * the sidebar badge, the "for me" inbox, the settled archive and all 1,853
  * imported rows carry on working without knowing these exist.
  *
- * `waiting` earns its place by saying something the desk could not say
- * before: this is not neglected, it is blocked on somebody outside the
- * room. The amber rail on the card already meant "somebody else's" — this
- * is that, written down, so a note nobody can move stops reading as a note
- * nobody has touched.
+ * `waiting` WAS a third one — blocked on somebody outside the room — and
+ * was dropped on 2026-09-25 because nobody used it. Notes stored under it
+ * read as In progress now (see normaliseStatus), so the old ones keep
+ * working and nothing needed migrating.
  */
 /**
  * Who may ERASE a note, as opposed to settling one.
@@ -141,7 +140,6 @@ export function canDeleteNotes({ platformRole, instructorType } = {}) {
 export const NOTE_STATUSES = [
   { key: 'open',        label: 'Open',        short: 'Open' },
   { key: 'in_progress', label: 'In progress', short: 'In progress' },
-  { key: 'waiting',     label: 'Waiting on someone', short: 'Waiting' },
   { key: 'closed',      label: 'Settled',     short: 'Settled' },
 ];
 
@@ -156,6 +154,18 @@ export const NOTE_STATUSES = [
 export const LIVE_STATUSES = ['open', 'in_progress', 'waiting'];
 
 /**
+ * 'waiting' IS STILL IN THAT LIST ON PURPOSE, and must stay.
+ *
+ * The status was retired from the UI, not from the database: notes saved
+ * under it before 2026-09-25 still carry the string. This query is an
+ * exact match on the STORED value, so dropping 'waiting' from it would
+ * make every one of those notes vanish off the desk — the same way moving
+ * a note to In progress used to, back when the query said
+ * `status == 'open'`. normaliseStatus() reads them as In progress, so they
+ * look right everywhere; they just have to be fetched first.
+ */
+
+/**
  * Anything that isn't recognisably one of the others is open — including
  * blank, which is what the oldest imported rows have.
  */
@@ -163,11 +173,13 @@ export function normaliseStatus(v) {
   const s = String(v ?? '').trim().toLowerCase().replace(/[\s-]+/g, '_');
   if (s === 'closed' || s === 'settled' || s === 'complete') return 'closed';
   if (s === 'in_progress' || s === 'inprogress' || s === 'doing') return 'in_progress';
-  if (s === 'waiting' || s === 'blocked' || s === 'on_hold') return 'waiting';
+  // Retired 2026-09-25. Old notes read as In progress rather than being
+  // stranded in a state nothing offers any more.
+  if (s === 'waiting' || s === 'blocked' || s === 'on_hold') return 'in_progress';
   return 'open';
 }
 
-/** Not settled. In progress and waiting are still open work. */
+/** Not settled. In progress is still open work. */
 export function isOpen(note) {
   return normaliseStatus(note?.status) !== 'closed';
 }
@@ -439,7 +451,6 @@ export const NOTE_VIEWS = {
   mine:     { key: 'mine',     label: 'For me' },
   open:     { key: 'open',     label: 'All open' },
   progress: { key: 'progress', label: 'In progress' },
-  waiting:  { key: 'waiting',  label: 'Waiting' },
   sent:     { key: 'sent',     label: 'I sent' },
   closed:   { key: 'closed',   label: 'Settled' },
 };
@@ -456,7 +467,6 @@ export function filterNotes(notes, { view = 'mine', uid = null, q = '', today = 
     mine:     rows.filter(n => isOpen(n) && isForMe(n, uid)),
     open:     rows.filter(isOpen),
     progress: rows.filter(n => normaliseStatus(n.status) === 'in_progress'),
-    waiting:  rows.filter(n => normaliseStatus(n.status) === 'waiting'),
     sent:     rows.filter(n => isFromMe(n, uid)),
     closed:   rows.filter(n => !isOpen(n)),
   };
@@ -803,4 +813,75 @@ export function ackLine(note, { nameByUid = {}, uid = null } = {}) {
     text: [`${who} acknowledged this`, when].filter(Boolean).join(' · '),
     waiting,
   };
+}
+
+// ─── Filtering by who it is between ──────────────────────────────────────
+//
+// "Everything Rahul sent Neeru." The views answer what STATE a note is in;
+// this answers who it is between, which is the other way people look for
+// one — and the only way to find a conversation that has already settled.
+//
+// The two are independent on purpose: pick a person and the Open / Settled
+// chips still apply, so "settled notes I sent Neeru" is two clicks.
+
+/** The sentinel for "don't care", so an empty <select> value is unambiguous. */
+export const ANY_PARTY = '';
+
+/** The sentinel for the notes addressed to the whole team. */
+export const EVERYONE_PARTY = '__all__';
+
+/**
+ * Is this note addressed to `key`?
+ *
+ * A NOTE TO EVERYONE DOES NOT MATCH A NAMED PERSON, which is the one
+ * judgement call in here. Everyone technically includes Neeru, and
+ * isForMe() counts it that way for her own inbox — but somebody filtering
+ * "to Neeru" is looking for the notes aimed AT her, and folding in every
+ * team-wide announcement buries them. Everyone is its own option instead,
+ * so each choice means exactly one thing.
+ */
+export function noteIsTo(note, key) {
+  if (!key) return true;
+  if (key === EVERYONE_PARTY) return !!note?.toAll;
+  if (note?.toAll) return false;
+  return (note?.toUids || []).includes(key);
+}
+
+/**
+ * Is this note from `key`?
+ *
+ * Matched on the uid first, then on the NAME, because the 1,750 imported
+ * rows carry `fromName` and no uid at all. Without the name fallback,
+ * filtering "from Rahul" would silently hide everything he wrote before
+ * the spreadsheet was brought over — which is most of what he wrote.
+ */
+export function noteIsFrom(note, key, nameByUid = {}) {
+  if (!key) return true;
+  if (note?.fromUid === key) return true;
+  if (note?.fromUid) return false;
+  const want = String(nameByUid[key] || '').trim().toLowerCase();
+  if (!want) return false;
+  return String(note?.fromName || '').trim().toLowerCase() === want;
+}
+
+/** Both halves, either of which may be "anyone". */
+export function matchesParties(note, { to = ANY_PARTY, from = ANY_PARTY, nameByUid = {} } = {}) {
+  return noteIsTo(note, to) && noteIsFrom(note, from, nameByUid);
+}
+
+/**
+ * Who to offer in the two pickers.
+ *
+ * Only people who can open the desk, because they are the only ones a note
+ * can be addressed to. `Everyone` is offered on the To side only — nobody
+ * writes a note FROM the whole team.
+ */
+export function partyOptions(members, { includeEveryone = false } = {}) {
+  const people = (members || [])
+    .filter(m => m?.uid)
+    .map(m => ({ value: m.uid, label: firstNameOf(m.displayName) || m.displayName || m.email || 'Someone', full: m.displayName || m.email || '' }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+  return includeEveryone
+    ? [{ value: EVERYONE_PARTY, label: 'Everyone', full: 'Notes addressed to the whole team' }, ...people]
+    : people;
 }

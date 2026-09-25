@@ -18,6 +18,7 @@ import {
   dueState, dueLabel, dueSuggestions, sortByDue, deskSummary, ymdOf, ageInDays, canDeleteNotes,
   recipientChips, noteDraft, validateDraft, editFields, wasEdited, editLabel,
   canAcknowledge, hasAcked, toggleAck, ackLine,
+  matchesParties, partyOptions, ANY_PARTY,
 } from '../lib/deskNotes';
 import { personColor, YOU_COLOR, EVERYONE_COLOR } from '../lib/personColor';
 import { parseNote, canSend, addressLabel, firstNameOf } from '../lib/deskParse';
@@ -164,7 +165,6 @@ export default function ManagementDesk() {
 const VIEWS = [
   { key: 'open', label: 'Open' },
   { key: 'progress', label: 'In progress' },
-  { key: 'waiting', label: 'Waiting' },
   { key: 'done', label: 'Settled' },
 ];
 
@@ -185,6 +185,10 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const [tidy, setTidy] = useState(false);
   const [picked, setPicked] = useState(() => new Set());
   const [q, setQ] = useState('');
+  // Who it's between, independent of which view is on — so "settled notes
+  // I sent Neeru" is two clicks rather than a search.
+  const [toWho, setToWho] = useState(ANY_PARTY);
+  const [fromWho, setFromWho] = useState(ANY_PARTY);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const uid = profile?.uid;
@@ -264,12 +268,14 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   const forMe = (n) => !!n.toAll || (n.toUids || []).includes(uid);
 
   const rows = useMemo(() => {
-    const kept = all.filter(n => matchesQuery(n, q)).filter(n =>
-      view === 'mine' ? (forMe(n) && isOpen(n))
-      : view === 'done' ? !isOpen(n)
-      : view === 'progress' ? normaliseStatus(n.status) === 'in_progress'
-      : view === 'waiting' ? normaliseStatus(n.status) === 'waiting'
-      : isOpen(n));
+    const kept = all
+      .filter(n => matchesQuery(n, q))
+      .filter(n => matchesParties(n, { to: toWho, from: fromWho, nameByUid }))
+      .filter(n =>
+        view === 'mine' ? (forMe(n) && isOpen(n))
+        : view === 'done' ? !isOpen(n)
+        : view === 'progress' ? normaliseStatus(n.status) === 'in_progress'
+        : isOpen(n));
     // Settled is an archive you look back through: the one just dealt
     // with belongs at the top.
     if (view === 'done') return sortSettled(kept);
@@ -278,7 +284,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     if (view === 'mine') return sortByDue(kept, today);
     return kept.sort((a, b) =>
       String(a.createdAt || a.loggedAt || '').localeCompare(String(b.createdAt || b.loggedAt || '')));
-  }, [all, view, q, uid, today]);        // eslint-disable-line react-hooks/exhaustive-deps
+  }, [all, view, q, uid, today, toWho, fromWho, nameByUid]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   // Searching from Open would otherwise hide the answer: the thing you are
   // looking up is usually SETTLED — that is what settled means. Rather than
@@ -294,15 +300,21 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
     [open, uid, today],
   );
 
-  const counts = useMemo(() => ({
-    mine: (open || []).filter(forMe).length,
-    open: (open || []).length,
-    progress: (open || []).filter(n => normaliseStatus(n.status) === 'in_progress').length,
-    waiting: (open || []).filter(n => normaliseStatus(n.status) === 'waiting').length,
+  // Counted through the SAME party filter the list uses. A chip reading
+  // "Open 14" above four rows sends people hunting for the other ten.
+  const counts = useMemo(() => {
+    const live = (open || []).filter(n => matchesParties(n, { to: toWho, from: fromWho, nameByUid }));
+    return ({
+    mine: live.filter(forMe).length,
+    open: live.length,
+    progress: live.filter(n => normaliseStatus(n.status) === 'in_progress').length,
     // Unknown until the archive has been fetched, and it is not fetched
     // until somebody asks. A count nobody needed is not worth 1,730 reads.
-    done: archive ? archive.length : null,
-  }), [open, archive, uid]);  // eslint-disable-line react-hooks/exhaustive-deps
+    done: archive
+      ? archive.filter(n => matchesParties(n, { to: toWho, from: fromWho, nameByUid })).length
+      : null,
+    });
+  }, [open, archive, uid, toWho, fromWho, nameByUid]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   const send = async () => {
     if (!canSend(parsed) || sending) return;
@@ -391,14 +403,27 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
   };
 
   /**
-   * "I've seen this."
+   * "I've seen this" — and, on the way in, "I've got it".
    *
-   * Only ever your own tick — canAcknowledge() gates the button, and the
-   * write only ever names `uid`. It says nothing about whether the work is
-   * done; that is what the status is for.
+   * Only ever your own tick: canAcknowledge() gates the button and the
+   * write only ever names `uid`.
+   *
+   * TICKING AN OPEN NOTE ALSO MOVES IT TO IN PROGRESS. Somebody who has
+   * read a note addressed to them has picked it up, and making them say so
+   * twice — once on the tick, once on the status pill — meant the second
+   * one mostly did not happen, so the board stayed full of "Open" notes
+   * that were all being worked on.
+   *
+   * ONLY ON THE WAY IN. Un-ticking does not drag it back to Open (the work
+   * carries on whether or not the tick is there), and a settled note is
+   * never reopened by somebody reading it.
    */
   const acknowledge = async (note) => {
-    await write(note, toggleAck(note, uid, profile?.displayName || profile?.email));
+    const fields = toggleAck(note, uid, profile?.displayName || profile?.email);
+    const takingItOn = !hasAcked(note, uid) && normaliseStatus(note.status) === 'open';
+    await write(note, takingItOn
+      ? { ...fields, ...statusFields('in_progress', profile?.displayName) }
+      : fields);
   };
 
   /**
@@ -509,6 +534,10 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
         <Chip on={view === 'mine'} onClick={() => setView('mine')}
           label="For me" n={counts.mine} accent />
         <span className="flex-1" />
+        <PartyPicker label="To" value={toWho} onChange={setToWho}
+          options={partyOptions(members, { includeEveryone: true })} />
+        <PartyPicker label="From" value={fromWho} onChange={setFromWho}
+          options={partyOptions(members)} />
         <SearchBox value={q} onChange={setQ} />
         {canDelete && !tidy && (
           <button onClick={() => setTidy(true)} title="Delete notes — test rows, or one typed into the wrong centre"
@@ -547,7 +576,6 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
               : view === 'mine' ? 'Nothing is waiting on you.'
               : view === 'done' ? 'Nothing settled yet.'
               : view === 'progress' ? 'Nothing is being worked on right now.'
-              : view === 'waiting' ? 'Nothing is blocked on anybody else.'
               : 'Nothing open. Everything has been dealt with.'}
           </p>
         </div>
@@ -965,6 +993,39 @@ function NoteEditor({ note, members = [], uid, onSave, onCancel }) {
  * record to point at would throw away the thing worth keeping.
  */
 /**
+ * One half of "who is this between".
+ *
+ * A NATIVE <select>, deliberately: free keyboard navigation, and on a
+ * phone the browser renders it as a full-screen wheel already. The desk is
+ * read on a phone as often as not, and a custom dropdown here would look
+ * better and work worse.
+ *
+ * Empty means anyone, so the pair reads as a sentence — To Neeru, From
+ * anyone — and leaving both empty is the desk exactly as it was.
+ */
+function PartyPicker({ label, value, onChange, options }) {
+  const on = value !== ANY_PARTY;
+  return (
+    <label className={`inline-flex items-center gap-1 rounded-lg border px-2 py-1.5 text-[12.5px] ${
+      on ? 'border-red-300 bg-red-50 text-red-800' : 'border-gray-300 bg-white text-gray-500'}`}>
+      <span className="font-semibold">{label}</span>
+      <select
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        aria-label={`Filter by who the note is ${label.toLowerCase()}`}
+        className={`max-w-[8.5rem] cursor-pointer border-0 bg-transparent py-0 pl-0 pr-1 text-[12.5px] font-semibold focus:outline-none ${
+          on ? 'text-red-800' : 'text-gray-700'}`}
+      >
+        <option value={ANY_PARTY}>anyone</option>
+        {options.map(o => (
+          <option key={o.value} value={o.value} title={o.full}>{o.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+/**
  * Who a note is for.
  *
  * SOLID, not a pale pill. The pale ones on this card mean a state — amber
@@ -1016,13 +1077,12 @@ function DeskStat({ k, v, s, tone }) {
 const PILL_TONE = {
   open:        'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',
   in_progress: 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100',
-  waiting:     'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200',
   closed:      'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100',
 };
 
 const DOT_TONE = {
   open: 'bg-amber-400', in_progress: 'bg-indigo-600',
-  waiting: 'bg-gray-400', closed: 'bg-emerald-600',
+  closed: 'bg-emerald-600',
 };
 
 /**

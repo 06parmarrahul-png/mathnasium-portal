@@ -32,6 +32,12 @@ import {
   editFields,
   wasEdited,
   editLabel,
+  noteIsTo,
+  noteIsFrom,
+  matchesParties,
+  partyOptions,
+  ANY_PARTY,
+  EVERYONE_PARTY,
   acksOf,
   hasAcked,
   canAcknowledge,
@@ -442,8 +448,23 @@ describe('the four statuses', () => {
     expect(normaliseStatus(undefined)).toBe('open');
     expect(normaliseStatus('In Progress')).toBe('in_progress');
     expect(normaliseStatus('in-progress')).toBe('in_progress');
-    expect(normaliseStatus('blocked')).toBe('waiting');
     expect(normaliseStatus('anything else')).toBe('open');
+  });
+
+  it('READS A RETIRED "waiting" AS IN PROGRESS', () => {
+    // Dropped from the UI on 2026-09-25 because nobody used it. Notes
+    // saved under it are not stranded in a state nothing offers.
+    expect(normaliseStatus('waiting')).toBe('in_progress');
+    expect(normaliseStatus('blocked')).toBe('in_progress');
+    expect(normaliseStatus('on hold')).toBe('in_progress');
+    expect(isOpen({ status: 'waiting' })).toBe(true);
+  });
+
+  it('STILL FETCHES the retired status, or those notes vanish', () => {
+    // The live listener is an exact match on the STORED value. Dropping
+    // 'waiting' from this list would take every old note off the desk —
+    // the same way `status == 'open'` once did to In progress.
+    expect(LIVE_STATUSES).toContain('waiting');
   });
 
   it('the live query asks for exactly the open-ish ones', () => {
@@ -1030,5 +1051,120 @@ describe('acknowledging a note', () => {
     const fields = toggleAck(note, 'neeru', 'Neeru Gill');
     expect(fields.status).toBeUndefined();
     expect(isOpen({ ...note, ...fields })).toBe(true);
+  });
+});
+
+describe('filtering by who a note is between', () => {
+  const names = { rahul: 'Rahul Parmar', neeru: 'Neeru Gill', vin: 'Vin Bhatia' };
+  const n = (over = {}) => ({ toUids: ['neeru'], fromUid: 'rahul', ...over });
+
+  describe('the To half', () => {
+    it('keeps the ones addressed to them', () => {
+      expect(noteIsTo(n(), 'neeru')).toBe(true);
+      expect(noteIsTo(n(), 'vin')).toBe(false);
+    });
+
+    it('keeps a note addressed to them AND somebody else', () => {
+      expect(noteIsTo(n({ toUids: ['neeru', 'vin'] }), 'vin')).toBe(true);
+    });
+
+    it('A NOTE TO EVERYONE DOES NOT MATCH A NAMED PERSON', () => {
+      // Everyone technically includes Neeru — but somebody filtering "to
+      // Neeru" wants the notes aimed at her, and folding in every
+      // team-wide announcement buries them. Everyone is its own option.
+      expect(noteIsTo({ toAll: true }, 'neeru')).toBe(false);
+      expect(noteIsTo({ toAll: true }, EVERYONE_PARTY)).toBe(true);
+      expect(noteIsTo(n(), EVERYONE_PARTY)).toBe(false);
+    });
+
+    it('anyone keeps everything', () => {
+      expect(noteIsTo(n(), ANY_PARTY)).toBe(true);
+      expect(noteIsTo({ toAll: true }, ANY_PARTY)).toBe(true);
+      expect(noteIsTo({}, ANY_PARTY)).toBe(true);
+    });
+  });
+
+  describe('the From half', () => {
+    it('matches on the uid', () => {
+      expect(noteIsFrom(n(), 'rahul', names)).toBe(true);
+      expect(noteIsFrom(n(), 'vin', names)).toBe(false);
+    });
+
+    it('FALLS BACK TO THE NAME for the imported rows', () => {
+      // 1,750 of them carry fromName and no uid. Without this, filtering
+      // "from Rahul" hides everything he wrote before the import.
+      const imported = { toUids: ['neeru'], fromName: 'Rahul Parmar' };
+      expect(noteIsFrom(imported, 'rahul', names)).toBe(true);
+      expect(noteIsFrom(imported, 'neeru', names)).toBe(false);
+    });
+
+    it('does not use the name when a uid is present and disagrees', () => {
+      // A uid is the stronger claim; a matching name on a different
+      // account would be a false positive.
+      const odd = { fromUid: 'someone-else', fromName: 'Rahul Parmar' };
+      expect(noteIsFrom(odd, 'rahul', names)).toBe(false);
+    });
+
+    it('anyone keeps everything', () => {
+      expect(noteIsFrom(n(), ANY_PARTY, names)).toBe(true);
+      expect(noteIsFrom({}, ANY_PARTY, names)).toBe(true);
+    });
+  });
+
+  describe('both halves together', () => {
+    const notes = [
+      { id: 'a', toUids: ['neeru'], fromUid: 'rahul' },
+      { id: 'b', toUids: ['neeru'], fromUid: 'vin' },
+      { id: 'c', toUids: ['vin'],   fromUid: 'rahul' },
+      { id: 'd', toAll: true,       fromUid: 'rahul' },
+    ];
+    const pick = (opts) => notes.filter(x => matchesParties(x, { nameByUid: names, ...opts })).map(x => x.id);
+
+    it('to somebody, from somebody', () => {
+      expect(pick({ to: 'neeru', from: 'rahul' })).toEqual(['a']);
+    });
+
+    it('TO SOMEBODY, FROM ANYONE — the one the ask named', () => {
+      expect(pick({ to: 'neeru' })).toEqual(['a', 'b']);
+    });
+
+    it('from somebody, to anyone', () => {
+      expect(pick({ from: 'rahul' })).toEqual(['a', 'c', 'd']);
+    });
+
+    it('neither is the desk as it was', () => {
+      expect(pick({})).toEqual(['a', 'b', 'c', 'd']);
+      expect(matchesParties(notes[0])).toBe(true);
+    });
+
+    it('a pair nobody wrote to each other comes back empty', () => {
+      expect(pick({ to: 'vin', from: 'vin' })).toEqual([]);
+    });
+  });
+
+  describe('what the pickers offer', () => {
+    const members = [
+      { uid: 'neeru', displayName: 'Neeru Gill' },
+      { uid: 'rahul', displayName: 'Rahul Parmar' },
+      { uid: 'ann', displayName: 'Ann Lee' },
+    ];
+
+    it('first names, alphabetically', () => {
+      expect(partyOptions(members).map(o => o.label)).toEqual(['Ann', 'Neeru', 'Rahul']);
+    });
+
+    it('offers Everyone on the To side only — nobody writes FROM the team', () => {
+      expect(partyOptions(members, { includeEveryone: true })[0].value).toBe(EVERYONE_PARTY);
+      expect(partyOptions(members).some(o => o.value === EVERYONE_PARTY)).toBe(false);
+    });
+
+    it('keeps the full name for the tooltip, so two Neerus are tellable apart', () => {
+      expect(partyOptions(members)[1].full).toBe('Neeru Gill');
+    });
+
+    it('skips anybody with no uid, and survives no members at all', () => {
+      expect(partyOptions([{ displayName: 'Ghost' }])).toEqual([]);
+      expect(partyOptions(undefined)).toEqual([]);
+    });
   });
 });
