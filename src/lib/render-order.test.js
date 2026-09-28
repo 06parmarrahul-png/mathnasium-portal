@@ -111,7 +111,14 @@ export function findRenderOrderHazards(src) {
     const close = matchParen(src, open);
     if (close < 0) continue;
     const call = src.slice(open, close);
-    const deps = call.match(/,\s*\[([\s\S]*?)\]\s*$/);
+    // The dep array is the FLAT bracket at the very end of the call, and
+    // [^[\]]* is what pins it there. With [\s\S]*? the match began at the
+    // earliest `, [` anywhere in the body — a computed key like
+    // `setRows(prev => ({ ...prev, [id]: ... }))` is one — and then ran to
+    // the final `]`, so the whole effect body was read as the dependency
+    // list. Every identifier mentioned in it, comments included, counted
+    // as a dependency.
+    const deps = call.match(/,\s*\[([^[\]]*)\]\s*$/);
     if (!deps) continue;
     // The hook call may be assigned (`  const x = useMemo(`), so measure the
     // statement's own indentation, not the identifier's column.
@@ -159,6 +166,21 @@ describe('findRenderOrderHazards', () => {
       }, [comparisonSummary]);
     `;
     expect(findRenderOrderHazards(fixed)).toEqual([]);
+  });
+
+  it('reads the dep array at the end, not a computed key in the body', () => {
+    // A computed key puts `, [` inside the effect. The dep array here is
+    // empty and mentions nothing, so there is no hazard to report — but
+    // the body names `funnel`, which is declared later.
+    const fine = `
+      useEffect(() => {
+        setRows(prev => ({ ...prev, [id]: 1 }));
+        // the funnel is read elsewhere
+      }, [id]);
+
+      const funnel = useMemo(() => ({}), [rows]);
+    `;
+    expect(findRenderOrderHazards(fine)).toEqual([]);
   });
 
   it('does not trip over a property that shares a name with a later const', () => {

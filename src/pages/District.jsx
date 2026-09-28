@@ -9,6 +9,8 @@ import { useTimeFormat } from '../lib/useTimeFormat';
 import {
   readVitals, ageInDays, freshnessOf, asOfLabel, rollUp, staffAt,
 } from '../lib/district';
+import { rollUpLeads, monthlyTrend } from '../lib/leadAnalytics';
+import LeadsPanel from '../components/district/LeadsPanel';
 
 /**
  * The district roll-up — several centres, for the person who answers for
@@ -75,6 +77,8 @@ export default function District() {
   const [staff, setStaff] = useState([]);
   const [rostered, setRostered] = useState({}); // id → today's shifts
   const [unfilled, setUnfilled] = useState({}); // id → open shifts nobody took
+  const [leadsBy, setLeadsBy] = useState({});   // id → that centre's leads
+  const [now, setNow] = useState(() => Date.now());
 
   // One listener per centre for the two per-centre docs. Equality-only
   // queries throughout, which is what the rest of the app already indexes.
@@ -92,6 +96,18 @@ export default function District() {
         query(collection(db, 'shifts'), where('centerId', '==', id), where('date', '==', today)),
         snap => setRostered(prev => ({ ...prev, [id]: snap.docs.map(d => d.data()) })),
         () => setRostered(prev => ({ ...prev, [id]: [] }))));
+      // The funnel. Read straight off each centre's own lead documents —
+      // one collection, no arithmetic across any other. A refusal here is
+      // an empty funnel for that centre rather than a broken page: the
+      // rules only opened leads to a district manager at the centres on
+      // their own account.
+      stops.push(onSnapshot(
+        collection(db, 'centers', id, 'leads'),
+        snap => setLeadsBy(prev => ({
+          ...prev,
+          [id]: snap.docs.map(d => ({ id: d.id, centreId: id, ...d.data() })),
+        })),
+        () => setLeadsBy(prev => ({ ...prev, [id]: [] }))));
       stops.push(onSnapshot(
         query(collection(db, 'openShifts'), where('centerId', '==', id)),
         snap => setUnfilled(prev => ({
@@ -102,6 +118,11 @@ export default function District() {
     }
     return () => stops.forEach(stop => stop());
   }, [allowed, centreIds, today]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10 * 60 * 1000);
+    return () => clearInterval(id);
+  }, []);
 
   // Staff across the whole district in one read. array-contains-any takes
   // thirty values, which is more centres than a district has.
@@ -139,6 +160,17 @@ export default function District() {
   }), [centreIds, configs, centres, staff, rostered, unfilled]);
 
   const totals = useMemo(() => rollUp(rows), [rows]);
+
+  // One reading of the clock for every age on the page, so two figures
+  // rendered in the same pass cannot disagree about what "3 days" means —
+  // and taken at mount rather than during render, so ages do not jitter
+  // every time something re-renders. Re-read every ten minutes, because a
+  // district dashboard is the kind of page that stays open all day.
+  const funnel = useMemo(() => rollUpLeads(leadsBy, now), [leadsBy, now]);
+  const trend = useMemo(
+    () => monthlyTrend(Object.values(leadsBy).flat(), 6, now), [leadsBy, now]);
+  const centreNames = useMemo(
+    () => Object.fromEntries(rows.map(r => [r.centreId, r.name])), [rows]);
   const districtStaff = useMemo(
     () => new Set(staff.filter(u => u.approved === true && u.status !== 'terminated').map(u => u.uid || u.id)).size,
     [staff]);
@@ -253,6 +285,9 @@ export default function District() {
           </div>
         )}
       </div>
+
+      {/* ── The funnel ───────────────────────────────────────────── */}
+      <LeadsPanel funnel={funnel} trend={trend} centreNames={centreNames} now={now} />
 
       {/* ── Centre by centre ─────────────────────────────────────── */}
       <div>

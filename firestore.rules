@@ -238,6 +238,20 @@ service cloud.firestore {
       return profileExists() && profile().get('role', '') == 'admin';
     }
 
+    // ─── District managers ─────────────────────────────────────────────
+    // Answers for several centres and runs none of them. Read-only by
+    // construction: this helper is only ever used to widen a `read`, and
+    // it is scoped to the centres on their own account, so oversight
+    // cannot reach a centre nobody put them on.
+    //
+    // Mirrors PLATFORM_ROLE_PERMISSIONS.district_manager in src/lib/roles.js,
+    // which grants exactly one permission and it is `district.view`.
+    function isDistrictManagerAt(centerId) {
+      return profileExists()
+          && profile().get('role', '') == 'district_manager'
+          && centerId in profile().get('centerIds', []);
+    }
+
     // MANAGERS ARE THE ADMIN NOW (decided 2026-09-14). The Admin platform
     // role is being retired — two accounts were left on it, one of them the
     // Manager — so everything it unlocked is unlocked by the Manager job
@@ -877,7 +891,10 @@ service cloud.firestore {
       // Server-side intake mirroring writes via firebase-admin and
       // bypasses rules entirely, so the auto-create flow is unaffected.
       match /leads/{leadId} {
-        allow read, write: if isOwnerLike() || isSuperAdmin();
+        allow read:  if isOwnerLike() || isSuperAdmin() || isDistrictManagerAt(centerId);
+        // Deliberately NOT widened: a district manager reads the funnel to
+        // see how it is being worked, and works none of it.
+        allow write: if isOwnerLike() || isSuperAdmin();
       }
 
       // ─── Connectors ─────────────────────────────────────────────────
