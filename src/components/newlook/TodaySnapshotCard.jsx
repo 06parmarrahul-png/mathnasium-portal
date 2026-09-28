@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useState } from 'react';
-import { ArrowRight, ChevronDown } from 'lucide-react';
+import { ArrowRight, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Btn } from './ui';
 import { fmtDay } from './format';
 import { useTimeFormat } from '../../lib/useTimeFormat';
@@ -95,6 +95,7 @@ function ColumnLayer({ axis, pct }) {
 
 export default function TodaySnapshotCard({
   shifts, volunteerNames, centerConfig, dateISO, isToday = true, to,
+  onPrevDay, onNextDay, onToday,
 }) {
   const fmtTime = useTimeFormat();
   const gridId = useId();
@@ -117,9 +118,15 @@ export default function TodaySnapshotCard({
     catch { /* nothing to do about it, and nothing depends on it */ }
   }, [open]);
 
-  if (!rows.length || !axis.slots.length) return null;
+  // A day nobody works is a real answer, and it used to be rendered by
+  // returning null. That was fine while this only ever showed today; it is
+  // a trap now that you can walk into such a day, because the controls for
+  // walking back out went with it. So the band always renders, and the
+  // grid is what the empty day replaces.
+  const empty = !rows.length || !axis.slots.length;
+  const canBrowse = typeof onPrevDay === 'function';
 
-  const span = axis.to - axis.from;
+  const span = empty ? 0 : axis.to - axis.from;
   const pct = (m) => ((m - axis.from) / span) * 100;
 
   // Every hour tick the day touches, closing one included.
@@ -129,7 +136,9 @@ export default function TodaySnapshotCard({
   // began. That single line is why none of the start times appeared to line
   // up with the header.
   const hours = [];
-  for (let h = Math.ceil(axis.from / 60); h * 60 <= axis.to; h += 1) hours.push(h);
+  if (!empty) {
+    for (let h = Math.ceil(axis.from / 60); h * 60 <= axis.to; h += 1) hours.push(h);
+  }
 
   const keyOf = (r) => {
     if (r.sickPay) return ['Sick', stateColorHex('Sick Pay', centerConfig)];
@@ -160,24 +169,49 @@ export default function TodaySnapshotCard({
   return (
     <div>
       {/* ── The band ─────────────────────────────────────────────── */}
-      <div className={`p-5 ${open ? 'rounded-t-2xl' : 'rounded-2xl'}`}
+      <div className={`p-5 ${open && !empty ? 'rounded-t-2xl' : 'rounded-2xl'}`}
         style={{ background: 'var(--nl-brand)', color: '#fff' }}>
-        <div className="flex items-center justify-between gap-3">
-          <span className="min-w-0 text-[10px] font-bold uppercase tracking-[0.14em] opacity-85">
-            {isToday ? "Today's snapshot" : 'Snapshot'} · {fmtDay(dateISO, { weekday: 'short', month: 'short', day: 'numeric' })}
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 text-[10px] font-bold uppercase tracking-[0.14em] opacity-85">
+              {isToday ? "Today's snapshot" : 'Snapshot'} · {fmtDay(dateISO, { weekday: 'short', month: 'short', day: 'numeric' })}
+            </span>
+            {/* Yesterday and tomorrow, the way the classic snapshot had it.
+                Only rendered when the page actually hands over the
+                handlers — a card given a fixed day should not offer to
+                move off it. */}
+            {canBrowse && (
+              <div className="flex shrink-0 items-center rounded-lg border border-white/40">
+                <button type="button" onClick={onPrevDay} aria-label="Previous day" title="Previous day"
+                  className="flex h-[28px] w-[28px] items-center justify-center rounded-l-lg text-white hover:bg-white/15">
+                  <ChevronLeft size={15} aria-hidden="true" />
+                </button>
+                <button type="button" onClick={onToday} disabled={isToday}
+                  title={isToday ? 'Already on today' : 'Back to today'}
+                  className="h-[28px] border-x border-white/40 px-2 text-[11px] font-bold uppercase tracking-wider text-white enabled:hover:bg-white/15 disabled:opacity-45">
+                  Today
+                </button>
+                <button type="button" onClick={onNextDay} aria-label="Next day" title="Next day"
+                  className="flex h-[28px] w-[28px] items-center justify-center rounded-r-lg text-white hover:bg-white/15">
+                  <ChevronRight size={15} aria-hidden="true" />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setOpen(v => !v)}
-              aria-expanded={open}
-              aria-controls={gridId}
-              className="flex min-h-[32px] items-center gap-1.5 rounded-lg border border-white/60 px-2.5 text-[12px] font-semibold text-white"
-            >
-              {open ? 'Hide' : 'Show'}
-              <ChevronDown size={14} aria-hidden="true"
-                className={`transition-transform ${open ? 'rotate-180' : ''}`} />
-            </button>
+            {!empty && (
+              <button
+                type="button"
+                onClick={() => setOpen(v => !v)}
+                aria-expanded={open}
+                aria-controls={gridId}
+                className="flex min-h-[32px] items-center gap-1.5 rounded-lg border border-white/60 px-2.5 text-[12px] font-semibold text-white"
+              >
+                {open ? 'Hide' : 'Show'}
+                <ChevronDown size={14} aria-hidden="true"
+                  className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+              </button>
+            )}
             {to && (
               <Btn to={to} size="sm" variant="ghost" className="!border-white/60 !text-white">
                 Full snapshot <ArrowRight size={13} />
@@ -188,13 +222,17 @@ export default function TodaySnapshotCard({
 
         <div className="mt-3 flex flex-wrap items-end gap-x-8 gap-y-4">
           <div className="min-w-0">
+            {/* "on today" is wrong the moment you step off today, which
+                is the whole point of the arrows above. */}
             <div className="nl-display text-[34px] font-bold leading-none sm:text-[42px]">
-              {totals.people} on today
+              {empty ? 'Nobody on' : `${totals.people} on ${isToday ? 'today' : 'this day'}`}
             </div>
             <div className="mt-2 text-[13.5px] leading-snug opacity-90">
-              {fmtTime.range(fromMins(axis.from), fromMins(axis.to))}
-              {leads.length > 0 && ` · ${list(leads)} leading`}
-              {host && ` · ${host} hosting`}
+              {empty ? 'No live shifts on the sheet for this day.' : (<>
+                {fmtTime.range(fromMins(axis.from), fromMins(axis.to))}
+                {leads.length > 0 && ` · ${list(leads)} leading`}
+                {host && ` · ${host} hosting`}
+              </>)}
             </div>
             {(totals.sick > 0 || totals.noShow > 0) && (
               <div className="mt-1.5 text-[13px] opacity-90">
@@ -203,17 +241,21 @@ export default function TodaySnapshotCard({
               </div>
             )}
           </div>
-          <div className="grid w-full grid-cols-2 gap-x-4 gap-y-3 sm:ml-auto sm:w-auto sm:grid-cols-4 sm:gap-x-7">
-            {stat(totals.instructors, 'Instructors')}
-            {stat(totals.host, 'Host')}
-            {stat(totals.online, 'Online')}
-            {stat(`${totals.hours.toFixed(1)}h`, 'Total hours')}
-          </div>
+          {/* Four zeros under "Nobody on" restate the headline and nothing
+              else, so they are not rendered rather than merely hidden. */}
+          {!empty && (
+            <div className="grid w-full grid-cols-2 gap-x-4 gap-y-3 sm:ml-auto sm:w-auto sm:grid-cols-4 sm:gap-x-7">
+              {stat(totals.instructors, 'Instructors')}
+              {stat(totals.host, 'Host')}
+              {stat(totals.online, 'Online')}
+              {stat(`${totals.hours.toFixed(1)}h`, 'Total hours')}
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── The grid ─────────────────────────────────────────────── */}
-      {open && (
+      {open && !empty && (
       <div id={gridId} className="overflow-x-auto rounded-b-2xl border border-t-0"
         style={{ borderColor: 'var(--nl-rule)', background: 'var(--nl-card)' }}>
         <div className="min-w-[760px] px-4 pb-3 pt-2.5">

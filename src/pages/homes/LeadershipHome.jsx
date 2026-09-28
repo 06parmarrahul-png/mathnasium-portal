@@ -64,9 +64,6 @@ import { useTimeFormat } from '../../lib/useTimeFormat';
  * been looked at.
  */
 
-/** A shift that is neither a draft nor cancelled is a shift someone works. */
-const isLive = (s) => s.status !== 'draft' && s.status !== 'cancelled';
-
 export default function LeadershipHome() {
   const auth = useAuth();
   const fmtTime = useTimeFormat();
@@ -75,6 +72,19 @@ export default function LeadershipHome() {
   } = auth;
 
   const today = todayISO();
+  // The day the SNAPSHOT is showing, held as an offset from today rather
+  // than an absolute date — the classic snapshot did the same, and for the
+  // same reason: a page left open across midnight should keep "today"
+  // meaning today, and should keep somebody parked two days back two days
+  // back, rather than quietly sliding them forward a day.
+  const [dayOffset, setDayOffset] = useState(0);
+  const viewDate = useMemo(() => {
+    const d = new Date(`${today}T00:00:00`);
+    d.setDate(d.getDate() + dayOffset);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }, [today, dayOffset]);
+
   const [todayShifts, setTodayShifts] = useState(null);   // null = still loading
   const [openShifts, setOpenShifts] = useState([]);
   const [people, setPeople] = useState([]);
@@ -84,16 +94,19 @@ export default function LeadershipHome() {
   const [leads, setLeads] = useState([]);
   const [events, setEvents] = useState([]);
 
-  // Today's roster. The one figure everyone opens this page for.
+  // The roster for the day the snapshot is showing. The one figure
+  // everyone opens this page for — and the only thing on the page that
+  // follows the arrows. Everything below still answers "what is waiting on
+  // me", which is a question about now, not about the day being browsed.
   useEffect(() => {
     if (!activeCenterId) return undefined;
     return onSnapshot(
       query(collection(db, 'shifts'),
-        where('centerId', '==', activeCenterId), where('date', '==', today)),
+        where('centerId', '==', activeCenterId), where('date', '==', viewDate)),
       snap => setTodayShifts(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
       () => setTodayShifts([]),
     );
-  }, [activeCenterId, today]);
+  }, [activeCenterId, viewDate]);
 
   // Shifts nobody has picked up. Filtered to today-forward in memory so
   // this needs no composite index.
@@ -171,9 +184,6 @@ export default function LeadershipHome() {
     return set;
   }, [people, activeCenterId]);
 
-  const anyLive = useMemo(
-    () => (todayShifts || []).some(isLive), [todayShifts]);
-
   // ── Things waiting on a decision ───────────────────────────────────────
   const unclaimed = useMemo(
     () => openShifts.filter(s => s.status === 'open' && s.date >= today)
@@ -241,19 +251,24 @@ export default function LeadershipHome() {
           right edge. */}
       {/* Full width, above the split. The grid is nineteen half-hour
           columns wide and cannot live in a 736px half-page. */}
+      {/* The card owns the empty day now. It has to: the arrows that walk
+          you off a day nobody works are on the card, so swapping it for a
+          plain "nobody rostered" would strand you there. Loading is still
+          out here because it only ever happens once, at mount. */}
       <div className="mb-3.5">
-          {todayShifts === null ? (
+        {todayShifts === null ? (
           <Loading label="Reading today's roster…" />
-        ) : anyLive ? (
+        ) : (
           <TodaySnapshotCard
             shifts={todayShifts}
             volunteerNames={volunteerNames}
             centerConfig={centerConfig}
-            dateISO={today}
+            dateISO={viewDate}
+            isToday={dayOffset === 0}
+            onPrevDay={() => setDayOffset(d => d - 1)}
+            onNextDay={() => setDayOffset(d => d + 1)}
+            onToday={() => setDayOffset(0)}
             to={PAGES.staffSchedule.path} />
-        ) : (
-          <AllClear title="Nobody rostered today"
-            note="No live shifts on the sheet for today at this centre." />
         )}
       </div>
 

@@ -98,7 +98,9 @@ describe('it renders at all', () => {
   it('survives a centre with nothing in it', () => {
     draw();
     expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();
-    expect(screen.getByText(/Nobody rostered today/i)).toBeTruthy();
+    // The empty-day wording moved onto the snapshot card, which now
+    // renders it itself so its day arrows survive a day nobody works.
+    expect(screen.getByText(/Nobody on/i)).toBeTruthy();
     expect(screen.getByText(/Nothing waiting/i)).toBeTruthy();
   });
 
@@ -376,7 +378,11 @@ describe('assessments today', () => {
     const row = [...container.querySelectorAll('div')]
       .find(el => el.textContent === '3:00 PM · Francis Moon');
     expect(row).toBeTruthy();
-    expect(screen.queryByText(/\bToday\b/)).toBeNull();
+    // Scoped to the assessment rows: the snapshot's day nav has a "Today"
+    // button of its own now, and it is not what this test is about.
+    const intakeRows = [...container.querySelectorAll('div')]
+      .filter(el => /·/.test(el.textContent) && /\d:\d\d [AP]M/.test(el.textContent));
+    expect(intakeRows.some(el => /\bToday\b/.test(el.textContent))).toBe(false);
   });
 
   it('never says "none booked" to somebody who may not read them', () => {

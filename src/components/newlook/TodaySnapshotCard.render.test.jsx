@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -269,5 +269,95 @@ describe('folding the grid away', () => {
     const id = toggle().getAttribute('aria-controls');
     expect(id).toBeTruthy();
     expect(document.getElementById(id)).toBeTruthy();
+  });
+});
+
+describe('walking back and forth through the days', () => {
+  /**
+   * The classic snapshot could step a day either way and jump back to
+   * today. That went when the classic home did, and this is it returning.
+   *
+   * The trap worth a test: the arrows live ON the card, so a day nobody
+   * works must not remove the card — it used to render nothing at all,
+   * which would strand you on the empty day with no way back.
+   */
+  const nav = () => ({
+    prev: screen.queryByLabelText('Previous day'),
+    next: screen.queryByLabelText('Next day'),
+    today: screen.queryByRole('button', { name: 'Today' }),
+  });
+
+  const drawWith = (props) => render(
+    <MemoryRouter>
+      <TodaySnapshotCard shifts={A_DAY} volunteerNames={new Set()}
+        centerConfig={{ name: 'Langley' }} dateISO="2026-09-21" {...props} />
+    </MemoryRouter>,
+  );
+
+  it('offers no arrows to a card that was given no way to move', () => {
+    draw();
+    expect(nav().prev).toBeNull();
+    expect(nav().next).toBeNull();
+  });
+
+  it('calls back for the day either side', () => {
+    const onPrevDay = vi.fn();
+    const onNextDay = vi.fn();
+    drawWith({ onPrevDay, onNextDay, onToday: vi.fn() });
+    fireEvent.click(nav().prev);
+    fireEvent.click(nav().next);
+    expect(onPrevDay).toHaveBeenCalledTimes(1);
+    expect(onNextDay).toHaveBeenCalledTimes(1);
+  });
+
+  it('greys out Today while you are already on it', () => {
+    drawWith({ onPrevDay: vi.fn(), onNextDay: vi.fn(), onToday: vi.fn(), isToday: true });
+    expect(nav().today.disabled).toBe(true);
+  });
+
+  it('offers Today once you have stepped off it', () => {
+    const onToday = vi.fn();
+    drawWith({ onPrevDay: vi.fn(), onNextDay: vi.fn(), onToday, isToday: false });
+    expect(nav().today.disabled).toBe(false);
+    fireEvent.click(nav().today);
+    expect(onToday).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops saying "today" once you are looking at another day', () => {
+    drawWith({ onPrevDay: vi.fn(), onNextDay: vi.fn(), onToday: vi.fn(), isToday: false });
+    expect(screen.getByText('3 on this day')).toBeTruthy();
+    expect(screen.queryByText('3 on today')).toBeNull();
+  });
+});
+
+describe('a day nobody works', () => {
+  const drawEmpty = (props = {}) => render(
+    <MemoryRouter>
+      <TodaySnapshotCard shifts={[]} volunteerNames={new Set()}
+        centerConfig={{ name: 'Langley' }} dateISO="2026-09-30" isToday={false} {...props} />
+    </MemoryRouter>,
+  );
+
+  it('says so, rather than rendering nothing', () => {
+    drawEmpty();
+    expect(screen.getByText('Nobody on')).toBeTruthy();
+    expect(screen.getByText(/No live shifts on the sheet/)).toBeTruthy();
+  });
+
+  it('keeps the arrows, so you can get back off it', () => {
+    drawEmpty({ onPrevDay: vi.fn(), onNextDay: vi.fn(), onToday: vi.fn() });
+    expect(screen.getByLabelText('Previous day')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Today' }).disabled).toBe(false);
+  });
+
+  it('drops the Hide control, which would name a grid that is not there', () => {
+    drawEmpty({ onPrevDay: vi.fn(), onNextDay: vi.fn(), onToday: vi.fn() });
+    expect(screen.queryByRole('button', { name: /hide|show/i })).toBeNull();
+  });
+
+  it('does not sit four zeros under "Nobody on"', () => {
+    drawEmpty();
+    expect(screen.queryByText('Instructors')).toBeNull();
+    expect(screen.queryByText('Total hours')).toBeNull();
   });
 });
