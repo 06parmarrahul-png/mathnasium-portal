@@ -36,12 +36,13 @@ import TerminateStaffModal from '../components/TerminateStaffModal';
  */
 
 const ROLE_LABELS = {
-  super_admin:     'Enterprise',
-  owner:           'Owner',
-  director:        'Director',
-  admin_assistant: 'Admin Assistant',
-  admin:           'Admin',
-  instructor:      'Instructor',
+  super_admin:      'Enterprise',
+  owner:            'Owner',
+  district_manager: 'District Manager',
+  director:         'Director',
+  admin_assistant:  'Admin Assistant',
+  admin:            'Admin',
+  instructor:       'Instructor',
 };
 
 const ROLE_COLORS = {
@@ -52,6 +53,9 @@ const ROLE_COLORS = {
   // palette so it reads as "senior staff" without co-opting owner
   // red or admin-assistant teal.
   director:        'bg-amber-100 text-amber-700 border-amber-200',
+  // Indigo, which none of the centre-level roles use — a district manager
+  // sits beside the whole list rather than inside it.
+  district_manager: 'bg-indigo-100 text-indigo-700 border-indigo-200',
   admin_assistant: 'bg-teal-100 text-teal-700 border-teal-200',
   admin:           'bg-emerald-100 text-emerald-700 border-emerald-200',
   instructor:      'bg-gray-100 text-gray-600 border-gray-200',
@@ -214,6 +218,24 @@ export default function ManageRoles() {
   // Director = full owner-equivalent permissions but label stays as
   // "Director" (used for Centre Directors / Directors of Education).
   // Requires the same 4-digit code as the other elevated roles.
+  /**
+   * District Manager, behind the same 4-digit code as the other elevated
+   * roles.
+   *
+   * It grants no write anywhere — one read-only permission — so the code
+   * is not protecting centre operations. It is protecting the families:
+   * the roll-up reads every centre's leads, and a lead carries a parent's
+   * name, email and phone. Handing one account that across a province is
+   * worth the same second step as handing someone a centre.
+   */
+  const handlePromoteToDistrictManager = (user) => {
+    if (!codeMeta.hasCode) {
+      setModal({ mode: 'set_then_promote', user, targetRole: 'district_manager' });
+    } else {
+      setModal({ mode: 'promote', user, targetRole: 'district_manager' });
+    }
+  };
+
   const handlePromoteToDirector = (user) => {
     if (!codeMeta.hasCode) {
       setModal({ mode: 'set_then_promote', user, targetRole: 'director' });
@@ -497,6 +519,15 @@ export default function ManageRoles() {
                           >
                             <Lock size={11} /> → Director
                           </button>
+                          {role !== 'district_manager' && (
+                            <button
+                              onClick={() => handlePromoteToDistrictManager(u)}
+                              className="flex items-center gap-1 rounded-lg border border-indigo-300 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
+                              title="District Manager sees a read-only roll-up of every centre on their account — staffing, coverage, leads and the figures each centre reports. It grants nothing at any individual centre. Set their centres with Move centres. Requires the 4-digit code."
+                            >
+                              <Lock size={11} /> → District Manager
+                            </button>
+                          )}
                           <button
                             onClick={() => handlePromoteToAdminAssistant(u)}
                             className="flex items-center gap-1 rounded-lg border border-teal-300 bg-white px-3 py-1.5 text-xs font-semibold text-teal-700 hover:bg-teal-50"
