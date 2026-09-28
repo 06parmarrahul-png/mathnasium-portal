@@ -5,6 +5,7 @@ import { homeFor } from '../lib/homeFor';
 
 const InstructorHome = lazy(() => import('./homes/InstructorHome'));
 const LeadershipHome = lazy(() => import('./homes/LeadershipHome'));
+const District       = lazy(() => import('./District'));
 
 /**
  * HomeSwitch — one of the two homes, with a floor under it.
@@ -87,7 +88,9 @@ class HomeBoundary extends Component {
 export default function HomeSwitch() {
   const auth = useAuth();
   const which = homeFor(auth);
-  const Home = which === 'leadership' ? LeadershipHome : InstructorHome;
+  const Home = which === 'leadership' ? LeadershipHome
+             : which === 'district'   ? District
+             : InstructorHome;
 
   return (
     <HomeBoundary which={which}>

@@ -22,6 +22,7 @@ const Schedule                  = lazy(() => import('./pages/Schedule'));
 const ShiftBoard                = lazy(() => import('./pages/ShiftBoard'));
 const Chat                      = lazy(() => import('./pages/Chat'));
 const Admin                     = lazy(() => import('./pages/Admin'));
+const District                  = lazy(() => import('./pages/District'));
 const SuperAdmin                = lazy(() => import('./pages/SuperAdmin'));
 const ManageRoles               = lazy(() => import('./pages/ManageRoles'));
 const NotificationPreferences   = lazy(() => import('./pages/NotificationPreferences'));
@@ -128,6 +129,7 @@ function AppRoutes() {
         {/* requireShiftTaking covers volunteers AND trainees — neither
             claims or swaps, which is all this page does. */}
         <Route path="/shift-board" element={<ProtectedRoute requireShiftTaking><Layout><ShiftBoard /></Layout></ProtectedRoute>} />
+        <Route path="/district" element={<ProtectedRoute permission="district.view"><Layout><District /></Layout></ProtectedRoute>} />
         <Route path="/chat" element={<ProtectedRoute blockVolunteers><Layout><Chat /></Layout></ProtectedRoute>} />
         {/* allowOps: Manager- and Host-titled users also get in here, with
             full admin-panel access — same "operational admin" tier as

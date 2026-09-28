@@ -17,6 +17,13 @@
  *                 leads, hosts, trainees, volunteers. Their question is
  *                 "am I on today".
  *
+ *   'district'    answers for several centres and runs none of them. Their
+ *                 question is "which of my centres needs me". Checked
+ *                 AFTER leadership, because an owner of two centres is
+ *                 both, and the centre they run is the one they open the
+ *                 portal for — the roll-up is a page they visit, not the
+ *                 page they land on.
+ *
  * ASKED AS "IS THIS LEADERSHIP" RATHER THAN AS A LIST OF JOB TITLES, so a
  * custom centre role invented in Manage Roles lands on the right side with
  * nobody editing this file. A Host carries admin.panel at some centres and
@@ -29,5 +36,7 @@ export function homeFor(auth = {}) {
   } = auth;
   const leadership = isOwnerLike
     || isSuperAdmin || isOwner || isDirector || isAdminAssistant || isAdmin || isManager;
-  return leadership ? 'leadership' : 'floor';
+  if (leadership) return 'leadership';
+  const district = typeof auth.can === 'function' && auth.can('district.view');
+  return district ? 'district' : 'floor';
 }

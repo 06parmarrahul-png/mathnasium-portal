@@ -213,6 +213,12 @@ export default function Layout({ children }) {
   if (!isOwnerLikeNav && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
+  // The district roll-up, for anyone who answers for more than one centre.
+  // Straight after Home because for a district manager it IS the job; an
+  // owner with one centre sees a one-row version and ignores it.
+  if (auth.can('district.view')) {
+    general.push({ to: PAGES.district.path, label: PAGES.district.name, icon: Building2 });
+  }
   // The centre calendar — meetings, calls, interviews, and holding time
   // off the public booking page.
   //

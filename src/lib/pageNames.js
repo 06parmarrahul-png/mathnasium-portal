@@ -57,6 +57,7 @@ export const PAGES = {
   centreSettings:   { path: '/center-settings',       name: 'Centre Settings' },
   connectors:       { path: '/connectors',            name: 'Connectors' },
 
+  district:         { path: '/district',              name: 'District' },
   manageCentres:    { path: '/super-admin',           name: 'Manage Centres' },
   manageRoles:      { path: '/manage-roles',          name: 'Manage Roles' },
   platformRevenue:  { path: '/platform-revenue',      name: 'Platform Revenue' },

@@ -121,6 +121,12 @@ export const PERMISSIONS = [
     description: 'The centre calendar — assign meetings, calls and interviews, and hold time off the public booking page.',
   },
   {
+    id: 'district.view',
+    group: 'Enterprise',
+    label: 'See the district roll-up',
+    description: 'Read-only oversight of every centre on the account: staffing, hours, coverage, events, and the figures each centre reports. Grants nothing at any individual centre.',
+  },
+  {
     id: 'roles.manage',
     group: 'Enterprise',
     label: 'Manage roles and permissions',
@@ -169,7 +175,7 @@ const PERMISSION_ID_SET = new Set(PERMISSION_IDS);
  * roles across every centre. `roles.manage` therefore comes from the
  * platform role alone, and a stored grant for it is ignored.
  */
-export const PLATFORM_ONLY_PERMISSIONS = new Set(['roles.manage']);
+export const PLATFORM_ONLY_PERMISSIONS = new Set(['roles.manage', 'district.view']);
 
 /** The permissions a centre role is allowed to offer in the editor. */
 export function assignablePermissions() {
@@ -212,8 +218,14 @@ const ADMIN_PANEL_BASE = [
 ];
 
 export const PLATFORM_ROLE_PERMISSIONS = {
-  super_admin:     [...ADMIN_PANEL_BASE, 'centre.settings', 'roles.manage'],
-  owner:           [...ADMIN_PANEL_BASE, 'centre.settings'],
+  super_admin:     [...ADMIN_PANEL_BASE, 'centre.settings', 'roles.manage', 'district.view'],
+  owner:           [...ADMIN_PANEL_BASE, 'centre.settings', 'district.view'],
+  // A district manager answers for several centres and runs none of them.
+  // One permission, and it is read-only by construction: it unlocks the
+  // roll-up and nothing at any individual centre. Which centres are theirs
+  // is the ordinary `centerIds` array every multi-centre account already
+  // uses — there is no second notion of a district to keep in sync.
+  district_manager: ['district.view'],
   director:        [...ADMIN_PANEL_BASE, 'centre.settings'],
   admin_assistant: [...ADMIN_PANEL_BASE, 'centre.settings'],
   // A plain Admin gets the panel and the analytics routes, but NOT centre
@@ -224,7 +236,7 @@ export const PLATFORM_ROLE_PERMISSIONS = {
 
 /** Platform roles, in descending order of reach. For pickers and labels. */
 export const PLATFORM_ROLES = [
-  'super_admin', 'owner', 'director', 'admin_assistant', 'admin', 'instructor',
+  'super_admin', 'owner', 'district_manager', 'director', 'admin_assistant', 'admin', 'instructor',
 ];
 
 // ─── Built-in centre roles ───────────────────────────────────────────────

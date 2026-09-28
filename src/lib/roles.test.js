@@ -105,9 +105,22 @@ const ALL_TITLES = [
   '', undefined, 'Some Invented Title',
 ];
 
+/**
+ * Roles that did not exist when the legacy checks above were written.
+ *
+ * The sweep below asks "does the new model reproduce the OLD behaviour",
+ * and for a role invented afterwards there is no old behaviour to
+ * reproduce — the legacy function falls through to its instructor default
+ * and says a district manager may claim shifts, which is exactly what the
+ * role is defined not to do. They get their own tests instead, further
+ * down, rather than a meaningless comparison here.
+ */
+const POST_LEGACY_ROLES = new Set(['district_manager']);
+const LEGACY_ROLES = PLATFORM_ROLES.filter(r => !POST_LEGACY_ROLES.has(r));
+
 describe('equivalence: the new permission model reproduces the old role checks', () => {
   const cases = [];
-  for (const platformRole of PLATFORM_ROLES) {
+  for (const platformRole of LEGACY_ROLES) {
     for (const instructorType of ALL_TITLES) {
       for (const isVolunteer of [false, true]) {
         cases.push([platformRole, String(instructorType), isVolunteer]);
@@ -115,8 +128,8 @@ describe('equivalence: the new permission model reproduces the old role checks',
     }
   }
 
-  it(`covers every combination (${PLATFORM_ROLES.length} roles × ${ALL_TITLES.length} titles × 2)`, () => {
-    expect(cases.length).toBe(PLATFORM_ROLES.length * ALL_TITLES.length * 2);
+  it(`covers every combination (${LEGACY_ROLES.length} roles × ${ALL_TITLES.length} titles × 2)`, () => {
+    expect(cases.length).toBe(LEGACY_ROLES.length * ALL_TITLES.length * 2);
   });
 
   it.each(cases)('role=%s title=%s volunteer=%s', (platformRole, instructorType, isVolunteer) => {
@@ -938,5 +951,50 @@ describe('director titles are the owner tier’s to give', () => {
       role: 'instructor', centerMemberships: { langley: { instructorType: 'Center Director' } },
     })).toBe(false);
     expect(canGrantDirectorTitle(null)).toBe(false);
+  });
+});
+
+describe('the district manager', () => {
+  /**
+   * Read-only oversight of several centres, and authority at none of them.
+   * The point of the role is that it can be handed to somebody senior
+   * without giving them the run of anybody's floor.
+   */
+  const p = (title) => resolvePermissions({
+    platformRole: 'district_manager', instructorType: title, roles: ROLES,
+  });
+
+  it('sees the district roll-up', () => {
+    expect(can(p(''), 'district.view')).toBe(true);
+  });
+
+  it.each(['admin.panel', 'centre.settings', 'admin.operations', 'scheduler.run', 'roles.manage'])(
+    'runs nothing at any centre — %s', (perm) => {
+      expect(can(p(''), perm)).toBe(false);
+    });
+
+  it('does not claim shifts, which the old instructor fallback would have allowed', () => {
+    expect(can(p(''), 'shifts.take')).toBe(false);
+  });
+
+  it('cannot be granted by a centre to itself', () => {
+    // Otherwise any centre could hand its own staff oversight of its
+    // neighbours by editing its own role registry.
+    expect(assignablePermissions().map(x => x.id)).not.toContain('district.view');
+  });
+
+  it('brings no centre powers of its own', () => {
+    // The role's whole grant, checked against the source rather than
+    // inferred: one permission, and it is the read-only one.
+    expect(PLATFORM_ROLE_PERMISSIONS.district_manager).toEqual(['district.view']);
+  });
+
+  it('still honours a centre title the person separately holds', () => {
+    // Michelle has no title anywhere, so he gets oversight and nothing
+    // else. Somebody who IS a Manager somewhere keeps being a Manager
+    // there — titles live in centerMemberships and are resolved per
+    // centre, so that power does not follow them across the district.
+    expect(can(p('Manager'), 'admin.panel')).toBe(true);
+    expect(can(p(''), 'admin.panel')).toBe(false);
   });
 });

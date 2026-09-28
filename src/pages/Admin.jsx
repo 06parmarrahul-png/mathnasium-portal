@@ -45,6 +45,7 @@ import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/tim
 import { availabilityConflict, describeConflict } from '../lib/availabilityFit';
 import { isTrainingShift, trainingIds as trainingIdsFor } from '../lib/staffTypes';
 import { RATIO_FIELD, defaultIncludedInRatio, countsInRatio, withRatioDefault, ratioHint, isRatioOverridden } from '../lib/ratioCount';
+import { readVitals, toFigure } from '../lib/district';
 import { roleRatioDefault, isDirectorTitle, canGrantDirectorTitle } from '../lib/roles';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -9413,6 +9414,8 @@ function SnapshotRow({ label, value, hint, tone }) {
 
 export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view = 'hub' }) {
   const navigate = useNavigate();
+  // Only for stamping who last typed the centre's figures.
+  const { profile } = useAuth();
   // Live counts that power the extra metric cards (open shifts, pending
   // time-off, etc). Pulled here rather than threaded through props
   // because the rest of Admin.jsx already subscribes to these elsewhere
@@ -9659,11 +9662,14 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   // question people were actually asking it — what do we want per half
   // hour, and can availability cover it — in CoverageModelCard.
 
-  // Manual student count + edit modal.
-  const studentCount     = Number(centerConfig?.activeStudentCount ?? 0) || 0;
-  const studentUpdatedAt = centerConfig?.studentCountUpdatedAt;
+  // The figures Ratio has no feed for, typed in here and read by the
+  // district roll-up. See src/lib/district.js for why a blank is kept
+  // distinct from a zero all the way through.
+  const centreVitals     = readVitals(centerConfig);
+  const studentCount     = centreVitals.activeStudents ?? 0;
+  const studentUpdatedAt = centreVitals.updatedAt;
   const [editingStudents, setEditingStudents] = useState(false);
-  const [studentInput,    setStudentInput]    = useState(studentCount);
+  const [vitalsInput,     setVitalsInput]     = useState({});
   const [savingStudents,  setSavingStudents]  = useState(false);
   const [studentSaveError,setStudentSaveError]= useState('');
 
@@ -9671,19 +9677,43 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   // tile was retired when Active Volunteers took its slot. Re-introduce if
   // we ever build an inbox-sync connector that's worth surfacing here.
 
-  // Re-sync input when the saved value changes (e.g. someone else updated it).
+  // Re-sync inputs when the saved values change (e.g. someone else updated
+  // them). A blank stays blank — typing 0 is a report, leaving it empty is
+  // not, and the roll-up tells those two apart.
   useEffect(() => {
-    if (!editingStudents) setStudentInput(studentCount);
-  }, [studentCount, editingStudents]);
+    if (editingStudents) return;
+    setVitalsInput({
+      activeStudents:   centreVitals.activeStudents   ?? '',
+      inactiveStudents: centreVitals.inactiveStudents ?? '',
+      onHoldStudents:   centreVitals.onHoldStudents   ?? '',
+      monthlyRevenue:   centreVitals.monthlyRevenue   ?? '',
+    });
+    // centreVitals is rebuilt each render from centerConfig; the four
+    // values are what actually change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editingStudents, studentCount, centreVitals.inactiveStudents,
+      centreVitals.onHoldStudents, centreVitals.monthlyRevenue]);
 
   const saveStudentCount = async () => {
-    const n = Math.max(0, parseInt(studentInput, 10) || 0);
+    // toFigure keeps "" (not reported) apart from 0 (reported as none) —
+    // it lives beside readVitals because the two are one contract.
+    const vitals = {
+      activeStudents:   toFigure(vitalsInput.activeStudents),
+      inactiveStudents: toFigure(vitalsInput.inactiveStudents),
+      onHoldStudents:   toFigure(vitalsInput.onHoldStudents),
+      monthlyRevenue:   toFigure(vitalsInput.monthlyRevenue),
+      updatedAt:        serverTimestamp(),
+      updatedByName:    profile?.displayName || null,
+    };
+    const n = vitals.activeStudents ?? 0;
     setSavingStudents(true);
     setStudentSaveError('');
     try {
       await setDoc(
         doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { activeStudentCount: n, studentCountUpdatedAt: serverTimestamp() },
+        // activeStudentCount is kept in step because the analytics tile
+        // above and a handful of older reads still point at it.
+        { vitals, activeStudentCount: n, studentCountUpdatedAt: serverTimestamp() },
         { merge: true },
       );
       setEditingStudents(false);
@@ -10077,7 +10107,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
             <div className="w-fit rounded-lg p-1.5 bg-emerald-100 text-emerald-700"><Activity size={16}/></div>
             <button
               type="button"
-              onClick={() => { setStudentInput(studentCount); setEditingStudents(true); }}
+              onClick={() => setEditingStudents(true)}
               className="flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline"
             >
               <Edit3 size={11}/> Edit
@@ -10203,16 +10233,33 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onClick={() => !savingStudents && setEditingStudents(false)}>
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl" onClick={e => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-gray-900 mb-1">Active Student Count</h3>
-            <p className="text-xs text-gray-500 mb-3">Manually update the current enrollment for this centre.</p>
-            <input
-              type="number"
-              min={0}
-              value={studentInput}
-              onChange={e => setStudentInput(e.target.value)}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none mb-3"
-              autoFocus
-            />
+            <h3 className="text-base font-bold text-gray-900 mb-1">This centre&rsquo;s numbers</h3>
+            <p className="text-xs text-gray-500 mb-3">
+              Ratio has no feed for these four, so they are typed in — and stamped with today&rsquo;s
+              date, because the district roll-up shows how old each one is. Leave a box empty if you
+              do not have the figure; empty is reported as &ldquo;not given&rdquo; rather than as zero.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-3">
+              {[
+                ['activeStudents',   'Active students'],
+                ['inactiveStudents', 'Inactive'],
+                ['onHoldStudents',   'On hold'],
+                ['monthlyRevenue',   'Monthly revenue ($)'],
+              ].map(([key, label], i) => (
+                <label key={key} className="block">
+                  <span className="mb-1 block text-[11px] font-semibold text-gray-500">{label}</span>
+                  <input
+                    type="number"
+                    min={0}
+                    placeholder="—"
+                    value={vitalsInput[key] ?? ''}
+                    onChange={e => setVitalsInput(v => ({ ...v, [key]: e.target.value }))}
+                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none"
+                    autoFocus={i === 0}
+                  />
+                </label>
+              ))}
+            </div>
             {studentSaveError && <p className="text-xs text-red-600 mb-2">{studentSaveError}</p>}
             <div className="flex items-center justify-end gap-2">
               <button
