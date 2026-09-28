@@ -6,10 +6,10 @@ import { useAuth } from '../contexts/AuthContext';
 import Mascot from './Mascot';
 import RatioLogo from './RatioLogo';
 import MigrationBanner from './MigrationBanner';
-import { isNewLookOn, setNewLook } from '../lib/newLook';
 import {
   readCollapsed, toggleCollapsed, isSectionOpen, rollUpBadge, sectionHasActive,
 } from '../lib/navSections';
+import { homeFor } from '../lib/homeFor';
 import { myOpenCount, canUseDesk, LIVE_STATUSES } from '../lib/deskNotes';
 import { isHourlyPaid } from '../lib/payProjection';
 import { gamesEnabled } from '../lib/ratioGames';
@@ -48,11 +48,9 @@ function todayStr() {
 export default function Layout({ children }) {
   const auth = useAuth();
   const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = auth;
-  // Everyone has a new home now — floor staff get the phone-first one,
-  // leadership get the board. Which is newLookHomeFor(), in HomeSwitch;
-  // all this needs to know is that the toggle is offered to all of them.
+  // Floor staff get the phone-first home, leadership get the board — the
+  // same split HomeSwitch uses, so the bottom tabs below follow it too.
   const isOwnerLikeNav = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
-  const newLookOn = isNewLookOn(profile?.uid);
   // Volunteers are unpaid and salaried staff aren't paid from the hourly
   // sheet, so a pay projection would be wrong for both.
   const showPay = isHourlyPaid({ displayName: profile?.displayName, isVolunteer }, auth.centerConfig);
@@ -580,21 +578,6 @@ export default function Layout({ children }) {
               <p className="truncate text-xs text-gray-400">{roleLabel}</p>
             </div>
           </Link>
-          {/* The way back to the classic home.
-              It was an opt-IN preview until 2026-09-25; everybody is on the
-              new home now and this is the escape hatch, kept here with the
-              other preferences rather than in the nav because it changes
-              ONE page. The classic home goes when nothing has fallen back
-              to it for a while. */}
-          {(
-            <button
-              onClick={() => { setNewLook(profile?.uid, !newLookOn); window.location.reload(); }}
-              className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white"
-              title="A home page built for a phone: your next shift, anything Ratio needs from you, and open shifts. Nothing else in the portal changes, and you can switch back here.">
-              <Sparkles size={16} />
-              <span className="flex-1">{newLookOn ? 'Back to classic home' : 'Back to the new home'}</span>
-            </button>
-          )}
           <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm text-gray-400 transition-colors hover:bg-gray-700 hover:text-white">
             <LogOut size={16} /> Sign Out
           </button>
@@ -641,13 +624,18 @@ export default function Layout({ children }) {
           {children}
         </main>
 
-        {/* Bottom tabs — phones only, and only for floor staff on the new
-            home. Instructors touch four things; reaching them through a
-            hamburger menu built for an owner's eighteen sidebar links is
-            the single worst part of the portal on a phone. `lg:hidden`
-            because the sidebar is back at that width and two navigations
-            would just compete. */}
-        {newLookOn && (
+        {/* Bottom tabs — phones only, and only for FLOOR STAFF. Instructors
+            touch four things; reaching them through a hamburger menu built
+            for an owner's twenty sidebar links is the worst part of the
+            portal on a phone. `lg:hidden` because the sidebar is back at
+            that width and two navigations would compete.
+
+            Gated on the home a person gets rather than on the old opt-in,
+            which is what it keyed off before the classic home went. The
+            tabs are My Schedule / Open Shifts / My Pay / Team Chat — an
+            instructor's four. An owner on a phone would be handed a nav
+            bar built for somebody else's job. */}
+        {homeFor(auth) === 'floor' && (
           <MobileTabs canTakeShifts={canTakeShifts} isVolunteer={isVolunteer} showPay={showPay} />
         )}
       </div>

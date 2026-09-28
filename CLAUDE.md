@@ -650,14 +650,28 @@ preference), and **a collapsed section still shows its badges**, rolled up
 to the header — the open-shift and Desk counts are the whole reason
 somebody looks, and a tidier sidebar that loses them is a worse one.
 
-**The new home is the default since 2026-09-25.** `isNewLookOn()` now asks
-"did they turn it OFF", so absent or blocked storage lands on the new home
-— a private window should show what everyone else sees. The classic Home,
-the sidebar toggle and the HomeSwitch error boundary all stay for now; the
-boundary writes the explicit `'off'` if a new home ever throws. **Delete
-the classic home once nothing has fallen back to it for a while** — that is
-the whole point of having moved everybody, and until it goes every change
-to a home is still two changes.
+**There is one home per person, and no classic.** Two pages —
+`homes/LeadershipHome` and `homes/InstructorHome` — chosen by `homeFor()`
+in `src/lib/homeFor.js`, which asks "is this leadership" rather than
+listing job titles, so a custom role from Manage Roles lands correctly
+without editing that file. The classic Home shipped alongside them behind
+a per-person opt-in (2026-08), became the non-default (2026-09-25) and was
+**deleted on 2026-09-28**, with the opt-in, the sidebar toggle and the
+"Classic view" links. `newLook.js` went too; what survived of it is
+`homeFor()`.
+
+**HomeSwitch still carries its own error boundary, and it matters MORE now
+there is nothing to fall back to.** App.jsx's boundary replaces the entire
+UI, sidebar included — so without this, a render error on the home page
+leaves somebody with no navigation at all. It has caught a real crash once
+already. The fallback is a card that says what happened and offers Reload
+plus My Schedule / Management Desk / Open Shifts, because the home page was
+the way in.
+
+**The phone bottom tabs follow `homeFor()`**, not the old opt-in they used
+to key off. They are an instructor's four — My Schedule, Open Shifts, My
+Pay, Team Chat — so leadership on a phone would otherwise be handed a nav
+bar built for somebody else's job.
 
 ### Probation and paid sick leave — one rule, in `src/lib/probation.js`
 

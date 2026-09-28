@@ -20,16 +20,15 @@ import { personColor } from '../lib/personColor';
  * Managers and Hosts, who carry most of the notes, are exactly the people
  * on the phone-first home.
  *
- * TWO SKINS, ONE SET OF NUMBERS. The desk's people are split across both
- * homes — Managers and Hosts get the phone-first one, the owner, directors
- * and the admin assistant keep the classic one — so this renders either,
- * and the counting happens once either way.
+ * ONE SKIN NOW. It used to render two — the phone-first home and the
+ * classic one — because the desk's people were split across both homes.
+ * The classic home went on 2026-09-28 and the second skin went with it.
  *
  * ONLY DESK PEOPLE SEE IT, asked exactly the way the Firestore rules ask
  * it (canUseDesk). An instructor's home is unchanged, and their read would
  * be refused anyway.
  */
-export default function DeskHomeCard({ variant = 'nl' }) {
+export default function DeskHomeCard() {
   const auth = useAuth();
   const { profile, activeCenterId } = auth;
   const [notes, setNotes] = useState(null);
@@ -66,36 +65,6 @@ export default function DeskHomeCard({ variant = 'nl' }) {
 
   const shown = summary.items.filter(n => dueState(n, today)).slice(0, 2);
   const rest = summary.onYou - shown.length;
-
-  if (variant === 'classic') {
-    return (
-      <div className="rounded-2xl border bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="min-w-0">
-            <b className="flex items-center gap-1.5 text-[15px] text-gray-900">
-              <StickyNote size={15} className="text-amber-500" />
-              {PAGES.desk.name}
-            </b>
-            <p className="mt-0.5 text-[13px] text-gray-500">
-              {summary.onYou === 0
-                ? 'Nothing waiting on you.'
-                : <>
-                    {summary.onYou} on you
-                    {summary.overdue > 0 && <>, <b className="text-red-600">{summary.overdue} overdue</b></>}
-                    {summary.oldestDays > 0 && <> · oldest is {summary.oldestDays} days</>}
-                  </>}
-            </p>
-          </div>
-          {summary.onYou > 0 && (
-            <Link to={PAGES.desk.path}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-3.5 py-2 text-[13px] font-semibold text-white hover:bg-red-700">
-              Open the desk <ArrowRight size={14} />
-            </Link>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="rounded-xl border p-4" style={{ background: 'var(--nl-card)', borderColor: 'var(--nl-rule)' }}>

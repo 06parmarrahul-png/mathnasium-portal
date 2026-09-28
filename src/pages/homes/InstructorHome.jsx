@@ -5,7 +5,6 @@ import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { greeting } from '../../lib/greeting';
 import { shiftOnDate } from '../../lib/doubleBooking';
-import { setNewLook } from '../../lib/newLook';
 import {
   watchLastSeen, markSeen, newestDate, unreadCount, unreadLabel,
 } from '../../lib/announcementReads';
@@ -284,13 +283,6 @@ export default function InstructorHome() {
               {greeting()}, {first}
             </h1>
           </div>
-          <button
-            type="button"
-            onClick={() => { setNewLook(profile?.uid, false); window.location.reload(); }}
-            className="-mr-1 mt-1 shrink-0 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold underline underline-offset-2"
-            style={{ color: 'var(--nl-muted)' }}>
-            Classic view
-          </button>
         </div>
       </div>
 
@@ -574,7 +566,7 @@ export default function InstructorHome() {
         {/* ── The Management Desk ─────────────────────────────────── */}
         {/* Renders nothing for anyone who can't open the desk, which is
             most of this page's readers. */}
-        <DeskHomeCard variant="nl" />
+        <DeskHomeCard />
 
         {/* ── Ratio Games ─────────────────────────────────────────── */}
         {/* The doorway most people use — the sidebar is behind a hamburger

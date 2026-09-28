@@ -209,11 +209,12 @@ describe('mobile', () => {
     expect(container.firstChild.className).toMatch(/\bnl\b/);
   });
 
-  it('offers a way back to the classic view without the sidebar', () => {
-    // On a phone the sidebar is behind a hamburger, so the escape hatch
-    // has to exist on the page itself.
+  it('OFFERS NO WAY BACK — there is nothing to go back to', () => {
+    // The classic home was deleted on 2026-09-28. A link to it would be a
+    // link to nowhere, and the escape hatch it existed to provide is now
+    // the error boundary in HomeSwitch.
     draw();
-    expect(screen.getByText(/Classic view/)).toBeTruthy();
+    expect(screen.queryByText(/Classic view/)).toBeNull();
   });
 });
 

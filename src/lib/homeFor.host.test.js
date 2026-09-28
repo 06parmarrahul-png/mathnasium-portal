@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { newLookHomeFor } from './newLook';
+import { homeFor } from './homeFor';
 import { resolveRoles, resolvePermissions } from './roles';
 import { resolveUserForCenter } from './centerMembership';
 
@@ -53,7 +53,7 @@ function authFor(user) {
 
 describe('a Host and the two homes', () => {
   it('sends a Host to the floor home — a Host is floor staff', () => {
-    expect(newLookHomeFor(authFor(RAHUL))).toBe('floor');
+    expect(homeFor(authFor(RAHUL))).toBe('floor');
   });
 
   it('still does, though Langley grants Host the admin panel', () => {
@@ -62,19 +62,19 @@ describe('a Host and the two homes', () => {
     // board instead of his own shifts.
     const auth = authFor(RAHUL);
     expect(auth.canSeeAdminPanel).toBe(true);
-    expect(newLookHomeFor(auth)).toBe('floor');
+    expect(homeFor(auth)).toBe('floor');
   });
 
   it('sends a Lead, an Instructor and a Trainee to the floor home too', () => {
     for (const title of ['Lead', 'Instructor', 'Training']) {
       const u = { ...RAHUL, centerMemberships: { langley: { instructorType: title } } };
-      expect(newLookHomeFor(authFor(u)), title).toBe('floor');
+      expect(homeFor(authFor(u)), title).toBe('floor');
     }
   });
 
   it('sends a Manager to the board, on the title alone', () => {
     const u = { ...RAHUL, centerMemberships: { langley: { instructorType: 'Manager' } } };
-    expect(newLookHomeFor(authFor(u))).toBe('leadership');
+    expect(homeFor(authFor(u))).toBe('leadership');
   });
 
   it('sends everyone who runs the centre to the board', () => {
@@ -86,6 +86,6 @@ describe('a Host and the two homes', () => {
       { ...RAHUL, role: 'super_admin' },
       { ...RAHUL, centerMemberships: { langley: { instructorType: 'Center Director' } } },
     ];
-    for (const u of cases) expect(newLookHomeFor(authFor(u))).toBe('leadership');
+    for (const u of cases) expect(homeFor(authFor(u))).toBe('leadership');
   });
 });

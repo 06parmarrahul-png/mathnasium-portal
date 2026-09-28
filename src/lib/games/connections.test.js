@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   dailyBoard, judgeGuess, hasUniqueSolution, propertyById, PROPERTIES,
-  GROUP_SIZE, GROUPS,
+  usableCombos, dayIndexFor, GROUP_SIZE, GROUPS,
 } from './connections';
 
 const boards = Array.from({ length: 300 }, (_, i) => dailyBoard(`langley|seed-${i}`));
@@ -126,6 +126,113 @@ describe('the properties themselves', () => {
     for (const p of PROPERTIES) {
       expect(p.pool.length).toBeGreaterThanOrEqual(GROUP_SIZE);
       for (const n of p.pool) expect(p.test(n)).toBe(true);
+    }
+  });
+});
+
+describe('how often a board comes back around', () => {
+  /**
+   * The complaint this answers: "it's a lot of repeats".
+   *
+   * What a player recognises is the four CATEGORIES, not which four primes
+   * turned up under them. The first version had eight properties and rolled
+   * four fresh each day: 24 distinct category sets in a year, the commonest
+   * landing 21 times. The numbers were nearly all different and it still
+   * felt repetitive, because the part anybody remembers was not.
+   */
+  const catsOn = (dayIndex, seed = 'langley|x|connections') =>
+    dailyBoard(seed, dayIndex).groups.map(g => g.id).sort().join('+');
+
+  it('has hundreds of category sets to draw on, not a couple of dozen', () => {
+    expect(usableCombos().length).toBeGreaterThan(500);
+  });
+
+  it('never repeats a category set until every one has been used', () => {
+    const n = usableCombos().length;
+    const seen = new Set();
+    for (let i = 0; i < n; i += 1) seen.add(catsOn(i));
+    expect(seen.size).toBe(n);
+  });
+
+  it('comes back round to the start once they have all been used', () => {
+    const n = usableCombos().length;
+    expect(catsOn(n)).toBe(catsOn(0));
+    expect(catsOn(n + 1)).toBe(catsOn(1));
+  });
+
+  it('runs a year of real dates without repeating a category set', () => {
+    const seen = new Set();
+    for (let i = 0; i < 365; i += 1) {
+      const iso = new Date(Date.UTC(2026, 0, 1) + i * 86400000).toISOString().slice(0, 10);
+      seen.add(catsOn(dayIndexFor(iso), `langley|${iso}|connections`));
+    }
+    expect(seen.size).toBe(365);
+  });
+
+  it('survives a day index from before the epoch', () => {
+    // Negative dividends keep their sign in JS; a naive % would index off
+    // the front of the rotation and hand back undefined.
+    expect(() => dailyBoard('langley|x', -1)).not.toThrow();
+    expect(dailyBoard('langley|x', -1).groups).toHaveLength(GROUPS);
+  });
+});
+
+describe('the same day, seen from different places', () => {
+  const day = '2026-06-15';
+  const at = (centre) => dailyBoard(`${centre}|${day}|connections`, dayIndexFor(day));
+
+  it('gives every centre the same four categories', () => {
+    const cats = ['langley', 'chilliwack', 'abbotsford']
+      .map(c => at(c).groups.map(g => g.id).sort().join('+'));
+    expect(new Set(cats).size).toBe(1);
+  });
+
+  it('but not the same sixteen numbers', () => {
+    const tiles = ['langley', 'chilliwack', 'abbotsford']
+      .map(c => at(c).tiles.slice().sort((a, b) => a - b).join(','));
+    expect(new Set(tiles).size).toBe(3);
+  });
+});
+
+describe('practice, which wants a new board rather than today’s', () => {
+  it('varies without a day index, on one date', () => {
+    const cats = Array.from({ length: 5 }, (_, i) =>
+      dailyBoard(`langley|2026-06-15|connections|practice-${i}`)
+        .groups.map(g => g.id).sort().join('+'));
+    expect(new Set(cats).size).toBeGreaterThan(1);
+  });
+});
+
+describe('every combination the rotation can land on', () => {
+  it('makes a board with exactly one answer', () => {
+    // Not a sample — all of them. The rotation will reach every one, so a
+    // single unfair combination is a board somebody gets handed one day.
+    const bad = [];
+    usableCombos().forEach((_, i) => {
+      const board = dailyBoard(`langley|check-${i}`, i);
+      if (!hasUniqueSolution(board.groups)) bad.push(board.groups.map(g => g.id).join('+'));
+      if (new Set(board.tiles).size !== GROUPS * GROUP_SIZE) bad.push(`dupe tile: ${board.tiles}`);
+    });
+    expect(bad).toEqual([]);
+  });
+});
+
+describe('dayIndexFor', () => {
+  it('advances by exactly one per calendar day', () => {
+    expect(dayIndexFor('2026-09-29') - dayIndexFor('2026-09-28')).toBe(1);
+    expect(dayIndexFor('2027-01-01') - dayIndexFor('2026-12-31')).toBe(1);
+  });
+
+  it('does not slide across a daylight-saving change', () => {
+    // Read as UTC on purpose: the clocks going forward must not make two
+    // days share an index, or the rotation stalls for a day.
+    expect(dayIndexFor('2026-03-09') - dayIndexFor('2026-03-08')).toBe(1);
+    expect(dayIndexFor('2026-11-02') - dayIndexFor('2026-11-01')).toBe(1);
+  });
+
+  it('is null for anything that is not a date, so the board falls back', () => {
+    for (const junk of [null, undefined, '', 'today', '2026-9-8', '2026-09-08T10:00']) {
+      expect(dayIndexFor(junk), String(junk)).toBeNull();
     }
   });
 });

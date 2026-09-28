@@ -1,32 +1,33 @@
 import { Component, Suspense, lazy } from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { newLookHomeFor, isNewLookOn, setNewLook } from '../lib/newLook';
-import Home from './Home';
+import { homeFor } from '../lib/homeFor';
 
 const InstructorHome = lazy(() => import('./homes/InstructorHome'));
 const LeadershipHome = lazy(() => import('./homes/LeadershipHome'));
 
 /**
- * HomeSwitch — the classic Home, or one of the two new ones, with a floor
- * under it. Which new one is newLookHomeFor(): leadership run the centre,
- * everyone else works shifts, and they open the portal to ask different
- * questions.
+ * HomeSwitch — one of the two homes, with a floor under it.
  *
- * WHY THE LOCAL BOUNDARY MATTERS MORE THAN IT LOOKS
- *   The app-wide ErrorBoundary (App.jsx) replaces the ENTIRE UI with an
- *   error card — sidebar included. So a render error here would take the
- *   "back to classic" toggle down with it, and the only way out would be a
- *   deploy. That is precisely what this feature must be immune to.
+ * Which one is homeFor(): leadership run the centre, everyone else works
+ * shifts, and they open the portal to ask different questions.
  *
- *   It has already earned its keep once: the first version of this shipped
- *   with a crash in the (since removed) director board, and this is what
- *   put people back on the classic Home instead of stranding them.
+ * WHY THE LOCAL BOUNDARY IS STILL HERE, NOW THERE IS NOTHING TO FALL BACK TO
+ *   The app-wide ErrorBoundary in App.jsx replaces the ENTIRE UI with an
+ *   error card — sidebar included. So without this, a render error on the
+ *   home page would leave somebody with no navigation at all: no way to
+ *   their shifts, the desk or the schedule, and nothing to do but wait for
+ *   a deploy. It has already earned its keep once, catching a crash in the
+ *   since-removed director board.
  *
- *   If it throws: the classic Home renders in its place, the opt-in is
- *   switched back off so a reload doesn't loop into the same crash, and a
- *   quiet line explains what happened.
+ *   It used to catch that by dropping the person back onto the classic
+ *   Home. The classic Home was deleted on 2026-09-28, so the fallback is
+ *   now a plain card that says what happened and hands over the three
+ *   links that answer most of why anybody opens Ratio. The rest of the
+ *   portal is untouched and the sidebar survives, which is the whole
+ *   point of catching it here rather than letting App.jsx have it.
  */
-class NewHomeBoundary extends Component {
+class HomeBoundary extends Component {
   constructor(props) {
     super(props);
     this.state = { failed: false };
@@ -37,20 +38,46 @@ class NewHomeBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error(`[${this.props.which} home] fell back to the classic home:`, error, info);
-    try { setNewLook(this.props.uid, false); } catch { /* storage blocked */ }
+    console.error(`[${this.props.which} home] failed to render:`, error, info);
   }
 
   render() {
     if (this.state.failed) {
       return (
-        <>
-          <div className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-            The new home page hit an error, so you&apos;re back on the classic one.
-            Nothing else is affected — and nothing was lost.
+        <div className="mx-auto max-w-lg rounded-xl border border-amber-300 bg-amber-50 p-5">
+          <p className="text-sm font-semibold text-amber-900">
+            Your home page didn&apos;t load.
+          </p>
+          <p className="mt-1 text-sm text-amber-900/80">
+            Nothing is lost and the rest of Ratio is fine — it&apos;s just this page.
+            Reloading usually sorts it.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-amber-700 px-3 py-1.5 text-[13px] font-semibold text-white hover:bg-amber-800"
+            >
+              Reload
+            </button>
+            {/* The three questions that account for most visits. Without
+                these somebody whose home is broken has a sidebar and no
+                idea which of twenty links they wanted. */}
+            {[
+              { to: '/schedule', label: 'My schedule' },
+              { to: '/desk', label: 'Management Desk' },
+              { to: '/shift-board', label: 'Open shifts' },
+            ].map(l => (
+              <Link
+                key={l.to}
+                to={l.to}
+                className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-[13px] font-semibold text-amber-900 hover:bg-amber-100"
+              >
+                {l.label}
+              </Link>
+            ))}
           </div>
-          <Home />
-        </>
+        </div>
       );
     }
     return this.props.children;
@@ -59,18 +86,14 @@ class NewHomeBoundary extends Component {
 
 export default function HomeSwitch() {
   const auth = useAuth();
-  const uid = auth.profile?.uid;
-
-  if (!isNewLookOn(uid)) return <Home />;
-
-  const which = newLookHomeFor(auth);
-  const NewHome = which === 'leadership' ? LeadershipHome : InstructorHome;
+  const which = homeFor(auth);
+  const Home = which === 'leadership' ? LeadershipHome : InstructorHome;
 
   return (
-    <NewHomeBoundary uid={uid} which={which}>
+    <HomeBoundary which={which}>
       <Suspense fallback={<div className="p-6 text-sm text-gray-500">Loading…</div>}>
-        <NewHome />
+        <Home />
       </Suspense>
-    </NewHomeBoundary>
+    </HomeBoundary>
   );
 }

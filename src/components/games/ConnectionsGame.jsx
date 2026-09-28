@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Heart } from 'lucide-react';
 import { Btn } from '../newlook/ui';
-import { dailyBoard, judgeGuess, GROUP_SIZE, LIVES } from '../../lib/games/connections';
+import { dailyBoard, dayIndexFor, judgeGuess, GROUP_SIZE, LIVES } from '../../lib/games/connections';
 
 /**
  * Connections — sixteen numbers, four sets of four.
@@ -15,10 +15,15 @@ import { dailyBoard, judgeGuess, GROUP_SIZE, LIVES } from '../../lib/games/conne
  * underneath, named, so you leave knowing what the board was. Losing and
  * being told nothing is the one ending worth avoiding.
  *
+ * `date` is today, for the ranked board only. It puts the four categories
+ * on a rotation that cannot repeat until every combination has been used
+ * — see connections.js. Practice leaves it off on purpose: it wants a
+ * different board on demand, not today's one again.
+ *
  * Calls onFinish exactly once, with { groups, mistakes }.
  */
-export default function ConnectionsGame({ seed, onFinish }) {
-  const board = useMemo(() => dailyBoard(seed), [seed]);
+export default function ConnectionsGame({ seed, date = null, onFinish }) {
+  const board = useMemo(() => dailyBoard(seed, dayIndexFor(date)), [seed, date]);
   const [tiles, setTiles] = useState(board.tiles);
   const [picked, setPicked] = useState([]);
   const [solved, setSolved] = useState([]);      // the ones they got

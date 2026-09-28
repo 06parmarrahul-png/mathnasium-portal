@@ -4,7 +4,6 @@ import { ArrowRight, CalendarDays, Users, Clock } from 'lucide-react';
 import { db } from '../../firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { greeting } from '../../lib/greeting';
-import { setNewLook } from '../../lib/newLook';
 import { weekAhead, weekWindow } from '../../lib/centreEvents';
 import { LEAD_STATUSES } from '../../lib/leads';
 import { PAGES } from '../../lib/pageNames';
@@ -232,13 +231,6 @@ export default function LeadershipHome() {
             {greeting()}, {first}
           </h1>
         </div>
-        <button
-          type="button"
-          onClick={() => { setNewLook(profile?.uid, false); window.location.reload(); }}
-          className="-mr-1 mt-1 shrink-0 rounded-lg px-2 py-1.5 text-[11.5px] font-semibold underline underline-offset-2"
-          style={{ color: 'var(--nl-muted)' }}>
-          Classic view
-        </button>
       </div>
 
       {/* min-w-0 on BOTH columns, and it is load-bearing. A grid item

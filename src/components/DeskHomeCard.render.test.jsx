@@ -132,11 +132,12 @@ describe('what it says', () => {
     expect(screen.getByText(/Nothing waiting on you/)).toBeTruthy();
   });
 
-  it('the classic skin says the same thing in one line', () => {
+  it('has ONE skin — the classic home it rendered the other one for is gone', () => {
+    // It used to take variant="classic" because the desk's people were
+    // split across two homes. Deleted 2026-09-28 with the classic home.
     notes.rows = [note('late', { dueDate: '2026-09-14' }), note('b')];
-    setup({ variant: 'classic' });
-    expect(screen.getByText(/2 on you/)).toBeTruthy();
-    expect(screen.getByText(/1 overdue/)).toBeTruthy();
-    expect(screen.getByText(/oldest is 11 days/)).toBeTruthy();
+    setup({ variant: 'classic' });          // ignored now
+    expect(screen.getByText(/waiting on you/)).toBeTruthy();
+    expect(screen.queryByText(/oldest is 11 days/)).toBeNull();
   });
 });

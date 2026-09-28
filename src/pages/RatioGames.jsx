@@ -187,7 +187,9 @@ export default function RatioGames() {
             <Pill tone={playing.ranked ? 'brand' : 'flat'}>{playing.ranked ? 'Ranked' : 'Practice'}</Pill>
           </div>
           {/* The finished game stays mounted: this is where the answers are. */}
-          <Active seed={playing.seed} onFinish={finish} />
+          {/* date only when it counts: Connections uses it to rotate the
+              day's categories, and practice wants a fresh board instead. */}
+          <Active seed={playing.seed} date={playing.ranked ? today : null} onFinish={finish} />
           {!playing.done && (
             <div className="mt-3 text-center">
               <Btn size="sm" variant="quiet" onClick={() => { setPlaying(null); setLastRun(null); }}>

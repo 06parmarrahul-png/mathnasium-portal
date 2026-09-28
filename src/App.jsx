@@ -11,7 +11,6 @@ import OwnerAssistant from './components/OwnerAssistant';
 // don't want a Suspense flash on the front door.
 import Login from './pages/Login';
 import Signup from './pages/Signup';
-import Home from './pages/Home';
 import Landing from './pages/Landing';
 import { useAuth } from './contexts/AuthContext';
 
@@ -78,9 +77,9 @@ function RootGate() {
   if (ownerLike && !isSuperAdmin && !centerConfig?.completedOnboarding) {
     return <Navigate to="/onboarding" replace />;
   }
-  // HomeSwitch serves the classic Home unless this person opted in to the
-  // role-shaped one, and carries its own error boundary so a failure there
-  // can never take the sidebar (and its "back to classic" toggle) with it.
+  // HomeSwitch picks the leadership or the floor home and carries its own
+  // error boundary, so a failure there can never take the sidebar with it
+  // — App.jsx's boundary replaces the whole UI, navigation included.
   return <ProtectedRoute><Layout><HomeSwitch /></Layout></ProtectedRoute>;
 }
 
