@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   DEFAULT_INTAKE_SETTINGS, intakeCapFor, countIntakesOn,
   computeWeekSlots, validateSlot,
@@ -8,6 +8,26 @@ import {
 const WEEK = '2026-09-20';
 const FRIDAY = '2026-09-25';
 const THURSDAY = '2026-09-24';
+
+/**
+ * THE CLOCK IS FROZEN, and it has to be.
+ *
+ * The booking engine will not offer a slot that has already passed — it
+ * compares every start against Date.now(). The fixture week above is a
+ * fixed set of dates, so as the real clock moved past them the tests
+ * started failing one at a time: three on 24 Sep, five by the evening,
+ * thirteen of thirty-four by the 28th. Nothing was broken; the fixtures
+ * had simply expired, and a suite that fails for calendar reasons stops
+ * being able to tell anybody that intake booking is broken for real ones.
+ *
+ * Frozen to the Sunday morning the fixture week opens, so every slot in
+ * it is in the future exactly as the author intended, for good. Anything
+ * in here that needs a different "now" sets it for itself.
+ */
+const FROZEN_NOW = new Date('2026-09-20T08:00:00');
+
+beforeEach(() => { vi.useFakeTimers({ now: FROZEN_NOW, toFake: ['Date'] }); });
+afterEach(() => { vi.useRealTimers(); });
 
 // Open 15:00–19:00 every day, which gives 4 hour-long starts a day.
 const HOURS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -19,9 +39,11 @@ const settings = (over = {}) => ({
   slotDurationMin: 60,
   slotIntervalMin: 60,
   advanceNoticeHrs: 0,
-  // The fixture week is in the past relative to nothing in particular, so
-  // give the engine room rather than fighting its clock.
-  maxAdvanceDays: 365 * 50,
+  // Was 365 * 50, to reach a fixture week the real clock had left behind.
+  // The clock is frozen at the start of that week now, so the engine's
+  // ordinary window covers it and the tests exercise the real default
+  // rather than a number chosen to get out of the way.
+  maxAdvanceDays: 60,
   ...over,
 });
 
