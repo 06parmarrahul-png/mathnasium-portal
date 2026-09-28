@@ -524,6 +524,59 @@ off the desk — the same failure as the old `status == 'open'` query.
 `normaliseStatus()` maps it to `in_progress`, so they read correctly
 everywhere; they just have to be fetched first. No migration was needed.
 
+### The desk: who a note is for — initials, names, and "and"
+
+`readAddress()` in `deskParse.js` reads the line's opening. The sheet's own
+form is initials joined by a slash (`VB/NG`) and that still works untouched;
+**"and" and FIRST NAMES** were added on top, because "Rachel, can you call the
+Liu family" is how a person actually writes it.
+
+**NAMES NEED PUNCTUATION; INITIALS DO NOT.** That asymmetry is the whole care
+in the function. `NG please call` is unambiguous — a bare two-letter capital
+is not an English word — but `Rachel` is, and half the notes on this desk are
+ABOUT somebody. So a name only addresses a note when the line punctuates it as
+one: a terminating `,` `:` `-`, or a strong separator (`/ & +`, never prose).
+
+| written | read as |
+| --- | --- |
+| `NG/RR please call` | both |
+| `NG and RR please call` | both (all initials, no comma needed) |
+| `Rachel, can you call` | Rachel |
+| `Rachel and Neeru, can you` | both |
+| `Rachel/NG please call` | both |
+| `Rachel needs a care call` | **nobody** — a sentence about Rachel |
+| `Rachel and Neeru are off` | **nobody** |
+
+A bracketed preferred name addresses someone too: "Jieun (Joanne) Lee" answers
+to **Joanne**. An unknown CODE still addresses the note (`unknownCodes` — a
+colleague with no account yet); an unknown NAME does not, because it is far
+more likely to be a student or a parent.
+
+### The desk: clearing a spreadsheet import
+
+Re-importing duplicates everything — the sheet has no id to match rows on —
+so the import panel can take the last import back out first. `deskReset.js`
+plus the lower half of `DeskImport.jsx`.
+
+**IT REMOVES `imported: true` ROWS, NOT EVERYTHING, and that distinction is
+the feature.** Every row an import writes carries that stamp; notes the team
+has typed in Ratio since, and tracker rows added on the tabs, do not. They
+are not in the spreadsheet, so a re-import would not put them back — a blanket
+wipe would destroy the desk's real work to solve a duplicate problem that only
+concerns the imported half. The panel counts both sides and says what it is
+keeping before anything happens.
+
+What DOES go with an imported note: replies, settling and due dates added in
+Ratio to that note, because the note itself is going. The panel says so. The
+re-imported copy is the spreadsheet's version.
+
+**Owner tier only** (`isOwnerLike || isSuperAdmin`), matching the delete rule
+on those five collections — anyone else would be offered a button Firestore
+refuses halfway through. Confirmation is `requireText: 'DELETE <CENTRE>'`, so
+muscle memory can't clear the wrong centre, and it writes
+`desk.import_cleared` to the audit log. The cached settled archive is dropped
+afterwards (`onCleared`), or it would keep listing notes that no longer exist.
+
 ### The desk: acknowledging a note
 
 A note addressed to you carries an **Acknowledge** button; pressing it puts

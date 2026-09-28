@@ -82,7 +82,7 @@ function fmtDate(iso) {
 
 export default function ManagementDesk() {
   const { profile, activeCenterId, centerConfig, permissions, canSeeCenterSettings,
-    myInstructorType } = useAuth();
+    myInstructorType, isOwnerLike, isSuperAdmin } = useAuth();
   const [tab, setTab] = useState('notes');
   const allowed = canUseDesk({
     platformRole: profile?.role, instructorType: myInstructorType, permissions,
@@ -127,7 +127,11 @@ export default function ManagementDesk() {
 
       {tab === 'notes'
         ? <NotesTab profile={profile} centerId={activeCenterId} centerConfig={centerConfig}
-            canImport={canSeeCenterSettings} />
+            canImport={canSeeCenterSettings}
+            // Clearing an import is owner tier, matching the delete rule on
+            // these five collections. Anyone else would be offered a button
+            // Firestore refuses.
+            canReset={!!isOwnerLike || !!isSuperAdmin} />
         : <TrackerTab key={tab} spec={TRACKERS[tab]} centerId={activeCenterId} profile={profile} />}
     </div>
   );
@@ -168,7 +172,7 @@ const VIEWS = [
   { key: 'done', label: 'Settled' },
 ];
 
-function NotesTab({ profile, centerId, centerConfig, canImport }) {
+function NotesTab({ profile, centerId, centerConfig, canImport, canReset = false }) {
   const [open, setOpen] = useState(null);        // open notes, live
   const [archive, setArchive] = useState(null);  // settled, fetched on demand
   const [people, setPeople] = useState([]);
@@ -593,7 +597,22 @@ function NotesTab({ profile, centerId, centerConfig, canImport }) {
 
       {canImport && (
         <DeskImport centerId={centerId} members={members} students={students}
-          existingCount={all.length} />
+          existingCount={all.length} canReset={canReset}
+          // The settled archive is fetched once and cached, so after a
+          // reset it would still be listing notes that no longer exist.
+          // Drop it and let the next look at Settled fetch again.
+          onCleared={({ removed, byCollection }) => {
+            setArchive(null);
+            fetchedFor.current = null;
+            logAuditEvent(profile, {
+              action: AUDIT_ACTIONS.DESK_IMPORT_CLEARED,
+              centerId,
+              details: {
+                count: removed,
+                byCollection: Object.fromEntries(byCollection.map(l => [l.key, l.count])),
+              },
+            });
+          }} />
       )}
     </div>
   );
@@ -1290,13 +1309,14 @@ function Composer({ text, setText, parsed, onSend, sending, me, onClose }) {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); onSend(); }
             if (e.key === 'Escape') { e.preventDefault(); onClose(); }
           }}
-          placeholder="NG, can you please complete a care call for…"
+          placeholder="Rachel, can you please complete a care call for…"
           className="w-full resize-none px-4 py-3 text-[15.5px] leading-relaxed focus:outline-none" />
 
         <div className="flex min-h-[42px] flex-wrap items-center gap-1.5 border-t border-dashed bg-gray-50 px-3 py-2">
           {!text.trim() ? (
             <span className="text-[12.5px] text-gray-500">
-              Start with initials — <b>NG</b>, <b>VB/NG</b>, or <b>Everyone</b>.
+              Start with who it&apos;s for — <b>NG</b>, <b>Rachel</b>,
+              {' '}<b>VB/NG</b>, <b>Rachel and Neeru,</b> or <b>Everyone</b>.
             </span>
           ) : (
             <>

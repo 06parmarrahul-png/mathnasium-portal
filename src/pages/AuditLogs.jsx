@@ -83,6 +83,15 @@ export default function AuditLogs() {
         return `Terminated ${name}${c}`
           + (Number.isFinite(n) ? ` — ${n} record${n === 1 ? '' : 's'} erased` : '');
       }
+      case 'desk.notes_deleted': {
+        const n = e.details?.count;
+        return `Deleted ${Number.isFinite(n) ? n : 'some'} desk note${n === 1 ? '' : 's'}${c}`;
+      }
+      case 'desk.import_cleared': {
+        const n = e.details?.count;
+        return `Cleared the spreadsheet import${c}`
+          + (Number.isFinite(n) ? ` — ${n} row${n === 1 ? '' : 's'} removed` : '');
+      }
       case 'staff.orphans_purged': {
         const n = e.details?.documentsDeleted;
         return `Cleared orphaned records for ${e.details?.orphanName || 'a former staff member'}${c}`

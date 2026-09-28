@@ -85,6 +85,10 @@ export const AUDIT_ACTIONS = {
   // The desk settles notes rather than erasing them, so the rare erasure
   // is worth a line in the log.
   DESK_NOTES_DELETED: 'desk.notes_deleted',
+  // Clearing a spreadsheet import so an updated one can be brought in
+  // without duplicating it. Removes hundreds of rows in one press, which
+  // is exactly the kind of thing a log is for.
+  DESK_IMPORT_CLEARED: 'desk.import_cleared',
   // Clearing data left behind by an account deleted before Terminate
   // existed. Also written server-side.
   STAFF_ORPHANS_PURGED: 'staff.orphans_purged',

@@ -53,7 +53,92 @@ const EVERYONE_RE = [
   /^\s*all\s*[,:\-–—]\s*/i,
 ];
 
-const ADDRESS_RE = /^\s*((?:[A-Z]{2,3})(?:\s*[/,&+]\s*[A-Z]{2,3})*)\s*[,:\-–—]?\s/;
+/**
+ * Reading who a note is for.
+ *
+ * The sheet's own form is initials joined by a slash — "VB/NG" — and that
+ * is still what most people type. Two things were asked for on top: the
+ * word "and" between them, and FIRST NAMES, because "Rachel, can you call
+ * the Liu family" is how a person actually writes it.
+ *
+ * NAMES NEED PUNCTUATION AND INITIALS DO NOT, which is the whole care in
+ * this function. "NG please call" is unambiguous: a bare two-letter
+ * capital is not an English word. "Rachel" is — and half the notes on this
+ * desk are ABOUT somebody. So "Rachel needs a care call" is a sentence and
+ * stays one, while "Rachel, can you..." and "Rachel/NG please..." are
+ * addresses. A name only counts when the line punctuates it as one:
+ *
+ *   NG/RR please call            → both, on the sheet's own form
+ *   NG and RR, please call       → both
+ *   Rachel, can you call         → Rachel      (comma)
+ *   Rachel and Neeru, can you    → both        (comma after the list)
+ *   Rachel/NG please call        → both        (a slash is never prose)
+ *   Rachel needs a care call     → nobody      (a sentence about Rachel)
+ *   Rachel and Neeru are off     → nobody      (ditto, two of them)
+ *
+ * Unknown initials still address the note (see `unknownCodes`); an
+ * unknown NAME does not, because it is far more likely to be a student.
+ */
+
+// A slash, ampersand or plus is never prose — it carries an address on
+// its own. A comma or "and" is a list separator in ordinary sentences too,
+// so it takes a terminator before it counts.
+// A slash, ampersand or plus is never prose — it carries an address on
+// its own. A comma or "and" is a list separator in ordinary sentences too,
+// so those need the line to punctuate the address as well.
+const STRONG_SEP = /^\s*[/&+]\s*/;
+const LIST_SEP = /^\s*(?:,\s*(?:and\s+)?|\s+and\s+)/i;
+const TERMINATOR = /^\s*[,:\-–—]\s+/;
+const WORD = /^[A-Za-z][A-Za-z'’.-]*/;
+
+function readAddress(text, byCode, byFirst) {
+  // One name or one set of initials, if the string starts with one.
+  const takeToken = (str) => {
+    const word = str.match(WORD);
+    if (!word) return null;
+    const raw = word[0].replace(/\.$/, '');
+    const isCode = /^[A-Z]{2,3}$/.test(raw);
+    const person = isCode ? byCode.get(raw) : byFirst.get(raw.toLowerCase());
+    // An unknown CODE still addresses the note; an unknown name does not,
+    // because it is far more likely to be a student than a colleague.
+    if (!isCode && !person) return null;
+    return { token: { code: isCode ? raw : null, person: person || null }, len: word[0].length, isCode };
+  };
+
+  const first = takeToken(text);
+  if (!first) return null;
+
+  const tokens = [first.token];
+  let allInitials = first.isCode;
+  let strong = false;
+  let rest = text.slice(first.len);
+
+  for (;;) {
+    const strongSep = rest.match(STRONG_SEP);
+    const sep = strongSep || rest.match(LIST_SEP);
+    if (!sep) break;
+    const next = takeToken(rest.slice(sep[0].length));
+    // "NG, can you…" — the comma is the sentence's, not the list's. Leave
+    // it where it is so the terminator below can read it.
+    if (!next) break;
+    if (strongSep) strong = true;
+    tokens.push(next.token);
+    if (!next.isCode) allInitials = false;
+    rest = rest.slice(sep[0].length + next.len);
+  }
+
+  const term = rest.match(TERMINATOR);
+  if (term) rest = rest.slice(term[0].length);
+  // "NGplease" was never an address.
+  else if (rest !== '' && !/^\s/.test(rest)) return null;
+
+  // Initials and strong separators speak for themselves. A list of names
+  // needs the punctuation, or every sentence opening with a colleague's
+  // name would be read as a note to them.
+  if (!allInitials && !strong && !term) return null;
+
+  return { tokens, rest: rest.replace(/^\s+/, '') };
+}
 
 /**
  * @param text    what was typed
@@ -76,6 +161,12 @@ export function parseNote(text, { staff = [], students = [] } = {}) {
     if (code && !byCode.has(code)) byCode.set(code, s);
     const first = firstNameOf(s?.displayName).toLowerCase();
     if (first && !byFirst.has(first)) byFirst.set(first, s);
+    // A preferred name in brackets — "Rahul (Rocky) Parmar" — is what the
+    // centre actually calls them, so it addresses them too. Same map, so
+    // the first person to claim a name keeps it either way.
+    const alias = String(s?.displayName ?? '').match(/\(([^)]+)\)/);
+    const called = alias ? alias[1].trim().toLowerCase() : '';
+    if (called && !byFirst.has(called)) byFirst.set(called, s);
   }
 
   // A salutation is not part of the address. 172 notes open with "Hi".
@@ -101,22 +192,19 @@ export function parseNote(text, { staff = [], students = [] } = {}) {
     if (m) { out.toAll = true; rest = rest.slice(m[0].length); break; }
   }
 
-  // Leading initials, possibly several: "VB/NG", "RR, SK"
-  const lead = rest.match(ADDRESS_RE);
+  // Who it is for: "VB/NG", "RR, SK", "NG and RR", "Rachel, ", "Rachel/NG".
+  const lead = readAddress(rest, byCode, byFirst);
   if (lead) {
-    let used = false;
-    for (const code of lead[1].split(/[/,&+]/).map(c => c.trim()).filter(Boolean)) {
-      const hit = byCode.get(code);
-      if (hit) { add(hit); used = true; continue; }
+    for (const token of lead.tokens) {
+      if (token.person) { add(token.person); continue; }
       // A code the centre uses that has no Ratio account. The note still
       // files and still says who it is for; it simply cannot land in
       // anybody's list until that account exists — and the moment it does,
       // the code resolves on its own, because initials are derived from the
       // display name.
-      if (!out.unknownCodes.includes(code)) out.unknownCodes.push(code);
-      used = true;
+      if (token.code && !out.unknownCodes.includes(token.code)) out.unknownCodes.push(token.code);
     }
-    if (used) rest = rest.slice(lead[0].length);
+    rest = lead.rest;
   }
 
   // Who it's about. Longest match wins so "Lexie Liu" beats "Lexie".

@@ -75,6 +75,75 @@ describe('who it is for', () => {
   });
 });
 
+describe('"and", and first names', () => {
+  it('reads "and" between initials, like a person writes it', () => {
+    expect(P('NG and RR please check this').toUids).toEqual(['u-neeru', 'u-rachel']);
+    expect(P('NG, RR and SK please check this').toUids)
+      .toEqual(['u-neeru', 'u-rachel', 'u-sabrina']);
+    expect(P('VB & NG — card declined').toUids).toEqual(['u-vin', 'u-neeru']);
+  });
+
+  it('reads a first name where a comma makes it an address', () => {
+    const p = P('Rachel, can you please call the Liu family');
+    expect(p.toUids).toEqual(['u-rachel']);
+    expect(p.body).toBe('can you please call the Liu family');
+  });
+
+  it('reads a list of first names', () => {
+    expect(P('Rachel and Neeru, can you cover Friday').toUids)
+      .toEqual(['u-rachel', 'u-neeru']);
+    expect(P('Rachel, Neeru and Sabrina: staff meeting at 6').toUids)
+      .toEqual(['u-rachel', 'u-neeru', 'u-sabrina']);
+  });
+
+  it('mixes names and initials in one line', () => {
+    expect(P('Rachel and NG, can you cover Friday').toUids)
+      .toEqual(['u-rachel', 'u-neeru']);
+    expect(P('Rachel/NG please cover Friday').toUids)
+      .toEqual(['u-rachel', 'u-neeru']);
+  });
+
+  it('takes the name the centre actually calls someone', () => {
+    // A bracketed preferred name addresses them too.
+    const staff = [{ uid: 'u-jieun', displayName: 'Jieun (Joanne) Lee' }];
+    const p = parseNote('Joanne, can you print the DWPs', { staff, students: [] });
+    expect(p.toUids).toEqual(['u-jieun']);
+    expect(p.body).toBe('can you print the DWPs');
+  });
+
+  it('does NOT read a sentence that happens to start with a name', () => {
+    // Half the notes on this desk are ABOUT somebody. This is the case the
+    // punctuation rule exists for.
+    const p = P('Rachel needs a care call before Friday');
+    expect(p.toUids).toEqual([]);
+    expect(canSend(p)).toBe(false);
+    expect(P('Rachel and Neeru are both off on Friday').toUids).toEqual([]);
+  });
+
+  it('still reads bare initials with no punctuation at all', () => {
+    // "NG" is not an English word, so it never needed the comma.
+    expect(P('NG please call the family').toUids).toEqual(['u-neeru']);
+  });
+
+  it('does not take an unknown first name for an address', () => {
+    // An unknown CODE is kept — those are colleagues without accounts. An
+    // unknown name is far more likely to be a student or a parent.
+    const p = P('Mateo, can you help on Friday');
+    expect(p.toUids).toEqual([]);
+    expect(p.unknownCodes).toEqual([]);
+  });
+
+  it('leaves the body alone whichever form was used', () => {
+    for (const line of [
+      'NG and RR, please check this',
+      'Rachel and Neeru, please check this',
+      'Rachel/NG, please check this',
+    ]) {
+      expect(P(line).body, line).toBe('please check this');
+    }
+  });
+});
+
 describe('addressed to everyone', () => {
   it('reads every form the centre uses', () => {
     // 82 notes are addressed to ALL.
