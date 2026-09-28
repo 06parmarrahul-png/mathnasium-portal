@@ -40,7 +40,18 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOpti
 const { default: RatioGames } = await import('./RatioGames');
 const { GAME_LIST } = await import('../lib/ratioGames');
 const { dailyEquation } = await import('../lib/games/mathle');
-const { dailyBoard } = await import('../lib/games/connections');
+const { dailyBoard, dayIndexFor } = await import('../lib/games/connections');
+
+/**
+ * The ranked board for the mocked today.
+ *
+ * The day index is not optional here: the page passes it for a ranked run
+ * so the categories walk a rotation instead of being rolled fresh, and a
+ * board built without it is a different board.
+ */
+const RANKED_DAY = '2026-09-20';
+const rankedBoard = () =>
+  dailyBoard(`langley|${RANKED_DAY}|connections`, dayIndexFor(RANKED_DAY));
 const { roundsFor, ROUNDS } = await import('../lib/games/ratioRush');
 
 const row = (uid, date, points, extra = {}) => ({
@@ -257,7 +268,7 @@ describe('Connections', () => {
   it('deals sixteen tiles and four lives', () => {
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     expect(screen.getByText(/Pick four/)).toBeTruthy();
     for (const tile of board.tiles) {
       expect(screen.getAllByText(String(tile)).length).toBeGreaterThan(0);
@@ -267,7 +278,7 @@ describe('Connections', () => {
   it('solves a set and names it', () => {
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     for (const value of board.groups[0].items) {
       fireEvent.click(screen.getByRole('button', { name: String(value) }));
     }
@@ -278,7 +289,7 @@ describe('Connections', () => {
   it('writes the run once all four are found', () => {
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     for (const group of board.groups) {
       for (const value of group.items) {
         fireEvent.click(screen.getByRole('button', { name: String(value) }));
@@ -296,7 +307,7 @@ describe('Connections', () => {
     // the board away the moment the last life went.
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     loseConnections(board);
 
     for (const group of board.groups) {
@@ -311,7 +322,7 @@ describe('Connections', () => {
   it('keeps a set you did find apart from the ones it had to show you', () => {
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     for (const value of board.groups[0].items) {
       fireEvent.click(screen.getByRole('button', { name: String(value) }));
     }
@@ -327,7 +338,7 @@ describe('a finished run stays on screen', () => {
   it('waits to be dismissed instead of dropping you back on the roster', () => {
     setup();
     startGame('Connections');
-    const board = dailyBoard('langley|2026-09-20|connections');
+    const board = rankedBoard();
     loseConnections(board);
 
     // Still looking at the board, with the score alongside it.
@@ -403,7 +414,7 @@ describe('practice never counts', () => {
     setup();
     startGame('Connections', { practice: true });
     // The ranked seed is fixed to the date; practice adds a nonce.
-    const ranked = dailyBoard('langley|2026-09-20|connections').tiles.join();
+    const ranked = rankedBoard().tiles.join();
     const onScreen = screen.getAllByRole('button')
       .map(b => b.textContent).filter(t => /^\d+$/.test(t)).join();
     expect(onScreen).not.toBe(ranked);
