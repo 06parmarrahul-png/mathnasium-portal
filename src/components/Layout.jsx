@@ -53,6 +53,7 @@ export default function Layout({ children }) {
   const isOwnerLikeNav = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
   // Volunteers are unpaid and salaried staff aren't paid from the hourly
   // sheet, so a pay projection would be wrong for both.
+  const isDistrictManager = auth.isDistrictManager;
   const showPay = isHourlyPaid({ displayName: profile?.displayName, isVolunteer }, auth.centerConfig);
   const location = useLocation();
   const [open, setOpen] = useState(false);
@@ -194,7 +195,9 @@ export default function Layout({ children }) {
   // someone else's centre. Owners skip Schedule (the personal-availability
   // page) since they run the business rather than take individual shifts,
   // but AA gets it back (they ARE scheduled like staff).
-  if (!isSuperAdmin && !isOwner) {
+  // A district manager is on nobody's rota, so a personal schedule is an
+  // empty page with a promising name.
+  if (!isSuperAdmin && !isOwner && !isDistrictManager) {
     general.push({ to: PAGES.mySchedule.path, label: PAGES.mySchedule.name, icon: CalendarDays });
   }
   // Shift Board is for instructors and AA (anyone who can claim shifts).
@@ -210,7 +213,7 @@ export default function Layout({ children }) {
   }
   // Their own hours and an estimate of what those come to. Not for owners
   // (they read the real payroll sheet) or for anyone not paid by the hour.
-  if (!isOwnerLikeNav && showPay) {
+  if (!isOwnerLikeNav && !isDistrictManager && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
   // The district roll-up, for anyone who answers for more than one centre.
@@ -363,8 +366,14 @@ export default function Layout({ children }) {
   const communicate = [];
   // Volunteers get a bare-bones portal — no team messaging. The route
   // guard enforces it; this just keeps the sidebar honest.
-  if (!isSuperAdmin && !isOwner && !isVolunteer) {
+  // Team Chat is one centre's floor talking to itself, which is not a
+  // conversation a district manager belongs in. Theirs is Owner Chat,
+  // added below — the owners of every centre they answer for.
+  if (!isSuperAdmin && !isOwner && !isVolunteer && !isDistrictManager) {
     communicate.push({ to: PAGES.teamChat.path, label: PAGES.teamChat.name, icon: MessageSquare });
+  }
+  if (isDistrictManager) {
+    communicate.push({ to: PAGES.ownerChat.path, label: PAGES.ownerChat.name, icon: Sparkles });
   }
   // The centre's Manager is in Management Chat too — Managers took over the
   // Admin role (see src/lib/managementTier.js).
@@ -372,8 +381,10 @@ export default function Layout({ children }) {
     communicate.push({ to: PAGES.managementChat.path, label: PAGES.managementChat.name, icon: Headphones });
   }
   // Volunteers get the latest announcement on their Home page, which is
-  // the whole of what they need from it.
-  if (!isOwner && !isVolunteer) {
+  // the whole of what they need from it. A district manager is not on the
+  // receiving end of a centre's announcements either — those are written
+  // for the people working the floor that week.
+  if (!isOwner && !isVolunteer && !isDistrictManager) {
     communicate.push({ to: PAGES.announcements.path, label: PAGES.announcements.name, icon: Megaphone });
   }
   if (!isOwner) {

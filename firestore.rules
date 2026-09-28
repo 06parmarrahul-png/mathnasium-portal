@@ -246,6 +246,11 @@ service cloud.firestore {
     //
     // Mirrors PLATFORM_ROLE_PERMISSIONS.district_manager in src/lib/roles.js,
     // which grants exactly one permission and it is `district.view`.
+    /** Role only — for the cross-centre room, which belongs to no centre. */
+    function isDistrictManager() {
+      return profileExists() && profile().get('role', '') == 'district_manager';
+    }
+
     function isDistrictManagerAt(centerId) {
       return profileExists()
           && profile().get('role', '') == 'district_manager'
@@ -1299,12 +1304,22 @@ service cloud.firestore {
     // only. Admins were dropped when Leadership Chat split into two
     // scopes; admins use the per-centre centerLeadership channel below
     // for everything they used to use this for.
+    // Owner Chat — the cross-centre room. District managers are in it: the
+    // owners of the centres they answer for are who they need to reach,
+    // and there is no per-centre room that spans a province.
+    //
+    // This is the ONE place a district manager may write, and it writes
+    // nothing about any centre's operations. Admin Assistants stay out,
+    // as they always have.
+    function inOwnerChat() {
+      return isOwner() || isSuperAdmin() || isDistrictManager();
+    }
     match /platformChat/{msgId} {
-      allow read:   if isSignedIn() && (isOwner() || isSuperAdmin());
-      allow create: if isSignedIn() && (isOwner() || isSuperAdmin())
+      allow read:   if isSignedIn() && inOwnerChat();
+      allow create: if isSignedIn() && inOwnerChat()
                     && request.resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && (isOwner() || isSuperAdmin());
-      allow delete: if isOwner() || isSuperAdmin();
+      allow update: if isSignedIn() && inOwnerChat();
+      allow delete: if inOwnerChat();
     }
 
     // Centre Leadership Chat (Management Chat in the app) — per-centre

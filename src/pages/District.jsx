@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { AlertTriangle, Building2, CalendarDays, Users, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, Building2, Users, ShieldAlert } from 'lucide-react';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Card, Lbl, Pill, AllClear, Loading } from '../components/newlook/ui';
@@ -76,7 +76,6 @@ export default function District() {
   const [configs, setConfigs] = useState({});   // id → config doc
   const [staff, setStaff] = useState([]);
   const [rostered, setRostered] = useState({}); // id → today's shifts
-  const [unfilled, setUnfilled] = useState({}); // id → open shifts nobody took
   const [leadsBy, setLeadsBy] = useState({});   // id → that centre's leads
   const [now, setNow] = useState(() => Date.now());
 
@@ -108,13 +107,6 @@ export default function District() {
           [id]: snap.docs.map(d => ({ id: d.id, centreId: id, ...d.data() })),
         })),
         () => setLeadsBy(prev => ({ ...prev, [id]: [] }))));
-      stops.push(onSnapshot(
-        query(collection(db, 'openShifts'), where('centerId', '==', id)),
-        snap => setUnfilled(prev => ({
-          ...prev,
-          [id]: snap.docs.map(d => d.data()).filter(s => s.status === 'open' && s.date >= today),
-        })),
-        () => setUnfilled(prev => ({ ...prev, [id]: [] }))));
     }
     return () => stops.forEach(stop => stop());
   }, [allowed, centreIds, today]);
@@ -146,7 +138,12 @@ export default function District() {
     const live = (rostered[id] || []).filter(s => s.status !== 'draft' && s.status !== 'cancelled');
     return {
       centreId: id,
-      name: config.name || centres[id]?.name || id,
+      // The centres/{id} doc holds the centre's real name — "Mathnasium of
+      // Langley". config.name is a per-centre setting that DEFAULTS to the
+      // bare word "Mathnasium", so preferring it turned every centre in the
+      // district into the same anonymous row. The identity doc wins, which
+      // is the order Manage Roles and the signup picker already use.
+      name: centres[id]?.name || config.name || id,
       city: config.city || centres[id]?.city || '',
       province: config.province || centres[id]?.province || '',
       vitals,
@@ -154,10 +151,9 @@ export default function District() {
       freshness: freshnessOf(ageInDays(vitals)),
       staff: staffAt(staff, id),
       onToday: live.length,
-      unfilled: (unfilled[id] || []).length,
       hoursToday: config.instructionalHours || null,
     };
-  }), [centreIds, configs, centres, staff, rostered, unfilled]);
+  }), [centreIds, configs, centres, staff, rostered]);
 
   const totals = useMemo(() => rollUp(rows), [rows]);
 
@@ -185,7 +181,6 @@ export default function District() {
   // What needs him. Every one of these is a live read — the half of the
   // page Radius cannot produce.
   const quiet = rows.filter(r => r.onToday === 0);
-  const short = rows.filter(r => r.unfilled > 0);
   const silent = rows.filter(r => !r.vitals.reported);
   const stale = rows.filter(r => r.vitals.reported && r.freshness === 'stale');
 
@@ -257,16 +252,11 @@ export default function District() {
       {/* ── Exceptions ───────────────────────────────────────────── */}
       <div>
         <Lbl className="mb-1.5">Needs you</Lbl>
-        {quiet.length === 0 && short.length === 0 && silent.length === 0 && stale.length === 0 ? (
+        {quiet.length === 0 && silent.length === 0 && stale.length === 0 ? (
           <AllClear title="Nothing standing out"
-            note="Every centre is staffed today, no shift is going unclaimed, and the reported figures are current." />
+            note="Every centre is staffed today and the reported figures are current." />
         ) : (
           <div className="space-y-2.5">
-            {short.length > 0 && (
-              <Exception icon={<CalendarDays size={16} />}
-                title={`${short.reduce((n, r) => n + r.unfilled, 0)} shifts nobody has taken`}
-                note={short.map(r => `${r.name} (${r.unfilled})`).join(' · ')} />
-            )}
             {quiet.length > 0 && (
               <Exception icon={<Users size={16} />}
                 title={`${quiet.length} centre${quiet.length === 1 ? '' : 's'} with nobody rostered today`}
@@ -304,7 +294,6 @@ export default function District() {
                   <th className="px-3 py-2 text-right font-bold uppercase tracking-wider text-[10px]">Revenue</th>
                   <th className="px-3 py-2 text-right font-bold uppercase tracking-wider text-[10px]">Staff</th>
                   <th className="px-3 py-2 text-right font-bold uppercase tracking-wider text-[10px]">On today</th>
-                  <th className="px-3 py-2 text-right font-bold uppercase tracking-wider text-[10px]">Unfilled</th>
                 </tr>
               </thead>
               <tbody>
@@ -332,10 +321,6 @@ export default function District() {
                     <Cell v={money(r.vitals.monthlyRevenue)} />
                     <td className="px-3 py-2.5 text-right tabular-nums">{r.staff.count}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{r.onToday}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums"
-                      style={{ color: r.unfilled > 0 ? 'var(--nl-warn)' : 'inherit' }}>
-                      {r.unfilled}
-                    </td>
                   </tr>
                 ))}
               </tbody>

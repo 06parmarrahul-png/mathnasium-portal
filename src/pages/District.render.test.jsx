@@ -71,8 +71,10 @@ const centre = (name, over = {}) => ({
 });
 
 /** Put a centre's config in place, and (optionally) its live rows. */
-const seed = (id, config, { shifts = [], open = [] } = {}) => {
-  docs[`centers/${id}`] = { name: config.name, city: config.city, province: config.province };
+const seed = (id, config, { shifts = [], open = [], identityName } = {}) => {
+  docs[`centers/${id}`] = {
+    name: identityName ?? config.name, city: config.city, province: config.province,
+  };
   docs[`centers/${id}/config/main`] = config;
   collections[`shifts|centerId:${id}|date:${TODAY}`] = shifts;
   collections[`openShifts|centerId:${id}`] = open;
@@ -151,23 +153,17 @@ describe('the roll-up', () => {
 });
 
 describe('what needs him', () => {
-  it('counts shifts nobody has taken, and says where', () => {
+  it('leaves unfilled shifts to the centres', () => {
+    // Deliberately absent. Getting a shift covered is the centre's job
+    // this afternoon, not a district manager's — and a roll-up that lists
+    // them buries the things only he can act on.
     seed('langley', centre('Langley'), {
       open: [{ status: 'open', date: TODAY }, { status: 'open', date: TODAY }],
       shifts: [{ status: 'published' }],
     });
     draw(['langley']);
-    expect(screen.getByText(/2 shifts nobody has taken/)).toBeTruthy();
-    expect(screen.getByText(/Langley \(2\)/)).toBeTruthy();
-  });
-
-  it('ignores an open shift already claimed, or in the past', () => {
-    seed('langley', centre('Langley'), {
-      open: [{ status: 'claimed', date: TODAY }, { status: 'open', date: '2020-01-01' }],
-      shifts: [{ status: 'published' }],
-    });
-    draw(['langley']);
-    expect(screen.queryByText(/shifts nobody has taken/)).toBeNull();
+    expect(screen.queryByText(/nobody has taken/i)).toBeNull();
+    expect(screen.queryByText(/unfilled/i)).toBeNull();
   });
 
   it('flags a centre with nobody rostered today', () => {
@@ -226,5 +222,28 @@ describe('centre by centre', () => {
     const { container } = draw(['langley']);
     expect(container.querySelectorAll('input, textarea, select')).toHaveLength(0);
     expect(container.querySelectorAll('button')).toHaveLength(0);
+  });
+});
+
+describe('what a centre is called', () => {
+  it('uses the centre’s own name, not the config default', () => {
+    // centerConfig.name defaults to the bare word "Mathnasium" for every
+    // centre, so preferring it turned a district into eight identical
+    // rows. The centres/{id} doc is where the real name lives.
+    seed('langley', centre('Mathnasium', { city: 'Langley' }), {
+      identityName: 'Mathnasium of Langley',
+      shifts: [{ status: 'published' }],
+    });
+    draw(['langley']);
+    const table = screen.getByRole('table');
+    expect(within(table).getByText('Mathnasium of Langley')).toBeTruthy();
+    expect(within(table).queryByText('Mathnasium')).toBeNull();
+  });
+
+  it('falls back to the config name when the centre doc has none', () => {
+    seed('langley', centre('Langley'), { identityName: undefined, shifts: [{ status: 'published' }] });
+    docs['centers/langley'] = { city: 'Langley', province: 'British Columbia' };
+    draw(['langley']);
+    expect(within(screen.getByRole('table')).getByText('Langley')).toBeTruthy();
   });
 });

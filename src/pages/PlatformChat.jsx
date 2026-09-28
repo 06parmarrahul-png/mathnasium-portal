@@ -32,7 +32,7 @@ const ROLE_ORDER = { super_admin: 0, owner: 1, admin: 2 };
  */
 
 export default function PlatformChat() {
-  const { profile, activeCenterId, isSuperAdmin, isOwner, isOwnerLike, isAdmin } = useAuth();
+  const { profile, activeCenterId, isSuperAdmin, isOwner, isOwnerLike, isAdmin, isDistrictManager } = useAuth();
   const fmtTime = useTimeFormat();
   const [searchParams] = useSearchParams();
   // Management chat — the same people the centerLeadership rules let in:
@@ -42,7 +42,10 @@ export default function PlatformChat() {
   const canSeeCentre = isSuperAdmin || isOwnerLike || isAdmin || isCentreManager(profile, activeCenterId);
   // Owner Chat — strictly owners + Enterprise. AA is intentionally
   // excluded here even though they have owner-level access elsewhere.
-  const canSeeOwners = isSuperAdmin || isOwner;
+  // District managers sit here too: the owners of the centres they answer
+  // for are exactly the people they need, and this room is already the
+  // cross-centre one. Admin Assistants remain out, as before.
+  const canSeeOwners = isSuperAdmin || isOwner || isDistrictManager;
 
   // URL drives the view. `?view=owners` → Owner Chat; otherwise →
   // Management Chat. Fall back to whichever the user can actually see.

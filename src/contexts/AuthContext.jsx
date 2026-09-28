@@ -169,6 +169,10 @@ export function AuthProvider({ children }) {
   const isSuperAdmin       = role === 'super_admin';
   const isOwner            = role === 'owner';
   const isAdminAssistant   = role === 'admin_assistant';
+  // Answers for several centres and runs none of them. Distinct from
+  // can('district.view'), which an owner also holds — this is the person
+  // whose ONLY job is the roll-up, and it is what the sidebar keys off.
+  const isDistrictManager  = role === 'district_manager';
   const isAdmin            = role === 'admin';   // distinct from owner (no center settings)
   const isInstructor       = role === 'instructor';
   // Centre Directors and Directors of Education are top-of-org staff who
@@ -484,6 +488,7 @@ export function AuthProvider({ children }) {
       isOwner,
       isDirector,
       isAdminAssistant,
+      isDistrictManager,
       isOwnerLike,
       isAdmin,
       isInstructor,
