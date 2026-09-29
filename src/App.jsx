@@ -47,7 +47,6 @@ const ApptotoSchedule           = lazy(() => import('./pages/ApptotoSchedule'));
 const PublicBook                = lazy(() => import('./pages/PublicBook'));
 const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'));
 const Leads                     = lazy(() => import('./pages/Leads'));
-const CaseStudy                 = lazy(() => import('./pages/CaseStudy'));
 const Onboarding                = lazy(() => import('./pages/Onboarding'));
 const Inventory                 = lazy(() => import('./pages/Inventory'));
 const AvailabilityLog           = lazy(() => import('./pages/AvailabilityLog'));
@@ -195,7 +194,6 @@ function AppRoutes() {
             URL could read the whole lead list. */}
         <Route path="/leads"        element={<ProtectedRoute requireOwner><Layout><Leads /></Layout></ProtectedRoute>} />
         {/* Pulls student counts out of the Student Scheduler data. */}
-        <Route path="/case-study"   element={<ProtectedRoute requireOwner><Layout><CaseStudy /></Layout></ProtectedRoute>} />
         {/* Onboarding runs full-screen (no sidebar) until the owner finishes setup. */}
         <Route path="/onboarding"   element={<ProtectedRoute><Onboarding /></ProtectedRoute>} />
         <Route path="*" element={<NotFound />} />

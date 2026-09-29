@@ -1649,7 +1649,7 @@ different times.
 **Managers and Hosts hold `calendar.access` but CANNOT read `centerIntakes`** —
 that collection is `isOwnerLike() || isSuperAdmin()` in the rules, deliberately,
 because an assessment carries a parent's name, email and phone and those roles
-are kept off every other PII route (Leads, Case Study, Supply & Demand). So they
+are kept off every other PII route (Leads, Supply & Demand). So they
 see the Calendar with no assessments on it. The page now SAYS so instead of
 rendering a quiet empty layer, and hides the Import button from them rather than
 offering a write the rules will refuse. Widening the rule would cross a boundary
@@ -1875,6 +1875,40 @@ without `hour12`, and fails on either, so a thirteenth copy can't appear.
 Lib functions that build a sentence for the screen (`doubleBooking`,
 `availabilityLog`, `availabilityFit`) take the format as a last argument and
 default to 12-hour.
+
+## Pinned shortcuts — the answer to "can I rearrange my sidebar?"
+
+Up to **five** pages pinned to a strip at the top of the sidebar.
+`src/lib/pinnedPages.js`, rendered by `NavRow` in `Layout.jsx`, stored on
+`users/{uid}.pinnedPages` as an array of PATHS.
+
+**PINS ARE ADDITIVE AND ONLY ADDITIVE, and that is the whole design.** The
+ask was to let the management roles rearrange their sidebars — a Centre
+Director's carries fifty links. The reason not to: today the sidebar is a pure
+function of role, which is why "where is Manage Payroll?" has one answer and
+`Layout.render.test.jsx` can assert what all ten roles see. Let people reorder
+and every support question starts with "what does yours look like?"; let them
+HIDE and a page somebody tucked away becomes a bug report about a working
+feature. So a pin copies a link to the top. Nothing moves, nothing is hidden,
+the role's own sections sit underneath unchanged.
+
+- **Five, and the oldest does not fall off.** A sixth is refused with a toast
+  rather than silently pushing one out — a shortcut that disappears on its own
+  is worse than one you had to make room for, because you find out at the
+  moment you reached for it.
+- **A pin to a page they no longer have is dropped on sight** (role changed,
+  centre switched) but stays in storage, so it comes back if their access does.
+- **On the user doc, not localStorage** like the collapse state in
+  `navSections.js` — pins should follow somebody from the desk computer to
+  their phone, and when a sidebar looks wrong it is worth being able to see
+  what they pinned.
+- **The pin button is a SIBLING of the link, never a child**: a button inside
+  an anchor is invalid, and a click meant for the pin would navigate. Hidden
+  until hover on a desktop, always visible on a phone, where there is no hover.
+
+If full per-person layouts are ever built, the thing that makes them
+survivable is the same: store it where it can be read back, and put a **Reset
+to default** in Manage Roles and in their own settings.
 
 ## Cole — the mascot each person picks
 

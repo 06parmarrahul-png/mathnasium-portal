@@ -53,7 +53,6 @@ export const PAGES = {
   centreAnalytics:  { path: '/center-analytics',      name: 'Centre Analytics' },
   supplyDemand:     { path: '/supply-demand',         name: 'Supply & Demand' },
   staffingBudget:   { path: '/staffing-budget',       name: 'Staffing Budget' },
-  caseStudy:        { path: '/case-study',            name: 'Case Study' },
   centreSettings:   { path: '/center-settings',       name: 'Centre Settings' },
   connectors:       { path: '/connectors',            name: 'Connectors' },
 

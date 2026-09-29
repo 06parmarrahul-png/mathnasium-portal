@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { collection, onSnapshot, query, where, orderBy, limit } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, updateDoc, where, orderBy, limit } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import Mascot from './Mascot';
@@ -15,6 +15,10 @@ import { isHourlyPaid } from '../lib/payProjection';
 import { gamesEnabled } from '../lib/ratioGames';
 import { roleLabelFor } from '../lib/roleLabel';
 import { isCentreManager } from '../lib/managementTier';
+import {
+  resolvePins, togglePin, isPinned, canPin, pinnedItems, fullMessage,
+} from '../lib/pinnedPages';
+import { toast } from '../lib/notify';
 import { PAGES, PORTAL_NAME, PORTAL_SUBTITLE, documentTitleFor } from '../lib/pageNames';
 import CenterSwitcher from './CenterSwitcher';
 import {
@@ -22,8 +26,8 @@ import {
   Briefcase, Shield, BarChart3, DollarSign, Headphones, Building2, FileClock, UserCog,
   CalendarRange, Users, Wallet, ClipboardList, Plug, MessagesSquare, Sparkles, CalendarCheck,
   CalendarClock,
-  UserPlus, FileBarChart, Activity, Package, History, LayoutGrid,
-  StickyNote, Gamepad2, ChevronDown,
+  UserPlus, Activity, Package, History, LayoutGrid,
+  StickyNote, Gamepad2, ChevronDown, Pin, PinOff,
 } from 'lucide-react';
 
 // Eligibility logic mirrors ShiftBoard.canTake — kept here so the badge count
@@ -43,6 +47,55 @@ function todayStr() {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+/**
+ * One link in the sidebar, with its pin.
+ *
+ * The pin is a SIBLING of the link, not a child: a button inside an
+ * anchor is invalid, and more to the point a click meant for the pin
+ * would navigate. It keeps its own column so the row doesn't reflow when
+ * it appears — invisible until hover on a desktop, always there on a
+ * phone, where there is no hover to reveal it with.
+ */
+function NavRow({ item, active, onNavigate, pinned, pinnable, onTogglePin }) {
+  return (
+    <div className="group mb-1 flex items-center gap-1">
+      <Link
+        to={item.to}
+        onClick={onNavigate}
+        className={`flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
+      >
+        <item.icon size={18} className="shrink-0" />
+        <span className="flex-1 truncate">{item.label}</span>
+        {item.badge > 0 && (
+          <span className={`min-w-[20px] shrink-0 text-center rounded-full px-1.5 py-0.5 text-xs font-bold ${active ? 'bg-white text-red-600' : 'bg-orange-500 text-white'}`}>
+            {item.badge}
+          </span>
+        )}
+      </Link>
+      <button
+        type="button"
+        onClick={onTogglePin}
+        disabled={!pinnable}
+        aria-label={pinned ? `Unpin ${item.label}` : `Pin ${item.label}`}
+        title={pinned ? `Unpin ${item.label}`
+          : pinnable ? `Pin ${item.label} to the top`
+          : fullMessage()}
+        // One opacity utility, not two: a class list carrying both
+        // lg:opacity-0 and lg:opacity-100 is decided by the order Tailwind
+        // happens to emit them in, which is not a thing to rely on. A pin
+        // already on the strip stays visible so it can be taken off again.
+        className={`shrink-0 rounded-lg p-1.5 transition-opacity hover:bg-gray-700 hover:text-white disabled:cursor-not-allowed disabled:opacity-30 ${
+          pinned
+            ? 'text-gray-200 lg:opacity-100'
+            : 'text-gray-400 lg:opacity-0 lg:focus:opacity-100 lg:group-hover:opacity-100'
+        }`}
+      >
+        {pinned ? <PinOff size={14} /> : <Pin size={14} />}
+      </button>
+    </div>
+  );
 }
 
 export default function Layout({ children }) {
@@ -299,7 +352,6 @@ export default function Layout({ children }) {
     intelligence.push({ to: PAGES.centreAnalytics.path, label: PAGES.centreAnalytics.name, icon: BarChart3 });
     intelligence.push({ to: PAGES.supplyDemand.path,    label: PAGES.supplyDemand.name,    icon: Activity });
     intelligence.push({ to: PAGES.staffingBudget.path,  label: PAGES.staffingBudget.name,  icon: Wallet });
-    intelligence.push({ to: PAGES.caseStudy.path,       label: PAGES.caseStudy.name,       icon: FileBarChart });
   }
 
   // CENTRE — configuration. Sits at the bottom because owners touch it
@@ -428,6 +480,13 @@ export default function Layout({ children }) {
     set: new Set(toggleCollapsed(profile?.uid, label)),
   });
 
+  // PINS — the five shortcuts at the top. Kept on the user doc beside the
+  // mascot and the clock, not in localStorage like the collapse state, for
+  // two reasons: they should follow somebody from the desk computer to
+  // their phone, and when a sidebar looks wrong to somebody it is worth
+  // being able to see what they pinned.
+  const [draftPins, setDraftPins] = useState(null);
+
   const navSections = useOwnerLayout
     ? [
         { label: 'General',      items: general      },
@@ -445,6 +504,36 @@ export default function Layout({ children }) {
         { label: 'Enterprise',  items: enterprise  },
         { label: 'Settings',    items: settingsSection },
       ].filter(s => s.items.length > 0);
+
+  // Every link on this sidebar, flattened — a pin is only shown when the
+  // page it points at is one this person still has.
+  const flatItems = useMemo(
+    () => navSections.flatMap(section => section.items),
+    [navSections],
+  );
+  const storedPins = useMemo(
+    () => resolvePins(profile?.pinnedPages, flatItems.map(i => i.to)),
+    [profile?.pinnedPages, flatItems],
+  );
+  // The draft is stamped with the uid for the same reason the collapse
+  // state is: signing into another account must not show them the last
+  // person's strip for a render.
+  const pins = draftPins && draftPins.uid === profile?.uid ? draftPins.list : storedPins;
+  const pinned = useMemo(() => pinnedItems(pins, flatItems), [pins, flatItems]);
+
+  const flipPin = async (item) => {
+    if (!profile?.uid) return;
+    const next = togglePin(pins, item.to);
+    if (next === pins) { toast.error(fullMessage()); return; }
+    setDraftPins({ uid: profile.uid, list: next });
+    try {
+      await updateDoc(doc(db, 'users', profile.uid), { pinnedPages: next });
+    } catch (err) {
+      // Put it back rather than leaving a pin that looks saved and isn't.
+      setDraftPins({ uid: profile.uid, list: pins });
+      toast.error(err?.message || 'Could not save that pin.');
+    }
+  };
 
   // Path equality + (when the link carries a ?tab= query string)
   // also matches the active tab. This keeps Manage Schedule /
@@ -502,6 +591,22 @@ export default function Layout({ children }) {
         </div>
 
         <nav className="mt-3 flex-1 min-h-0 overflow-y-auto flex flex-col gap-1 px-3 pb-4">
+          {/* PINNED — additive, never a replacement. The role's own sections
+              sit underneath, unchanged, so "where is it?" still has one
+              answer for everybody. Hidden until somebody pins something. */}
+          {pinned.length > 0 && (
+            <div className="mb-4">
+              <p className="mb-1 px-3 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                Pinned
+              </p>
+              {pinned.map(item => (
+                <NavRow key={`pin-${item.to}`} item={item} active={isActive(item)}
+                  onNavigate={() => setOpen(false)}
+                  pinned pinnable onTogglePin={() => flipPin(item)} />
+              ))}
+            </div>
+          )}
+
           {navSections.map((section, idx) => {
             const hasActive = sectionHasActive(section.items, isActive);
             const open = isSectionOpen({ label: section.label, index: idx, collapsed, hasActive });
@@ -540,25 +645,13 @@ export default function Layout({ children }) {
                   </button>
                 )
               )}
-              {open && section.items.map(item => {
-                const active = isActive(item);
-                return (
-                  <Link
-                    key={item.to + (item.label || '')}
-                    to={item.to}
-                    onClick={() => setOpen(false)}
-                    className={`mb-1 flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${active ? 'bg-red-600 text-white shadow-md' : 'text-gray-300 hover:bg-gray-700 hover:text-white'}`}
-                  >
-                    <item.icon size={18} />
-                    <span className="flex-1">{item.label}</span>
-                    {item.badge > 0 && (
-                      <span className={`min-w-[20px] text-center rounded-full px-1.5 py-0.5 text-xs font-bold ${active ? 'bg-white text-red-600' : 'bg-orange-500 text-white'}`}>
-                        {item.badge}
-                      </span>
-                    )}
-                  </Link>
-                );
-              })}
+              {open && section.items.map(item => (
+                <NavRow key={item.to + (item.label || '')} item={item} active={isActive(item)}
+                  onNavigate={() => setOpen(false)}
+                  pinned={isPinned(pins, item.to)}
+                  pinnable={canPin(pins, item.to)}
+                  onTogglePin={() => flipPin(item)} />
+              ))}
             </div>
             );
           })}

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';   // this file is transformed with the classic JSX runtime
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { render, cleanup, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 /**
@@ -15,9 +15,11 @@ import { MemoryRouter } from 'react-router-dom';
  */
 
 vi.mock('../firebase', () => ({ db: {}, auth: {}, storage: {} }));
+const writes = [];
 vi.mock('firebase/firestore', () => ({
   collection: () => ({}), query: () => ({}), where: () => ({}), orderBy: () => ({}), limit: () => ({}),
-  doc: () => ({}),
+  doc: (_db, coll, id) => ({ __path: `${coll}/${id}` }),
+  updateDoc: async (ref, data) => { writes.push({ path: ref.__path, data }); },
   onSnapshot: (q, next) => { if (typeof next === 'function') next({ docs: [] }); return () => {}; },
 }));
 vi.mock('./CenterSwitcher', () => ({ default: () => null }));
@@ -86,8 +88,9 @@ const PEOPLE = {
   volunteer: { role: 'instructor', title: 'Volunteer', volunteer: true },
 };
 
-function draw(who, { newHome = false, at = '/' } = {}) {
+function draw(who, { newHome = false, at = '/', pins = null } = {}) {
   current.auth = authFor(PEOPLE[who]);
+  if (pins) current.auth.profile.pinnedPages = pins;
   localStorage.clear();
   if (newHome) localStorage.setItem(`ratio-new-look:${current.auth.profile.uid}`, 'on');
   const { container } = render(<MemoryRouter initialEntries={[at]}><Layout><div /></Layout></MemoryRouter>);
@@ -316,5 +319,76 @@ describe('the Calendar reaches management and stops there', () => {
       staffRoles: [{ name: 'Host', permissions: HOST_WITHOUT }],
       knownPermissions: HOST_WITHOUT,
     })).toContain(CALENDAR);
+  });
+});
+
+
+describe('pinned shortcuts', () => {
+  const DESK = PAGES.desk.path;
+  const PAYROLL = PAGES.managePayroll.path;
+
+  beforeEach(() => { writes.length = 0; });
+
+  it('shows nothing until somebody pins something', () => {
+    const { container } = draw('owner');
+    expect([...container.querySelectorAll('aside nav p')]
+      .map(p => p.textContent)).not.toContain('Pinned');
+  });
+
+  it('puts a pinned page at the top AND leaves it where it was', () => {
+    // The whole point: pins are additive. "Where is the Desk?" has the
+    // same answer for everyone whether or not they pinned it.
+    const { container, sidebar } = draw('owner', { pins: [DESK] });
+    const headers = [...container.querySelectorAll('aside nav p')].map(p => p.textContent);
+    expect(headers[0]).toBe('Pinned');
+    expect(sidebar.filter(x => x === PAGES.desk.name)).toHaveLength(2);
+  });
+
+  it('keeps the pin order, not the sidebar order', () => {
+    const { container } = draw('owner', { pins: [PAYROLL, DESK] });
+    const pinnedLinks = [...container.querySelectorAll('aside nav > div:first-child a')]
+      .map(a => a.getAttribute('href'));
+    expect(pinnedLinks).toEqual([PAYROLL, DESK]);
+  });
+
+  it('ignores a pin to a page this person does not have', () => {
+    // An instructor with a pin to Manage Payroll — role changed, or they
+    // moved centre. A link into a wall is worse than no shortcut.
+    const { container, sidebar } = draw('instructor', { pins: [PAYROLL] });
+    expect([...container.querySelectorAll('aside nav p')].map(p => p.textContent))
+      .not.toContain('Pinned');
+    expect(sidebar).not.toContain(PAGES.managePayroll.name);
+  });
+
+  it('saves a pin to the user doc, where it follows them between devices', () => {
+    const { container } = draw('owner');
+    const button = [...container.querySelectorAll('aside nav button')]
+      .find(b => b.getAttribute('aria-label') === `Pin ${PAGES.desk.name}`);
+    expect(button).toBeTruthy();
+    fireEvent.click(button);
+    expect(writes).toHaveLength(1);
+    expect(writes[0].path).toBe(`users/${current.auth.profile.uid}`);
+    expect(writes[0].data.pinnedPages).toEqual([DESK]);
+  });
+
+  it('unpins from the strip itself', () => {
+    const { container } = draw('owner', { pins: [DESK] });
+    const button = [...container.querySelectorAll('aside nav button')]
+      .find(b => b.getAttribute('aria-label') === `Unpin ${PAGES.desk.name}`);
+    fireEvent.click(button);
+    expect(writes[0].data.pinnedPages).toEqual([]);
+  });
+
+  it('stops at five, without dropping one you already had', () => {
+    const five = [PAGES.home.path, PAGES.chats.path, PAGES.studentScheduler.path,
+      PAGES.staffingBoard.path, DESK];
+    const { container } = draw('owner', { pins: five });
+    const sixth = [...container.querySelectorAll('aside nav button')]
+      .find(b => b.getAttribute('aria-label') === `Pin ${PAGES.managePayroll.name}`);
+    expect(sixth.disabled).toBe(true);
+    fireEvent.click(sixth);
+    expect(writes).toHaveLength(0);
+    // The five they have are still unpinnable-from, i.e. still there.
+    expect([...container.querySelectorAll('aside nav > div:first-child a')]).toHaveLength(5);
   });
 });
