@@ -48,8 +48,8 @@
 
 import { Resend } from 'resend';
 import { authenticateRequest, getFirestore } from './_lib/firebase-admin.js';
-import { createHmac, timingSafeEqual } from 'node:crypto';
 import { verifyTwilioSignature } from './_lib/twilioSignature.js';
+import { unsubscribeToken, tokenMatches } from './_lib/unsubscribe.js';
 import { recordConsent, contactKey } from './_lib/consentStore.js';
 import { parseInboundKeyword, stopReply, helpReply, normalisePhone } from '../src/lib/consent.js';
 
@@ -112,28 +112,6 @@ function bodyToText({ to_name, body, cta_text, cta_link }) {
   if (cta_link) txt += `\n\n${cta_text || 'Open the portal'}: ${cta_link}`;
   txt += `\n\n— Ratio`;
   return txt;
-}
-
-/**
- * The token that lets an email's unsubscribe link work without a login.
- *
- * Derived, not stored: HMAC of centre + channel + address under a server
- * secret. Nothing to look up, nothing to leak from the database, and a
- * link cannot be edited into somebody else's address without the secret.
- */
-export function unsubscribeToken(centreId, channel, address) {
-  const secret = process.env.UNSUBSCRIBE_SECRET || process.env.RESEND_API_KEY || '';
-  return createHmac('sha256', secret)
-    .update(`${centreId}|${channel}|${String(address).toLowerCase()}`)
-    .digest('base64url')
-    .slice(0, 32);
-}
-
-function tokenMatches(given, expected) {
-  const a = Buffer.from(String(given || ''));
-  const b = Buffer.from(String(expected || ''));
-  if (!a.length || a.length !== b.length) return false;
-  try { return timingSafeEqual(a, b); } catch { return false; }
 }
 
 /** Twilio wants TwiML back, or an empty 200 to say nothing. */

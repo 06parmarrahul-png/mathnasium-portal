@@ -36,6 +36,7 @@
 import { Resend } from 'resend';
 import { getFirestore } from '../_lib/firebase-admin.js';
 import { runInventorySweep } from '../_lib/inventory-alerts.js';
+import { runIntakeReminderSweep } from '../_lib/intake-reminders.js';
 
 // Lazy Resend client — same pattern as the rest of api/.
 let _resend = null;
@@ -194,6 +195,33 @@ export default async function handler(req, res) {
     inventory = { error: err.message || String(err) };
   }
 
+  // ─── Assessment reminders for families ─────────────────────────────
+  // Rides along for the same reason the inventory sweep does. Every send
+  // passes the consent gate first, so a family who replied STOP is not
+  // texted by this even though they booked.
+  //
+  // Wrapped so a reminder problem can never stop the staff shift
+  // reminders below, which is the job this cron was built for.
+  let intakeReminders = null;
+  try {
+    intakeReminders = await runIntakeReminderSweep({
+      db,
+      fromAddress,
+      portalUrl: process.env.PORTAL_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null),
+      resend: resendClient(),
+    });
+  } catch (err) {
+    console.error('[intake-reminders] sweep failed:', err);
+    intakeReminders = { error: err.message || String(err) };
+  }
+
+  // ?remindersOnly=1 runs just the family reminders and returns — lets
+  // you test one against your own booking without firing shift emails at
+  // real staff.
+  if (req.query?.remindersOnly) {
+    return res.status(200).json({ ok: true, intakeReminders });
+  }
+
   // ?inventoryOnly=1 runs just the sweep and returns — lets you test the
   // low-stock email without firing shift reminders at real staff.
   // Add &force=1 to bypass throttling.
@@ -225,7 +253,7 @@ export default async function handler(req, res) {
   });
 
   if (lookups.length === 0) {
-    return res.status(200).json({ scanned: 0, sent: 0, message: 'No users due reminders', inventory });
+    return res.status(200).json({ scanned: 0, sent: 0, message: 'No users due reminders', inventory, intakeReminders });
   }
 
   // For each (user, target date) pair, pull the matching shift(s) and decide
@@ -268,7 +296,7 @@ export default async function handler(req, res) {
   }
 
   if (toSend.length === 0) {
-    return res.status(200).json({ scanned: lookups.length, sent: 0, message: 'No matching shifts', inventory });
+    return res.status(200).json({ scanned: lookups.length, sent: 0, message: 'No matching shifts', inventory, intakeReminders });
   }
 
   const resend = resendClient();
@@ -309,5 +337,6 @@ export default async function handler(req, res) {
     failed,
     errors,
     inventory,
+    intakeReminders,
   });
 }
