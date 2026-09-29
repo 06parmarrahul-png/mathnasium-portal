@@ -167,7 +167,29 @@ export function importSummary(payload, members, students = []) {
     receipts: (payload?.receipts || []).length,
     referrals: (payload?.referrals || []).length,
     studentOfMonth: (payload?.studentOfMonth || []).length,
+    // HOW FRESH THE FILE IS. The panel showed a row count and nothing
+    // else, so a spreadsheet downloaded weeks ago looked exactly like
+    // today's — and one was imported believing it was current. The
+    // newest note in the file is the honest answer to "is this the
+    // latest sheet", so it goes on screen before the button.
+    ...noteDateRange(payload?.notes),
   };
+}
+
+/**
+ * The span of dates a file covers, from the notes in it.
+ *
+ * Nulls rather than today's date when there is nothing to read: an empty
+ * file has no span, and inventing one would put a reassuring date under a
+ * file that has nothing in it.
+ */
+export function noteDateRange(rows) {
+  const dates = (rows || [])
+    .map(r => r?.loggedAt)
+    .filter(d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}/.test(d))
+    .map(d => d.slice(0, 10))
+    .sort();
+  return { oldest: dates[0] || null, newest: dates[dates.length - 1] || null };
 }
 
 /** Firestore takes at most 500 writes per batch. */

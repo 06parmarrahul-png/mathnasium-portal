@@ -570,6 +570,13 @@ What DOES go with an imported note: replies, settling and due dates added in
 Ratio to that note, because the note itself is going. The panel says so. The
 re-imported copy is the spreadsheet's version.
 
+**THE PANEL SAYS HOW OLD THE FILE IS**, because a workbook downloaded weeks
+ago converts just as happily as today's and the JSON looks identical either
+way — a 17-day-old sheet was nearly imported as current. `noteDateRange()` in
+`deskImport.js` reads the span off the notes; the summary shows the newest
+one, in amber past three days, and `desk_import_convert.py` prints the same
+line when it writes the file.
+
 **Owner tier only** (`isOwnerLike || isSuperAdmin`), matching the delete rule
 on those five collections — anyone else would be offered a button Firestore
 refuses halfway through. Confirmation is `requireText: 'DELETE <CENTRE>'`, so

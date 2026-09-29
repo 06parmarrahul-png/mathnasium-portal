@@ -28,6 +28,22 @@ import { toast, confirmDialog } from '../lib/notify';
  * that — scoped to the rows an import wrote (`imported: true`) and never
  * to the notes the team has typed in Ratio since. See deskReset.js.
  */
+/** "11 Sep 2026" — local noon, so a bare date is not yesterday. */
+function fmtDay(iso) {
+  const d = new Date(`${iso}T12:00:00`);
+  return Number.isNaN(d.getTime()) ? iso
+    : d.toLocaleDateString('en-CA', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** Whole days between the newest note in the file and today. */
+function staleDays(iso) {
+  const then = new Date(`${iso}T12:00:00`).getTime();
+  if (Number.isNaN(then)) return 0;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12).getTime();
+  return Math.max(0, Math.round((today - then) / 86400000));
+}
+
 export default function DeskImport({
   centerId, members, students = [], existingCount = 0, canReset = false,
   onCleared = null,
@@ -282,6 +298,19 @@ export default function DeskImport({
 
       {summary && !progress && (
         <div className="mt-3 rounded-lg border bg-white p-3 text-[13px] text-gray-700">
+          {/* How fresh the file is, first — a sheet downloaded weeks ago
+              looks exactly like today's once it is JSON. */}
+          {summary.newest && (
+            <p className="mb-2 rounded-lg bg-gray-100 px-2.5 py-1.5 text-[12.5px] text-gray-700">
+              Newest note in this file: <b>{fmtDay(summary.newest)}</b>
+              {summary.oldest && <> · oldest {fmtDay(summary.oldest)}</>}
+              {staleDays(summary.newest) >= 3 && (
+                <span className="ml-1 font-semibold text-amber-700">
+                  — {staleDays(summary.newest)} days ago. Download the sheet again if that isn&apos;t right.
+                </span>
+              )}
+            </p>
+          )}
           <p className="mb-1.5 font-semibold text-gray-900">This is what it will add:</p>
           <ul className="space-y-0.5">
             <li>{summary.notes} notes — {summary.open} of them still open</li>

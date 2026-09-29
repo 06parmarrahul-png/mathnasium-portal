@@ -211,6 +211,22 @@ def main():
         print('  %-16s %d' % (k, len(payload[k])))
     print('  %-16s %d' % ('notes still open', sum(1 for n in notes if n['status'] == 'open')))
 
+    # HOW OLD THE WORKBOOK IS. A copy downloaded weeks ago converts just as
+    # happily as today's and produces a file that looks identical, so say
+    # what the newest note in it is dated — the one number that answers
+    # "is this the current sheet".
+    dates = sorted(n['loggedAt'] for n in notes if n.get('loggedAt'))
+    if dates:
+        newest = dates[-1]
+        print('  %-16s %s → %s' % ('notes dated', dates[0], newest))
+        try:
+            behind = (date.today() - datetime.strptime(newest, '%Y-%m-%d').date()).days
+            if behind >= 3:
+                print('\n  ! The newest note in this file is %d days old.' % behind)
+                print('    Download the sheet again if you meant to import today\'s.')
+        except ValueError:
+            pass
+
 
 if __name__ == '__main__':
     main()

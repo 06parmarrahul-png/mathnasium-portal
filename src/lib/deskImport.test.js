@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   resolveInitials, isEveryone, parseReplySignature,
-  noteFromRow, notesFromRows, importSummary, chunk, BATCH_LIMIT,
+  noteFromRow, notesFromRows, importSummary, noteDateRange, chunk, BATCH_LIMIT,
 } from './deskImport';
 
 /**
@@ -276,5 +276,41 @@ describe('what an imported note knows about itself', () => {
     const n = noteFromRow(row(), MEMBERS);
     expect(() => n).not.toThrow();
     expect(n.aboutLinked).toBe(false);
+  });
+});
+
+
+describe('how fresh the file is', () => {
+  const rows = [
+    { loggedAt: '2026-09-11', body: 'newest' },
+    { loggedAt: '2025-05-07', body: 'oldest' },
+    { loggedAt: '2026-08-30', body: 'middle' },
+  ];
+
+  it('reads the span from the notes themselves', () => {
+    // The mistake this exists to prevent: a sheet downloaded weeks ago
+    // looks exactly like today's once it is JSON, and one was imported
+    // believing it was current.
+    expect(noteDateRange(rows)).toEqual({ oldest: '2025-05-07', newest: '2026-09-11' });
+  });
+
+  it('trims a timestamp down to the day', () => {
+    expect(noteDateRange([{ loggedAt: '2026-09-11T14:02:00Z' }]).newest).toBe('2026-09-11');
+  });
+
+  it('ignores anything that is not a date', () => {
+    expect(noteDateRange([{ loggedAt: 'sometime' }, { loggedAt: null }, {}]))
+      .toEqual({ oldest: null, newest: null });
+  });
+
+  it('has no span for an empty file, rather than pretending it is today', () => {
+    expect(noteDateRange([])).toEqual({ oldest: null, newest: null });
+    expect(noteDateRange(undefined)).toEqual({ oldest: null, newest: null });
+  });
+
+  it('puts the span on the summary the panel reads', () => {
+    const summary = importSummary({ notes: rows }, [], []);
+    expect(summary.newest).toBe('2026-09-11');
+    expect(summary.oldest).toBe('2025-05-07');
   });
 });
