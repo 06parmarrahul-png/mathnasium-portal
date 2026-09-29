@@ -2509,6 +2509,23 @@ function StatPayTab({ holidays, rows }) {
   );
 }
 
+/**
+ * The number beside a payroll heading.
+ *
+ * Payroll is a sequence — pick the period, load Radius, work the red
+ * rows, send it — and the page used to present it out of order, with the
+ * export sitting above the import it depends on. The order is fixed now;
+ * the numbers say so out loud, for somebody running it for the first
+ * time who has nobody to ask.
+ */
+function PayrollStep({ n }) {
+  return (
+    <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gray-900 text-xs font-bold text-white">
+      {n}
+    </span>
+  );
+}
+
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
   const { user, activeCenterId, centerConfig, centreName, canSeeCenterSettings, canManageOperations } = useAuth();
@@ -7387,6 +7404,7 @@ export default function Admin() {
           {/* Pay period selector */}
           <div className="rounded-xl border bg-white p-5 shadow-sm">
             <div className="flex items-center gap-2 mb-4">
+              <PayrollStep n={1} />
               <CalendarRange size={18} className="text-green-600" />
               <h3 className="font-semibold text-gray-900">Select Pay Period</h3>
             </div>
@@ -7459,48 +7477,65 @@ export default function Admin() {
                     )}
                   </div>
                 </div>
-                {/* Unresolved counter — aggregates red rows across all
-                    visible persons. Pulls from comparisonSummary (which
-                    overlays Radius matches onto payrollSummary). When
-                    there's no Radius import yet, comparisonSummary is
-                    null and we fall back to payrollSummary, where no
-                    discrepancies are computed → zero unresolved. */}
-                {(() => {
-                  const rows = (comparisonSummary?.perPerson) || [];
-                  let unresolved = 0;
-                  for (const p of rows) {
-                    for (const s of (p.shiftComparisons || [])) {
-                      // No-shows are explained, not outstanding — never count them.
-                      // Future shifts aren't outstanding work — they just
-                      // haven't happened. Counting them made the export
-                      // warning fire on every mid-period run.
-                      if (payrollNeedsReview(s)) unresolved++;
-                    }
-                  }
-                  return (
-                    <div className="flex items-center gap-3">
-                      {unresolved > 0 ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700"
-                          title="Click Resolve on each red row after reviewing.">
-                          ⚠ {unresolved} unresolved
-                        </span>
-                      ) : (
-                        rows.length > 0 && (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
-                            ✓ all resolved
-                          </span>
-                        )
-                      )}
-                      <button onClick={() => handleExportFinalPayroll(unresolved)}
-                        className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
-                        <Download size={15} /> Export Final Payroll
-                      </button>
-                    </div>
-                  );
-                })()}
               </div>
             )}
           </div>
+
+          {/* Radius Import — auto-collapses to a one-line chip once
+              entries are loaded, so it doesn't waste vertical space on
+              the working flow (reconcile rows → resolve → export).
+              Click the chip to expand and re-import a different file. */}
+          {payrollSummary.length > 0 && radiusData.length > 0 && !radiusExpanded && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-2.5 shadow-sm flex items-center gap-3">
+              <CheckCircle size={16} className="text-blue-600 shrink-0" />
+              <div className="flex-1 text-sm">
+                <span className="font-semibold text-blue-900">Radius timesheet loaded:</span>{' '}
+                <span className="text-blue-800">{radiusData.length} entries</span>
+                {radiusFileName && <span className="text-blue-600 ml-1">· {radiusFileName}</span>}
+              </div>
+              <button
+                onClick={() => setRadiusExpanded(true)}
+                className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100">
+                Re-import
+              </button>
+            </div>
+          )}
+          {payrollSummary.length > 0 && (radiusData.length === 0 || radiusExpanded) && (
+            <div className="rounded-xl border bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-1">
+                <PayrollStep n={2} />
+                <h3 className="font-semibold text-gray-900">Radius Timesheet Import</h3>
+                {radiusData.length > 0 && (
+                  <>
+                    <span className="ml-2 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                      {radiusData.length} entries loaded
+                    </span>
+                    <button onClick={() => setRadiusExpanded(false)}
+                      className="ml-auto text-xs font-semibold text-gray-500 hover:text-gray-800">
+                      Collapse
+                    </button>
+                  </>
+                )}
+              </div>
+              <p className="text-sm text-gray-500 mb-4">
+                Upload the Radius Excel export for this pay period. The portal will compare actual sign-in/out times against scheduled shifts and flag any discrepancies.
+              </p>
+              <label className="flex items-center gap-3 cursor-pointer w-fit">
+                <div className="flex items-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors">
+                  <Download size={15} className="rotate-180" />
+                  {radiusFileName ? `Loaded: ${radiusFileName}` : 'Upload Radius Export (.xlsx)'}
+                </div>
+                <input type="file" accept=".xlsx" onChange={handleRadiusImport} className="hidden" />
+              </label>
+              {radiusError && <p className="mt-2 text-sm text-red-600">{radiusError}</p>}
+              {radiusData.length > 0 && (
+                <button onClick={() => { setRadiusData([]); setRadiusFileName(''); }}
+                  className="mt-2 text-xs text-gray-400 hover:text-red-500">
+                  Clear Radius data
+                </button>
+              )}
+            </div>
+          )}
 
           {/* Radius entries for people who aren't on hourly payroll. Stated
               plainly rather than dropped in silence, so it's clear they were
@@ -7579,62 +7614,6 @@ export default function Admin() {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
-
-          {/* Radius Import — auto-collapses to a one-line chip once
-              entries are loaded, so it doesn't waste vertical space on
-              the working flow (reconcile rows → resolve → export).
-              Click the chip to expand and re-import a different file. */}
-          {payrollSummary.length > 0 && radiusData.length > 0 && !radiusExpanded && (
-            <div className="rounded-xl border border-blue-200 bg-blue-50 p-2.5 shadow-sm flex items-center gap-3">
-              <CheckCircle size={16} className="text-blue-600 shrink-0" />
-              <div className="flex-1 text-sm">
-                <span className="font-semibold text-blue-900">Radius timesheet loaded:</span>{' '}
-                <span className="text-blue-800">{radiusData.length} entries</span>
-                {radiusFileName && <span className="text-blue-600 ml-1">· {radiusFileName}</span>}
-              </div>
-              <button
-                onClick={() => setRadiusExpanded(true)}
-                className="rounded-md border border-blue-300 bg-white px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100">
-                Re-import
-              </button>
-            </div>
-          )}
-          {payrollSummary.length > 0 && (radiusData.length === 0 || radiusExpanded) && (
-            <div className="rounded-xl border bg-white p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-1">
-                <div className="w-2 h-2 rounded-full bg-blue-500" />
-                <h3 className="font-semibold text-gray-900">Radius Timesheet Import</h3>
-                {radiusData.length > 0 && (
-                  <>
-                    <span className="ml-2 rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                      {radiusData.length} entries loaded
-                    </span>
-                    <button onClick={() => setRadiusExpanded(false)}
-                      className="ml-auto text-xs font-semibold text-gray-500 hover:text-gray-800">
-                      Collapse
-                    </button>
-                  </>
-                )}
-              </div>
-              <p className="text-sm text-gray-500 mb-4">
-                Upload the Radius Excel export for this pay period. The portal will compare actual sign-in/out times against scheduled shifts and flag any discrepancies.
-              </p>
-              <label className="flex items-center gap-3 cursor-pointer w-fit">
-                <div className="flex items-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-blue-100 transition-colors">
-                  <Download size={15} className="rotate-180" />
-                  {radiusFileName ? `Loaded: ${radiusFileName}` : 'Upload Radius Export (.xlsx)'}
-                </div>
-                <input type="file" accept=".xlsx" onChange={handleRadiusImport} className="hidden" />
-              </label>
-              {radiusError && <p className="mt-2 text-sm text-red-600">{radiusError}</p>}
-              {radiusData.length > 0 && (
-                <button onClick={() => { setRadiusData([]); setRadiusFileName(''); }}
-                  className="mt-2 text-xs text-gray-400 hover:text-red-500">
-                  Clear Radius data
-                </button>
-              )}
             </div>
           )}
 
@@ -8412,6 +8391,72 @@ export default function Admin() {
               </div>
             </div>
           )}
+          {/* ── STEP 3: send it ────────────────────────────────────────
+              This button used to sit at the TOP, inside the pay-period
+              card — above the Radius import it depends on and above the
+              red rows it refuses to run with. Somebody who had not been
+              shown the job read the page in order and exported first.
+
+              It is last now, under the table it summarises, and it
+              carries the figure that is actually leaving: what you are
+              about to send, and whether anything is still unresolved. */}
+          {payrollSummary.length > 0 && (() => {
+            // Unresolved counter — aggregates red rows across all visible
+            // persons. Pulls from comparisonSummary (which overlays Radius
+            // matches onto payrollSummary). When there's no Radius import
+            // yet, comparisonSummary is null and we fall back to
+            // payrollSummary, where no discrepancies are computed → zero
+            // unresolved.
+            const rows = (comparisonSummary?.perPerson) || [];
+            let unresolved = 0;
+            for (const p of rows) {
+              for (const s of (p.shiftComparisons || [])) {
+                // No-shows are explained, not outstanding — never count
+                // them. Future shifts aren't outstanding work either;
+                // counting them made the warning fire on every mid-period
+                // run.
+                if (payrollNeedsReview(s)) unresolved++;
+              }
+            }
+            return (
+              <div className="rounded-xl border bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center gap-2">
+                  <PayrollStep n={3} />
+                  <h3 className="font-semibold text-gray-900">Export Final Payroll</h3>
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="text-sm">
+                    <span className="text-gray-500">{payPeriodLabel} · </span>
+                    <span className="text-gray-500">Total payable: </span>
+                    <span className="font-bold text-green-700"
+                      title="Worked + payable sick + stat. This is the Total Payable Hrs column in the export.">
+                      {Math.round(totalPayableHours * 100) / 100}h
+                    </span>
+                    <span className="ml-2 text-gray-500">across {payrollSummary.length} staff</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {unresolved > 0 ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-bold text-red-700"
+                        title="Click Resolve on each red row above after reviewing.">
+                        ⚠ {unresolved} unresolved
+                      </span>
+                    ) : (
+                      rows.length > 0 && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-700">
+                          ✓ all resolved
+                        </span>
+                      )
+                    )}
+                    <button onClick={() => handleExportFinalPayroll(unresolved)}
+                      className="flex items-center gap-2 rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-green-700 transition-colors">
+                      <Download size={15} /> Export Final Payroll
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+
           </>)}{/* ─── end of "This Period" sub-tab ─── */}
         </div>
       )}
