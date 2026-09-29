@@ -14,7 +14,9 @@
 // the same membership check.
 
 import { Buffer } from 'node:buffer';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { getFirestore, authenticateRequest } from './_lib/firebase-admin.js';
+import { normaliseApptotoEvent } from '../src/lib/apptotoEvent.js';
 
 const APPTOTO_BASE = process.env.APPTOTO_API_BASE || 'https://api.apptoto.com/v1';
 
@@ -203,8 +205,160 @@ async function handleTestConnection(req, res, auth) {
   return res.status(200).json({ ok: true, sampleEventCount: arr.length });
 }
 
+// ── Inbound booking webhook ──────────────────────────────────────────
+//
+//   POST /api/apptoto?action=booking&centerId=…
+//   Header: X-Ratio-Secret: <the centre's webhook secret>
+//
+// Apptoto calls this when a family books. Ratio writes the same pair a
+// booking on its own page writes — an intake and a lead — so everything
+// downstream (Assessments this week, the funnel, the district roll-up)
+// treats an Apptoto booking exactly like a native one.
+//
+// WHY IT LIVES IN THIS FILE. Vercel's Hobby plan allows twelve functions
+// and this project already has twelve; two of them carry comments saying
+// they were merged to stay under it. A new file would be the thirteenth.
+//
+// WHY IT IS ANSWERED BEFORE THE AUTH GATE. Apptoto has no Firebase
+// account. It proves itself with a per-centre shared secret instead, and
+// nothing else on this endpoint accepts that secret.
+
+/** Constant-time compare that cannot throw on a length mismatch. */
+function secretMatches(given, expected) {
+  if (typeof given !== 'string' || typeof expected !== 'string') return false;
+  if (!given || !expected) return false;
+  const a = Buffer.from(given);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+async function handleWebhook(req, res) {
+  const centerId = req.query.centerId;
+  if (!centerId) return res.status(400).json({ error: 'centerId required' });
+
+  const fs = getFirestore();
+  const credsSnap = await fs.doc(`centerIntegrations/${centerId}__apptoto`).get();
+  const secret = credsSnap.exists ? credsSnap.data().webhookSecret : null;
+  if (!secret) {
+    return res.status(403).json({ error: 'No webhook secret set for this centre.' });
+  }
+
+  const given = req.headers['x-ratio-secret'] || req.query.key;
+  if (!secretMatches(String(given || ''), String(secret))) {
+    // Deliberately vague: a caller guessing secrets learns nothing from it.
+    return res.status(403).json({ error: 'Rejected.' });
+  }
+
+  // Apptoto wraps the event differently depending on the trigger, so take
+  // whichever of these carries it.
+  const raw = req.body?.event || req.body?.calendar_event || req.body?.data || req.body;
+  const ev = normaliseApptotoEvent(raw);
+
+  // No id means a retry could never be recognised; no start means it is
+  // not an appointment. Either way this is not something to half-write.
+  if (!ev.usable) {
+    return res.status(422).json({
+      error: 'Unreadable booking — needs an event id and a start time.',
+      saw: { eventId: ev.eventId, startISO: ev.startISO },
+    });
+  }
+  if (!ev.isAssessment) {
+    // Apptoto carries the whole calendar, staff meetings included. Not an
+    // error — just not a booking Ratio has any business filing.
+    return res.status(200).json({ ok: true, ignored: 'not an assessment', title: ev.title });
+  }
+
+  // Deterministic ids ARE the idempotency. A webhook that fires twice
+  // writes the same document twice, which is a no-op, instead of giving
+  // one family two assessments and the funnel two leads.
+  const intakeId = `apptoto_${centerId}_${ev.eventId}`;
+  const leadId   = `apptoto_${ev.eventId}`;
+  const intakeRef = fs.collection('centerIntakes').doc(intakeId);
+
+  if ((await intakeRef.get()).exists) {
+    return res.status(200).json({ ok: true, duplicate: true, intakeId });
+  }
+
+  // Mirrors the payload POST /api/intakes writes, field for field, so the
+  // management screens cannot tell the two apart. `source` is the one
+  // deliberate difference: it is what answers "how many bookings still
+  // come through Apptoto", which is the number that says when to cancel.
+  await intakeRef.set({
+    slot: ev.startISO,
+    durationMin: 60,
+    email:        (ev.email || '').toLowerCase(),
+    phone:        ev.phone || '',
+    guardianName: ev.name || '',
+    childName:    '',
+    childGrade:   '',
+    childSchool:  '',
+    smsOptIn:     false,
+    notes:        ev.title ? `Booked in Apptoto as "${ev.title}"` : '',
+    status:       'scheduled',
+    source:       'apptoto',
+    apptotoEventId: ev.eventId,
+    bookedAt:     new Date().toISOString(),
+    centerId,
+  });
+
+  // As on the native path, a failed lead must not fail the booking: the
+  // assessment is real and already written.
+  let leadWritten = false;
+  try {
+    const now = new Date().toISOString();
+    await fs.doc(`centers/${centerId}/leads/${leadId}`).set({
+      parentName:   ev.name || '',
+      parentEmail:  ev.email || '',
+      parentPhone:  ev.phone || '',
+      childName:    '',
+      childGrade:   '',
+      childSchool:  '',
+      status:       'new',
+      source:       'apptoto',
+      sourceDetail: `Booked in Apptoto for ${new Date(ev.startISO).toLocaleString()}`,
+      notes:        '',
+      assignedTo:   '',
+      history: [{ at: now, by: 'system', text: 'Created from an Apptoto booking' }],
+      intakeId,
+      apptotoEventId: ev.eventId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+    leadWritten = true;
+  } catch (e) {
+    console.error('Apptoto lead mirror failed:', e?.message || e);
+  }
+
+  return res.status(200).json({ ok: true, intakeId, leadWritten });
+}
+
+/** Mint (or replace) the secret Apptoto will send, and the URL to paste. */
+async function handleRotateSecret(req, res, auth) {
+  const { centerId } = req.body || {};
+  if (!centerId) return res.status(400).json({ error: 'centerId required' });
+  if (!canUseIntegration(auth.profile, centerId)) {
+    return res.status(403).json({ error: 'Not authorized for this centre' });
+  }
+  const secret = randomBytes(24).toString('base64url');
+  await getFirestore()
+    .doc(`centerIntegrations/${centerId}__apptoto`)
+    .set({ webhookSecret: secret, webhookSecretAt: new Date(), centerId, vendor: 'apptoto' }, { merge: true });
+  return res.status(200).json({ ok: true, secret });
+}
+
 // ── Method router ────────────────────────────────────────────────────
 export default async function handler(req, res) {
+  // Before the auth gate on purpose — see handleWebhook.
+  if (req.method === 'POST' && req.query.action === 'booking') {
+    try {
+      return await handleWebhook(req, res);
+    } catch (e) {
+      console.error('apptoto webhook error:', e);
+      return res.status(500).json({ error: 'Internal error' });
+    }
+  }
+
   let auth;
   try {
     auth = await authenticateRequest(req);
@@ -215,6 +369,9 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET')  return await handleEvents(req, res, auth);
+    if (req.method === 'POST' && req.body?.action === 'rotate-webhook-secret') {
+      return await handleRotateSecret(req, res, auth);
+    }
     if (req.method === 'POST') return await handlePost(req, res, auth);
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {

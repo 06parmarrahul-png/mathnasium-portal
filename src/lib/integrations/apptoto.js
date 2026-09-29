@@ -84,3 +84,31 @@ export async function fetchApptotoEvents(centerId, { start, end } = {}) {
   if (!r.ok) throw new Error(body?.error || `Request failed (${r.status})`);
   return body;
 }
+
+/**
+ * Mint the secret Apptoto will send back, and the URL it sends it to.
+ *
+ * The secret is generated server-side and stored beside the API key; the
+ * only time the browser sees it is the moment it is created, which is the
+ * moment somebody needs to paste it. Rotating it invalidates the old one,
+ * so a webhook left configured in an Apptoto account nobody controls any
+ * more stops working the moment this is pressed.
+ */
+export async function rotateApptotoWebhookSecret(centerId) {
+  const token = await auth.currentUser?.getIdToken();
+  if (!token) return { ok: false, error: 'Not signed in.' };
+  const r = await fetch('/api/apptoto', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ action: 'rotate-webhook-secret', centerId }),
+  });
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) return { ok: false, error: body.error || `HTTP ${r.status}` };
+  return { ok: true, secret: body.secret, url: webhookUrlFor(centerId) };
+}
+
+/** Where Apptoto posts a new booking for this centre. */
+export function webhookUrlFor(centerId) {
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  return `${origin}/api/apptoto?action=booking&centerId=${encodeURIComponent(centerId)}`;
+}

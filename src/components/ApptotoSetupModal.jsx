@@ -7,7 +7,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import {
   getApptotoStatus, saveApptotoCredentials, clearApptotoCredentials,
-  testApptotoConnection,
+  testApptotoConnection, rotateApptotoWebhookSecret, webhookUrlFor,
 } from '../lib/integrations/apptoto';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -18,6 +18,7 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
   const [email,  setEmail]  = useState('');
   const [apiKey, setApiKey] = useState('');
   const [status, setStatus] = useState({ configured: false });
+  const [hook, setHook] = useState(null);   // { secret, url } — shown once, on creation
   const [busy,   setBusy]   = useState(false);
   const [error,  setError]  = useState('');
   const [ok,     setOk]     = useState(null); // null | success-message string
@@ -121,6 +122,41 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
             </div>
           )}
 
+          {status.configured && (
+            <div className="rounded-lg border border-gray-200 px-3 py-3">
+              <p className="text-xs font-semibold text-gray-700">Send new bookings straight to Ratio</p>
+              <p className="mt-1 text-xs text-gray-500">
+                With this set, a family booking in Apptoto lands in Ratio as an assessment and a lead —
+                the same pair a booking on Ratio&rsquo;s own page creates. Run both for a while and the
+                lead source tells you how many people still come through Apptoto.
+              </p>
+              {hook ? (
+                <div className="mt-2.5 space-y-2">
+                  <Field label="Webhook URL" value={hook.url} />
+                  <Field label="Header — X-Ratio-Secret" value={hook.secret} />
+                  <p className="text-[11px] text-amber-700">
+                    The secret is shown once. Paste it into Apptoto now; generating another replaces it.
+                  </p>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    const r = await rotateApptotoWebhookSecret(activeCenterId);
+                    setBusy(false);
+                    if (r.ok) setHook({ secret: r.secret, url: r.url || webhookUrlFor(activeCenterId) });
+                    else setError(r.error || 'Could not create the webhook secret.');
+                  }}
+                  className="mt-2.5 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+                >
+                  Create webhook details
+                </button>
+              )}
+            </div>
+          )}
+
           <ol className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 space-y-1.5 list-decimal list-inside">
             <li>Sign in to <a href="https://www.apptoto.com/" target="_blank" rel="noreferrer" className="underline inline-flex items-center gap-0.5">Apptoto <ExternalLink size={10}/></a>.</li>
             <li>Open <strong>Settings → Integrations → API</strong>.</li>
@@ -199,6 +235,25 @@ export default function ApptotoSetupModal({ open, onClose, onSaved }) {
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** A value meant to be copied out, not read. */
+function Field({ label, value }) {
+  return (
+    <div>
+      <div className="text-[11px] font-semibold text-gray-500">{label}</div>
+      <div className="mt-0.5 flex items-center gap-2">
+        <code className="min-w-0 flex-1 truncate rounded bg-gray-50 px-2 py-1 text-[11px] text-gray-800">{value}</code>
+        <button
+          type="button"
+          onClick={() => navigator.clipboard?.writeText(value)}
+          className="shrink-0 rounded border border-gray-300 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-50"
+        >
+          Copy
+        </button>
       </div>
     </div>
   );

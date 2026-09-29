@@ -36,9 +36,16 @@ const ID_KEYS = ['id', 'event_id', 'eventId', 'uuid', 'guid', 'calendar_event_id
  * "Appointment Booked" is Apptoto's default subject when something is
  * booked through the calendar, so it counts. The rest are the words
  * centres actually title these with.
+ *
+ * NOTE THE \w* ON assess AND consult. The version this was gathered from
+ * ended every alternative with \b, which meant /\bassess\b/ could not
+ * match "Assessment" — the single likeliest title a centre gives these —
+ * because the boundary fails against the following "m". Same for
+ * "Consultation". Those two take a suffix; the rest keep their boundary,
+ * so "tour" still does not match "tournament".
  */
 export const ASSESSMENT_RE =
-  /\b(assess|intake|consult|trial|new\s*student|tour|appointment\s*booked|booked)\b/i;
+  /\b(assess\w*|intake|consult\w*|trial|new\s*student|tour|appointment\s*booked|booked)\b/i;
 
 const pickFromKeys = (obj, keys) => {
   if (!obj || typeof obj !== 'object') return null;

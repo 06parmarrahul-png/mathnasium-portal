@@ -20,47 +20,19 @@ import {
   CalendarCheck, Plug, Loader2, AlertTriangle, ExternalLink, ChevronRight,
 } from 'lucide-react';
 
-// Apptoto's /events response uses different field names across endpoints
-// and account versions. Try every common shape so the dashboard isn't
-// silently empty when one of them differs.
-const START_KEYS = [
-  'start_time', 'start_date', 'start', 'startTime', 'starts_at', 'startsAt',
-  'dt_start', 'dtstart', 'event_start', 'calendar_event_start', 'time_start',
-  'datetime', 'at', 'when',
-];
-const TITLE_KEYS = [
-  'title', 'calendar_event_name', 'name', 'summary', 'subject',
-  'event_title', 'appointment_type',
-];
-const pickFromKeys = (obj, keys) => {
-  if (!obj || typeof obj !== 'object') return null;
-  for (const k of keys) if (obj[k]) return obj[k];
-  return null;
-};
-const pickStart = (e) =>
-  pickFromKeys(e, START_KEYS)
-  || pickFromKeys(e?.calendar_event, START_KEYS)
-  || pickFromKeys(e?.time, START_KEYS)
-  || null;
-const pickTitle = (e) =>
-  pickFromKeys(e, TITLE_KEYS)
-  || pickFromKeys(e?.calendar_event, TITLE_KEYS)
-  || '(untitled)';
-const pickContact = (e) => {
-  if (!e) return '';
-  const direct = e.contact_name || e.attendee_name || e.client_name;
-  if (direct) return direct;
-  const c = e.contact || e.address_book_contact || (Array.isArray(e.participants) && e.participants[0]);
-  if (!c) return '';
-  return c.name
-    || `${c.first_name || ''} ${c.last_name || ''}`.trim()
-    || c.email || c.phone || '';
-};
+// One reading of an Apptoto event, shared with the API side. This file
+// used to carry its own copy of the key spellings and the assessment
+// test — and that copy could not match "Assessment", the likeliest title
+// of all, because every alternative ended in \b. See apptotoEvent.js.
+import {
+  startISOOf as pickStart, titleOf, contactOf, ASSESSMENT_RE,
+} from '../lib/apptotoEvent';
 
-// "Appointment Booked" is Apptoto's default subject when something gets
-// booked via the calendar — treat that as an intake too. Also keep the
-// generic keywords so we still catch consults, trials, etc.
-const ASSESSMENT_RE = /\b(assess|intake|consult|trial|new\s*student|tour|appointment\s*booked|booked)\b/i;
+const pickTitle = (e) => titleOf(e) || '(untitled)';
+const pickContact = (e) => {
+  const c = contactOf(e);
+  return c.name || c.email || c.phone || '';
+};
 
 function startOfWeek(d) {
   const x = new Date(d);

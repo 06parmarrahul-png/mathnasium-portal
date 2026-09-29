@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  normaliseApptotoEvent, eventIdOf, startISOOf, titleOf, contactOf, ASSESSMENT_RE,
+  normaliseApptotoEvent, eventIdOf, startISOOf, contactOf, ASSESSMENT_RE,
 } from './apptotoEvent';
 
 /**
