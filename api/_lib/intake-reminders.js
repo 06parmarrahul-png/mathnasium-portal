@@ -95,7 +95,15 @@ export async function runIntakeReminderSweep({ db, fromAddress, portalUrl, resen
     let anySent = false;
 
     // ── text ──
-    if (intake.phone && smsConfigured()) {
+    // A reminder that did not go is a thing somebody asks about later, so
+    // the two reasons it never even reaches sendSms() are recorded here
+    // rather than dropped. Before this, a run with SMS switched off came
+    // back `sms: 0, skipped: []` — nothing sent and nothing to explain it.
+    if (!intake.phone) {
+      summary.skipped.push({ id: intake.id, channel: 'sms', reason: 'no-phone' });
+    } else if (!smsConfigured()) {
+      summary.skipped.push({ id: intake.id, channel: 'sms', reason: 'sms-not-configured' });
+    } else {
       try {
         const r = await sendSms(db, centreId, {
           to: intake.phone,
@@ -110,8 +118,12 @@ export async function runIntakeReminderSweep({ db, fromAddress, portalUrl, resen
       }
     }
 
-    // ── email ──
-    if (intake.email && resend && fromAddress) {
+    // ── email ── same rule: say why, or say nothing happened at all.
+    if (!intake.email) {
+      summary.skipped.push({ id: intake.id, channel: 'email', reason: 'no-email' });
+    } else if (!resend || !fromAddress) {
+      summary.skipped.push({ id: intake.id, channel: 'email', reason: 'email-not-configured' });
+    } else {
       try {
         const verdict = await checkBeforeSend(db, centreId, {
           channel: 'email', address: intake.email,
