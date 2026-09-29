@@ -7,6 +7,7 @@ import { db, serverTimestamp } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { Megaphone, Plus, Trash2, Pin, PinOff, Edit3, Loader2 } from 'lucide-react';
 import { confirmDialog, toast } from '../lib/notify';
+import { isCentreStaff } from '../lib/centreStaff';
 import { attachEmails } from '../lib/userContact';
 import { notifyAnnouncement } from '../lib/emailService';
 import { markSeen, newestDate } from '../lib/announcementReads';
@@ -99,7 +100,7 @@ export default function Announcements() {
       ));
       const approved = snap.docs
         .map(d => ({ uid: d.id, ...d.data() }))
-        .filter(u => u.approved && u.role !== 'super_admin');
+        .filter(u => u.approved && isCentreStaff(u));
       const withEmails = await attachEmails(approved);
       await notifyAnnouncement({
         post:        postData,

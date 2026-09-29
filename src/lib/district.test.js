@@ -223,3 +223,35 @@ describe('what a typed box becomes, and survives a round trip', () => {
     expect(toFigure('12.6')).toBe(13);
   });
 });
+
+describe('a district manager is not staff anywhere', () => {
+  // They carry every centre in the district on centerIds, which is how
+  // the district is defined — so without this they would appear as a
+  // member of staff at each one, on the page they are reading.
+  const michelle = {
+    uid: 'michelle', role: 'district_manager', approved: true,
+    centerIds: ['langley', 'burnaby', 'abbotsford'],
+  };
+  const instructor = (uid, centreId) => ({
+    uid, role: 'instructor', approved: true, centerIds: [centreId],
+    instructorType: 'Instructor',
+  });
+
+  it('is left out of every centre he oversees', () => {
+    for (const centre of michelle.centerIds) {
+      const out = staffAt([michelle, instructor('a', centre)], centre);
+      expect(out.count, centre).toBe(1);
+      expect(out.byRole.district_manager).toBeUndefined();
+    }
+  });
+
+  it('does not change the count for everyone else', () => {
+    const out = staffAt([instructor('a', 'langley'), instructor('b', 'langley')], 'langley');
+    expect(out.count).toBe(2);
+  });
+
+  it('leaves the platform operator out too, as it always did', () => {
+    const enterprise = { uid: 'e', role: 'super_admin', approved: true, centerIds: ['langley'] };
+    expect(staffAt([enterprise, instructor('a', 'langley')], 'langley').count).toBe(1);
+  });
+});

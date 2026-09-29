@@ -46,6 +46,7 @@ import { availabilityConflict, describeConflict } from '../lib/availabilityFit';
 import { isTrainingShift, trainingIds as trainingIdsFor } from '../lib/staffTypes';
 import { RATIO_FIELD, defaultIncludedInRatio, countsInRatio, withRatioDefault, ratioHint, isRatioOverridden } from '../lib/ratioCount';
 import { readVitals, toFigure } from '../lib/district';
+import { isCentreStaff } from '../lib/centreStaff';
 import { roleRatioDefault, isDirectorTitle, canGrantDirectorTitle } from '../lib/roles';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -2728,6 +2729,10 @@ export default function Admin() {
     if (!u) return false;
     if (u.internal === true) return false;
     if (u.displayName === 'Admin Team') return false;
+    // A district manager carries this centre's id so they can SEE it, and
+    // is employed by nobody. No fixed-staff escape hatch like the owner
+    // tier below gets, because there is no centre they could be staff at.
+    if (!isCentreStaff(u)) return false;
     // Owner / super-admin are hidden from the schedule roster by
     // default. Director is owner-EQUIVALENT for permissions but still
     // needs to appear on the schedule (they run the floor). So
@@ -9576,8 +9581,8 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   // volunteers = separate tile so the owner can see unpaid headcount.
   // Combined headcount is still derivable for any future card that
   // needs it: activeEmployees + activeVolunteers.
-  const activeEmployees  = users.filter(u => u.approved && u.role !== 'super_admin' && u.isVolunteer !== true).length;
-  const activeVolunteers = users.filter(u => u.approved && u.role !== 'super_admin' && u.isVolunteer === true).length;
+  const activeEmployees  = users.filter(u => u.approved && isCentreStaff(u) && u.isVolunteer !== true).length;
+  const activeVolunteers = users.filter(u => u.approved && isCentreStaff(u) && u.isVolunteer === true).length;
 
   // Avg hours per instructor working this month.
   const monthInstructors = new Set(monthShifts.map(s => s.userName).filter(Boolean));
@@ -9929,7 +9934,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
     return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   };
 
-  const activeStaff = users.filter(u => u.approved && u.role !== 'super_admin');
+  const activeStaff = users.filter(u => u.approved && isCentreStaff(u));
   const currentHeadcount = activeStaff.length;
 
   // Build next 4 months as { key:'YYYY-MM', label:'Aug 2026' }.

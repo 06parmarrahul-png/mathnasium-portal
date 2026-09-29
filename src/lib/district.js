@@ -32,6 +32,8 @@
  * PURE MODULE — no React, no Firebase, no clock of its own.
  */
 
+import { isCentreStaff } from './centreStaff';
+
 /** The figures a person types in. Everything else on the page is live. */
 export const VITAL_KEYS = [
   'activeStudents', 'inactiveStudents', 'onHoldStudents', 'monthlyRevenue',
@@ -173,11 +175,18 @@ export function rollUp(rows, now = Date.now()) {
   };
 }
 
-/** Head count and a role breakdown for one centre, from the user docs. */
+/**
+ * Head count and a role breakdown for one centre, from the user docs.
+ *
+ * isCentreStaff matters more here than anywhere: a district manager
+ * carries every centre in the district on their own `centerIds`, so
+ * without it the person reading this page would be counted as a member of
+ * staff at all eight of them.
+ */
 export function staffAt(users, centreId) {
   const rows = (users || []).filter(u => (
     u && Array.isArray(u.centerIds) && u.centerIds.includes(centreId)
-      && u.approved === true && u.status !== 'terminated'
+      && u.approved === true && u.status !== 'terminated' && isCentreStaff(u)
   ));
   const byRole = {};
   for (const u of rows) {

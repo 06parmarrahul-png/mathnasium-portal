@@ -37,6 +37,7 @@ const MONTH_NAME_TO_NUMBER = {
 // itself pure (no Firebase, no React), so this keeps the module unit-
 // testable while avoiding a second copy of the legacy-tag mapping.
 import { expandSubRoles } from './subRoles';
+import { isCentreStaff } from './centreStaff';
 // The single source of truth for ratio membership. Also pure — keeps this
 // engine unit-testable and stops the generator drifting from the shift
 // documents it produces.
@@ -561,7 +562,7 @@ export function generateSchedule({
   const formInstructors = instructors.filter(
     u => u.approved
       && u.role !== 'owner'
-      && u.role !== 'super_admin'
+      && isCentreStaff(u)
       && u.role !== 'director'
       && !fixedStaffNames.has(u.displayName)
   ).map(u => ({ ...u, subRoles: expandSubRoles(u.subRoles) }));
