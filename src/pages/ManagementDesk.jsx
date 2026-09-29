@@ -169,7 +169,7 @@ export default function ManagementDesk() {
 const VIEWS = [
   { key: 'open', label: 'Open' },
   { key: 'progress', label: 'In progress' },
-  { key: 'done', label: 'Settled' },
+  { key: 'done', label: 'Completed' },
 ];
 
 function NotesTab({ profile, centerId, centerConfig, canImport, canReset = false }) {
@@ -565,7 +565,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport, canReset = false
       {hiddenSettled > 0 && (
         <button onClick={() => setView('done')}
           className="mb-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 bg-white px-3 py-2 text-[13px] font-semibold text-gray-600 hover:bg-gray-50">
-          {hiddenSettled} more {hiddenSettled === 1 ? 'match' : 'matches'} in Settled
+          {hiddenSettled} more {hiddenSettled === 1 ? 'match' : 'matches'} in Completed
           <ArrowRight size={13} />
         </button>
       )}
@@ -578,7 +578,7 @@ function NotesTab({ profile, centerId, centerConfig, canImport, canReset = false
           <p className="text-sm font-medium text-gray-500">
             {q ? 'Nothing matches that.'
               : view === 'mine' ? 'Nothing is waiting on you.'
-              : view === 'done' ? 'Nothing settled yet.'
+              : view === 'done' ? 'Nothing completed yet.'
               : view === 'progress' ? 'Nothing is being worked on right now.'
               : 'Nothing open. Everything has been dealt with.'}
           </p>

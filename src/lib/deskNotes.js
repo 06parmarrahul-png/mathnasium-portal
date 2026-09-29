@@ -140,7 +140,7 @@ export function canDeleteNotes({ platformRole, instructorType } = {}) {
 export const NOTE_STATUSES = [
   { key: 'open',        label: 'Open',        short: 'Open' },
   { key: 'in_progress', label: 'In progress', short: 'In progress' },
-  { key: 'closed',      label: 'Settled',     short: 'Settled' },
+  { key: 'closed',      label: 'Completed',   short: 'Completed' },
 ];
 
 /**
@@ -452,7 +452,7 @@ export const NOTE_VIEWS = {
   open:     { key: 'open',     label: 'All open' },
   progress: { key: 'progress', label: 'In progress' },
   sent:     { key: 'sent',     label: 'I sent' },
-  closed:   { key: 'closed',   label: 'Settled' },
+  closed:   { key: 'closed',   label: 'Completed' },
 };
 
 /**

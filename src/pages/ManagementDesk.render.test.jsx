@@ -265,10 +265,10 @@ describe('the chain', () => {
     expect(screen.queryByText('Sorted last week')).toBeNull();
   });
 
-  it('greys a settled note but leaves it in the chain under Settled', async () => {
+  it('greys a settled note but leaves it in the chain under Completed', async () => {
     snapshots.notes = [note({ status: 'closed', body: 'Sorted last week' })];
     draw();
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     expect(await screen.findByText('Sorted last week')).toBeTruthy();
     expect(screen.getByText('Reopen')).toBeTruthy();
   });
@@ -279,7 +279,7 @@ describe('the chain', () => {
     snapshots.notes = [note({ status: 'closed', body: 'Old' })];
     draw();
     expect(reads.filter(r => r.includes('closed')).length).toBe(0);
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     expect(reads.filter(r => r.includes('closed')).length).toBe(1);
   });
 
@@ -312,13 +312,13 @@ describe('the chain', () => {
       body: 'Amazon gift card was refunded' })];
     draw();
     fireEvent.change(screen.getByPlaceholderText('Search\u2026'), { target: { value: 'harshad' } });
-    const more = await screen.findByText(/1 more match in Settled/);
+    const more = await screen.findByText(/1 more match in Completed/);
     fireEvent.click(more);
     expect(await screen.findByText(/Amazon gift card was refunded/)).toBeTruthy();
   });
 });
 
-describe('Settled, most recently settled first', () => {
+describe('Completed, most recently settled first', () => {
   const bodies = () => screen.getAllByText(/^(Imported, top|Imported, lower|Settled in Ratio|Just dealt)/)
     .map(el => el.textContent);
 
@@ -332,7 +332,7 @@ describe('Settled, most recently settled first', () => {
         settledAt: '2026-09-12T03:14:43Z', settledByName: 'Neeru Gill' }),
     ];
     draw();
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await screen.findByText('Settled in Ratio');
     expect(bodies()).toEqual(['Settled in Ratio', 'Imported, top', 'Imported, lower']);
     // The local day it was settled — the day, so the timezone of the
@@ -349,24 +349,24 @@ describe('Settled, most recently settled first', () => {
     draw();
     // Settled is fetched once. Open it first so the fetch has already
     // happened, which is the case that used to lose the note.
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await screen.findByText('Settled in Ratio');
     fireEvent.click(screen.getByText('Open'));
     fireEvent.click(await screen.findByText('Mark done'));
     await waitFor(() => expect(writes.length).toBe(1));
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await waitFor(() => expect(bodies()).toEqual(['Just dealt with', 'Settled in Ratio', 'Imported, top']));
     // Once each — not also lingering as a stale open copy.
     expect(screen.getAllByText('Just dealt with')).toHaveLength(1);
   });
 
-  it('takes a reopened note out of Settled straight away', async () => {
+  it('takes a reopened note out of Completed straight away', async () => {
     snapshots.notes = [
       note({ id: 'r1', status: 'closed', body: 'Settled in Ratio', settledAt: '2026-09-12T03:14:43Z' }),
       note({ id: 'imp1', status: 'closed', body: 'Imported, top', sheetOrder: 0 }),
     ];
     draw();
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await screen.findByText('Settled in Ratio');
     fireEvent.click(screen.getAllByText('Reopen')[0]);
     await waitFor(() => expect(bodies()).toEqual(['Imported, top']));
@@ -913,7 +913,7 @@ describe('editing a note', () => {
     snapshots.users = desk;
     snapshots.notes = [note({ status: 'closed', settledAt: '2026-09-10T00:00:00.000Z' })];
     draw();
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await waitFor(() => expect(screen.getByRole('button', { name: /^Edit$/ })).toBeTruthy());
     openEditor();
     fireEvent.change(bodyBox(), { target: { value: 'For the record: it was refunded.' } });
@@ -998,7 +998,7 @@ describe('acknowledging a note — did she actually see it?', () => {
     snapshots.users = desk;
     snapshots.notes = [note({ toUids: ['vin'], status: 'closed', settledAt: '2026-09-10T00:00:00.000Z' })];
     draw();
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     await waitFor(() => expect(ackButton()).toBeTruthy());
     fireEvent.click(ackButton());
     await waitFor(() => expect(lastUpdate()).toBeTruthy());
@@ -1195,7 +1195,7 @@ describe('filtering by who it is between', () => {
     draw();
     fireEvent.change(toPicker(), { target: { value: 'neeru' } });
     expect(bodies()).toEqual(['BODY-LIVE']);
-    fireEvent.click(screen.getByText('Settled'));
+    fireEvent.click(screen.getByText('Completed'));
     expect(bodies()).toEqual(['BODY-DONE']);
   });
 });
@@ -1215,7 +1215,7 @@ describe('Waiting is gone', () => {
     // pickers are <select>s and their <option>s carry the same role.
     const menu = screen.getByRole('listbox');
     expect([...menu.querySelectorAll('[role="option"]')].map(o => o.textContent))
-      .toEqual(['Open', 'In progress', 'Settled']);
+      .toEqual(['Open', 'In progress', 'Completed']);
     expect(screen.queryByText(/Waiting on someone/)).toBeNull();
   });
 
