@@ -49,6 +49,8 @@ import { readVitals, toFigure } from '../lib/district';
 import { isCentreStaff } from '../lib/centreStaff';
 import { roleRatioDefault, isDirectorTitle, canGrantDirectorTitle } from '../lib/roles';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
+import PayrollProjectionCard from '../components/PayrollProjectionCard';
+import { projectPayroll, monthOfPeriodEnd } from '../lib/payrollProjection';
 import CenterSettingsTab from '../components/CenterSettingsTab';
 import HolidaysEditor from '../components/HolidaysEditor';
 import {
@@ -4101,6 +4103,27 @@ export default function Admin() {
     return set;
   }, [users]);
 
+  // ─── Payroll Projection ───────────────────────────────────────────────
+  // Both runs of whichever month the selected period pays out in. It used
+  // to live on Centre Analytics, where it rebuilt these three exclusion
+  // sets from scratch so its figure would agree with this page's; here it
+  // is handed the same ones the table below uses, so agreeing is no
+  // longer something anybody has to maintain.
+  //
+  // Sick shifts are out of the headline on purpose — they are paid from
+  // the sick-pay line and have their own column on the export.
+  const payrollProjection = useMemo(() => projectPayroll({
+    shifts,
+    month: monthOfPeriodEnd(payEnd),
+    today: todayKey,
+    isPayable: (s) => s.status !== 'draft'
+      && s.role !== 'Volunteer'
+      && !s.sickPay
+      && !salaryStaff.has(s.userName)
+      && !volunteerNames.has(s.userName)
+      && !hiddenFromOps.has(s.userName),
+  }), [shifts, payEnd, todayKey, salaryStaff, volunteerNames, hiddenFromOps]);
+
   // ─── Earlier-in-the-year sick shifts ──────────────────────────────────
   // Sick entitlement is annual, but the live `shifts` listener only covers a
   // 180-day sliding window. By December that window starts in June, so sick
@@ -7242,6 +7265,13 @@ export default function Admin() {
               hides itself until the user scrolls past ~400px. */}
           <ScrollTopButton />
 
+          {/* First thing on the page: what the two runs of this month are
+              going to cost. Moved here from Centre Analytics — it is a
+              payroll number, it is read against the table below it, and
+              it follows the period selector rather than carrying a second
+              month control of its own. */}
+          <PayrollProjectionCard projection={payrollProjection} />
+
           {/* (Removed) "Payroll tools" toolbar — the WIW import + bulk-
               delete buttons it housed are migration-era tooling we no
               longer need surfaced at the top of every payroll view. The
@@ -9479,10 +9509,10 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const todayStr      = format(now, 'yyyy-MM-dd');
   const weekStartStr  = format(startOfWeek(now), 'yyyy-MM-dd');
   const weekEndStr    = format(addDays(startOfWeek(now), 6), 'yyyy-MM-dd');
-  // viewMonth drives the Snapshot + Leaderboard + Hours-by-Assignment +
-  // Payroll Projection cards. The other cards (Today / This Week /
-  // This Year / Coverage rolling-8 / Hiring forecast) intentionally
-  // stay anchored to "now" — they're not monthly.
+  // viewMonth drives the Snapshot + Leaderboard + Hours-by-Assignment
+  // cards. The other cards (Today / This Week / This Year / Coverage
+  // rolling-8 / Hiring forecast) intentionally stay anchored to "now" —
+  // they're not monthly.
   const [viewMonth, setViewMonth] = useState(() => startOfMonth(new Date()));
   const monthStartStr = format(startOfMonth(viewMonth), 'yyyy-MM-dd');
   const monthEndStr   = format(endOfMonth(viewMonth), 'yyyy-MM-dd');
@@ -9783,35 +9813,13 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
   const coverageVsTarget = coverageTarget > 0
     ? (coverageAvg / coverageTarget) * 100 : 0;
 
-  // ─── Payroll Projection (semi-monthly) ───────────────────────────────
-  // Mathnasium pays semi-monthly with a lagged window:
-  //   • 15th payroll covers the 26th of the PRIOR month → 10th of this month
-  //   • 30th payroll covers the 11th → 25th of this month
-  // Hours worked from the 26th onward roll into NEXT month's 15th run.
+  // The exclusion sets the payroll rules use. The Payroll Projection card
+  // that needed them has moved to Manage Payroll, where the real ones
+  // already live (lib/payrollProjection.js); these stay because the
+  // weekly scheduled-hours block below still subtracts the same people.
   //
-  // This card MUST match the Manage Payroll export's "Total Hours" column
-  // so owners can reconcile the two. That means the same filters as
-  // payrollSummary in Admin.jsx:
-  //   – posted only (drafts excluded)
-  //   – Volunteer-role shifts excluded
-  //   – salaried staff, flagged volunteers, and hidden ops accounts
-  //     (owner / super-admin / Admin Team / internal) excluded
-  //   – sick shifts NOT added to the headline (they live in a separate
-  //     Sick Pay column in the export)
-  //   – no-shows count 0 (they didn't come in, they don't get paid) —
-  //     this matches Staffing Budget's paidHours(); without it Analytics
-  //     over-reported the period by the no-show hours.
-  //   – Payroll Hours = payHoursOverride if set, else scheduled.
-  const payHrsOf = (s) => {
-    if (s.noShow) return 0;
-    return (typeof s.payHoursOverride === 'number' && isFinite(s.payHoursOverride))
-      ? s.payHoursOverride
-      : shiftHours(s);
-  };
-
-  // Rebuild the same exclusion sets the payroll tab uses. AnalyticsTab
-  // only receives `users` + `activeCenterId`, so we resolve per-centre
-  // here (cheap; users list is small).
+  // AnalyticsTab only receives `users` + `activeCenterId`, so they are
+  // resolved per-centre here (cheap; the users list is small).
   const _payUsersForCentre = users.map(u => resolveUserForCenter(u, activeCenterId));
   const _paySalaryStaff = new Set(Array.isArray(centerConfig?.salaryStaff) ? centerConfig.salaryStaff : []);
   const _payVolunteerNames = new Set();
@@ -9825,33 +9833,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       || u.displayName === 'Admin Team';
     if (hidden && u.displayName) _payHiddenFromOps.add(u.displayName);
   }
-  const _payEligible = (s) =>
-    s.status !== 'draft'
-    && s.role !== 'Volunteer'
-    && !s.sickPay
-    && !_paySalaryStaff.has(s.userName)
-    && !_payVolunteerNames.has(s.userName)
-    && !_payHiddenFromOps.has(s.userName);
-
-  const _vmY = viewMonth.getFullYear();
-  const _vmM = viewMonth.getMonth();
-  const period1StartDate = new Date(_vmY, _vmM - 1, 26);
-  const period1EndDate   = new Date(_vmY, _vmM,     10);
-  const period2StartDate = new Date(_vmY, _vmM,     11);
-  const period2EndDate   = new Date(_vmY, _vmM,     25);
-  const period1StartStr = format(period1StartDate, 'yyyy-MM-dd');
-  const period1EndStr   = format(period1EndDate,   'yyyy-MM-dd');
-  const period2StartStr = format(period2StartDate, 'yyyy-MM-dd');
-  const period2EndStr   = format(period2EndDate,   'yyyy-MM-dd');
-
-  const period1Shifts = shifts.filter(s =>
-    s.date >= period1StartStr && s.date <= period1EndStr && _payEligible(s));
-  const period2Shifts = shifts.filter(s =>
-    s.date >= period2StartStr && s.date <= period2EndStr && _payEligible(s));
-  const period1Hours  = period1Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
-  const period2Hours  = period2Shifts.reduce((sum, s) => sum + payHrsOf(s), 0);
-  const period1Names  = new Set(period1Shifts.map(s => s.userName).filter(Boolean));
-  const period2Names  = new Set(period2Shifts.map(s => s.userName).filter(Boolean));
 
   // ─── Weekly scheduled hours (Mon–Sat) ─────────────────────────────────
   // Deliberately mirrors Manage Schedule's "Total assigned" rather than the
@@ -9904,16 +9885,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
     }
   }
   const weeklyTotal = weekRows.reduce((n, r) => n + r.hours, 0);
-
-  // Which pay run is "upcoming" given today's date:
-  //   day 1–10  → 15th of this month is next up (period 1)
-  //   day 11–25 → 30th of this month is next up (period 2)
-  //   day 26+   → already accruing toward NEXT month's 15th, so neither
-  //               card in the viewed month is upcoming.
-  const todayDay = isViewingCurrentMonth ? now.getDate() : null;
-  const currentPeriod = todayDay == null
-    ? null
-    : (todayDay <= 10 ? 1 : todayDay <= 25 ? 2 : null);
 
   // ─── Hiring forecast (Phase 2) ─────────────────────────────────────────
   // Roll up staff `careerPlan` fields into a projected headcount for each of
@@ -10333,81 +10304,9 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       </div>
       )}
 
-      {/* ── Snapshot module: Payroll Projection + Operations Snapshot ──
-          Payroll Projection leads — it's the number owners open this page
-          for. Semi-monthly view: the 15th pay run covers prior-month 26th →
-          this-month 10th; the 30th covers this-month 11th → 25th. Uses the
-          same Payroll Hours value as Manage Payroll — override wins,
-          scheduled falls back, no-shows count 0 — so a bloated upcoming run
-          is visible before payroll day instead of after. */}
-      {view === 'snapshot' && (
-      <div className="rounded-2xl border bg-white p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-sm font-semibold text-gray-900">Payroll Projection</h3>
-          <span className="text-xs text-gray-500">{format(viewMonth, 'MMMM yyyy')}</span>
-        </div>
-        <p className="text-xs text-gray-500 mb-4">
-          Semi-monthly pay runs · Payroll Hours = override (if set) or scheduled hours
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {[
-            {
-              label: '15th payroll',
-              window: `${format(period1StartDate, 'MMM d')} – ${format(period1EndDate, 'MMM d')}`,
-              hours: period1Hours,
-              shifts: period1Shifts.length,
-              instructors: period1Names.size,
-              upcoming: currentPeriod === 1,
-            },
-            {
-              label: '30th payroll',
-              window: `${format(period2StartDate, 'MMM d')} – ${format(period2EndDate, 'MMM d')}`,
-              hours: period2Hours,
-              shifts: period2Shifts.length,
-              instructors: period2Names.size,
-              upcoming: currentPeriod === 2,
-            },
-          ].map(p => (
-            <div
-              key={p.label}
-              className={`rounded-xl border p-4 ${
-                p.upcoming
-                  ? 'border-purple-300 bg-purple-50/40'
-                  : 'border-gray-200 bg-gray-50/40'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold uppercase tracking-wide text-gray-600">{p.label}</span>
-                {p.upcoming && (
-                  <span className="rounded-full bg-purple-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-purple-800">
-                    Upcoming
-                  </span>
-                )}
-              </div>
-              <p className="text-[10px] text-gray-500 mb-2">{p.window}</p>
-              <div className="flex items-baseline gap-1">
-                <span className="text-2xl font-bold text-purple-700">{round1(p.hours)}</span>
-                <span className="text-sm text-gray-500">hrs</span>
-              </div>
-              <p className="mt-1 text-[10px] text-gray-500">
-                {p.shifts} shift{p.shifts === 1 ? '' : 's'} · {p.instructors} instructor{p.instructors === 1 ? '' : 's'}
-              </p>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center justify-between rounded-lg bg-gray-50 px-3 py-2">
-          <span className="text-xs font-medium text-gray-600">Total month projection</span>
-          <span className="text-sm font-bold text-gray-900">
-            {round1(period1Hours + period2Hours)} hrs
-          </span>
-        </div>
-        {isViewingCurrentMonth && (
-          <p className="mt-2 text-[10px] text-gray-400 italic">
-            Matches the Manage Payroll export (Total Hours): posted shifts only, sick / volunteers / salaried / hidden accounts excluded.
-          </p>
-        )}
-      </div>
-      )}
+      {/* Payroll Projection used to lead this module. It is a payroll
+          number read against the payroll table, so it now opens Manage
+          Payroll instead — see components/PayrollProjectionCard. */}
 
       {/* Operations Snapshot — dense, decision-useful numbers replacing
           the old 30-day bar chart. Each row is a single KPI that maps to
