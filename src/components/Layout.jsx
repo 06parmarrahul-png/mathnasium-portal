@@ -19,7 +19,8 @@ import {
   resolvePins, togglePin, isPinned, canPin, pinnedItems, fullMessage,
 } from '../lib/pinnedPages';
 import { toast } from '../lib/notify';
-import { PAGES, PORTAL_NAME, PORTAL_SUBTITLE, documentTitleFor } from '../lib/pageNames';
+import { PAGES, documentTitleFor } from '../lib/pageNames';
+import { portalSubtitle } from '../lib/portalIdentity';
 import CenterSwitcher from './CenterSwitcher';
 import {
   House, Megaphone, CalendarDays, MessageSquare, Settings, LogOut, Menu, X, Bell,
@@ -100,7 +101,11 @@ function NavRow({ item, active, onNavigate, pinned, pinnable, onTogglePin }) {
 
 export default function Layout({ children }) {
   const auth = useAuth();
-  const { profile, mySubRoles, logout, activeCenterId, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = auth;
+  const { profile, mySubRoles, logout, activeCenterId, centreName, isSuperAdmin, isOwner, isDirector, isAdminAssistant, isAdmin, isLead, isVolunteer, canTakeShifts, canSeeAdminPanel, canManageOperations } = auth;
+  // "Mathnasium of Langley" over "Staff Portal" — or over "Centre
+  // Operations Portal", for the people who open this to run the place
+  // rather than to find out when they're on.
+  const subtitle = portalSubtitle(auth);
   // Floor staff get the phone-first home, leadership get the board — the
   // same split HomeSwitch uses, so the bottom tabs below follow it too.
   const isOwnerLikeNav = isSuperAdmin || isOwner || isAdminAssistant || isDirector;
@@ -581,9 +586,13 @@ export default function Layout({ children }) {
         <div className="shrink-0 flex items-center gap-3 border-b border-gray-700 px-5 py-5">
           {/* Their own Cole, picked at sign-up or on Account. */}
           <Mascot id={profile?.mascot} size={40} className="shrink-0" />
-          <div>
-            <h1 className="text-lg font-bold leading-tight text-white">{PORTAL_NAME}</h1>
-            <p className="text-xs text-gray-400">{PORTAL_SUBTITLE}</p>
+          {/* min-w-0 so the centre name can wrap inside a 16rem sidebar
+              instead of shoving the close button off the edge. It is two
+              lines at "Mathnasium of North Vancouver" and that is fine —
+              it is the first thing anybody reads here. */}
+          <div className="min-w-0">
+            <h1 className="text-base font-bold leading-tight text-white">{centreName}</h1>
+            <p className="text-xs text-gray-400">{subtitle}</p>
           </div>
           <button className="ml-auto lg:hidden" onClick={() => setOpen(false)}>
             <X size={20} />
@@ -713,9 +722,9 @@ export default function Layout({ children }) {
           <button onClick={() => setOpen(true)} aria-label="Open menu">
             <Menu size={24} className="text-gray-700" />
           </button>
-          <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2">
             <Mascot id={profile?.mascot} size={28} className="shrink-0" />
-            <span className="font-bold text-gray-900">{PORTAL_NAME}</span>
+            <span className="truncate font-bold text-gray-900">{centreName}</span>
           </div>
 
           {/* Account and settings live on the avatar, top-right — where

@@ -18,8 +18,9 @@
  *     phone home), and replaced "Shift Board".
  */
 
-export const PORTAL_NAME = 'Mathnasium';
-export const PORTAL_SUBTITLE = 'Staff Portal';
+// PORTAL_NAME and PORTAL_SUBTITLE used to live here, as two fixed strings.
+// Neither is fixed: the first is the centre's own name and the second
+// depends on whether you run the place. See lib/portalIdentity.js.
 
 export const PAGES = {
   home:             { path: '/',                      name: 'Home' },

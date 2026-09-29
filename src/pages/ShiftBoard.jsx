@@ -304,7 +304,7 @@ function EditOpenShiftModal({ shift, onClose, onSave }) {
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ShiftBoard() {
-  const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, canTakeShifts, centerConfig } = useAuth();
+  const { profile, mySubRoles, activeCenterId, canSeeAdminPanel, canTakeShifts, centreName } = useAuth();
   const fmtTime = useTimeFormat();
   const [editingOpenShift, setEditingOpenShift] = useState(null);
   const [openShifts, setOpenShifts] = useState([]);
@@ -471,7 +471,7 @@ export default function ShiftBoard() {
         // shared 12-hour default rather than the author's own clock.
         text: `✅ ${profile.displayName} claimed the open shift on ${fmtDate(openShift.date)} (${formatRange(openShift.startTime, openShift.endTime)}).`,
         userId: 'system',
-        userName: centerConfig?.name || 'Mathnasium',
+        userName: centreName,
         userRole: 'system',
         centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),

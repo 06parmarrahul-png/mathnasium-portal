@@ -2509,7 +2509,7 @@ function StatPayTab({ holidays, rows }) {
 
 // ── Main Admin Component ───────────────────────────────────────────────────────
 export default function Admin() {
-  const { user, activeCenterId, centerConfig, canSeeCenterSettings, canManageOperations } = useAuth();
+  const { user, activeCenterId, centerConfig, centreName, canSeeCenterSettings, canManageOperations } = useAuth();
   const fmtTime = useTimeFormat();
   // The centre's staffing day model. Manage Staff Schedule's day headers
   // used to divide by a HARDCODED constant while the Staffing Budget page
@@ -3930,7 +3930,7 @@ export default function Admin() {
           await addDoc(collection(db, 'chat'), {
             text: `📅 The ${monthLabel} schedule is live! Check your shifts on the Schedule page.`,
             userId: 'system',
-            userName: centerConfig?.name || 'Mathnasium',
+            userName: centreName,
             userRole: 'system',
             centerId: activeCenterId,
             createdAt: serverTimestamp(),
@@ -5630,7 +5630,7 @@ export default function Admin() {
             clockIn: normalizeTimeToHHMM(item.row?.timeIn),
             scheduledEnd: normalizeTimeToHHMM(item.shift.endTime),
             token,
-            centreName: centerConfig?.name,
+            centreName,
           });
           if (!delivered) { failed.push(`${item.person} (send failed)`); continue; }
           // Stamped on the shift so the panel can say "already asked" and
@@ -8511,7 +8511,7 @@ export default function Admin() {
         <HolidaysEditor
           activeCenterId={activeCenterId}
           centerConfig={centerConfig}
-          activeCenterName={centerConfig?.name || activeCenterId}
+          activeCenterName={centreName}
         />
       )}
 
@@ -10735,6 +10735,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
 // ─── Sub-component: Job-posting template modal ───────────────────────────
 
 function JobPostingModal({ centerConfig, defaultRole, defaultStartMonth, onClose }) {
+  const { centreName: centerName } = useAuth();
   const [role, setRole]     = useState(SHIFT_ASSIGNMENTS.includes(defaultRole) ? defaultRole : 'Elementary Instructor');
   const [startMonth, setStartMonth] = useState(defaultStartMonth || '');
   const [hoursRange, setHoursRange] = useState('10–15');
@@ -10754,7 +10755,6 @@ function JobPostingModal({ centerConfig, defaultRole, defaultStartMonth, onClose
     return new Date(parseInt(y, 10), parseInt(m, 10) - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
   })();
 
-  const centerName = centerConfig?.name || 'Mathnasium';
   const locationLine = [centerConfig?.city, centerConfig?.province].filter(Boolean).join(', ');
 
   const template = `${centerName} is hiring a ${role}!

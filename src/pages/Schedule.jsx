@@ -1250,7 +1250,7 @@ function CalendarSyncModal({ profile, onClose }) {
 }
 
 export default function Schedule() {
-  const { profile, mySubRoles, activeCenterId, centerConfig, canTakeShifts } = useAuth();
+  const { profile, mySubRoles, activeCenterId, centerConfig, centreName, canTakeShifts } = useAuth();
   const fmtTime = useTimeFormat();
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(null);
@@ -1672,7 +1672,7 @@ export default function Schedule() {
       await addDoc(collection(db, 'chat'), {
         text: `✅ ${profile.displayName} has claimed the open shift on ${dateFormatted} (${formatRange(openShift.startTime, openShift.endTime)}).`,
         userId: 'system',
-        userName: centerConfig?.name || 'Mathnasium',
+        userName: centreName,
         userRole: 'system',
         centerId: openShift.centerId || activeCenterId,
         createdAt: serverTimestamp(),

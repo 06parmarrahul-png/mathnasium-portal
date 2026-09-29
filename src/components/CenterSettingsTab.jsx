@@ -27,7 +27,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
   // a contest with a prize, so starting and stopping it is the owner's and
   // Enterprise's alone. The Firestore rules enforce the same thing, so
   // this isn't the only thing standing in the way.
-  const { isOwner, isSuperAdmin } = useAuth();
+  const { isOwner, isSuperAdmin, centreName } = useAuth();
   const canSwitchGames = isOwner || isSuperAdmin;
   // Local form state — initialized from the live config but allows uncommitted edits.
   const [form, setForm] = useState(centerConfig);
@@ -84,7 +84,7 @@ export default function CenterSettingsTab({ activeCenterId, centerConfig }) {
           <h3 className="font-semibold text-gray-900">Centre Settings</h3>
         </div>
         <p className="text-sm text-gray-500">
-          Tunables for <strong>{centerConfig?.name || activeCenterId}</strong>. Changes apply immediately to the auto-scheduler, the Full Day picker, payroll exclusions, and the coverage grid for everyone at this center.
+          Tunables for <strong>{centreName}</strong>. Changes apply immediately to the auto-scheduler, the Full Day picker, payroll exclusions, and the coverage grid for everyone at this center.
         </p>
       </div>
 

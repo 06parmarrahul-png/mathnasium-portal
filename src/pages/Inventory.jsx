@@ -563,7 +563,9 @@ function SettingsModal({
 // ─── Page ──────────────────────────────────────────────────────────────
 
 export default function Inventory() {
-  const { profile, activeCenterId, canManageOperations, centerConfig } = useAuth();
+  // centreName is renamed here because `centerName` is also the prop
+  // OrderModal and the order email take.
+  const { profile, activeCenterId, canManageOperations, centreName: centerName } = useAuth();
   const fmtTime = useTimeFormat();
   // Managers and Hosts get full inventory access too — they're the ones
   // ordering supplies day to day.
@@ -596,8 +598,6 @@ export default function Inventory() {
   const [myNotify, setMyNotify] = useState(true);
   const [togglingMine, setTogglingMine] = useState(false);
 
-  // centers/{id}/config/main carries `name` (e.g. "Mathnasium Langley").
-  const centerName = centerConfig?.name || centerConfig?.centerName || activeCenterId;
   const loading = loadedCenter !== activeCenterId;
 
   // Live data. Re-subscribes on centre switch so the Langley → Burnaby

@@ -22,7 +22,7 @@ const CATEGORIES = {
 const BLANK_DRAFT = { title: '', text: '', category: 'general', pinned: false };
 
 export default function Announcements() {
-  const { profile, activeCenterId, centerConfig, canSeeAdminPanel } = useAuth();
+  const { profile, activeCenterId, centreName, canSeeAdminPanel } = useAuth();
   const [posts, setPosts] = useState([]);
   const [showForm, setShowForm] = useState(false);
   // editingId === null → composing a new post (will send emails on save)
@@ -105,7 +105,7 @@ export default function Announcements() {
       await notifyAnnouncement({
         post:        postData,
         staffEmails: withEmails,
-        centerName:  centerConfig?.name || 'Ratio',
+        centerName:  centreName,
       });
     } catch (err) {
       console.error('[Announcements] email fan-out failed:', err);

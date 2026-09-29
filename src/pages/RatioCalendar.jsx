@@ -113,7 +113,7 @@ const BLANK = {
 };
 
 export default function RatioCalendar() {
-  const { activeCenterId, profile, centerConfig, isOwnerLike, isSuperAdmin } = useAuth();
+  const { activeCenterId, profile, centerConfig, centreName, isOwnerLike, isSuperAdmin } = useAuth();
   // centerIntakes is owner-tier in the rules, deliberately: an assessment
   // carries a parent's name, email and phone, and Managers and Hosts are
   // kept off the PII routes everywhere else in the app.
@@ -435,7 +435,7 @@ export default function RatioCalendar() {
         <h1 className="nl-display text-[26px] font-semibold leading-tight">{PAGES.calendar.name}</h1>
         <span className="rounded-full px-2.5 py-1 text-[11px] font-semibold"
           style={{ background: 'var(--nl-raised)', color: 'var(--nl-ink2)' }}>
-          {centerConfig?.name || activeCenterId}
+          {centreName}
         </span>
         {canSeeFamilies && (
         <button type="button" onClick={() => setImporting(true)}

@@ -29,7 +29,8 @@ vi.mock('../contexts/AuthContext', () => ({ useAuth: () => current.auth, useOpti
 
 const { default: Layout } = await import('./Layout');
 const { resolveRoles, resolvePermissions, can: hasPermission } = await import('../lib/roles');
-const { PAGES, PORTAL_SUBTITLE } = await import('../lib/pageNames');
+const { PAGES } = await import('../lib/pageNames');
+const { STAFF_SUBTITLE, OPERATIONS_SUBTITLE } = await import('../lib/portalIdentity');
 
 const LANGLEY = {
   staffRolePermissions: {
@@ -60,6 +61,10 @@ function authFor({ role, title, volunteer = false, config = LANGLEY }) {
       centerMemberships: { langley: { instructorType: title, isVolunteer: volunteer } },
     },
     activeCenterId: 'langley', centerConfig: config, mySubRoles: ['Elementary'], logout: () => {},
+    // What AuthContext resolves from the centre's identity doc. Named
+    // here rather than left undefined because the header is one of the
+    // things this file is checking.
+    centreName: 'Mathnasium of Langley',
     isSuperAdmin: role === 'super_admin', isOwner: role === 'owner', isDirector,
     isDistrictManager: role === 'district_manager',
     isAdminAssistant: role === 'admin_assistant', isAdmin: role === 'admin',
@@ -148,12 +153,32 @@ describe('one name per page', () => {
       .toEqual(['Home', 'My Schedule', 'Job Board', 'My Pay', 'Team Chat']);
   });
 
-  it('says Staff Portal, for everyone', () => {
-    for (const who of ['owner', 'instructor']) {
+  it('names the centre in the corner, never the bare brand', () => {
+    for (const who of Object.keys(PEOPLE)) {
       const { container } = draw(who);
-      expect(container.querySelector('aside').textContent).toContain(PORTAL_SUBTITLE);
-      expect(container.textContent).not.toContain('Instructor Portal');
+      const head = container.querySelector('aside').textContent;
+      expect(head).toContain('Mathnasium of Langley');
       cleanup();
+    }
+  });
+
+  it('says Staff Portal to the floor and Centre Operations Portal to the people running it', () => {
+    const subtitleFor = (who) => {
+      const { container } = draw(who);
+      const text = container.querySelector('aside').textContent;
+      cleanup();
+      return text;
+    };
+    // 'manager' here is the retired `admin` PLATFORM role, which outranked
+    // a director; 'managerNow' is the same person on the Manager job
+    // title, which does not.
+    for (const who of ['owner', 'director', 'education', 'manager', 'districtManager', 'enterprise']) {
+      expect(subtitleFor(who)).toContain(OPERATIONS_SUBTITLE);
+    }
+    for (const who of ['instructor', 'lead', 'host', 'trainee', 'volunteer', 'aa', 'managerNow']) {
+      const text = subtitleFor(who);
+      expect(text).toContain(STAFF_SUBTITLE);
+      expect(text).not.toContain(OPERATIONS_SUBTITLE);
     }
   });
 

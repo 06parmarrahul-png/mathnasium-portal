@@ -35,7 +35,7 @@ const TABS = [
 ];
 
 export default function CenterSettings() {
-  const { activeCenterId, centerConfig, canSeeCenterSettings } = useAuth();
+  const { activeCenterId, centerConfig, centreName, canSeeCenterSettings } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState(() => {
     const t = searchParams.get('tab');
@@ -68,7 +68,7 @@ export default function CenterSettings() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Centre Settings</h1>
           <p className="text-sm text-gray-500">
-            Configure <strong>{centerConfig?.name || activeCenterId}</strong>.
+            Configure <strong>{centreName}</strong>.
             One-time setup that affects scheduling, payroll, and the look of the schedule grid.
           </p>
         </div>
@@ -105,7 +105,7 @@ export default function CenterSettings() {
         <HolidaysEditor
           activeCenterId={activeCenterId}
           centerConfig={centerConfig}
-          activeCenterName={centerConfig?.name || activeCenterId}
+          activeCenterName={centreName}
         />
       )}
 
@@ -113,7 +113,7 @@ export default function CenterSettings() {
         <AppearanceEditor
           activeCenterId={activeCenterId}
           centerConfig={centerConfig}
-          activeCenterName={centerConfig?.name || activeCenterId}
+          activeCenterName={centreName}
         />
       )}
 

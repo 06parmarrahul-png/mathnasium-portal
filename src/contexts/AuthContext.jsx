@@ -16,6 +16,7 @@ import { expandSubRoles } from '../lib/subRoles';
 import { resolveRoles, resolvePermissions, can as hasPermission } from '../lib/roles';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import { resolveMascotId } from '../lib/mascots';
+import { centreDisplayName } from '../lib/portalIdentity';
 
 const AuthContext = createContext(null);
 
@@ -44,6 +45,11 @@ export function AuthProvider({ children }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
   const [centerConfig, setCenterConfig] = useState(DEFAULT_CENTER_CONFIG);
+  // The centre's identity doc — `centers/{id}`, which is where its real
+  // name lives ("Mathnasium of Langley"). Separate from centerConfig
+  // because that doc's `name` defaults to the bare brand, so it cannot
+  // answer "which centre is this" on its own. null until the first read.
+  const [centreIdentity, setCentreIdentity] = useState(null);
   // activeCenterId is real state so switchCenter() can reactively re-fetch
   // every collection. Initialized from profile + localStorage on mount.
   const [activeCenterId, setActiveCenterIdState] = useState(DEFAULT_CENTER_ID);
@@ -345,6 +351,27 @@ export function AuthProvider({ children }) {
     );
   }, [activeCenterId, user]);
 
+  // The identity doc alongside it. Unlike the config this one is a public
+  // read (the signup page's centre picker needs it before anybody has an
+  // account), so it doesn't wait on `user` — which also means the name in
+  // the corner is already right on the first paint after a sign-in rather
+  // than flicking from the brand to the centre a moment later.
+  useEffect(() => onSnapshot(
+    doc(db, 'centers', activeCenterId),
+    (snap) => setCentreIdentity(snap.exists() ? snap.data() : null),
+    () => setCentreIdentity(null),
+  ), [activeCenterId]);
+
+  // What the portal calls this centre, in one place, because it is read in
+  // the sidebar, the phone header, and anywhere else that has to say where
+  // somebody is before it says anything else.
+  const centreName = useMemo(() => centreDisplayName({
+    identityName: centreIdentity?.name,
+    configName: centerConfig?.name,
+    city: centreIdentity?.city || centerConfig?.city,
+    centreId: activeCenterId,
+  }), [centreIdentity, centerConfig, activeCenterId]);
+
   const login = async (email, password) => {
     await signInWithEmailAndPassword(auth, email.trim(), password);
   };
@@ -481,6 +508,9 @@ export function AuthProvider({ children }) {
       userCenters,
       // Center settings (instructional hours, fixed staff, etc.)
       centerConfig,
+      // "Mathnasium of Langley" — the active centre's own name, resolved
+      // once here rather than re-derived by every surface that shows it.
+      centreName,
       // Role helpers — read these in components instead of comparing
       // profile.role strings everywhere.
       role,
