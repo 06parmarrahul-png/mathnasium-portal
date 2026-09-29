@@ -35,7 +35,7 @@
 // Body: { email: string, continueUrl?: string }
 // Response: 200 { sent: true }  (regardless of whether the user existed)
 //
-// Required env vars (already set in Vercel for /api/send-email):
+// Required env vars (already set in Vercel for /api/notify):
 //   RESEND_API_KEY
 //   RESEND_FROM
 //   FIREBASE_SERVICE_ACCOUNT

@@ -16,7 +16,7 @@
 // Env vars (set in Vercel project settings):
 //   GEMINI_API_KEY            - from https://aistudio.google.com/app/apikey (free)
 //   FIREBASE_SERVICE_ACCOUNT  - already used by other API routes
-//   RESEND_API_KEY, RESEND_FROM - already used by /api/send-email
+//   RESEND_API_KEY, RESEND_FROM - already used by /api/notify
 //
 // Why Gemini (and not Claude / OpenAI):
 //   Google AI Studio gives a real free tier (1,500 req/day on Flash) that

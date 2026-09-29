@@ -1,4 +1,20 @@
-// POST /api/send-email
+// /api/notify — everything Ratio sends, and everything that says stop.
+//
+//   POST /api/notify                         staff email batch (authenticated)
+//   POST /api/notify?action=sms-inbound      Twilio: STOP / START / HELP  (public, signed)
+//   GET  /api/notify?action=unsubscribe      one-click email opt-out      (public, tokened)
+//
+// It was send-email.js. The two public routes joined it rather than
+// becoming files of their own because Vercel's Hobby plan allows twelve
+// functions and this project has exactly twelve — the same reason
+// api/apptoto.js and api/intakes.js each carry two halves.
+//
+// THE PUBLIC ROUTES ARE ANSWERED BEFORE THE AUTH GATE. Neither a carrier
+// nor a family clicking a link in an email has a Firebase token. They
+// prove themselves with a Twilio signature and a per-address token.
+//
+// ── the original contract, unchanged ────────────────────────────────
+// POST /api/notify
 //
 // Sends a batch of transactional emails via Resend. Used by the Mathnasium
 // portal for all four notification flows:
@@ -32,6 +48,10 @@
 
 import { Resend } from 'resend';
 import { authenticateRequest, getFirestore } from './_lib/firebase-admin.js';
+import { createHmac, timingSafeEqual } from 'node:crypto';
+import { verifyTwilioSignature } from './_lib/twilioSignature.js';
+import { recordConsent, contactKey } from './_lib/consentStore.js';
+import { parseInboundKeyword, stopReply, helpReply, normalisePhone } from '../src/lib/consent.js';
 
 const BATCH_LIMIT = 100;
 
@@ -94,7 +114,149 @@ function bodyToText({ to_name, body, cta_text, cta_link }) {
   return txt;
 }
 
+/**
+ * The token that lets an email's unsubscribe link work without a login.
+ *
+ * Derived, not stored: HMAC of centre + channel + address under a server
+ * secret. Nothing to look up, nothing to leak from the database, and a
+ * link cannot be edited into somebody else's address without the secret.
+ */
+export function unsubscribeToken(centreId, channel, address) {
+  const secret = process.env.UNSUBSCRIBE_SECRET || process.env.RESEND_API_KEY || '';
+  return createHmac('sha256', secret)
+    .update(`${centreId}|${channel}|${String(address).toLowerCase()}`)
+    .digest('base64url')
+    .slice(0, 32);
+}
+
+function tokenMatches(given, expected) {
+  const a = Buffer.from(String(given || ''));
+  const b = Buffer.from(String(expected || ''));
+  if (!a.length || a.length !== b.length) return false;
+  try { return timingSafeEqual(a, b); } catch { return false; }
+}
+
+/** Twilio wants TwiML back, or an empty 200 to say nothing. */
+function twiml(res, message) {
+  res.setHeader('Content-Type', 'text/xml');
+  return res.status(200).send(message
+    ? `<?xml version="1.0" encoding="UTF-8"?><Response><Message>${message
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</Message></Response>`
+    : '<?xml version="1.0" encoding="UTF-8"?><Response/>');
+}
+
+/**
+ * A family texting STOP, START or HELP.
+ *
+ * Signature-checked: this route can mark a number as withdrawn, and via
+ * START as consenting again, so an unsigned caller could forge the very
+ * record the system exists to be able to prove.
+ */
+async function handleSmsInbound(req, res) {
+  const centreId = req.query.centerId;
+  if (!centreId) return res.status(400).json({ error: 'centerId required' });
+
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!authToken) {
+    console.error('sms-inbound: TWILIO_AUTH_TOKEN not set — refusing to trust the request');
+    return res.status(500).json({ error: 'Not configured' });
+  }
+
+  const proto = req.headers['x-forwarded-proto'] || 'https';
+  const url = `${proto}://${req.headers.host}${req.url}`;
+  const ok = verifyTwilioSignature({
+    authToken, url, params: req.body || {},
+    signature: req.headers['x-twilio-signature'],
+  });
+  if (!ok) return res.status(403).json({ error: 'Bad signature' });
+
+  const from = normalisePhone(req.body?.From);
+  const keyword = parseInboundKeyword(req.body?.Body);
+  if (!from || !keyword) {
+    // A real reply from a real person that is not a keyword. Not an
+    // error, and not ours to answer.
+    return twiml(res, null);
+  }
+
+  const fs = getFirestore();
+  const centreSnap = await fs.doc(`centers/${centreId}`).get();
+  const centreName = centreSnap.exists ? (centreSnap.data().name || 'Mathnasium') : 'Mathnasium';
+
+  if (keyword === 'help') {
+    return twiml(res, helpReply(centreName, process.env.SMS_HELP_CONTACT || null));
+  }
+
+  await recordConsent(fs, centreId, {
+    channel: 'sms',
+    address: from,
+    state: keyword === 'stop' ? 'withdrawn' : 'granted',
+    source: 'sms-reply',
+    wording: String(req.body?.Body || '').slice(0, 200),
+    actor: from,
+  });
+
+  // Carriers expect exactly one confirmation for a STOP, and nothing
+  // further afterwards.
+  return twiml(res, keyword === 'stop'
+    ? stopReply(centreName)
+    : `${centreName}: you are opted back in. Reply STOP to opt out again.`);
+}
+
+/**
+ * The unsubscribe link at the foot of an email.
+ *
+ * One click, no login, no confirmation step — a link that asks somebody
+ * to sign in before it will stop emailing them is not an opt-out. GET is
+ * deliberate: it is what List-Unsubscribe and every mail client expect.
+ */
+async function handleUnsubscribe(req, res) {
+  const { centerId, addr, token, channel = 'email' } = req.query;
+  if (!centerId || !addr || !token) {
+    return res.status(400).send('This link is incomplete.');
+  }
+  if (!tokenMatches(token, unsubscribeToken(centerId, channel, addr))) {
+    return res.status(403).send('This link is not valid.');
+  }
+  if (!contactKey(channel, addr)) {
+    return res.status(400).send('This link is not valid.');
+  }
+
+  try {
+    await recordConsent(getFirestore(), centerId, {
+      channel, address: addr, state: 'withdrawn',
+      source: 'email-link', wording: 'Unsubscribed via email link', actor: String(addr),
+    });
+  } catch (e) {
+    console.error('unsubscribe failed:', e?.message || e);
+    return res.status(500).send('Something went wrong. Please reply to the email instead.');
+  }
+
+  res.setHeader('Content-Type', 'text/html');
+  return res.status(200).send(`<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Unsubscribed</title>
+<div style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1.5rem;line-height:1.6">
+  <h1 style="font-size:1.25rem;margin:0 0 .5rem">You're unsubscribed</h1>
+  <p style="color:#555;margin:0">We won't email ${String(addr).replace(/[<>&"]/g, '')} again.
+  If this was a mistake, reply to any earlier email and we'll put it back.</p>
+</div>`);
+}
+
 export default async function handler(req, res) {
+  // Public routes, answered before the staff auth gate — neither a
+  // carrier nor a family clicking a link has a Firebase token.
+  try {
+    if (req.query.action === 'sms-inbound' && req.method === 'POST') {
+      return await handleSmsInbound(req, res);
+    }
+    if (req.query.action === 'unsubscribe') {
+      return await handleUnsubscribe(req, res);
+    }
+  } catch (e) {
+    console.error('notify public route error:', e);
+    return res.status(500).json({ error: 'Internal error' });
+  }
+
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'Method not allowed' });

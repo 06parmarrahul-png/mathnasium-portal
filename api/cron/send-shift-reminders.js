@@ -10,7 +10,7 @@
 //      on every invocation. The endpoint rejects anything else, so nobody
 //      can spam the reminder system by hitting the URL externally.
 //   2. RESEND_API_KEY + RESEND_FROM must already be set (same vars the
-//      normal /api/send-email handler uses).
+//      normal /api/notify handler uses).
 //   3. FIREBASE_SERVICE_ACCOUNT must already be set (same as Stripe webhook).
 //
 // TIMING — how lead-time preferences are honoured
