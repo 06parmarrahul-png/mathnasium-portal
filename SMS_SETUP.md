@@ -98,6 +98,14 @@ sample messages that match what the cron actually sends.
 | `TWILIO_FROM` | the toll-free number, E.164 — `+18005550100` |
 | `UNSUBSCRIBE_SECRET` | any long random string, e.g. `openssl rand -base64 32` |
 | `SMS_HELP_CONTACT` | what HELP replies point at — a centre address you control |
+| `PORTAL_URL` | your stable production URL, no trailing slash |
+
+`PORTAL_URL` is not optional here even though other code treats it as
+such. Without it the unsubscribe link falls back to `VERCEL_URL`, which
+is the URL of one *deployment* and changes every time you push. An
+unsubscribe link sits in somebody's inbox for months; built from
+`VERCEL_URL` it stops working the next time you deploy, and a dead
+opt-out link is worse than no link at all — the reply is "report spam".
 
 `TWILIO_AUTH_TOKEN` is not optional. The inbound route **refuses to trust
 any request** when it is unset, rather than accepting unsigned ones —
