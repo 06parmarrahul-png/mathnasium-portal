@@ -725,7 +725,7 @@ export function buildOrderListText(items, centerName) {
 
 // ─── Send the reorder email on demand ──────────────────────────────────
 //
-// Same /api/send-email endpoint the rest of the app uses (Bearer ID
+// Same /api/notify endpoint the rest of the app uses (Bearer ID
 // token + { emails: [{ to, to_name, subject, body, cta_text, cta_link }] }).
 // The weekly automated version lives in api/cron/check-inventory.js; this
 // is the "don't wait until Monday, send it now" button.
@@ -771,7 +771,7 @@ export async function sendOrderListEmail({ recipients, items, centerName, settin
     cta_link: `${typeof window !== 'undefined' ? window.location.origin : ''}/inventory`,
   }));
 
-  const r = await fetch('/api/send-email', {
+  const r = await fetch('/api/notify', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${idToken}`,

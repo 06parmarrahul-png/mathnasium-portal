@@ -8,8 +8,10 @@
  *
  * Architecture: this file builds the subject + plain-text body for each
  * notification, batches the recipients into a single payload, and POSTs to
- * /api/send-email — a Vercel serverless function that fans the batch out
- * through Resend (see api/send-email.js + RESEND_SETUP.md).
+ * /api/notify — a Vercel serverless function that fans the batch out
+ * through Resend (see api/notify.js + RESEND_SETUP.md). It was
+ * send-email.js until it grew the SMS and opt-out routes; one function,
+ * because the Hobby plan allows twelve and this project has twelve.
  *
  * The serverless function requires a Firebase ID token, so we attach the
  * current user's token before sending.
@@ -24,12 +26,12 @@ import { auth } from '../firebase';
 
 import { SIGNOUT_TTL_DAYS } from './signOut';
 
-const SEND_ENDPOINT = '/api/send-email';
+const SEND_ENDPOINT = '/api/notify';
 
 // ─── Send primitive ────────────────────────────────────────────────────────
 
 /**
- * POST a batch of emails to /api/send-email. Fire-and-forget by default —
+ * POST a batch of emails to /api/notify. Fire-and-forget by default —
  * failures are logged but don't throw, so a Resend outage won't disrupt
  * the user-facing UX flow that triggered the email.
  *

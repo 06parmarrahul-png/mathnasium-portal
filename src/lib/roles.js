@@ -219,7 +219,10 @@ const ADMIN_PANEL_BASE = [
 
 export const PLATFORM_ROLE_PERMISSIONS = {
   super_admin:     [...ADMIN_PANEL_BASE, 'centre.settings', 'roles.manage', 'district.view'],
-  owner:           [...ADMIN_PANEL_BASE, 'centre.settings', 'district.view'],
+  // No district.view: an owner runs their own centre, and a roll-up of it
+  // is the pages they already have. Enterprise keeps it as the platform
+  // operator. See the sidebar gate in Layout.jsx.
+  owner:           [...ADMIN_PANEL_BASE, 'centre.settings'],
   // A district manager answers for several centres and runs none of them.
   // One permission, and it is read-only by construction: it unlocks the
   // roll-up and nothing at any individual centre. Which centres are theirs

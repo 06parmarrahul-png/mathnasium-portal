@@ -61,6 +61,7 @@ function authFor({ role, title, volunteer = false, config = LANGLEY }) {
     },
     activeCenterId: 'langley', centerConfig: config, mySubRoles: ['Elementary'], logout: () => {},
     isSuperAdmin: role === 'super_admin', isOwner: role === 'owner', isDirector,
+    isDistrictManager: role === 'district_manager',
     isAdminAssistant: role === 'admin_assistant', isAdmin: role === 'admin',
     isOwnerLike: ['owner', 'admin_assistant', 'super_admin'].includes(role) || isDirector,
     isLead: title === 'Lead', isVolunteer: volunteer,
@@ -86,6 +87,11 @@ const PEOPLE = {
   instructor:{ role: 'instructor', title: 'Instructor' },
   trainee:   { role: 'instructor', title: 'Training' },
   volunteer: { role: 'instructor', title: 'Volunteer', volunteer: true },
+  // Answers for several centres, runs none of them.
+  districtManager: { role: 'district_manager', title: '' },
+  // The platform operator. Keeps district.view — so this is the account
+  // that proves the TAB follows the job rather than the permission.
+  enterprise: { role: 'super_admin', title: '' },
 };
 
 function draw(who, { newHome = false, at = '/', pins = null } = {}) {
@@ -390,5 +396,38 @@ describe('pinned shortcuts', () => {
     expect(writes).toHaveLength(0);
     // The five they have are still unpinnable-from, i.e. still there.
     expect([...container.querySelectorAll('aside nav > div:first-child a')]).toHaveLength(5);
+  });
+});
+
+
+describe('the district roll-up is the district manager’s tab', () => {
+  const DISTRICT = PAGES.district.name;
+
+  it('is there for the district manager, right after Home', () => {
+    const sidebar = draw('districtManager').sidebar;
+    expect(sidebar).toContain(DISTRICT);
+    expect(sidebar.indexOf(DISTRICT)).toBe(1);
+  });
+
+  it('is not on an owner’s sidebar', () => {
+    // It used to be: the link keyed off can('district.view'), which an
+    // owner holds, so every owner carried a tab to a roll-up of the one
+    // centre they already run.
+    expect(draw('owner').sidebar).not.toContain(DISTRICT);
+  });
+
+  it('is off Enterprise’s sidebar too, though they still hold the permission', () => {
+    // The tab follows the JOB; the permission is only the read. If the
+    // gate goes back to can('district.view'), this is what fails.
+    const { sidebar } = draw('enterprise');
+    expect(current.auth.can('district.view')).toBe(true);
+    expect(sidebar).not.toContain(DISTRICT);
+  });
+
+  it('is on nobody else’s either', () => {
+    for (const who of Object.keys(PEOPLE)) {
+      if (who === 'districtManager') continue;
+      expect(draw(who).sidebar, who).not.toContain(DISTRICT);
+    }
   });
 });

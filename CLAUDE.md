@@ -1876,6 +1876,22 @@ Lib functions that build a sentence for the screen (`doubleBooking`,
 `availabilityLog`, `availabilityFit`) take the format as a last argument and
 default to 12-hour.
 
+## The District tab belongs to the district manager, not the permission
+
+`district.view` is the READ; `district_manager` is the JOB, and the sidebar
+follows the job. The link in `Layout.jsx` keys off `isDistrictManager` alone.
+
+It used to key off `can('district.view')`, which an owner held too — so every
+owner carried a tab to a roll-up of the one centre they already run. The
+permission has been taken off the `owner` role as well, so the route and the
+tab now agree; **Enterprise keeps it** as the platform operator, and is the
+account `Layout.render.test.jsx` uses to prove the gate is the role rather
+than the permission (they hold it and still get no tab).
+
+No data was ever exposed by this: `District.jsx` scopes every query to the
+reader's own `profile.centerIds`, so an owner saw their own centre and nothing
+else. It was noise on the sidebar, not a leak.
+
 ## Pinned shortcuts — the answer to "can I rearrange my sidebar?"
 
 Up to **five** pages pinned to a strip at the top of the sidebar.

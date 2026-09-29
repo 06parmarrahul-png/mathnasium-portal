@@ -269,10 +269,15 @@ export default function Layout({ children }) {
   if (!isOwnerLikeNav && !isDistrictManager && showPay) {
     general.push({ to: PAGES.myPay.path, label: PAGES.myPay.name, icon: Wallet });
   }
-  // The district roll-up, for anyone who answers for more than one centre.
-  // Straight after Home because for a district manager it IS the job; an
-  // owner with one centre sees a one-row version and ignores it.
-  if (auth.can('district.view')) {
+  // The district roll-up — for the district manager, and nobody else.
+  //
+  // It used to key off can('district.view'), which an owner holds too, so
+  // every owner carried a tab to a roll-up of the one centre they already
+  // run. The permission is the READ; this role is the JOB, and the sidebar
+  // follows the job — the same distinction AuthContext draws where
+  // isDistrictManager is defined. Straight after Home, because for them it
+  // is the whole of it.
+  if (isDistrictManager) {
     general.push({ to: PAGES.district.path, label: PAGES.district.name, icon: Building2 });
   }
   // The centre calendar — meetings, calls, interviews, and holding time

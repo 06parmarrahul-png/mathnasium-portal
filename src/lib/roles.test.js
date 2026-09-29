@@ -983,6 +983,16 @@ describe('the district manager', () => {
     expect(assignablePermissions().map(x => x.id)).not.toContain('district.view');
   });
 
+  it('is the only role that answers for a district — an owner does not', () => {
+    // An owner runs one centre; a roll-up of it is the pages they already
+    // have, and the tab for it was noise on their sidebar.
+    const owner = resolvePermissions({ platformRole: 'owner', instructorType: '', roles: ROLES });
+    expect(can(owner, 'district.view')).toBe(false);
+    expect(PLATFORM_ROLE_PERMISSIONS.owner).not.toContain('district.view');
+    // Enterprise keeps it: they are the platform operator.
+    expect(PLATFORM_ROLE_PERMISSIONS.super_admin).toContain('district.view');
+  });
+
   it('brings no centre powers of its own', () => {
     // The role's whole grant, checked against the source rather than
     // inferred: one permission, and it is the read-only one.
