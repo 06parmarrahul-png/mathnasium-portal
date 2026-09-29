@@ -6,9 +6,9 @@ All four portal notifications (schedule posted, open shift, shift claimed, time-
 
 ```
 Browser (emailService.js)
-    │  POST /api/send-email  + Firebase ID token
+    │  POST /api/notify  + Firebase ID token
     ▼
-Vercel serverless function (api/send-email.js)
+Vercel serverless function (api/notify.js)
     │  resend.batch.send(...)
     ▼
 Resend → recipient inboxes
@@ -87,4 +87,4 @@ All four are **fire-and-forget** — if Resend is down or the serverless functio
 
 ## Changing the email template
 
-Edit `src/lib/emailService.js`. The subject and `body` (plain text, newlines = line breaks) are composed per notification type. The serverless function (`api/send-email.js`) wraps everything in a basic HTML shell with the red Mathnasium CTA button — edit `bodyToHtml()` there if you want a different look.
+Edit `src/lib/emailService.js`. The subject and `body` (plain text, newlines = line breaks) are composed per notification type. The serverless function (`api/notify.js`) wraps everything in a basic HTML shell with the red Mathnasium CTA button — edit `bodyToHtml()` there if you want a different look.
