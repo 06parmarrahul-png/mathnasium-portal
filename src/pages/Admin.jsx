@@ -37,7 +37,6 @@ import {
   isOperatingDay, holidayFor, ALL_WEEKDAYS, resolveInstructionalHours,
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
-import CoverageModelCard from '../components/CoverageModelCard';
 import CentreRolesTab from '../components/CentreRolesTab';
 import TerminateStaffModal from '../components/TerminateStaffModal';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
@@ -10028,12 +10027,6 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       icon: Megaphone, accent: 'bg-sky-100 text-sky-700',
     },
     {
-      key: 'coverage',
-      label: 'Avg Coverage by Day',
-      desc: 'Rolling 8-week average of how many instructors actually show up per weekday vs. your staffing target.',
-      icon: Calendar, accent: 'bg-amber-100 text-amber-700',
-    },
-    {
       key: 'assignments',
       label: 'Hours by Assignment',
       desc: 'Where this month\'s hours are going — by sub-role and per-instructor leaderboard.',
@@ -10077,7 +10070,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
         </div>
       )}
 
-      {/* ── Hub: 5 module tiles ─────────────────────────────────────────
+      {/* ── Hub: the module tiles ───────────────────────────────────────
           Only renders on the overview. Each tile is a button that
           navigates to that module's dedicated detail page. Description
           text is right on the tile so a new owner doesn't have to
@@ -10088,7 +10081,7 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
             <LayoutGrid size={14} className="text-gray-500" />
             <h3 className="text-sm font-semibold text-gray-900">Analytics modules</h3>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {MODULES.map(m => {
               const Icon = m.icon;
               return (
@@ -10482,14 +10475,9 @@ export function AnalyticsTab({ shifts, users, centerConfig, activeCenterId, view
       </div>
       )}
 
-      {/* ── Coverage: what we want per day, and whether we can staff it ── */}
-      {view === 'coverage' && (<>
-      {/* Target vs availability vs rota, per half hour. Replaced "Average
-          Coverage by Day", whose daily average against one number for the
-          whole day could not say which HALF HOUR was short. */}
-      <CoverageModelCard />
-
-      </>)}
+      {/* Coverage by Day lives on the Availability Log now. It reads the
+          availability people filed against the target the centre set,
+          which is that page's question, not a strategy module's. */}
 
       {/* ── Hiring module: 4-month forecast + job posting tools ─────── */}
       {view === 'hiring' && (

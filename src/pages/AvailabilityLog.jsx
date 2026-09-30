@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
@@ -10,9 +11,10 @@ import {
   subscribeAvailabilityLog, indexShifts, conflictFor,
   describeChange, fmtWindow, fmtDay, fmtWhen, logToCsv,
 } from '../lib/availabilityLog';
+import CoverageModelCard from '../components/CoverageModelCard';
 import {
   History, Search, Download, AlertTriangle, CalendarDays, Loader2,
-  ChevronRight, ChevronDown, ShieldCheck, CalendarRange, UserCog,
+  ChevronRight, ChevronDown, ShieldCheck, CalendarRange, UserCog, Users,
 } from 'lucide-react';
 
 /**
@@ -29,6 +31,22 @@ import {
  * the row turns red retroactively, which is exactly the case that
  * started the argument.
  */
+
+/**
+ * The page's two halves.
+ *
+ * Coverage by Day came off Centre Analytics, where it was a strategy
+ * module sitting between a payroll projection and a hiring forecast. It
+ * reads availability — what people said they could work — against the
+ * target the centre set, so the question it answers is the one this page
+ * is already about, and the two now sit a click apart.
+ *
+ * In the URL so a tab can be linked to and survives a refresh.
+ */
+const TABS = [
+  { key: 'log',      label: 'Change Log',     icon: History },
+  { key: 'coverage', label: 'Coverage by Day', icon: Users },
+];
 
 const RANGES = [
   { key: '7',   label: 'Last 7 days',  days: 7   },
@@ -229,6 +247,11 @@ function BatchGroup({ entries }) {
 export default function AvailabilityLog() {
   const { activeCenterId, canManageOperations, isSuperAdmin } = useAuth();
 
+  const [params, setParams] = useSearchParams();
+  const tab = TABS.some(t => t.key === params.get('tab')) ? params.get('tab') : 'log';
+  // replace: flipping a tab is not a place in history worth backing into.
+  const openTab = (key) => setParams(key === 'log' ? {} : { tab: key }, { replace: true });
+
   const [entries, setEntries] = useState([]);
   const [shifts, setShifts] = useState([]);
   const [loadedCenter, setLoadedCenter] = useState(null);
@@ -342,126 +365,151 @@ export default function AvailabilityLog() {
             <History size={24} className="text-red-600" /> Availability Log
           </h1>
           <p className="mt-1 text-sm text-gray-500">
-            Every time someone adds, changes or removes their availability — with the
-            exact before and after. Admins, admin assistants, directors and owners only.
+            {tab === 'coverage'
+              ? 'How many instructors each day needs, and whether the availability on file covers it.'
+              : 'Every time someone adds, changes or removes their availability — with the exact before and after.'}
+            {' '}Admins, admin assistants, directors and owners only.
           </p>
         </div>
-        <button
-          onClick={handleExport}
-          className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
-        >
-          <Download size={16} /> Export
-        </button>
-      </div>
-
-      {loadError && (
-        <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
-          <div className="min-w-0 text-sm text-amber-900">
-            <p className="font-semibold">{errorCopy(loadError).title}</p>
-            <p className="mt-0.5">{errorCopy(loadError).body}</p>
-            {/* The underlying message names the infrastructure it came
-                from, which is meaningless to a centre admin and not
-                theirs to act on. Enterprise sees it; nobody else does. */}
-            {isSuperAdmin && (
-              <p className="mt-2 break-words rounded bg-amber-100 px-2 py-1 font-mono text-xs">
-                {loadError.code ? `${loadError.code}: ` : ''}{loadError.message}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <StatTile icon={CalendarRange} label="Changes" value={filtered.length} sub="In the selected range" />
-        <StatTile
-          icon={AlertTriangle}
-          label="Conflicts"
-          value={conflictCount}
-          sub="Clash with a scheduled shift"
-          tone={conflictCount > 0 ? 'red' : 'gray'}
-        />
-        <StatTile
-          icon={UserCog}
-          label="Removals"
-          value={removedCount}
-          sub="Availability taken away"
-          tone={removedCount > 0 ? 'amber' : 'gray'}
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-        <div className="relative min-w-[14rem] flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search by instructor or date…"
-            className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-          />
-        </div>
-        <select
-          value={range}
-          onChange={e => setRange(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-        >
-          {RANGES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
-        </select>
-        <select
-          value={actionFilter}
-          onChange={e => setActionFilter(e.target.value)}
-          className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
-        >
-          <option value="all">All changes</option>
-          <option value={AVAIL_ACTIONS.ADDED}>Added</option>
-          <option value={AVAIL_ACTIONS.CHANGED}>Changed</option>
-          <option value={AVAIL_ACTIONS.REMOVED}>Removed</option>
-        </select>
-        <button
-          onClick={() => setConflictsOnly(v => !v)}
-          className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
-            conflictsOnly
-              ? 'border-red-300 bg-red-50 text-red-700'
-              : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
-          }`}
-        >
-          <AlertTriangle size={14} /> Conflicts only
-        </button>
-      </div>
-
-      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-        {loading ? (
-          <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
-            <Loader2 size={16} className="animate-spin" /> Loading changes…
-          </div>
-        ) : groups.length === 0 ? (
-          <div className="px-6 py-16 text-center">
-            <ShieldCheck size={40} className="mx-auto mb-3 text-gray-300" />
-            <p className="text-base font-semibold text-gray-900">
-              {loadError
-                ? 'History unavailable'
-                : entries.length === 0 ? 'No changes recorded yet' : 'Nothing matches those filters'}
-            </p>
-            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
-              {loadError
-                ? 'Changes will show up here once this clears — see the note above.'
-                : entries.length === 0
-                  ? 'Changes appear here as soon as staff start editing their availability. Anything changed before this log was added is not recorded.'
-                  : 'Try widening the date range or clearing the conflicts filter.'}
-            </p>
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {groups.map(g => (
-              g.type === 'batch'
-                ? <BatchGroup key={g.key} entries={g.entries} />
-                : <div key={g.key} className={g.entry._conflict ? 'bg-red-50/40' : ''}>
-                    <EntryRow entry={g.entry} />
-                  </div>
-            ))}
-          </div>
+        {/* Exports the log, so it goes when the log does. */}
+        {tab === 'log' && (
+          <button
+            onClick={handleExport}
+            className="inline-flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+          >
+            <Download size={16} /> Export
+          </button>
         )}
       </div>
+
+      <div className="flex gap-1 border-b border-gray-200">
+        {TABS.map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.key} onClick={() => openTab(t.key)}
+              className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                tab === t.key
+                  ? 'border-b-2 border-red-600 bg-white text-red-700'
+                  : 'text-gray-500 hover:text-gray-800'
+              }`}>
+              <Icon size={16} /> {t.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {tab === 'coverage' && <CoverageModelCard />}
+
+      {tab === 'log' && (<>
+        {loadError && (
+          <div className="flex items-start gap-3 rounded-xl border border-amber-300 bg-amber-50 p-4">
+            <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-600" />
+            <div className="min-w-0 text-sm text-amber-900">
+              <p className="font-semibold">{errorCopy(loadError).title}</p>
+              <p className="mt-0.5">{errorCopy(loadError).body}</p>
+              {/* The underlying message names the infrastructure it came
+                  from, which is meaningless to a centre admin and not
+                  theirs to act on. Enterprise sees it; nobody else does. */}
+              {isSuperAdmin && (
+                <p className="mt-2 break-words rounded bg-amber-100 px-2 py-1 font-mono text-xs">
+                  {loadError.code ? `${loadError.code}: ` : ''}{loadError.message}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <StatTile icon={CalendarRange} label="Changes" value={filtered.length} sub="In the selected range" />
+          <StatTile
+            icon={AlertTriangle}
+            label="Conflicts"
+            value={conflictCount}
+            sub="Clash with a scheduled shift"
+            tone={conflictCount > 0 ? 'red' : 'gray'}
+          />
+          <StatTile
+            icon={UserCog}
+            label="Removals"
+            value={removedCount}
+            sub="Availability taken away"
+            tone={removedCount > 0 ? 'amber' : 'gray'}
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+          <div className="relative min-w-[14rem] flex-1">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by instructor or date…"
+              className="w-full rounded-lg border border-gray-300 py-2 pl-9 pr-3 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+            />
+          </div>
+          <select
+            value={range}
+            onChange={e => setRange(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+          >
+            {RANGES.map(r => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select>
+          <select
+            value={actionFilter}
+            onChange={e => setActionFilter(e.target.value)}
+            className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none focus:ring-1 focus:ring-red-500"
+          >
+            <option value="all">All changes</option>
+            <option value={AVAIL_ACTIONS.ADDED}>Added</option>
+            <option value={AVAIL_ACTIONS.CHANGED}>Changed</option>
+            <option value={AVAIL_ACTIONS.REMOVED}>Removed</option>
+          </select>
+          <button
+            onClick={() => setConflictsOnly(v => !v)}
+            className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition ${
+              conflictsOnly
+                ? 'border-red-300 bg-red-50 text-red-700'
+                : 'border-gray-300 bg-white text-gray-600 hover:bg-gray-50'
+            }`}
+          >
+            <AlertTriangle size={14} /> Conflicts only
+          </button>
+        </div>
+
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
+          {loading ? (
+            <div className="flex items-center justify-center gap-2 py-16 text-sm text-gray-500">
+              <Loader2 size={16} className="animate-spin" /> Loading changes…
+            </div>
+          ) : groups.length === 0 ? (
+            <div className="px-6 py-16 text-center">
+              <ShieldCheck size={40} className="mx-auto mb-3 text-gray-300" />
+              <p className="text-base font-semibold text-gray-900">
+                {loadError
+                  ? 'History unavailable'
+                  : entries.length === 0 ? 'No changes recorded yet' : 'Nothing matches those filters'}
+              </p>
+              <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+                {loadError
+                  ? 'Changes will show up here once this clears — see the note above.'
+                  : entries.length === 0
+                    ? 'Changes appear here as soon as staff start editing their availability. Anything changed before this log was added is not recorded.'
+                    : 'Try widening the date range or clearing the conflicts filter.'}
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-gray-100">
+              {groups.map(g => (
+                g.type === 'batch'
+                  ? <BatchGroup key={g.key} entries={g.entries} />
+                  : <div key={g.key} className={g.entry._conflict ? 'bg-red-50/40' : ''}>
+                      <EntryRow entry={g.entry} />
+                    </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </>)}
     </div>
   );
 }

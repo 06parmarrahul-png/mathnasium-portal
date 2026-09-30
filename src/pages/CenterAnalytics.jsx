@@ -10,7 +10,10 @@ import { resolveUserForCenter } from '../lib/centerMembership';
 // Which :section route segments map to a real AnalyticsTab view. Anything
 // outside this list falls back to the hub. Keeps URL typos from rendering
 // a blank page.
-const VALID_VIEWS = new Set(['snapshot', 'intakes', 'coverage', 'assignments', 'hiring']);
+// 'coverage' was here until Coverage by Day moved to the Availability
+// Log; an old bookmark now falls back to the hub rather than to a
+// view that renders nothing.
+const VALID_VIEWS = new Set(['snapshot', 'intakes', 'assignments', 'hiring']);
 
 /**
  * Standalone Centre Analytics page. Pulls `shifts` + `users` for the
