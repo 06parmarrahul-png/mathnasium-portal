@@ -14,7 +14,15 @@
  * capacity, and the axis title and legend wording come from the caller.
  *
  * The geometry is exported because callers lay HTML out underneath the SVG
- * (target inputs, day labels) and it has to line up with the columns.
+ * (target inputs, day labels) and it has to line up with the columns —
+ * see components/SlotStrip.jsx, which is what they should use.
+ *
+ * THE LEGEND IS HTML, ABOVE THE CHART. It was SVG text at the bottom, at
+ * hardcoded x positions (130 / 248 / 378) picked for one set of words, so a
+ * longer label on the other page ran into its neighbour with nothing to
+ * stop it; and it sat below the thing it explains, which is the wrong way
+ * round for somebody meeting the colours for the first time. As HTML it
+ * wraps, and it is read before the bars rather than after them.
  */
 
 import { CHART, CHART_COLORS } from '../lib/slotChart';
@@ -28,6 +36,16 @@ import { CHART, CHART_COLORS } from '../lib/slotChart';
  * @param {string} axisTitle  rotated label on the y-axis
  * @param {object} legend     { fill, matched, under, over } wording
  */
+/** One entry in the legend: a swatch and what it means. */
+function Key({ swatch, children }) {
+  return (
+    <li className="flex items-center gap-1.5">
+      {swatch}
+      <span>{children}</span>
+    </li>
+  );
+}
+
 export default function SlotBarChart({ items, maxY, tickStep, axisTitle, legend }) {
   const { W, H, PADL, PADB, PADT, PADR } = CHART;
   const { GREEN_FILL, OVER_FILL, UNDER_FILL, GREEN_LINE, UNDER_LINE, OVER_LINE } = CHART_COLORS;
@@ -37,8 +55,21 @@ export default function SlotBarChart({ items, maxY, tickStep, axisTitle, legend 
   const groupW = chartW / Math.max(1, items.length);
   const yScale = (v) => PADT + chartH - (v / maxY) * chartH;
 
+  const line = (color) => (
+    <span className="h-[3px] w-4 shrink-0 rounded-full" style={{ background: color }} />
+  );
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="xMidYMid meet">
+    <>
+      <ul className="mb-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[10px] text-gray-600">
+        <Key swatch={<span className="h-2.5 w-2.5 shrink-0 rounded-[2px]" style={{ background: GREEN_FILL }} />}>
+          {legend.fill}
+        </Key>
+        <Key swatch={line(GREEN_LINE)}>{legend.matched}</Key>
+        <Key swatch={line(UNDER_LINE)}>{legend.under}</Key>
+        <Key swatch={line(OVER_LINE)}>{legend.over}</Key>
+      </ul>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" preserveAspectRatio="xMidYMid meet">
       {/* Y-axis title */}
       <text x={10} y={PADT + chartH / 2} transform={`rotate(-90 10 ${PADT + chartH / 2})`} textAnchor="middle" fontSize="10" fill="#6b7280">
         {axisTitle}
@@ -98,18 +129,7 @@ export default function SlotBarChart({ items, maxY, tickStep, axisTitle, legend 
           </g>
         );
       })}
-
-      {/* Legend at the bottom — matches the boss's screenshot ordering. */}
-      <g transform={`translate(${PADL}, ${H - 2})`}>
-        <rect x="0" y="-9" width="10" height="9" fill={GREEN_FILL} />
-        <text x="14" y="-1" fontSize="10" fill="#4b5563">{legend.fill}</text>
-        <line x1="130" y1="-5" x2="146" y2="-5" stroke={GREEN_LINE} strokeWidth="2.5" />
-        <text x="150" y="-1" fontSize="10" fill="#4b5563">{legend.matched}</text>
-        <line x1="248" y1="-5" x2="264" y2="-5" stroke={UNDER_LINE} strokeWidth="2.5" />
-        <text x="268" y="-1" fontSize="10" fill="#4b5563">{legend.under}</text>
-        <line x1="378" y1="-5" x2="394" y2="-5" stroke={OVER_LINE} strokeWidth="2.5" />
-        <text x="398" y="-1" fontSize="10" fill="#4b5563">{legend.over}</text>
-      </g>
     </svg>
+    </>
   );
 }

@@ -223,7 +223,24 @@ raw. Every other staffing target in the app is a whole-day number
 
 **It is the Supply & Demand chart, literally.** `components/SlotBarChart.jsx` was
 lifted out of `SupplyDemand.jsx` so both pages draw through one component
-(geometry and palette in `src/lib/slotChart.js`). Same bars, same marker lines,
+(geometry and palette in `src/lib/slotChart.js`).
+
+**The rows under the chart go through `components/SlotStrip.jsx`, and nothing
+else will line up.** They were a `table-fixed` whose first column held the row
+label ("Ratio status", "Impact", "Target") — a fixed-width column inside the
+same track list that the chart's own columns do not lose, so every cell sat
+right of the bar it described. Measured in a browser at 900px: the first pill
+was **50.6px out on a 127px column**, and the drift shrank across the row
+(50.6 → 16.0), so no single offset would have fixed it. A SlotStrip puts the
+label ABOVE the row and gives the cells the plot area alone — `CHART_INSET` on
+the wrapper, `repeat(n, minmax(0, 1fr))` with **no gap** inside (a gap moves
+cell centres by up to half a gap at the ends; padding inside each cell does
+not). Re-measured after: 0.02px. It also does not scroll on its own, which the
+old strip did while the chart above it did not.
+
+**The legend is HTML, above the chart.** It was SVG text at the bottom at
+hardcoded x positions picked for one page's wording, so the other page's longer
+labels ran into each other. Same bars, same marker lines,
 same status pills underneath. S&D asks "enough instructors for the students
 booked"; Coverage asks "enough for what we asked for" — so the series are named
 `value` / `marker`, and the axis title and legend come from the caller. **Don't

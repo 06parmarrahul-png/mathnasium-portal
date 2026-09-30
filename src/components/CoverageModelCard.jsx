@@ -47,7 +47,7 @@ import {
   clearSlotTargets, setAllDayTargets,
 } from '../lib/coverageModel';
 import SlotBarChart from './SlotBarChart';
-import { CHART_INSET } from '../lib/slotChart';
+import SlotStrip from './SlotStrip';
 import { Users, ChevronDown, ChevronRight, Save, Loader2, Lock, RotateCcw } from 'lucide-react';
 
 const fmtDate = (ymd) => new Date(`${ymd}T12:00:00`)
@@ -348,108 +348,94 @@ export default function CoverageModelCard() {
           />
 
           {/* The rows under the chart, in Supply & Demand's shape: the slot,
-              the verdict, and what it costs you. */}
-          <div className="mt-2 overflow-x-auto">
-            <div style={{ paddingLeft: CHART_INSET.left, paddingRight: CHART_INSET.right }}>
-              <table className="w-full table-fixed text-xs">
-                <tbody>
-                  <tr>
-                    <th className="w-24 py-1 pr-2 text-left text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                      {expanded ? 'Slot' : 'Day'}
-                    </th>
-                    {columns.map((c, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center text-[10px] text-gray-500">
-                        {expanded ? slotLabel(c.slot, fmtTime) : (
-                          <button
-                            onClick={() => setOpenDay(days[i].weekday)}
-                            className="inline-flex items-center gap-0.5 font-semibold text-gray-700 hover:text-purple-700"
-                          >
-                            <ChevronRight size={10} />
-                            {days[i].weekday.slice(0, 3)}
-                          </button>
-                        )}
-                        {!expanded && <span className="block text-[9px] text-gray-400">{fmtDate(days[i].date)}</span>}
-                      </td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="py-1 pr-2 text-left text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                      Ratio status
-                    </th>
-                    {columns.map((c, i) => (
-                      <td key={i} className="px-0.5 py-1">
-                        <span className={`block rounded-md px-1 py-1.5 text-center text-[11px] font-bold ${PILL_TONE[c.verdict.tone]}`}>
-                          {c.verdict.label}
-                        </span>
-                      </td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="py-1 pr-2 text-left align-top text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                      Target
-                      <span className="block text-[9px] font-normal normal-case tracking-normal text-gray-400">
-                        {expanded ? 'blank follows the day' : 'instructors wanted'}
-                      </span>
-                    </th>
-                    {columns.map((c, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center">
-                        {expanded ? (
-                          <input
-                            type="number" min="0" max="40"
-                            value={stored?.[expanded.weekday]?.[c.slot] ?? ''}
-                            placeholder={Number.isFinite(c.target) ? String(c.target) : '—'}
-                            disabled={!canEdit}
-                            aria-label={`Wanted at ${c.slot} on ${expanded.weekday}`}
-                            onChange={e => setDraft(setSlotTarget(stored, expanded.weekday, c.slot, e.target.value))}
-                            className={`w-12 rounded border px-1 py-1 text-center text-xs tabular-nums focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-400 ${
-                              c.overridden ? 'border-purple-400 font-semibold text-purple-900' : 'border-gray-300 text-gray-500'
-                            }`}
-                          />
-                        ) : (
-                          <input
-                            type="number" min="0" max="40"
-                            value={dayTargetFor(model, days[i].weekday) ?? ''}
-                            placeholder="—"
-                            disabled={!canEdit}
-                            aria-label={`Instructors wanted on ${days[i].weekday}`}
-                            onChange={e => setDraft(setDayTarget(stored, days[i].weekday, e.target.value))}
-                            className="w-12 rounded border border-gray-300 px-1 py-1 text-center text-xs font-semibold tabular-nums text-gray-900 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-400"
-                          />
-                        )}
-                      </td>
-                    ))}
-                  </tr>
-                  <tr>
-                    <th className="py-1 pr-2 text-left align-top text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                      Impact
-                      <span className="block text-[9px] font-normal normal-case leading-tight tracking-normal text-gray-400">
-                        instructors<br />to find
-                      </span>
-                    </th>
-                    {columns.map((c, i) => (
-                      <td key={i} className="px-0.5 py-1 text-center">
-                        {c.verdict.short > 0
-                          ? <span className="text-base font-bold text-orange-600">{c.verdict.short}</span>
-                          : <span className="text-gray-300">—</span>}
-                      </td>
-                    ))}
-                  </tr>
-                  {expanded && (
-                    <tr>
-                      <th className="py-1 pr-2 text-left text-[10px] font-bold uppercase tracking-wide text-gray-500">
-                        On the rota
-                        <span className="block text-[9px] font-normal normal-case tracking-normal text-gray-400">
-                          drafts included
-                        </span>
-                      </th>
-                      {slotRows.map((r, i) => (
-                        <td key={i} className="px-0.5 py-1 text-center tabular-nums text-gray-600">{r.scheduled}</td>
-                      ))}
-                    </tr>
+              the verdict, and what it costs you.
+
+              EACH CELL IS CENTRED ON ITS OWN BAR. These were a table whose
+              first column held the row label, which ate width the chart's
+              columns do not lose, so every cell sat right of the bar it
+              described. Labels are above their rows now — see
+              components/SlotStrip.jsx. */}
+          <div className="mt-2 space-y-2.5">
+            {/* The day row is a CONTROL — click a day to open its half
+                hours — so it stays. There is no slot equivalent when a day
+                is open: the chart's own axis labels the half hours
+                directly above, and once the strip lines up with the bars
+                a second row of the same times sat a few pixels under the
+                first and read as two different rows. */}
+            {!expanded && (
+              <SlotStrip label="Day" count={columns.length}>
+                {days.map((d, i) => (
+                  <div key={i} className="px-0.5 text-center text-[10px] text-gray-500">
+                    <button
+                      onClick={() => setOpenDay(d.weekday)}
+                      className="inline-flex items-center gap-0.5 font-semibold text-gray-700 hover:text-purple-700"
+                    >
+                      <ChevronRight size={10} />
+                      {d.weekday.slice(0, 3)}
+                    </button>
+                    <span className="block text-[9px] text-gray-400">{fmtDate(d.date)}</span>
+                  </div>
+                ))}
+              </SlotStrip>
+            )}
+
+            <SlotStrip label="Ratio status" count={columns.length}>
+              {columns.map((c, i) => (
+                <div key={i} className="px-0.5">
+                  <span className={`block rounded-md px-1 py-1.5 text-center text-[11px] font-bold ${PILL_TONE[c.verdict.tone]}`}>
+                    {c.verdict.label}
+                  </span>
+                </div>
+              ))}
+            </SlotStrip>
+
+            <SlotStrip label="Target" hint={expanded ? 'blank follows the day' : 'instructors wanted'} count={columns.length}>
+              {columns.map((c, i) => (
+                <div key={i} className="px-0.5 text-center">
+                  {expanded ? (
+                    <input
+                      type="number" min="0" max="40"
+                      value={stored?.[expanded.weekday]?.[c.slot] ?? ''}
+                      placeholder={Number.isFinite(c.target) ? String(c.target) : '—'}
+                      disabled={!canEdit}
+                      aria-label={`Wanted at ${c.slot} on ${expanded.weekday}`}
+                      onChange={e => setDraft(setSlotTarget(stored, expanded.weekday, c.slot, e.target.value))}
+                      className={`w-12 rounded border px-1 py-1 text-center text-xs tabular-nums focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-400 ${
+                        c.overridden ? 'border-purple-400 font-semibold text-purple-900' : 'border-gray-300 text-gray-500'
+                      }`}
+                    />
+                  ) : (
+                    <input
+                      type="number" min="0" max="40"
+                      value={dayTargetFor(model, days[i].weekday) ?? ''}
+                      placeholder="—"
+                      disabled={!canEdit}
+                      aria-label={`Instructors wanted on ${days[i].weekday}`}
+                      onChange={e => setDraft(setDayTarget(stored, days[i].weekday, e.target.value))}
+                      className="w-12 rounded border border-gray-300 px-1 py-1 text-center text-xs font-semibold tabular-nums text-gray-900 focus:border-purple-500 focus:outline-none focus:ring-1 focus:ring-purple-200 disabled:bg-gray-50 disabled:text-gray-400"
+                    />
                   )}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              ))}
+            </SlotStrip>
+
+            <SlotStrip label="Impact" hint="instructors to find" count={columns.length}>
+              {columns.map((c, i) => (
+                <div key={i} className="px-0.5 text-center">
+                  {c.verdict.short > 0
+                    ? <span className="text-base font-bold text-orange-600">{c.verdict.short}</span>
+                    : <span className="text-gray-300">—</span>}
+                </div>
+              ))}
+            </SlotStrip>
+
+            {expanded && (
+              <SlotStrip label="On the rota" hint="drafts included" count={slotRows.length}>
+                {slotRows.map((r, i) => (
+                  <div key={i} className="px-0.5 text-center tabular-nums text-gray-600">{r.scheduled}</div>
+                ))}
+              </SlotStrip>
+            )}
           </div>
 
           {/* Week summary, and the honest-empty caveats. */}

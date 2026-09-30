@@ -19,6 +19,7 @@ import { DEFAULT_TARGET_RATIO } from '../lib/subRoles';
 import { floorSupply, uniqueOnFloor, SIDE_LABELS } from '../lib/floorSupply';
 import { resolveUserForCenter } from '../lib/centerMembership';
 import SlotBarChart from '../components/SlotBarChart';
+import SlotStrip from '../components/SlotStrip';
 
 /**
  * Supply & Demand — per-slot student-to-instructor coverage visualization.
@@ -676,75 +677,54 @@ function SideCard({ side, data, dayWindow, typical, weekdayLabel, forecastRatio,
       <Chart rows={rows} maxY={maxY} forecastRatio={forecastRatio} slotLabel={slotLabel} />
 
       {/* ── RATIO STATUS + IMPACT ──────────────────────────────────────
-          Directly under the chart, exactly like Andy's boss's tool:
-          per-slot coloured boxes (Matched green, X.X Over pink, X.X
-          Under orange) with a matching "# of Students Affected" row.
-          Uses a single wide table so every cell aligns column-for-
-          column with the chart bars above. */}
-      <div className="mt-5 overflow-x-auto">
-        <table className="w-full text-xs table-fixed border-separate border-spacing-x-0.5">
-          <colgroup>
-            <col style={{ width: 90 }} />
-            {rows.map(r => <col key={r.i} />)}
-          </colgroup>
-          <thead>
-            <tr className="text-[10px] uppercase tracking-wide text-gray-500">
-              <th className="text-left pb-1 pr-2 font-bold">Slot</th>
-              {rows.map(r => (
-                <th key={r.i} className="text-center pb-1 font-medium">{slotLabel(r.i).toUpperCase().replace('AM', 'AM').replace('PM', 'PM')}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {/* RATIO STATUS row — one full-width coloured pill per slot.
-                Values format: "Matched" or "2 Over" / "1 Under", counted in
-                whole instructors (supply − ceil(demand ÷ ratio)). Never a
-                fraction: half a person isn't an action anyone can take. */}
-            <tr>
-              <td className="pr-2 py-2 text-left align-top">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Ratio Status</div>
-              </td>
-              {rows.map(r => {
-                // r.overUnderRatio is already a whole number of instructors.
-                const abs = Math.abs(r.overUnderRatio);
-                let label = 'Matched';
-                if (r.status === 'overstaffed')       label = `${abs} Over`;
-                else if (r.status === 'understaffed') label = `${abs} Under`;
-                const cls = r.status === 'matched'
-                  ? 'bg-emerald-200/70 text-emerald-900'
-                  : r.status === 'understaffed'
-                    ? 'bg-orange-100 text-orange-700 border border-orange-300'
-                    : 'bg-red-100 text-red-700 border border-red-200';
-                return (
-                  <td key={r.i} className="p-0 align-middle">
-                    <div className={`rounded-md py-2 text-center text-xs font-semibold ${cls}`}>
-                      {label}
-                    </div>
-                  </td>
-                );
-              })}
-            </tr>
-            {/* IMPACT row — students beyond capacity in understaffed
-                slots. Non-understaffed slots show "—" so the row reads
-                as a comparison, not a data table. */}
-            <tr>
-              <td className="pr-2 py-2 text-left align-top">
-                <div className="text-[10px] font-bold uppercase tracking-wide text-gray-700">Impact</div>
-                <div className="text-[9px] font-normal text-gray-500 leading-tight"># of<br/>Students<br/>Affected</div>
-              </td>
-              {rows.map(r => {
-                const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
-                return (
-                  <td key={r.i} className="text-center align-middle py-2">
-                    {r.status === 'understaffed' && shortStudents > 0
-                      ? <span className="text-orange-600 font-bold text-base">{shortStudents}</span>
-                      : <span className="text-gray-300">—</span>}
-                  </td>
-                );
-              })}
-            </tr>
-          </tbody>
-        </table>
+          Per-slot coloured boxes (Matched green, X Over pink, X Under
+          orange) with a matching "students affected" row, EACH CELL
+          CENTRED ON ITS OWN BAR — see components/SlotStrip.jsx for why
+          that needed the row labels to move above the rows.
+
+          The slot times that used to head this block are gone: the chart
+          draws them under its own axis, directly above, and printing them
+          twice a few pixels apart read as two different rows of times. */}
+      <div className="mt-4 space-y-3">
+        {/* One full-width pill per slot. "Matched" or "2 Over" / "1 Under",
+            counted in whole instructors (supply − ceil(demand ÷ ratio)).
+            Never a fraction: half a person isn't an action anyone can take. */}
+        <SlotStrip label="Ratio status" count={rows.length}>
+          {rows.map(r => {
+            // r.overUnderRatio is already a whole number of instructors.
+            const abs = Math.abs(r.overUnderRatio);
+            let label = 'Matched';
+            if (r.status === 'overstaffed')       label = `${abs} Over`;
+            else if (r.status === 'understaffed') label = `${abs} Under`;
+            const cls = r.status === 'matched'
+              ? 'bg-emerald-200/70 text-emerald-900'
+              : r.status === 'understaffed'
+                ? 'bg-orange-100 text-orange-700 border border-orange-300'
+                : 'bg-red-100 text-red-700 border border-red-200';
+            return (
+              <div key={r.i} className="px-0.5">
+                <div className={`rounded-md py-2 text-center text-[11px] font-semibold ${cls}`}>
+                  {label}
+                </div>
+              </div>
+            );
+          })}
+        </SlotStrip>
+
+        {/* Students beyond capacity in understaffed slots. Everything else
+            shows "—" so the row reads as a comparison, not a data table. */}
+        <SlotStrip label="Impact" hint="students affected" count={rows.length}>
+          {rows.map(r => {
+            const shortStudents = Math.max(0, Math.round(r.demand - r.capacity));
+            return (
+              <div key={r.i} className="px-0.5 text-center">
+                {r.status === 'understaffed' && shortStudents > 0
+                  ? <span className="text-base font-bold text-orange-600">{shortStudents}</span>
+                  : <span className="text-gray-300">—</span>}
+              </div>
+            );
+          })}
+        </SlotStrip>
       </div>
 
       {/* ── Slot Detail (editable) ─────────────────────────────────────

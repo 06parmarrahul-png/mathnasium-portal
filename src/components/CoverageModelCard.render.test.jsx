@@ -83,10 +83,19 @@ function setup(coverageModel, { canEdit = true, config = {} } = {}) {
 const barValues = () =>
   [...document.querySelectorAll('svg text[font-weight="600"]')].map(t => t.textContent.trim());
 
-/** The cells of the row whose header starts with `label`. */
+/**
+ * The cells of the strip whose label starts with `label`.
+ *
+ * The rows under the chart used to be a <table> with the label in the
+ * first <th> of each <tr>; they are SlotStrips now — a label above a grid
+ * — because a label column inside the track list pushed every cell right
+ * of the bar it belongs to. The grid is the strip's last child.
+ */
 const rowCells = (label) => {
-  const th = [...document.querySelectorAll('th')].find(x => x.textContent.startsWith(label));
-  return [...th.parentElement.querySelectorAll('td')].map(td => td.textContent.trim());
+  const strip = [...document.querySelectorAll('p')]
+    .find(p => p.textContent.startsWith(label))?.parentElement;
+  if (!strip) throw new Error(`no strip labelled ${label}`);
+  return [...strip.lastElementChild.children].map(cell => cell.textContent.trim());
 };
 
 /** The "2 Short" / "Matched" / "1 Spare" pills, left to right. */
