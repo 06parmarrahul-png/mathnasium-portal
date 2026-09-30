@@ -150,7 +150,10 @@ function AppRoutes() {
         <Route path="/supply-demand" element={<ProtectedRoute requireOwner><Layout><SupplyDemand /></Layout></ProtectedRoute>} />
         {/* Builds the shifts real bookings call for, then the owner assigns
             instructors to them. allowOps so Managers/Hosts can staff a day. */}
-        <Route path="/staffing-board" element={<ProtectedRoute requireOwner allowOps><Layout><StaffingBoard /></Layout></ProtectedRoute>} />
+        {/* The Staffing Board moved inside Manage Staff Schedule's
+            auto-scheduler. Kept as a redirect so an old bookmark, or a pin
+            somebody made, lands on it rather than on nothing. */}
+        <Route path="/staffing-board" element={<Navigate to="/admin?tab=scheduler" replace />} />
         <Route path="/staffing-budget" element={<ProtectedRoute><Layout><StaffingBudget /></Layout></ProtectedRoute>} />
         <Route path="/center-settings" element={<ProtectedRoute><Layout><CenterSettings /></Layout></ProtectedRoute>} />
         <Route path="/audit-logs" element={<ProtectedRoute><Layout><AuditLogs /></Layout></ProtectedRoute>} />

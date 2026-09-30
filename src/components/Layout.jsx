@@ -334,7 +334,9 @@ export default function Layout({ children }) {
   const demand = [];
   if (useOwnerLayout) {
     demand.push({ to: PAGES.studentScheduler.path, label: PAGES.studentScheduler.name, icon: ClipboardList });
-    demand.push({ to: PAGES.staffingBoard.path, label: PAGES.staffingBoard.name, icon: LayoutGrid });
+    // The Staffing Board used to sit here. It is a section of Manage Staff
+    // Schedule's auto-scheduler now — the same job from the other end —
+    // so it is reached from there rather than from a link of its own.
   }
 
   // SUPPLY — staff. Schedule + roster + pay = supply being allocated,

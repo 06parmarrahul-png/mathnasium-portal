@@ -48,6 +48,7 @@ import { readVitals, toFigure } from '../lib/district';
 import { isCentreStaff } from '../lib/centreStaff';
 import { roleRatioDefault, isDirectorTitle, canGrantDirectorTitle } from '../lib/roles';
 import IntakeAnalyticsCard from '../components/IntakeAnalyticsCard';
+import StaffingBoard from './StaffingBoard';
 import PayrollProjectionCard from '../components/PayrollProjectionCard';
 import { projectPayroll, monthOfPeriodEnd } from '../lib/payrollProjection';
 import CenterSettingsTab from '../components/CenterSettingsTab';
@@ -7271,6 +7272,24 @@ export default function Admin() {
               </div>
             </>
           )}
+
+          {/* ── The Staffing Board ──────────────────────────────────────
+              Its own page until now, one sidebar section away from this
+              one, and the two do the same job from opposite ends: Generate
+              Schedule starts from who is AVAILABLE, the board starts from
+              what the bookings DEMAND. Both write drafts you publish from
+              the weekly grid. Somebody deciding between them was being
+              asked to hold two pages in their head; now it is one screen,
+              and the choice is which half you scroll to. */}
+          <div className="border-t border-gray-200 pt-6">
+            <div className="mb-4">
+              <h3 className="text-base font-bold text-gray-900">Staffing Board</h3>
+              <p className="mt-0.5 text-sm text-gray-500">
+                The other way round: builds the shifts your bookings actually call for, and you decide who works them.
+              </p>
+            </div>
+            <StaffingBoard embedded />
+          </div>
         </div>
       )}
 

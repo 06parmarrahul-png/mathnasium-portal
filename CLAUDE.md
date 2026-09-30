@@ -123,8 +123,12 @@ Two engines, sharing libraries:
 
 - **`src/lib/scheduler.js`** → `generateSchedule()`. Availability-driven. Called
   from one place: `src/pages/Admin.jsx`. Pure, unit-tested.
-- **`src/pages/StaffingBoard.jsx`** (`/staffing-board`) → demand-driven. Reads
-  real bookings, emits shift slots, human assigns people.
+- **`src/pages/StaffingBoard.jsx`** → demand-driven. Reads real bookings,
+  emits shift slots, human assigns people. **It is a section of Manage Staff
+  Schedule → auto-scheduler now**, rendered with `embedded` (which drops its
+  own `<h1>` and page gutter), not a page of its own — the two engines do the
+  same job from opposite ends and sat one sidebar section apart. Old links
+  still work: `/staffing-board` redirects to `/admin?tab=scheduler`.
 
 Supporting pure libs, all tested: `demand-staffing.js` (bookings → per-date
 min/max), `shift-shaping.js` (demand curve → contiguous shift blocks),
@@ -225,11 +229,12 @@ booked"; Coverage asks "enough for what we asked for" — so the series are name
 `value` / `marker`, and the axis title and legend come from the caller. **Don't
 recolour it in one place**: a green bar has to mean the same thing on both.
 
-`CoverageModelCard` is the single surface, mounted on **both** Centre Analytics →
-Coverage and the **Staffing Board** — Managers and Hosts can reach the board and
-Centre Analytics is owner-tier, and one component means the two can't drift. It
-self-subscribes (users, availability, shifts, time off) precisely because those
-two pages hold different slices of data.
+`CoverageModelCard` is the single surface and it now has ONE home: **Availability
+Log → Coverage by Day** (`/availability-log?tab=coverage`). It reads the
+availability people filed against the target the centre set, which is that
+page's own question. It was on Centre Analytics → Coverage and on the Staffing
+Board; both mounts are gone. It self-subscribes (users, availability, shifts,
+time off), which is what made moving it a one-line change.
 
 - **A bar per operating day**, height = instructors available, marker = that
   day's target, targets typed underneath. **Click a day** and the same chart
@@ -401,7 +406,7 @@ screen or migration is needed).
 
 Two rules keep it legible:
 - **Solid means a person, pale means a state.** The card's pale pills are
-  statuses (amber Open, indigo In progress, emerald Settled, red Overdue), so
+  statuses (amber Open, indigo In progress, emerald Completed, red Overdue), so
   people are solid. Don't blur the two.
 - **Red is reserved.** `YOU_COLOR` is the same red as the "this one is yours"
   rail, and `PERSON_COLORS` deliberately excludes it, so no colleague is ever
@@ -428,9 +433,19 @@ settles notes rather than erasing them, and this exists for test rows and notes
 typed into the wrong centre. No rules change was needed; the delete rule was
 always there and the UI simply never offered it.
 
+### The desk: the third status is CALLED "Completed" and STORED as `closed`
+
+Renamed from "Settled" (2026-09-29) — the centre's word; the old one came off
+the spreadsheet's "Settled Notes" tab and reads like an account rather than a
+job. **The on-screen word only.** The stored status is still `'closed'`, the
+stamp is still `settledAt` / `settledByName`, and `sortSettled` still sorts by
+it — 1,730 imported rows carry those fields and renaming them would be a
+migration that changes nothing anybody reads. `normaliseStatus()` already
+folded `'complete'` onto `'closed'`.
+
 ### The desk: four statuses, and due dates
 
-A note is **Open · In progress · Waiting · Settled**. The middle two are
+A note is **Open · In progress · Waiting · Completed**. The middle two are
 **sub-states of open**: `isOpen()` still means "not settled", so the sidebar
 badge, the "for me" inbox, the settled archive and all 1,853 imported rows work
 without knowing they exist. `normaliseStatus()` reads the spreadsheet's
@@ -490,7 +505,7 @@ Three things worth knowing before changing it:
   allow and what the shared spreadsheet allowed before them; a restriction in
   the page the rules don't back would be theatre. The stamp is what makes it
   honest instead. **Edits overwrite** — there is no version history, so the
-  previous wording is gone. Settled notes can be corrected without reopening.
+  previous wording is gone. Completed notes can be corrected without reopening.
 
 **No rules change was needed**: `allow update: if canUseDeskAt(centerId)` was
 always field-free.
@@ -515,7 +530,7 @@ is two clicks. `noteIsTo()` / `noteIsFrom()` / `matchesParties()` in
 
 ### The desk: 'waiting' was retired (2026-09-25)
 
-Three statuses now — Open, In progress, Settled. Nobody used Waiting.
+Three statuses now — Open, In progress, Completed. Nobody used Waiting.
 
 **`LIVE_STATUSES` STILL CONTAINS `'waiting'` AND MUST.** The live listener is
 an exact match on the STORED value, and notes saved before the change still
@@ -593,7 +608,7 @@ A note addressed to you carries an **Acknowledge** button; pressing it puts
 `acks: [{ uid, name, at }]`, the same shape as `replies`.
 
 **IT IS NOT A FIFTH STATUS, and that is the point.** Open / In progress /
-Waiting / Settled describe the WORK; this describes the READING, and the two
+Waiting / Completed describe the WORK; this describes the READING, and the two
 come apart constantly — a note can sit acknowledged and untouched for a week
 (seen, not started), or be settled by somebody it was never addressed to (done,
 never read by the person it was for). Folding it into `NOTE_STATUSES` would lose
@@ -921,6 +936,32 @@ adminAssistant + adminHours` only — Online is budgeted the same day but
 scheduled elsewhere. The `steam` / `summerCamp` buckets are **retired**
 (`ACTIVE_BUCKETS` excludes them) but the keys survive so past periods and the 58
 historical flex shifts still report.
+
+## Manage Payroll reads in the order you do it
+
+Three numbered steps down the page, because the page used to present a
+sequence out of sequence — Export Final Payroll sat at the TOP, inside the
+pay-period card, above the Radius import it depends on and above the red rows
+it refuses to run with.
+
+  1  Select Pay Period
+  2  Radius Timesheet Import  (also above its own output — the "N Radius
+     entries skipped" and unpaid-shift panels are results of it)
+  3  Export Final Payroll, under the table it summarises, carrying the period,
+     the total payable, the head count and the unresolved gate
+
+**Payroll Projection leads the page** (`components/PayrollProjectionCard.jsx`,
+maths in `src/lib/payrollProjection.js`). It was the first card on Centre
+Analytics, where `AnalyticsTab` — handed only `users` and `activeCenterId` —
+rebuilt payroll's salaried / volunteer / hidden-from-ops sets from scratch so
+its figure would agree with a table on another page. Here it is passed the same
+sets the payroll table uses, so agreeing is structural.
+
+The cycle: the 15th run covers the 26th of the PRIOR month → the 10th; the 30th
+covers the 11th → the 25th; from the 26th neither run of the viewed month is
+upcoming, because the money is already going to next month's 15th. The month
+follows the period selector — the month a period PAYS OUT in, so Sep 26 – Oct 10
+reads as October. ISO strings end to end.
 
 ## The new look — two opt-in homes
 
@@ -1809,8 +1850,17 @@ Job Board") all read from it. **Import the name; don't type it.**
 Rules: the sidebar name is the name everywhere (no short forms on phones);
 personal pages start with "My" (My Schedule, My Pay, My Account); Canadian
 spelling, Centre. "Job Board" replaced "Shift Board" — it's the centre's own
-word, from Rahul's sketch of the phone home. The header reads
-"Mathnasium · Staff Portal" for everyone.
+word, from Rahul's sketch of the phone home.
+
+The sidebar header is NOT a fixed string — see `src/lib/portalIdentity.js`.
+`centreDisplayName()` resolves the active centre's own name ("Mathnasium of
+Langley") from its `centers/{id}` identity doc, falling through config name,
+city and centre id; `AuthContext` exposes it as `centreName` and every surface
+that has to say which centre you are in reads that one value.
+`portalSubtitle()` says **Centre Operations Portal** to owners, directors,
+district managers and the platform admin, and **Staff Portal** to everybody
+else. Note `config.name` DEFAULTS to the bare word "Mathnasium", which is why
+preferring it turned every centre into the same anonymous one.
 
 `pageNames.test.js` scans every non-test source file (comments excluded) for
 retired names — Shift Board, Scheduler Creation, Notification Preferences,

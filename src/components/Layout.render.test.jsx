@@ -411,8 +411,11 @@ describe('pinned shortcuts', () => {
   });
 
   it('stops at five, without dropping one you already had', () => {
+    // Five pages an owner's sidebar really carries — the Staffing Board
+    // used to be one of them and is a section of Manage Staff Schedule now,
+    // so a pin to it is dropped rather than shown.
     const five = [PAGES.home.path, PAGES.chats.path, PAGES.studentScheduler.path,
-      PAGES.staffingBoard.path, DESK];
+      PAGES.calendar.path, DESK];
     const { container } = draw('owner', { pins: five });
     const sixth = [...container.querySelectorAll('aside nav button')]
       .find(b => b.getAttribute('aria-label') === `Pin ${PAGES.managePayroll.name}`);

@@ -45,7 +45,6 @@ import { isTrainingType } from '../lib/staffTypes';
 import { RATIO_FIELD } from '../lib/ratioCount';
 import { resolveInstructionalHours } from '../lib/centerConfig';
 import Avatar from '../components/Avatar';
-import CoverageModelCard from '../components/CoverageModelCard';
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -112,7 +111,14 @@ function round1(n) {
   return String(Math.round((Number(n) || 0) * 10) / 10);
 }
 
-export default function StaffingBoard() {
+/**
+ * @param {object}  props
+ * @param {boolean} props.embedded  Rendered as a section of Manage Staff
+ *   Schedule rather than as its own page: the page wrapper and the <h1>
+ *   belong to the host, so they are dropped. Everything else is the same
+ *   board, which is the point — there is one of these, not two.
+ */
+export default function StaffingBoard({ embedded = false }) {
   const { activeCenterId, centerConfig } = useAuth();
   const fmtTime = useTimeFormat();
   // The centre's staffing day model — same numbers Manage Staff Schedule
@@ -655,24 +661,17 @@ export default function StaffingBoard() {
   }, [board]);
 
   return (
-    <div className="mx-auto max-w-[1400px] px-5 py-7">
-      {/* Title */}
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-[26px] font-bold tracking-tight text-gray-900">Staffing Board</h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            Builds the shifts your bookings actually call for. You decide who works them.
-          </p>
+    <div className={embedded ? '' : 'mx-auto max-w-[1400px] px-5 py-7'}>
+      {!embedded && (
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <h1 className="text-[26px] font-bold tracking-tight text-gray-900">Staffing Board</h1>
+            <p className="mt-0.5 text-sm text-gray-500">
+              Builds the shifts your bookings actually call for. You decide who works them.
+            </p>
+          </div>
         </div>
-      </div>
-
-      {/* What the centre WANTS, day by day, and whether availability covers
-          it. The same card Centre Analytics shows — Managers and Hosts can
-          reach this page, and Centre Analytics is owner-tier. Nothing on
-          this board is scheduled from it. */}
-      <div className="mb-5">
-        <CoverageModelCard />
-      </div>
+      )}
 
       {/* Controls */}
       <div className="mb-5 rounded-2xl border border-gray-200 bg-white p-4 shadow-sm">
