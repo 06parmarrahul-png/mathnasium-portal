@@ -135,6 +135,30 @@ export const GAMES = {
       `${groups} of 4${mistakes > 0 ? `, ${mistakes} wrong` : ' clean'}`,
   },
 
+  coleHop: {
+    id: 'coleHop',
+    name: 'Cole Hop',
+    blurb: 'Answer a times table and Cole hops. The platform above is sliding — time it.',
+    kind: 'daily',
+    par: 20,
+    unit: 'platforms',
+    minutes: 3,
+    // Platforms climbed, not pixels: the gap between them is randomised,
+    // so scoring the height would make two identical runs on different
+    // days worth different amounts — fine for a personal best, wrong for
+    // a board that adds days together. One platform is one correct
+    // answer, well timed.
+    //
+    // PAR 20 IS A FIRST ESTIMATE. Nobody at the centre has played it yet,
+    // so it is the one number here that should be re-cut once a week of
+    // real scores exists. It is a single constant; nothing else moves.
+    score: ({ climbed = 0 } = {}) => clampPoints((100 * climbed) / 20),
+    resultOf: ({ climbed = 0 } = {}) => Math.max(0, Math.round(climbed)),
+    summary: ({ climbed = 0, right = 0, wrong = 0 } = {}) =>
+      `${climbed} platform${climbed === 1 ? '' : 's'}`
+      + (right + wrong > 0 ? `, ${right}/${right + wrong} on the tables` : ''),
+  },
+
   ratioRush: {
     id: 'ratioRush',
     name: 'Ratio Rush',
@@ -163,7 +187,7 @@ export const GAME_LIST = Object.values(GAMES);
  * each with its own one ranked run. Locking games to weekdays would mean
  * somebody who only works Tuesdays never plays anything but Connections.
  */
-export const ROTATION = ['mathle', 'connections', 'ratioRush', 'sprint60'];
+export const ROTATION = ['mathle', 'connections', 'ratioRush', 'coleHop', 'sprint60'];
 
 export function featuredGameId(date) {
   const key = typeof date === 'string' ? date : dayKey(date);

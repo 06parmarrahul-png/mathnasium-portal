@@ -13,6 +13,7 @@ import SprintGame from '../components/games/SprintGame';
 import MathleGame from '../components/games/MathleGame';
 import ConnectionsGame from '../components/games/ConnectionsGame';
 import RatioRushGame from '../components/games/RatioRushGame';
+import ColeHopGame from '../components/games/ColeHopGame';
 
 /**
  * Ratio Games — a short maths game a day, a board, and a monthly winner.
@@ -44,6 +45,7 @@ const COMPONENTS = {
   mathle: MathleGame,
   connections: ConnectionsGame,
   ratioRush: RatioRushGame,
+  coleHop: ColeHopGame,
 };
 
 function monthName(month) {
@@ -189,7 +191,12 @@ export default function RatioGames() {
           {/* The finished game stays mounted: this is where the answers are. */}
           {/* date only when it counts: Connections uses it to rotate the
               day's categories, and practice wants a fresh board instead. */}
-          <Active seed={playing.seed} date={playing.ranked ? today : null} onFinish={finish} />
+          {/* `ranked` is for the games where it changes the RULES rather
+              than just the bookkeeping: Cole Hop drops its times-table
+              picker for a ranked run, because picking the 2× table is an
+              easier game for the same points. */}
+          <Active seed={playing.seed} date={playing.ranked ? today : null}
+            ranked={playing.ranked} onFinish={finish} />
           {!playing.done && (
             <div className="mt-3 text-center">
               <Btn size="sm" variant="quiet" onClick={() => { setPlaying(null); setLastRun(null); }}>

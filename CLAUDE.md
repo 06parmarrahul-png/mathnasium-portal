@@ -1354,9 +1354,10 @@ made in Manage Staff, per centre, without an Enterprise login.
 
 ## Ratio Games — the one thing everybody gets
 
-A short maths game a day, a per-centre board, a monthly winner. **Four games
+A short maths game a day, a per-centre board, a monthly winner. **Five games
 live:** Sprint 60 (timed arithmetic), Mathle (guess the equation), Connections
-(sixteen numbers, four sets) and Ratio Rush (the centre's own staffing maths).
+(sixteen numbers, four sets), Ratio Rush (the centre's own staffing maths) and
+Cole Hop (times tables, as something to climb).
 
 **Each game scores itself.** "Better" means something different in each — more
 correct in Sprint, FEWER guesses in Mathle — so the registry entry carries
@@ -1388,7 +1389,7 @@ an integer, not that it was the right one. Both timed games say what they take
 second being the actual staffing rule rather than a hint.
 
 **Engines live in `src/lib/games/`, all pure and seeded** (`mathle.js`,
-`connections.js`, `ratioRush.js`). Daily puzzles seed from `centre|date|game`,
+`connections.js`, `ratioRush.js`, `coleHop.js`). Daily puzzles seed from `centre|date|game`,
 so the whole centre argues about the same board and nobody can reroll; practice
 adds a nonce. Two things worth knowing:
 - **Mathle never runs a player's string as code.** `evaluate()` is a two-pass
@@ -1406,6 +1407,37 @@ adds a nonce. Two things worth knowing:
   against a sixty-second clock is a different skill. A miss shows the
   division, and `aimNote()` adds what the aim would have wanted whenever
   that is a different number — so the easy ratio never reads as the target.
+
+### Cole Hop
+
+Andy's game, brought in from a standalone HTML file. Answer a times-table
+question and Cole hops straight up; he does not steer, and the platform above
+is sliding, so WHEN you answer is the other half of it. Miss and he falls.
+
+Four things changed on the way in, and each is load-bearing:
+
+- **Seeded.** The original drew every platform and every question from
+  `Math.random()`. `courseFor(seed)` and `questionsFor(seed, table)` give the
+  whole centre the same ladder and the same questions in the same order.
+  Decoration — dust, somersaults — is still random, because it decides nothing.
+- **Platforms are positioned from the clock, not integrated frame by frame.**
+  `p.x += p.vx * dt` accumulates differently at 60Hz and 120Hz, so two people
+  on the same seeded ladder would have been aiming at platforms in different
+  places. A reflected triangle wave off `t` is the same everywhere.
+- **Scored on platforms climbed, not pixels.** Gaps are randomised, so two
+  identical runs on different days would be worth different amounts — fine for
+  a personal best, wrong for a board that adds days together.
+- **A ranked run is always ALL TABLES.** The picker (1–12, or all) is practice
+  only: against a prize, choosing the 2× table is an easier game for the same
+  points. `RANKED_TABLE` in `coleHop.js`; the page passes `ranked` so the
+  component can drop the picker.
+
+**`par: 20` IS A PLACEHOLDER.** Nobody at the centre has played it, and it is
+the one number in the registry set by guess rather than by measurement. The
+game is punishing — from the starting platform there is nothing underneath, so
+one mistimed hop ends the run at zero, which is true of Andy's original too.
+Re-cut par once a week of real scores exists; it is a single constant and
+nothing else moves.
 
 **Still unbuilt, and deliberately:** the bank-based games (Riddle of the Day,
 Spot the Error, Close Enough) and the weekly Cross-number. Those need real
