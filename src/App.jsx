@@ -45,6 +45,7 @@ const Connectors                = lazy(() => import('./pages/Connectors'));
 const ChatsHub                  = lazy(() => import('./pages/Chats'));
 const ApptotoSchedule           = lazy(() => import('./pages/ApptotoSchedule'));
 const PublicBook                = lazy(() => import('./pages/PublicBook'));
+const ManageBooking             = lazy(() => import('./pages/ManageBooking'));
 const IntakeManagement          = lazy(() => import('./pages/IntakeManagement'));
 const Leads                     = lazy(() => import('./pages/Leads'));
 const Onboarding                = lazy(() => import('./pages/Onboarding'));
@@ -184,6 +185,11 @@ function AppRoutes() {
         <Route path="/apptoto" element={<ProtectedRoute requireOwner><Layout><ApptotoSchedule /></Layout></ProtectedRoute>} />
         {/* Public, NO auth — parents land here from marketing links. */}
         <Route path="/book/:centerId" element={<PublicBook />} />
+        {/* A family managing their own assessment. No login: the token in
+            the link is the credential. The bare path is the way in for
+            somebody holding only the SMS reminder. */}
+        <Route path="/booking" element={<ManageBooking />} />
+        <Route path="/booking/:intakeId" element={<ManageBooking />} />
         {/* Sign-out confirmation from the payroll email. PUBLIC on purpose:
             the one-time token in the link is the authorisation, because the
             person opening it is on a phone and not logged in. The token

@@ -1975,6 +1975,47 @@ Lib functions that build a sentence for the screen (`doubleBooking`,
 `availabilityLog`, `availabilityFit`) take the format as a last argument and
 default to 12-hour.
 
+## A family managing their own assessment (`/booking`)
+
+The Apptoto reminder offers "1 to confirm, 2 to cancel, 3 to reschedule", and
+the third had nowhere to land — it meant a phone call. `/booking/:intakeId?k=`
+is where it lands now: the family open their own assessment and confirm, move
+or cancel it. `src/pages/ManageBooking.jsx`, rules in
+`src/lib/manageBooking.js`, endpoints folded into `api/intakes.js` (Vercel
+Hobby allows twelve functions and the project is at twelve).
+
+**ASSESSMENTS ONLY, AND THAT IS THE WHOLE CONSTRAINT.** Sessions come from
+Acuity over a **one-way iCal sync** — the Onboarding page walks the centre
+through setting it up that way, and there is no Acuity API key anywhere in the
+project. Ratio reads sessions and cannot write one back, so a session "swap"
+here would move it on this screen, Acuity would keep the original, and the next
+feed read would put it back: two systems disagreeing about where a child is
+meant to be. Assessments live in `centerIntakes`, which Ratio owns end to end.
+If session swaps are ever wanted, they need an Acuity API key first; until then
+the honest version is a REQUEST staff action by hand.
+
+**The link is the credential.** No login — a parent has an SMS and an email,
+not an account. Every intake has carried a 24-character `cancelToken` since the
+booking page shipped and nothing read it until now. `loadBookingFor()` answers
+the same for "no such booking" and "wrong token", so the endpoint cannot be
+used to find out which families exist, and `publicBooking()` is an ALLOW-LIST:
+the document also holds the token, a phone number and staff notes, and a
+delete-list would ship the next field somebody adds.
+
+**Two hours' notice** (`MIN_NOTICE_HOURS`) to move or cancel; inside that the
+page says to ring the centre. **Confirming stays open right up to the
+appointment** — "yes, we're coming" is useful at any hour and changes nothing
+anybody has to act on.
+
+**The SMS cannot carry the token**, because Apptoto does not know it. So
+`/booking` with no id asks for the email they booked with and sends the link,
+and answers identically whether or not that address has a booking. The
+confirmation email carries the deep link directly.
+
+A move or a cancellation writes a line on the family's **lead**, so the centre
+sees it where it already looks, and a reschedule leaves `rescheduledFrom` on
+the intake.
+
 ## The District tab belongs to the district manager, not the permission
 
 `district.view` is the READ; `district_manager` is the JOB, and the sidebar

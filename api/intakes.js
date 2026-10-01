@@ -16,6 +16,9 @@ import { getFirestore } from './_lib/firebase-admin.js';
 import {
   DEFAULT_INTAKE_SETTINGS, computeWeekSlots, validateSlot,
 } from './_lib/intakeAvailability.js';
+import {
+  tokenOk, changeWindow, publicBooking, isUpcoming, CANCELLED, CONFIRMED,
+} from '../src/lib/manageBooking.js';
 
 const FROM = process.env.RESEND_FROM || 'Ratio <onboarding@resend.dev>';
 let _resend = null;
@@ -28,6 +31,10 @@ function resendClient() {
 }
 
 const isEmail = (s) => typeof s === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+
+/** Where a family manages their own booking. The link IS the credential. */
+const SITE = (process.env.PUBLIC_SITE_URL || 'https://ratiosolved.com').replace(/\/$/, '');
+const manageUrl = (id, token) => `${SITE}/booking/${id}?k=${encodeURIComponent(token)}`;
 const truthy  = (s) => typeof s === 'string' && s.trim().length > 0;
 
 // Shared loader — pulls centre identity + intake settings in one round.
@@ -306,7 +313,10 @@ async function handleCreate(req, res) {
         `🗓  ${niceTime}`,
         `⏱  ${settings.slotDurationMin} minutes`,
         '',
-        'Please arrive a few minutes early. If you need to reschedule, just reply to this email and we\'ll sort it out.',
+        'Please arrive a few minutes early.',
+        '',
+        'Need to move it or cancel? Open your booking here:',
+        manageUrl(ref.id, cancelToken),
         '',
         'See you soon,',
         centreName,
@@ -324,11 +334,226 @@ async function handleCreate(req, res) {
   });
 }
 
+
+// ── Managing a booking you already have ───────────────────────────────
+//
+//   GET  /api/intakes?action=booking&id=…&k=<token>
+//   POST /api/intakes  { action: 'confirm' | 'cancel' | 'reschedule', id, token, slot? }
+//   POST /api/intakes  { action: 'send-link', centerId, email }
+//
+// NO LOGIN, because a parent has an SMS and an email, not an account. The
+// token on the booking is the credential: it names ONE booking, grants
+// nothing else, and has been written on every booking since the page
+// shipped — see src/lib/manageBooking.js.
+//
+// Assessments only. Sessions come from Acuity one way and Ratio cannot
+// write one back; moving one here would be a change this app believes and
+// Acuity does not.
+
+async function loadBookingFor(fs, id, token) {
+  if (!id || !token) return { error: 'That link is incomplete.', code: 400 };
+  const ref = fs.collection('centerIntakes').doc(String(id));
+  const snap = await ref.get();
+  // The same answer for "no such booking" and "wrong token", so the
+  // endpoint cannot be used to find out which bookings exist.
+  if (!snap.exists || !tokenOk(token, snap.data().cancelToken)) {
+    return { error: 'We couldn’t find that booking. Check the link, or call the centre.', code: 404 };
+  }
+  return { ref, data: { id: snap.id, ...snap.data() } };
+}
+
+async function handleBookingRead(req, res) {
+  const fs = getFirestore();
+  const found = await loadBookingFor(fs, req.query.id, req.query.k);
+  if (found.error) return res.status(found.code).json({ ok: false, error: found.error });
+
+  const ctx = await loadCentreContext(fs, found.data.centerId);
+  const window = changeWindow(found.data);
+  return res.status(200).json({
+    ok: true,
+    booking: publicBooking(found.data),
+    centre: { name: ctx?.centre?.name || found.data.centerId, timezone: ctx?.settings?.timezone || 'America/Vancouver' },
+    canChange: window.canChange,
+    reason: window.reason,
+  });
+}
+
+async function handleBookingChange(req, res) {
+  const { action, id, token, slot } = req.body || {};
+  const fs = getFirestore();
+  const found = await loadBookingFor(fs, id, token);
+  if (found.error) return res.status(found.code).json({ ok: false, error: found.error });
+  const booking = found.data;
+
+  // Confirming is the one thing that stays open right up to the
+  // appointment: "yes, we are coming" is useful at any hour, and it
+  // changes nothing anybody has to act on.
+  if (action === 'confirm') {
+    if (booking.status === CANCELLED) {
+      return res.status(409).json({ ok: false, error: 'This assessment has been cancelled.' });
+    }
+    await found.ref.update({ status: CONFIRMED, confirmedAt: new Date().toISOString() });
+    return res.status(200).json({ ok: true, status: CONFIRMED });
+  }
+
+  const window = changeWindow(booking);
+  if (!window.canChange) return res.status(409).json({ ok: false, error: window.reason });
+
+  if (action === 'cancel') {
+    await found.ref.update({
+      status: CANCELLED,
+      cancelledAt: new Date().toISOString(),
+      cancelledBy: 'family',
+    });
+    notifyCentre(fs, booking, 'cancelled', booking.slot).catch(() => {});
+    return res.status(200).json({ ok: true, status: CANCELLED });
+  }
+
+  if (action !== 'reschedule') {
+    return res.status(400).json({ ok: false, error: 'Unknown action.' });
+  }
+  if (!truthy(slot)) return res.status(400).json({ ok: false, error: 'Pick a new time.' });
+
+  const ctx = await loadCentreContext(fs, booking.centerId);
+  if (!ctx) return res.status(404).json({ ok: false, error: 'Centre not found' });
+  const { settings, instructionalHours, summerOverride, holidays } = ctx;
+
+  // Everything else booked in the window, MINUS this booking itself —
+  // otherwise a family moving a 4:30 to 5:00 is blocked by their own 4:30,
+  // and worse, re-picking the time they already hold reads as "taken".
+  const horizonStart = new Date().toISOString();
+  const horizonEnd = new Date(Date.now() + 60 * 24 * 3600 * 1000).toISOString();
+  const existingSnap = await fs
+    .collection('centerIntakes')
+    .where('centerId', '==', booking.centerId)
+    .where('slot', '>=', horizonStart)
+    .where('slot', '<=', horizonEnd)
+    .get()
+    .catch(() => ({ docs: [] }));
+  const bookedSlots = existingSnap.docs
+    .filter(d => d.id !== booking.id)
+    .map(d => {
+      const v = d.data();
+      return {
+        startISO:    v.slot,
+        durationMin: v.durationMin || settings.slotDurationMin,
+        status:      v.status || 'scheduled',
+      };
+    });
+
+  const slotYmd = String(slot).slice(0, 10);
+  const holds = await loadHolds(fs, booking.centerId, slotYmd, slotYmd);
+  const v = validateSlot({
+    slotISO: slot, settings, bookedSlots, instructionalHours, summerOverride,
+    holds, closures: closuresFrom(holidays, slotYmd, slotYmd),
+  });
+  if (!v.ok) return res.status(409).json({ ok: false, error: v.error });
+
+  const from = booking.slot;
+  await found.ref.update({
+    slot,
+    status: CONFIRMED,       // they just told us they are coming, at this time
+    rescheduledAt: new Date().toISOString(),
+    rescheduledFrom: from,
+  });
+  notifyCentre(fs, booking, 'moved', slot).catch(() => {});
+  return res.status(200).json({ ok: true, slot });
+}
+
+/**
+ * A line on the family's lead, so the centre sees the change where it
+ * already looks. Best effort: the family's booking is the promise, and a
+ * failed note must not undo it.
+ */
+async function notifyCentre(fs, booking, what, slot) {
+  const leadSnap = await fs
+    .collection(`centers/${booking.centerId}/leads`)
+    .where('intakeId', '==', booking.id)
+    .limit(1)
+    .get();
+  if (leadSnap.empty) return;
+  const when = new Date(slot).toLocaleString('en-US', { timeZone: 'America/Vancouver' });
+  const text = what === 'cancelled'
+    ? `Family cancelled their assessment (was ${when})`
+    : `Family moved their assessment to ${when}`;
+  await leadSnap.docs[0].ref.update({
+    history: [...(leadSnap.docs[0].data().history || []), { at: new Date().toISOString(), by: 'family', text }],
+    updatedAt: new Date(),
+  });
+}
+
+/**
+ * "Email me my booking link."
+ *
+ * The SMS reminder cannot carry the token — Apptoto does not know it — so
+ * this is how somebody with only the text message gets in. ALWAYS answers
+ * the same whether or not that address has a booking: anything else turns
+ * it into a way of asking whether a family is a customer.
+ */
+async function handleSendLink(req, res) {
+  const { centerId, email } = req.body || {};
+  const quiet = () => res.status(200).json({ ok: true });
+  if (!centerId || !isEmail(email)) return quiet();
+
+  const fs = getFirestore();
+  const snap = await fs
+    .collection('centerIntakes')
+    .where('centerId', '==', centerId)
+    .where('email', '==', String(email).trim().toLowerCase())
+    .get()
+    .catch(() => ({ docs: [] }));
+
+  const upcoming = snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(b => isUpcoming(b) && b.status !== CANCELLED)
+    .sort((a, b) => String(a.slot).localeCompare(String(b.slot)));
+  if (upcoming.length === 0) return quiet();
+
+  try {
+    const ctx = await loadCentreContext(fs, centerId);
+    const tz = ctx?.settings?.timezone || 'America/Vancouver';
+    const centreName = ctx?.centre?.name || 'Mathnasium';
+    const lines = upcoming.map(b => {
+      const when = new Date(b.slot).toLocaleString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZone: tz,
+      });
+      return `${when} — ${b.childName}\n${manageUrl(b.id, b.cancelToken)}`;
+    });
+    await resendClient().emails.send({
+      from: FROM,
+      to: upcoming[0].email,
+      subject: `Your assessment booking — ${centreName}`,
+      text: [
+        'Here’s your booking. The link opens it — you can confirm, move it, or cancel.',
+        '',
+        ...lines,
+        '',
+        'The link is personal to you, so please don’t forward it.',
+        '',
+        centreName,
+      ].join('\n'),
+    });
+  } catch (e) {
+    console.error('Booking link email failed:', e?.message || e);
+  }
+  return quiet();
+}
+
 // ── Method router ─────────────────────────────────────────────────────
 export default async function handler(req, res) {
   try {
-    if (req.method === 'GET')  return await handleAvailability(req, res);
-    if (req.method === 'POST') return await handleCreate(req, res);
+    if (req.method === 'GET') {
+      if (req.query.action === 'booking') return await handleBookingRead(req, res);
+      return await handleAvailability(req, res);
+    }
+    if (req.method === 'POST') {
+      const action = req.body?.action;
+      if (action === 'send-link') return await handleSendLink(req, res);
+      if (action) return await handleBookingChange(req, res);
+      // No action: the original create path, untouched.
+      return await handleCreate(req, res);
+    }
     return res.status(405).json({ error: 'Method not allowed' });
   } catch (e) {
     console.error('intakes endpoint error:', e);
