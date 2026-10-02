@@ -3,13 +3,16 @@
 // (plus the centre name) via the availability endpoint.
 
 import { useEffect, useMemo, useState } from 'react';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db, serverTimestamp } from '../firebase';
 import {
   Save, ExternalLink, Plus, Trash2, Loader2, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { resolveInstructionalHours, isSummerOverrideActive } from '../lib/centerConfig';
 import { useTimeFormat } from '../lib/useTimeFormat';
+import BookingSlotGrid from './BookingSlotGrid';
+import { pruneRules } from '../lib/bookingSlotGrid';
+import { todayISO } from '../lib/payProjection';
 
 const WEEKDAYS = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 
@@ -34,6 +37,9 @@ const DEFAULTS = {
     Thursday: '', Friday: '', Saturday: '',
   },
   address:     '',
+  // Times opened and closed by hand on the week grid, keyed by date then
+  // by time. Empty by default: nothing is shut until somebody shuts it.
+  slotRules:   {},
   headline:    'Book Your Free Math Skills Assessment Today!',
   subheadline: 'Book a 60-minute consultation to see how we can support your child. We\'ll assess their math skills, spot any gaps, and create a personalized learning plan!',
 };
@@ -53,6 +59,7 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
         ...acc,
         [d]: centerConfig?.intakeSettings?.maxIntakesPerWeekday?.[d] ?? '',
       }), {}),
+      slotRules: centerConfig?.intakeSettings?.slotRules || {},
     }),
     [centerConfig],
   );
@@ -60,6 +67,10 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [savedAt, setSavedAt] = useState(null);
+  // Bumped on save so the grid re-reads the week: a saved close changes
+  // what the public endpoint returns, and the grid is a mirror of it.
+  const [reloadKey, setReloadKey] = useState(0);
+  const dirty = JSON.stringify(s) !== JSON.stringify(initial);
 
   useEffect(() => { setS(initial); }, [initial]);
 
@@ -70,12 +81,22 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
   const save = async () => {
     setError(''); setSaving(true);
     try {
-      await setDoc(
-        doc(db, 'centers', activeCenterId, 'config', 'main'),
-        { intakeSettings: { ...s, updatedAt: serverTimestamp() } },
-        { merge: true },
-      );
+      // The local day, not the UTC one: toISOString() is already tomorrow
+      // here by late afternoon, and pruning against it would throw away
+      // today's own closures.
+      const today = todayISO();
+      const rules = pruneRules(s.slotRules, today);
+      const ref = doc(db, 'centers', activeCenterId, 'config', 'main');
+      await setDoc(ref, { intakeSettings: { ...s, slotRules: rules, updatedAt: serverTimestamp() } }, { merge: true });
+      // slotRules goes again, on its own, as a REPLACEMENT. The merge
+      // write above deep-merges maps, so a date pruned here — or a time
+      // the grid reopened — would otherwise survive in Firestore and go
+      // on closing a slot that reads as open on screen. updateDoc
+      // replaces the value at a named field rather than merging into it.
+      await updateDoc(ref, { 'intakeSettings.slotRules': rules });
+      setS(prev => ({ ...prev, slotRules: rules }));
       setSavedAt(new Date());
+      setReloadKey(k => k + 1);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -97,11 +118,20 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
             Let parents book free assessments directly through Ratio — no third-party tool needed.
           </p>
         </div>
-        <button onClick={save} disabled={saving}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-          {saving && <Loader2 size={14} className="animate-spin" />}
-          <Save size={14} /> Save
-        </button>
+        <div className="flex items-center gap-2">
+          {/* A grid you tap is easy to walk away from. Say so, next to the
+              button that fixes it. */}
+          {dirty && !saving && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+              Unsaved changes
+            </span>
+          )}
+          <button onClick={save} disabled={saving}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+            {saving && <Loader2 size={14} className="animate-spin" />}
+            <Save size={14} /> Save
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -224,6 +254,29 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
             </label>
           ))}
         </div>
+      </Card>
+
+      {/* ── The week, exactly as a family sees it ─────────────────────
+          The one surface on this page that is not a form: Vin opens the
+          booking tab, sees the grid parents see, and taps a time shut or
+          open. It asks the PUBLIC endpoint, so what is on screen is the
+          real answer rather than a second one assembled here — the day
+          cap, calendar holds, statutory closures and the summer hours
+          override all arrive already applied. */}
+      <Card title="The week families see">
+        <p className="mb-3 text-xs text-gray-500">
+          Tap a time to close it; tap it again to open it back up. This is per DATE —
+          closing 3:30 on Tuesday the 7th says nothing about Tuesday the 14th. Which
+          times exist at all comes from the hours below; a whole day off is a centre
+          closure under Centre Settings &rarr; General.
+        </p>
+        <BookingSlotGrid
+          centerId={activeCenterId}
+          enabled={s.enabled}
+          rules={s.slotRules || {}}
+          reloadKey={reloadKey}
+          onChange={rules => setField('slotRules', rules)}
+        />
       </Card>
 
       {/* Per-day availability — defaults to mirroring instructional hours

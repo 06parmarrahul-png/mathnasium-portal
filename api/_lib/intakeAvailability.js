@@ -38,6 +38,27 @@ export const DEFAULT_INTAKE_SETTINGS = {
     Sunday: null, Monday: null, Tuesday: null, Wednesday: null,
     Thursday: null, Friday: null, Saturday: null,
   },
+  // Individual times somebody at the centre has opened or closed BY HAND,
+  // from the grid in Centre Settings. Keyed by the centre's own date and
+  // then by the slot's start time:
+  //
+  //   slotRules: { '2026-10-07': { '15:30': false, '16:00': true } }
+  //
+  // false — closed. true — open. A time with NO ENTRY is the normal case
+  // and follows the hours, which is why this starts empty: switching the
+  // feature on must not close a single slot anywhere.
+  //
+  // IT IS PER DATE, NOT PER WEEKDAY. Closing 3:30 on Tuesday the 7th says
+  // nothing about Tuesday the 14th. The recurring question — which hours
+  // the centre takes assessments in at all — is the hours above, and a
+  // whole day off is a centre closure.
+  //
+  // A REOPENED SLOT STORES `true` RATHER THAN DROPPING THE KEY, because
+  // the settings panel saves with a merge write and a merge write
+  // deep-merges maps: a key removed locally would quietly survive in
+  // Firestore and the slot would stay shut. Same trap the coverage model
+  // has a note about.
+  slotRules: {},
   // Where the family actually has to turn up. Shown on the booking page
   // and again on the confirmation, because an assessment is in person and
   // a parent who assumed otherwise finds out on the day.
@@ -65,6 +86,31 @@ export function intakeCapFor(settings, weekday) {
   if (blank(raw)) return null;
   const n = Number(raw);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * Has somebody at the centre opened or closed this exact slot by hand?
+ *
+ * @returns {boolean|null} true (open), false (closed), null (no opinion)
+ *
+ * Null is the answer for almost every slot and means "follow the hours".
+ * Anything that is not exactly true or false reads as null, so a half-
+ * written rule cannot shut a centre's booking page.
+ */
+export function slotRuleFor(settings, ymd, hhmm) {
+  const rules = (settings || {}).slotRules;
+  if (!rules || typeof rules !== 'object') return null;
+  const day = rules[ymd];
+  if (!day || typeof day !== 'object') return null;
+  const v = day[hhmm];
+  return v === true || v === false ? v : null;
+}
+
+/** Minutes since midnight → 'HH:MM', the key slotRules is written under. */
+export function hhmmOf(minutes) {
+  const h = String(Math.floor(minutes / 60)).padStart(2, '0');
+  const m = String(minutes % 60).padStart(2, '0');
+  return `${h}:${m}`;
 }
 
 /**
@@ -281,15 +327,20 @@ export function computeWeekSlots(weekStartYMD, settings, bookedSlots = [], instr
       // Held by a calendar entry rather than booked by a family. Both are
       // unavailable; they are separate so the grid can tell them apart.
       const held      = !taken && isSlotTaken(iso, slotDur, holds);
+      // Shut by hand from the settings grid. Its own flag rather than
+      // folded into `held`, because the two are undone in different
+      // places — a hold is a calendar entry, this is one tap.
+      const staffClosed = slotRuleFor(s, ymd, hhmmOf(minutes)) === false;
       slots.push({
         startISO: iso,
         label:    formatTimeLabel(minutes),
         taken,
         held,
+        staffClosed,
         inPast,
         tooFuture,
         dayFull,
-        available: !taken && !held && !inPast && !tooFuture && !dayFull,
+        available: !taken && !held && !staffClosed && !inPast && !tooFuture && !dayFull,
       });
     }
     out.push({ date: ymd, weekday, dayFull, slots, closed: false, closureName: null });
@@ -359,6 +410,14 @@ export function validateSlot({
     return minutes >= ws && minutes + slotDur <= we;
   });
   if (!inAnyWindow) return { ok: false, error: 'Slot is outside the centre\'s booking window.' };
+
+  // Shut by hand from the settings grid. Checked on the server as well as
+  // drawn on the grid, for the same reason everything else here is: the
+  // page a family is looking at may have been open since before somebody
+  // closed the slot, and a tab is not a permission.
+  if (slotRuleFor(s, ymd, hhmmOf(minutes)) === false) {
+    return { ok: false, error: 'That time is no longer being offered. Please pick another.' };
+  }
 
   const active = (bookedSlots || []).filter(b => b.status !== 'cancelled');
 

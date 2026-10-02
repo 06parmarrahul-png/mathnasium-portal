@@ -1515,6 +1515,45 @@ form. `src/pages/PublicBook.jsx`, availability engine in
   `taken`, so the two can be worded differently); a closed day carries
   `closed` + `closureName` and no slots at all.
 
+### Opening and closing individual times (Centre Settings → Online Booking)
+
+**"The week families see"** is the same grid a parent gets, with a tap on
+each time. Green is bookable, red is not; a tap flips it, and the column head
+closes or opens a whole date. `components/BookingSlotGrid.jsx`, pure parts in
+`src/lib/bookingSlotGrid.js`.
+
+**IT ASKS THE PUBLIC ENDPOINT** — `/api/intakes?action=availability` — rather
+than recomputing availability on the client. That is the whole point: staff are
+looking at the parent-facing answer, so the day cap, calendar holds, statutory
+closures, advance notice and the summer-hours override all arrive already
+applied, and there is no second implementation to drift. The only thing drawn
+from local state is whether a time is shut BY HAND, because an unsaved tap has
+to show at once.
+
+**Stored as `intakeSettings.slotRules`** — `{ 'YYYY-MM-DD': { 'HH:MM': false } }`.
+Per DATE, not per weekday: closing 3:30 on Tuesday the 7th says nothing about
+the 14th. The recurring question is the hours; a whole day off is a closure.
+
+Four rules that are easy to get wrong, all pinned by tests:
+
+- **An absent rule means "follow the hours", never "closed".** The map starts
+  empty, so switching this on shuts nothing anywhere. Anything that is not
+  exactly `true` or `false` reads as absent — the same class of trap as
+  `Number(null)` being 0.
+- **Reopening writes `true`; it does NOT delete the key.** The settings panel
+  saves with a merge write and a merge write deep-merges maps, so a key removed
+  locally would survive in Firestore and the slot would stay shut while the grid
+  showed it open. For the same reason `save()` writes `slotRules` a second time
+  with `updateDoc`, which REPLACES the field, so pruning past dates takes.
+- **`validateSlot` checks it too.** A family's tab may have been open since
+  before somebody closed the slot, and a tab is not a permission.
+- **A closed time does NOT use up the day's assessment allowance**, exactly as a
+  calendar hold does not. Shutting two times must not eat one of Friday's two.
+
+Booked and held times are inert — offering to "open" an hour a family is already
+coming to would be the worst button on the page. Times the grid never shows
+cannot be opened from here: which times exist at all is the hours' job.
+
 Two traps, both caught by tests:
 
 - **`Number(null)` is `0`.** A cap of `null` coerced to zero would have

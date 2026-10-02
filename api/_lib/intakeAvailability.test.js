@@ -354,3 +354,99 @@ describe('a centre closure shuts the day', () => {
     expect(days.every(d => d.closed === false)).toBe(true);
   });
 });
+
+/**
+ * Times opened and closed by hand, from the grid in Centre Settings.
+ *
+ * The layer under test is deliberately thin — a map of date → time →
+ * boolean — but it is the only one a person edits by tapping, so the two
+ * things worth pinning are that it is PER DATE (closing Tuesday the 22nd
+ * says nothing about the 29th) and that an absent rule means "follow the
+ * hours" rather than "closed", which is what would happen if anything in
+ * here tested for falsiness.
+ */
+describe('a time somebody shut by hand', () => {
+  const TUE = '2026-09-22';
+  const NEXT_TUE = '2026-09-29';
+  const open = {
+    ...DEFAULT_INTAKE_SETTINGS,
+    enabled: true,
+    useCustomAvailability: true,
+    availability: { ...DEFAULT_INTAKE_SETTINGS.availability, Tuesday: [{ start: '15:00', end: '19:00' }] },
+  };
+  const tuesdayOf = (settings, weekStart = WEEK) =>
+    computeWeekSlots(weekStart, settings, [], null, null, {}).find(d => d.date === TUE);
+
+  it('changes nothing at all when no rule is set', () => {
+    const day = tuesdayOf(open);
+    expect(day.slots.every(sl => sl.available)).toBe(true);
+    expect(day.slots.every(sl => sl.staffClosed === false)).toBe(true);
+  });
+
+  it('takes exactly the time that was shut, and leaves the rest', () => {
+    const day = tuesdayOf({ ...open, slotRules: { [TUE]: { '15:30': false } } });
+    const shut = day.slots.filter(sl => !sl.available);
+    expect(shut).toHaveLength(1);
+    expect(shut[0].startISO).toBe(`${TUE}T15:30:00`);
+    expect(shut[0].staffClosed).toBe(true);
+  });
+
+  it('says nothing about the same time next week', () => {
+    const rules = { slotRules: { [TUE]: { '15:30': false } } };
+    const next = computeWeekSlots('2026-09-27', { ...open, ...rules }, [], null, null, {})
+      .find(d => d.date === NEXT_TUE);
+    expect(next.slots.every(sl => sl.available)).toBe(true);
+  });
+
+  it('reopens on `true`, which is how the grid undoes a tap', () => {
+    // The key is set to true rather than deleted: the settings panel
+    // saves with a merge write, and a merge write would keep the old
+    // `false` for a key that was removed locally.
+    const day = tuesdayOf({ ...open, slotRules: { [TUE]: { '15:30': true } } });
+    expect(day.slots.every(sl => sl.available)).toBe(true);
+  });
+
+  it('ignores a rule that is neither true nor false', () => {
+    for (const junk of ['false', 0, null, undefined, {}]) {
+      const day = tuesdayOf({ ...open, slotRules: { [TUE]: { '15:30': junk } } });
+      expect(day.slots.every(sl => sl.available)).toBe(true);
+    }
+  });
+
+  it('survives a half-written map without closing the centre', () => {
+    for (const junk of [null, 'nope', 42, []]) {
+      const day = tuesdayOf({ ...open, slotRules: junk });
+      expect(day.slots.every(sl => sl.available)).toBe(true);
+    }
+  });
+
+  it('does NOT use up the day-s assessment allowance', () => {
+    // Same rule as a calendar hold: shutting a time is not an assessment
+    // and must not eat one of the day's two.
+    const capped = { ...open, maxIntakesPerDay: 2, slotRules: { [TUE]: { '15:30': false, '16:00': false } } };
+    const day = tuesdayOf(capped);
+    expect(day.dayFull).toBe(false);
+    expect(day.slots.some(sl => sl.available)).toBe(true);
+  });
+
+  it('refuses the booking on the server too, not just on the grid', () => {
+    const got = validateSlot({
+      slotISO: `${TUE}T15:30:00`,
+      settings: { ...open, slotRules: { [TUE]: { '15:30': false } } },
+      bookedSlots: [],
+      instructionalHours: null,
+    });
+    expect(got.ok).toBe(false);
+    expect(got.error).toMatch(/no longer being offered/i);
+  });
+
+  it('still takes the booking when the rule is for another time', () => {
+    const got = validateSlot({
+      slotISO: `${TUE}T15:30:00`,
+      settings: { ...open, slotRules: { [TUE]: { '16:00': false } } },
+      bookedSlots: [],
+      instructionalHours: null,
+    });
+    expect(got.ok).toBe(true);
+  });
+});
