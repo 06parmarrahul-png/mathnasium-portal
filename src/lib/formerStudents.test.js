@@ -3,6 +3,7 @@ import {
   readDate, schoolYearStart, gradeNow, gradeLabel, stageOf, yearsBetween,
   readStudentRow, reengagement, callBackList, readStudentExport, studentImportId,
   MAX_AWAY_YEARS, buildStudentIndex, matchFormerStudent, familyKind, leadFromCallBack,
+  callBackBatch, BATCH_SIZE, isPending,
 } from './formerStudents';
 
 const TODAY = '2026-10-03';
@@ -272,5 +273,41 @@ describe('turning a call-back into a lead', () => {
 
   it('survives a half-empty record', () => {
     expect(leadFromCallBack({}, TODAY)).toMatchObject({ childName: '', status: 'new' });
+  });
+});
+
+describe('ten at a time, not three hundred', () => {
+  const many = Array.from({ length: 25 }, (_, i) => readStudentRow(row({
+    'Student Id': String(100 + i), 'First Name': `Kid${i}`,
+    'Date of Birth': '01/03/2012', 'Last Attendance Date': '01/10/2024',
+  }), TODAY).student);
+
+  it('hands over a batch and says how deep the pool is', () => {
+    const got = callBackBatch(many, TODAY);
+    expect(got.batch).toHaveLength(BATCH_SIZE);
+    expect(got.pool).toBe(25);
+  });
+
+  it('drops somebody who has been rung, for good', () => {
+    const called = many.map((s, i) => (i === 0 ? { ...s, calledAt: '2026-09-01T10:00:00Z' } : s));
+    expect(callBackList(called, TODAY)).toHaveLength(24);
+  });
+
+  it('holds a snooze until the day it runs out, then brings them back', () => {
+    const snoozed = many.map((s, i) => (i === 0 ? { ...s, snoozedUntil: '2026-11-01' } : s));
+    expect(callBackList(snoozed, TODAY)).toHaveLength(24);
+    const expired = many.map((s, i) => (i === 0 ? { ...s, snoozedUntil: '2026-09-01' } : s));
+    expect(callBackList(expired, TODAY)).toHaveLength(25);
+  });
+
+  it('keeps the batch at ten so the count means something', () => {
+    expect(BATCH_SIZE).toBe(10);
+  });
+
+  it('knows pending from settled without running the whole rule', () => {
+    expect(isPending(many[0], TODAY)).toBe(true);
+    expect(isPending({ ...many[0], calledAt: '2026-01-01T00:00:00Z' }, TODAY)).toBe(false);
+    expect(isPending({ ...many[0], snoozedUntil: '2027-01-01' }, TODAY)).toBe(false);
+    expect(isPending({ ...many[0], snoozedUntil: '2026-01-01' }, TODAY)).toBe(true);
   });
 });

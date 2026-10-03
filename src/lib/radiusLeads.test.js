@@ -145,6 +145,23 @@ describe('one row', () => {
   });
 });
 
+describe('an import is reference data, not a to-do list', () => {
+  it('arrives archived, every row of it', () => {
+    // 687 families on the call sheet without this, 48 with a 90-day
+    // window — and those 48 were Radius rows nobody in Ratio had ever
+    // worked. The call sheet is for what happens next.
+    expect(readRow(row()).lead.archived).toBe(true);
+    expect(readRow(row({ 'Created Date': '01/10/2026' })).lead.archived).toBe(true);
+  });
+
+  it('keeps every field, so nothing is lost by archiving it', () => {
+    const got = readRow(row()).lead;
+    expect(got.parentPhone).toBeTruthy();
+    expect(got.outcomeReason).toBeTruthy();
+    expect(got.importedGrade).toBe(6);
+  });
+});
+
 describe('re-running the import', () => {
   it('writes the same id for the same Radius lead, so it rewrites not duplicates', () => {
     const a = readRow(row()).lead;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { collection, onSnapshot, writeBatch, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, onSnapshot, writeBatch, doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Upload, Loader2, AlertTriangle, CheckCircle2, ChevronDown, ChevronRight,
   Phone, GraduationCap,
@@ -8,8 +8,8 @@ import { db } from '../firebase';
 import { toast } from '../lib/notify';
 import { todayISO } from '../lib/payProjection';
 import {
-  readStudentExport, callBackList, studentImportId, gradeLabel, MAX_AWAY_YEARS,
-  leadFromCallBack,
+  readStudentExport, callBackBatch, studentImportId, gradeLabel, MAX_AWAY_YEARS,
+  leadFromCallBack, BATCH_SIZE,
 } from '../lib/formerStudents';
 import { createLead } from '../lib/leads';
 
@@ -60,6 +60,10 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
     setMaking(id);
     try {
       await createLead(centerId, leadFromCallBack(call, today), actor);
+      // It is a lead now, so it is worked there. Leaving it on the
+      // call-back list as well would be the same family in two places,
+      // each telling somebody to ring them.
+      await settle(call, { calledAt: new Date().toISOString() });
       toast.success(`${call.student.name} is on the call sheet.`);
     } catch (err) {
       toast.error(err.message || 'Could not make that lead.');
@@ -79,8 +83,26 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
     );
   }, [centerId, onLoaded]);
 
-  const calls = useMemo(() => callBackList(students || [], today), [students, today]);
-  const shown = showAll ? calls : calls.slice(0, 12);
+  // TEN, not three hundred and forty-one. The pool stays whole; the
+  // screen takes a week's worth. See BATCH_SIZE for why shortening the
+  // window instead would gut the thing that makes this useful.
+  const { batch, pool } = useMemo(
+    () => callBackBatch(students || [], today, showAll ? 1000 : BATCH_SIZE),
+    [students, today, showAll],
+  );
+
+  /** Rung, or not this week. Either way it leaves the batch. */
+  const settle = async (call, patch) => {
+    const id = call.student.id || studentImportId(call.student);
+    await setDoc(doc(db, 'centers', centerId, 'formerStudents', id),
+      { ...patch, updatedAt: serverTimestamp() }, { merge: true });
+  };
+
+  const snoozeDate = () => {
+    const d = new Date(`${today}T12:00:00`);
+    d.setDate(d.getDate() + 90);
+    return d.toISOString().slice(0, 10);
+  };
 
   const pick = async (e) => {
     const file = e.target.files?.[0];
@@ -128,8 +150,10 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
         {open ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
         <GraduationCap size={15} className="text-gray-500" />
         <span className="text-sm font-semibold text-gray-900">Worth a call back</span>
-        {calls.length > 0 && (
-          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800">{calls.length}</span>
+        {pool > 0 && (
+          <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-800">
+            {Math.min(BATCH_SIZE, pool)}
+          </span>
         )}
         <span className="text-xs text-gray-500">Former students whose school year has moved on</span>
       </button>
@@ -140,7 +164,7 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
             <p className="flex items-center gap-2 py-4 text-xs text-gray-500">
               <Loader2 size={13} className="animate-spin" /> Reading former students…
             </p>
-          ) : calls.length === 0 && !summary && done === null ? (
+          ) : pool === 0 && !summary && done === null ? (
             <p className="mb-3 text-xs text-gray-500">
               Nothing here yet. Import the Radius student export and this fills with the
               families who already know you — the child&rsquo;s date of birth is what makes it
@@ -149,8 +173,12 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
             </p>
           ) : (
             <>
+              <p className="mb-2 text-xs text-gray-500">
+                <b className="text-gray-800">{showAll ? pool : Math.min(BATCH_SIZE, pool)} of {pool}</b>
+                {' '}— this week&rsquo;s. Ring them, or push one back, and the next ones take their place.
+              </p>
               <ul className="mb-3 divide-y divide-gray-100 overflow-hidden rounded-lg border border-gray-200">
-                {shown.map(c => {
+                {batch.map(c => {
                   const kind = KIND[c.kind] || KIND.recent;
                   return (
                     <li key={c.student.id || c.student.source_radiusId}
@@ -170,19 +198,31 @@ export default function FormerStudents({ centerId, onLoaded, actor }) {
                         </span>
                         <span className="mt-0.5 block text-[12.5px] leading-snug text-gray-600">{c.why}</span>
                       </span>
-                      <button type="button" onClick={() => makeLead(c)}
-                        disabled={making === (c.student.id || c.student.source_radiusId)}
-                        className="shrink-0 self-center rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
-                        {making === (c.student.id || c.student.source_radiusId) ? 'Adding…' : 'Make a lead'}
-                      </button>
+                      <span className="flex shrink-0 self-center gap-1">
+                        <button type="button" onClick={() => makeLead(c)}
+                          disabled={making === (c.student.id || c.student.source_radiusId)}
+                          className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+                          {making === (c.student.id || c.student.source_radiusId) ? 'Adding…' : 'Make a lead'}
+                        </button>
+                        <button type="button" title="Push back three months"
+                          onClick={() => settle(c, { snoozedUntil: snoozeDate() })}
+                          className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-gray-50">
+                          Not now
+                        </button>
+                        <button type="button" title="Rung — do not show again"
+                          onClick={() => settle(c, { calledAt: new Date().toISOString() })}
+                          className="rounded-lg border border-gray-300 bg-white px-2 py-1 text-[11px] font-semibold text-gray-500 hover:bg-gray-50">
+                          Done
+                        </button>
+                      </span>
                     </li>
                   );
                 })}
               </ul>
-              {calls.length > shown.length && (
+              {pool > batch.length && (
                 <button type="button" onClick={() => setShowAll(true)}
                   className="mb-3 text-xs font-semibold text-gray-600 hover:text-gray-900">
-                  Show all {calls.length}
+                  Show all {pool}
                 </button>
               )}
               <p className="mb-3 flex items-start gap-1.5 text-[11px] text-gray-500">

@@ -209,10 +209,43 @@ export function reengagement(student, today) {
   return null;
 }
 
-/** The call-back list, best reason first, then longest away. */
+/**
+ * How many to put in front of somebody at once.
+ *
+ * MEASURED, AND THE NUMBER IS NOT THE POINT — the shape is. The pool is
+ * 341 families and shortening the window does not fix it, it guts it: at
+ * one year there are 64 names but only 7 have changed school stage,
+ * because a child who left ten months ago is in the same grade or one
+ * up. The interesting ones — 39 who crossed the Grade 7 step, 59 who are
+ * several grades on — LEFT between one and three years ago. Cut to a
+ * year and the feature is "people who left recently", which is the part
+ * anybody could already remember.
+ *
+ * So the pool stays at three years and the SCREEN gets ten. Work them,
+ * mark them, and next week shows the next ten. A list of 341 is not a
+ * longer to-do list than a list of ten; it is one nobody starts.
+ */
+export const BATCH_SIZE = 10;
+
+/**
+ * Has this one been dealt with, for now?
+ *
+ * `calledAt` is permanent — somebody rang them, and they do not come
+ * round again. `snoozedUntil` is "not this week", which is the honest
+ * answer most of the time and the one that keeps the batch moving.
+ */
+export function isPending(student, today) {
+  if (!student) return false;
+  if (student.calledAt) return false;
+  if (student.snoozedUntil && String(student.snoozedUntil) > String(today)) return false;
+  return true;
+}
+
+/** The whole pool, best reason first, then most recent leaver. */
 export function callBackList(students, today) {
   const out = [];
   for (const student of students || []) {
+    if (!isPending(student, today)) continue;
     const r = reengagement(student, today);
     if (r) out.push({ student, ...r });
   }
@@ -221,6 +254,17 @@ export function callBackList(students, today) {
   // be a conversation rather than a cold introduction.
   return out.sort((a, b) => a.priority - b.priority || a.awayYears - b.awayYears
     || a.student.name.localeCompare(b.student.name));
+}
+
+/**
+ * This week's ten, and how many are behind them.
+ *
+ * The count matters as much as the batch: "10 of 341" says there is a
+ * pool to keep working, where a bare ten reads as "that is all there is".
+ */
+export function callBackBatch(students, today, size = BATCH_SIZE) {
+  const pool = callBackList(students, today);
+  return { batch: pool.slice(0, size), pool: pool.length };
 }
 
 /** Read the whole export, with the counts somebody sees before writing. */
