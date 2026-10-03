@@ -87,6 +87,14 @@ describe('it is a copy of the sheet', () => {
     expect(screen.getByText('Yes')).toBeTruthy();
   });
 
+  it('prints a last contact that is a person and a date in one cell', () => {
+    // "VB 7/16" through a date formatter comes out empty, which blanked
+    // the whole column until somebody looked at it beside the sheet.
+    render(<LeadTracker leads={[lead({ id: 'vb', createdAt: '2026-10-01T10:00:00',
+      lastContactOn: '2026-10-02', tracker: { lastContact: 'VB 10/2' } })]} />);
+    expect(screen.getByText('VB 10/2')).toBeTruthy();
+  });
+
   it('leaves a cell empty rather than filling it with something invented', () => {
     setup();
     const row = screen.getByText('Tina Vuong / Kai').closest('tr');

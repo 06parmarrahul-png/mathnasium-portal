@@ -303,20 +303,38 @@ export function monthKpis(leads, now = Date.now()) {
 }
 
 /**
+ * The people named in a "who did this" cell.
+ *
+ * "Sabrina / Vin" is two people and both of them were in the room, so the
+ * cell is split on the slash. "N/A" is NOT two people called N and A — it
+ * is somebody saying nobody toured them, and splitting it invented two
+ * staff members who do not exist and gave them three tours between them.
+ */
+const NOT_A_PERSON = /^(n\/?a|none|tbd|-|—)$/i;
+
+export function splitPeople(value) {
+  const raw = String(value || '').trim();
+  if (!raw || NOT_A_PERSON.test(raw)) return [];
+  return raw.split('/').map(p => p.trim()).filter(p => p && !NOT_A_PERSON.test(p));
+}
+
+/**
  * Tours and assessments per person, the way the KPI sheet counts them.
  *
  * `field` is 'tourBy' or 'assessedBy'. Vin's sheet credits BOTH names in
  * "Sabrina / Vin", so a slash-separated cell gives each of them the tour
  * — which is what the two of them did.
+ *
+ * HIS OWN TOURS FORMULA DOES NOT. It is COUNTIF(H:H, "Rahul"), an exact
+ * match, so a shared tour typed "Sabrina/Rahul" is credited to NEITHER of
+ * them — while the assessor formula beside it uses COUNTIF(I:I, "*Vin*")
+ * and does count shares. Both are counted here, which is why these
+ * numbers can read higher than the sheet's.
  */
 export function scoreboard(leads, field) {
   const tally = new Map();
   for (const lead of leads || []) {
-    const raw = String(lead?.[field] || '').trim();
-    if (!raw) continue;
-    for (const part of raw.split('/')) {
-      const person = part.trim();
-      if (!person) continue;
+    for (const person of splitPeople(lead?.[field])) {
       const row = tally.get(person) || { person, total: 0, enrolled: 0 };
       row.total += 1;
       if (lead.status === 'enrolled') row.enrolled += 1;

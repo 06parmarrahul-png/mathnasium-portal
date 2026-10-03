@@ -54,15 +54,27 @@ export function formatDay(ymd) {
   return new Date(at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }
 
-/** The five events, in the order they happen. */
-export const STORY_KEYS = ['enquiry', 'reached', 'assessment', 'assessed', 'outcome'];
+/**
+ * The six events, in the order they happen — the centre's own words for
+ * its own funnel, not a generic one. "Lead Call" is the column heading on
+ * the tracker's own tabs.
+ *
+ * SENDING THE LINK AND THEM ENROLLING ARE SEPARATE EVENTS, and the gap
+ * between the two is where families are lost: the link can sit in an
+ * inbox for a week, and before this there was no way to see that it had.
+ * Collapsing them into one step would hide exactly the call worth making.
+ */
+export const STORY_KEYS = [
+  'inquiry', 'leadCall', 'booked', 'completed', 'enrolment', 'enrolled',
+];
 
 export const STORY_LABELS = {
-  enquiry:    'Enquiry in',
-  reached:    'Reached',
-  assessment: 'Assessment',
-  assessed:   'Assessed',
-  outcome:    'Enrolled',
+  inquiry:   'Inquiry',
+  leadCall:  'Lead Call',
+  booked:    'Assessment Booked',
+  completed: 'Assessment Completed',
+  enrolment: 'Enrolment Link Sent',
+  enrolled:  'Enrolled',
 };
 
 /**
@@ -85,7 +97,7 @@ export function storyOf(lead, now = Date.now()) {
   const won = l.status === 'enrolled';
   const lost = l.status === 'lost';
 
-  // Reached: when they were FIRST reached, not most recently.
+  // The lead call: when they were FIRST reached, not most recently.
   //
   // `lastContactOn` moves every time somebody logs a call, so a family
   // rung again a week after their assessment would draw a Reached dot
@@ -95,26 +107,28 @@ export function storyOf(lead, now = Date.now()) {
   // contact is still shown, as its own field, in the detail panel.
   const reachedOn = ymdOf(l.contactedAt) || l.lastContactOn || '';
 
-  // Assessed: its own stamp, or — when the outcome says they attended —
+  // Completed: its own stamp, or — when the outcome says they attended —
   // the day of the assessment, which is when it happened.
   const assessedOn = ymdOf(l.assessedAt) || (outcome === 'attended' ? l.assessmentOn || '' : '');
+
+  const linkSentOn = ymdOf(l.enrolmentLinkSentAt) || l.enrolmentLinkSentOn || '';
 
   const until = l.assessmentOn ? daysUntil(l.assessmentOn, now) : null;
   const wait = daysToAssessment(l);
 
   const steps = [
     {
-      key: 'enquiry',
+      key: 'inquiry',
       on: ymdOf(l.createdAt),
       state: 'done',
     },
     {
-      key: 'reached',
+      key: 'leadCall',
       on: reachedOn,
       state: reachedOn ? 'done' : 'todo',
     },
     {
-      key: 'assessment',
+      key: 'booked',
       on: l.assessmentOn || '',
       state: outcome === 'no-show' || outcome === 'cancelled' ? 'miss'
         : !l.assessmentOn ? 'todo'
@@ -136,12 +150,19 @@ export function storyOf(lead, now = Date.now()) {
       late: wait !== null && wait > DAYS_TO_ASSESSMENT_GOAL,
     },
     {
-      key: 'assessed',
+      key: 'completed',
       on: assessedOn,
       state: assessedOn ? 'done' : 'todo',
     },
     {
-      key: 'outcome',
+      // Something the centre DOES, so it is done or it is not.
+      key: 'enrolment',
+      on: linkSentOn,
+      state: linkSentOn ? 'done' : 'todo',
+    },
+    {
+      // What the family did about it.
+      key: 'enrolled',
       on: won ? ymdOf(l.enrolledAt) : lost ? ymdOf(l.lostAt) : '',
       state: won ? 'won' : lost ? 'lost' : 'todo',
       note: lost ? 'Lost' : '',
@@ -175,7 +196,7 @@ const landed = (s) => s.state !== 'todo';
  * is noise, and the dots already sit next to each other.
  *
  * A label here is only ever how long THAT hop took. The four-day goal
- * spans enquiry → assessment, which is one hop or two depending on
+ * spans inquiry → assessment booked, which is one hop or two depending on
  * whether anybody logged a call, so it lives on the assessment step
  * instead — see `waitDays` / `late` in storyOf().
  */

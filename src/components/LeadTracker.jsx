@@ -30,10 +30,10 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Download, Table2 } from 'lucide-react';
+import { Download, Table2, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   TRACKER_COLUMNS, trackerMonths, trackerRows, trackerSummary, trackerCsv,
-  monthLabel, monthOf,
+  trackerKpis, monthsBefore, monthLabel, monthOf,
 } from '../lib/leadTracker';
 import { formatDay } from '../lib/leadStory';
 import { DAYS_TO_ASSESSMENT_GOAL } from '../lib/leadFollowUp';
@@ -62,6 +62,65 @@ function OutOf({ label, n, outOf, rate, tone }) {
           <span className="ml-auto text-[11px] font-semibold tabular-nums text-gray-500">{pct(rate)}</span>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/** One figure, with what it was measured over. */
+function Stat({ label, value, hint, note, tone }) {
+  return (
+    <div className="rounded-lg bg-white p-2.5 ring-1 ring-gray-200">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">{label}</div>
+      <div className="mt-0.5 flex items-baseline gap-1.5">
+        <span className={`text-lg font-bold tabular-nums ${tone || 'text-gray-900'}`}>{value}</span>
+        {hint ? <span className="text-[11px] text-gray-500">{hint}</span> : null}
+        {/* The sample, always — a mean over three rows and a mean over
+            thirty are different facts. */}
+        {note ? <span className="ml-auto text-[11px] text-gray-400">{note}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Person down the side, month across the top — his KPI Tracking tab.
+ *
+ * "How is Sabrina doing" is a question about the year, and the monthly
+ * block under the rows cannot answer it however often you change tab.
+ */
+function KpiGrid({ title, months, rows }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="overflow-x-auto rounded-lg bg-white p-3 ring-1 ring-gray-200">
+      <h4 className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-gray-500">{title}</h4>
+      <table className="w-full text-[12px]">
+        <thead>
+          <tr className="text-[10px] uppercase text-gray-400">
+            <th className="pb-1 text-left font-semibold">Who</th>
+            {months.map(m => (
+              <th key={m} className="pb-1 text-right font-semibold">{monthLabel(m).split(' ')[0].slice(0, 3)}</th>
+            ))}
+            <th className="pb-1 text-right font-semibold">Total</th>
+            <th className="pb-1 text-right font-semibold">Enrolled</th>
+            <th className="pb-1 text-right font-semibold">Rate</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => (
+            <tr key={r.person} className="border-t border-gray-100">
+              <td className="py-1 font-medium text-gray-900">{r.person}</td>
+              {months.map(m => (
+                <td key={m} className={`py-1 text-right tabular-nums ${r.months[m] ? 'text-gray-700' : 'text-gray-300'}`}>
+                  {r.months[m] || '—'}
+                </td>
+              ))}
+              <td className="py-1 text-right font-semibold tabular-nums text-gray-900">{r.total}</td>
+              <td className="py-1 text-right tabular-nums text-emerald-700">{r.enrolled}</td>
+              <td className="py-1 text-right font-semibold tabular-nums text-gray-700">{pct(r.rate)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -104,7 +163,13 @@ function Scoreboard({ title, rows }) {
 }
 
 export default function LeadTracker({ leads, onOpen }) {
-  const months = useMemo(() => trackerMonths(leads), [leads]);
+  // Eleven years of imported Radius history gave this screen 130 monthly
+  // tabs. The archive is one click away rather than always in the way.
+  const [allMonths, setAllMonths] = useState(false);
+  const [showKpis, setShowKpis] = useState(true);
+  const months = useMemo(() => trackerMonths(leads, { all: allMonths }), [leads, allMonths]);
+  const hidden = useMemo(() => monthsBefore(leads), [leads]);
+  const kpis = useMemo(() => trackerKpis(leads, months), [leads, months]);
   // The month with the most recent lead in it, which is the one somebody
   // opening this is nearly always working.
   const [month, setMonth] = useState(() => monthOf({ createdAt: Date.now() }));
@@ -138,10 +203,18 @@ export default function LeadTracker({ leads, onOpen }) {
             {monthLabel(m)}
           </button>
         ))}
-        <button type="button" onClick={handleExport}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50">
-          <Download size={13} /> Export
-        </button>
+        <div className="ml-auto flex items-center gap-1.5">
+          {hidden > 0 && (
+            <button type="button" onClick={() => setAllMonths(v => !v)}
+              className="rounded-lg px-2.5 py-1 text-[12px] font-semibold text-gray-500 hover:bg-gray-100">
+              {allMonths ? 'Hide the archive' : `Show ${hidden} older ${hidden === 1 ? 'month' : 'months'}`}
+            </button>
+          )}
+          <button type="button" onClick={handleExport}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-2.5 py-1 text-[12px] font-semibold text-gray-700 ring-1 ring-gray-200 hover:bg-gray-50">
+            <Download size={13} /> Export
+          </button>
+        </div>
       </div>
 
       {/* ── The rows ────────────────────────────────────────────────── */}
@@ -171,7 +244,14 @@ export default function LeadTracker({ leads, onOpen }) {
                 <td className="px-2 py-1.5 font-medium text-gray-900">{r.name || <Dash />}</td>
                 <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-gray-600">{formatDay(r.created) || <Dash />}</td>
                 <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-gray-500">{formatDay(r.week) || <Dash />}</td>
-                <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-gray-600">{formatDay(r.contact) || <Dash />}</td>
+                {/* "VB 7/16" is a person AND a date in one cell. Running
+                    it through a date formatter blanks the whole column,
+                    which is what it did until somebody looked. */}
+                <td className="whitespace-nowrap px-2 py-1.5 text-gray-600">
+                  {!r.contact ? <Dash />
+                    : r.contactIsDate ? <span className="tabular-nums">{formatDay(r.contact)}</span>
+                      : r.contact}
+                </td>
                 <td className="px-2 py-1.5 text-gray-600">{r.reason || <Dash />}</td>
                 <td className="whitespace-nowrap px-2 py-1.5">
                   {r.assess === 'NS' || r.assess === 'CA' ? (
@@ -213,43 +293,60 @@ export default function LeadTracker({ leads, onOpen }) {
         </table>
       </div>
 
-      {/* ── The block under the rows ─────────────────────────────────── */}
+      {/* ── The block under the rows — his numbers, his names ──────── */}
       {rows.length > 0 ? (
         <div className="space-y-3 border-t border-gray-200 bg-gray-50 p-3">
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             <OutOf label="No assessment booked" n={summary.noAssessment}
-              outOf={summary.total} rate={summary.noAssessmentRate} />
+              outOf={summary.leads} rate={summary.noAssessmentRate} />
+            {/* Out of ASSESSMENTS, not out of leads. The two denominators
+                are different on his sheet too, deliberately. */}
             <OutOf label="Cancellations / no shows" n={summary.broken}
-              outOf={summary.total} rate={summary.brokenRate} tone="text-rose-700" />
-            <OutOf label="Enrolled" n={summary.enrolled}
-              outOf={summary.total} rate={summary.enrolledRate} tone="text-emerald-700" />
-            <div className="rounded-lg bg-white p-2.5 ring-1 ring-gray-200">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-500">
-                Days to assessment
-              </div>
-              <div className="mt-0.5 flex items-baseline gap-1.5">
-                <span className={`text-lg font-bold tabular-nums ${
-                  summary.daysToAssessment === null ? 'text-gray-400'
-                    : summary.daysToAssessment <= DAYS_TO_ASSESSMENT_GOAL ? 'text-emerald-700' : 'text-amber-700'}`}>
-                  {summary.daysToAssessment === null ? '—' : summary.daysToAssessment.toFixed(1)}
-                </span>
-                <span className="text-[11px] text-gray-500">
-                  goal {DAYS_TO_ASSESSMENT_GOAL}
-                </span>
-                <span className="ml-auto text-[11px] text-gray-400">
-                  {/* The sample, always — a mean over three rows and a mean
-                      over thirty are different facts. */}
-                  of {summary.daysToAssessmentSample}
-                </span>
-              </div>
-            </div>
+              outOf={summary.assessments} rate={summary.brokenRate} tone="text-rose-700" />
+            <OutOf label="Leads converted" n={summary.converted}
+              outOf={summary.leads} rate={null} tone="text-emerald-700" />
+            <Stat label="Days to assessment"
+              value={summary.daysToAssessment === null ? '—' : summary.daysToAssessment.toFixed(1)}
+              hint={`goal ${DAYS_TO_ASSESSMENT_GOAL}`}
+              note={`of ${summary.daysToAssessmentSample}`}
+              tone={summary.daysToAssessment === null ? 'text-gray-400'
+                : summary.daysToAssessment <= DAYS_TO_ASSESSMENT_GOAL ? 'text-emerald-700' : 'text-amber-700'} />
           </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            <Stat label="Leads assessed rate" value={pct(summary.leadsAssessedRate)}
+              hint={`${summary.assessments - summary.broken} of ${summary.leads}`} />
+            <Stat label="Lead conversion rate" value={pct(summary.leadConversionRate)}
+              hint={`${summary.converted} of ${summary.assessments} assessed`} />
+            <Stat label="Assessment conversion rate" value={pct(summary.assessmentConversionRate)}
+              hint={`${summary.converted} of ${summary.decided} decided`} />
+          </div>
+
           <div className="grid gap-2 md:grid-cols-2">
             <Scoreboard title="Tours" rows={summary.tours} />
             <Scoreboard title="Assessments" rows={summary.assessors} />
           </div>
         </div>
       ) : null}
+
+      {/* ── The KPI tab: the year, not one month ───────────────────── */}
+      {months.length > 1 ? (
+        <div className="border-t border-gray-200">
+          <button type="button" onClick={() => setShowKpis(v => !v)}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50">
+            {showKpis ? <ChevronDown size={14} className="text-gray-400" /> : <ChevronRight size={14} className="text-gray-400" />}
+            <span className="text-[12px] font-bold uppercase tracking-wide text-gray-600">KPI tracking</span>
+            <span className="text-[11px] text-gray-500">Tours and assessments per person, across every month</span>
+          </button>
+          {showKpis ? (
+            <div className="space-y-3 border-t border-gray-100 bg-gray-50 p-3">
+              <KpiGrid title="Tours" months={kpis.months} rows={kpis.tours} />
+              <KpiGrid title="Assessments" months={kpis.months} rows={kpis.assessments} />
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
     </section>
   );
 }

@@ -39,13 +39,13 @@ describe('the day a stamp falls on', () => {
   });
 });
 
-describe('the five events', () => {
-  it('always has the same five, in order', () => {
+describe('the six events', () => {
+  it('always has the same six, in order', () => {
     expect(storyOf(lead()).map(s => s.key)).toEqual(STORY_KEYS);
   });
 
   it('counts the enquiry itself as done', () => {
-    const got = by(storyOf(lead()), 'enquiry');
+    const got = by(storyOf(lead()), 'inquiry');
     expect(got.state).toBe('done');
     expect(got.on).toBe('2026-10-01');
   });
@@ -53,18 +53,18 @@ describe('the five events', () => {
   it('leaves everything else hollow on a brand new lead', () => {
     const steps = storyOf(lead());
     expect(steps.filter(s => s.state === 'todo').map(s => s.key))
-      .toEqual(['reached', 'assessment', 'assessed', 'outcome']);
+      .toEqual(['leadCall', 'booked', 'completed', 'enrolment', 'enrolled']);
   });
 });
 
-describe('reached', () => {
+describe('leadCall', () => {
   it('counts a logged call', () => {
-    expect(by(storyOf(lead({ lastContactOn: '2026-10-02' })), 'reached'))
+    expect(by(storyOf(lead({ lastContactOn: '2026-10-02' })), 'leadCall'))
       .toMatchObject({ state: 'done', on: '2026-10-02' });
   });
 
   it('counts the stamp from moving the status to Contacted', () => {
-    expect(by(storyOf(lead({ status: 'contacted', contactedAt: '2026-10-03T14:00:00' })), 'reached'))
+    expect(by(storyOf(lead({ status: 'contacted', contactedAt: '2026-10-03T14:00:00' })), 'leadCall'))
       .toMatchObject({ state: 'done', on: '2026-10-03' });
   });
 
@@ -73,15 +73,15 @@ describe('reached', () => {
     // Reached dot dated after the Assessment dot beside it — that is the
     // story told out of order.
     const got = by(storyOf(lead({
-      status: 'assessed', contactedAt: '2026-10-02T09:00:00', lastContactOn: '2026-10-04',
+      status: 'completed', contactedAt: '2026-10-02T09:00:00', lastContactOn: '2026-10-04',
       assessmentOn: '2026-10-03', assessmentOutcome: 'attended',
-    })), 'reached');
+    })), 'leadCall');
     expect(got.on).toBe('2026-10-02');
   });
 
   it('draws the five events in the order they happened', () => {
     const steps = storyOf(lead({
-      status: 'assessed', contactedAt: '2026-10-02T09:00:00', lastContactOn: '2026-10-04',
+      status: 'completed', contactedAt: '2026-10-02T09:00:00', lastContactOn: '2026-10-04',
       assessmentOn: '2026-10-03', assessmentOutcome: 'attended',
     }));
     const dated = steps.filter(s => s.on).map(s => s.on);
@@ -91,58 +91,58 @@ describe('reached', () => {
   it('does not count the status word on its own', () => {
     // 'contacted' with no stamp behind it is somebody having changed a
     // dropdown. The dot stays hollow because nothing says when.
-    expect(by(storyOf(lead({ status: 'contacted' })), 'reached').state).toBe('todo');
+    expect(by(storyOf(lead({ status: 'contacted' })), 'leadCall').state).toBe('todo');
   });
 });
 
 describe('the assessment — booked is not done', () => {
   it('is planned when the date is still to come', () => {
-    const got = by(storyOf(lead({ assessmentOn: '2026-10-09', assessmentOutcome: 'booked' })), 'assessment');
+    const got = by(storyOf(lead({ assessmentOn: '2026-10-09', assessmentOutcome: 'booked' })), 'booked');
     expect(got.state).toBe('planned');
     expect(got.unrecorded).toBe(false);
   });
 
   it('is still planned on the day itself — it has not happened yet', () => {
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-05', assessmentOutcome: 'booked' })), 'assessment').state)
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-05', assessmentOutcome: 'booked' })), 'booked').state)
       .toBe('planned');
   });
 
   it('is only done once somebody says they attended', () => {
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'attended' })), 'assessment').state)
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'attended' })), 'booked').state)
       .toBe('done');
   });
 
   it('flags a date that went by with no outcome recorded', () => {
     // The lead a pipeline quietly loses: it looks booked, it is three
     // days past, and nobody wrote down whether they walked in.
-    const got = by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'booked' })), 'assessment');
+    const got = by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'booked' })), 'booked');
     expect(got.state).toBe('planned');
     expect(got.unrecorded).toBe(true);
   });
 
   it('does not flag an attended or broken one as unrecorded', () => {
     for (const o of ['attended', 'no-show', 'cancelled']) {
-      expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: o })), 'assessment').unrecorded)
+      expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: o })), 'booked').unrecorded)
         .toBe(false);
     }
   });
 
   it('marks a no-show and a cancellation as broken, and says which', () => {
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'no-show' })), 'assessment'))
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'no-show' })), 'booked'))
       .toMatchObject({ state: 'miss', label: 'No show' });
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'cancelled' })), 'assessment'))
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'cancelled' })), 'booked'))
       .toMatchObject({ state: 'miss', label: 'Cancelled' });
   });
 });
 
-describe('assessed', () => {
+describe('completed', () => {
   it('counts its own stamp', () => {
-    expect(by(storyOf(lead({ status: 'assessed', assessedAt: '2026-10-02T16:00:00' })), 'assessed'))
+    expect(by(storyOf(lead({ status: 'completed', assessedAt: '2026-10-02T16:00:00' })), 'completed'))
       .toMatchObject({ state: 'done', on: '2026-10-02' });
   });
 
   it('counts an attended assessment on the day it was held', () => {
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'attended' })), 'assessed'))
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-02', assessmentOutcome: 'attended' })), 'completed'))
       .toMatchObject({ state: 'done', on: '2026-10-02' });
   });
 
@@ -150,37 +150,71 @@ describe('assessed', () => {
     // Honest rather than tidy: enrolling does not prove an assessment
     // was recorded, and inventing one here would be the confidently
     // wrong dashboard this codebase already deleted once.
-    expect(by(storyOf(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' })), 'assessed').state)
+    expect(by(storyOf(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' })), 'completed').state)
       .toBe('todo');
   });
 });
 
 describe('how it ended', () => {
   it('is won, on the day they enrolled', () => {
-    expect(by(storyOf(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' })), 'outcome'))
+    expect(by(storyOf(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' })), 'enrolled'))
       .toMatchObject({ state: 'won', on: '2026-10-04' });
   });
 
   it('is lost, and says so', () => {
-    expect(by(storyOf(lead({ status: 'lost', lostAt: '2026-10-04T10:00:00' })), 'outcome'))
+    expect(by(storyOf(lead({ status: 'lost', lostAt: '2026-10-04T10:00:00' })), 'enrolled'))
       .toMatchObject({ state: 'lost', label: 'Lost' });
+  });
+});
+
+describe('the enrolment link, and what they did about it', () => {
+  it('records sending the link as its own event', () => {
+    expect(by(storyOf(lead({ enrolmentLinkSentOn: '2026-10-03' })), 'enrolment'))
+      .toMatchObject({ state: 'done', on: '2026-10-03' });
+  });
+
+  it('keeps sending it apart from them acting on it', () => {
+    // The gap between these two is where families are lost — the link
+    // can sit in an inbox for a week. One step cannot show that.
+    const steps = storyOf(lead({ enrolmentLinkSentOn: '2026-10-03' }));
+    expect(by(steps, 'enrolment').state).toBe('done');
+    expect(by(steps, 'enrolled').state).toBe('todo');
+  });
+
+  it('stands the family on the link they have not acted on yet', () => {
+    const steps = storyOf(lead({
+      lastContactOn: '2026-10-01', assessmentOn: '2026-10-02', assessmentOutcome: 'attended',
+      assessedAt: '2026-10-02T15:00:00', enrolmentLinkSentOn: '2026-10-03',
+    }));
+    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['enrolled']);
+  });
+
+  it('measures how long the link has been sitting there', () => {
+    const gaps = storyGaps(storyOf(lead({
+      enrolmentLinkSentOn: '2026-10-01', status: 'enrolled', enrolledAt: '2026-10-04T10:00:00',
+    })));
+    expect(gaps[4]).toMatchObject({ days: 3, label: '3d' });
+  });
+
+  it('stays hollow when nobody recorded sending one', () => {
+    expect(by(storyOf(lead()), 'enrolment').state).toBe('todo');
   });
 });
 
 describe('where the family is standing', () => {
   it('marks exactly one step, the first one still open', () => {
     const steps = storyOf(lead({ lastContactOn: '2026-10-02' }));
-    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['assessment']);
+    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['booked']);
   });
 
   it('stands them on a booked assessment rather than past it', () => {
     const steps = storyOf(lead({ lastContactOn: '2026-10-02', assessmentOn: '2026-10-09', assessmentOutcome: 'booked' }));
-    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['assessment']);
+    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['booked']);
   });
 
   it('stands them on the break when one happened', () => {
     const steps = storyOf(lead({ lastContactOn: '2026-10-02', assessmentOn: '2026-10-03', assessmentOutcome: 'no-show' }));
-    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['assessment']);
+    expect(steps.filter(s => s.now).map(s => s.key)).toEqual(['booked']);
   });
 
   it('stands nobody anywhere once the story is over', () => {
@@ -198,7 +232,7 @@ describe('how long each step took', () => {
   it('says nothing about a gap with an open end', () => {
     // Nothing has happened after the enquiry, so the segment has no
     // length yet — labelling it "0d" would read as instant.
-    expect(storyGaps(storyOf(lead()))).toEqual([null, null, null, null, null]);
+    expect(storyGaps(storyOf(lead()))).toEqual([null, null, null, null, null, null]);
   });
 
   it('drops a same-day gap rather than printing 0d', () => {
@@ -234,23 +268,23 @@ describe('lead in, assessed within four days', () => {
     // day the family is seen.
     const twoHops = by(storyOf(lead({
       lastContactOn: '2026-10-02', assessmentOn: '2026-10-04', assessmentOutcome: 'booked',
-    })), 'assessment');
-    const oneHop = by(storyOf(lead({ assessmentOn: '2026-10-04', assessmentOutcome: 'booked' })), 'assessment');
+    })), 'booked');
+    const oneHop = by(storyOf(lead({ assessmentOn: '2026-10-04', assessmentOutcome: 'booked' })), 'booked');
     expect(twoHops.waitDays).toBe(3);
     expect(oneHop.waitDays).toBe(3);
   });
 
   it('is within the goal at four days and late at five', () => {
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-05', assessmentOutcome: 'booked' })), 'assessment'))
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-05', assessmentOutcome: 'booked' })), 'booked'))
       .toMatchObject({ waitDays: 4, late: false });
-    expect(by(storyOf(lead({ assessmentOn: '2026-10-06', assessmentOutcome: 'booked' })), 'assessment'))
+    expect(by(storyOf(lead({ assessmentOn: '2026-10-06', assessmentOutcome: 'booked' })), 'booked'))
       .toMatchObject({ waitDays: 5, late: true });
   });
 
   it('is not late when there is no assessment to have waited for', () => {
     // Absent, not zero, and certainly not "late" — a lead with nothing
     // booked has not missed a four-day goal, it has no measurement.
-    const got = by(storyOf(lead()), 'assessment');
+    const got = by(storyOf(lead()), 'booked');
     expect(got.waitDays).toBeNull();
     expect(got.late).toBe(false);
   });
@@ -264,19 +298,19 @@ describe('how far along they are', () => {
   });
 
   it('puts a finished story past the end, so it sorts last', () => {
-    expect(stageIndex(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' }))).toBe(5);
+    expect(stageIndex(lead({ status: 'enrolled', enrolledAt: '2026-10-04T10:00:00' }))).toBe(6);
   });
 });
 
 describe('it does not fall over', () => {
   it('takes a lead with nothing on it at all', () => {
     const steps = storyOf({});
-    expect(steps).toHaveLength(5);
-    expect(by(steps, 'enquiry').on).toBe('');
+    expect(steps).toHaveLength(6);
+    expect(by(steps, 'inquiry').on).toBe('');
     expect(storyGaps(steps).every(g => g === null)).toBe(true);
   });
 
   it('takes null', () => {
-    expect(storyOf(null)).toHaveLength(5);
+    expect(storyOf(null)).toHaveLength(6);
   });
 });

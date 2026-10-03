@@ -145,22 +145,23 @@ export function LeadStoryGrid({ lead, tone = 'slate', size = 12 }) {
  */
 function bodyFor(lead, step) {
   const l = lead || {};
-  if (step.key === 'enquiry') {
+  if (step.key === 'inquiry') {
     const bits = [LEAD_SOURCE_LABELS[l.source] || l.source, LEAD_REASON_LABELS[l.reason]]
       .filter(Boolean);
     return bits.join(' · ');
   }
-  if (step.key === 'reached') {
+  if (step.key === 'leadCall') {
     // The last thing anybody wrote down about talking to them.
     const last = (l.history || []).filter(h => h && h.text).slice(-1)[0];
     return last ? last.text : '';
   }
-  if (step.key === 'assessment') {
+  if (step.key === 'booked') {
     return [l.tourBy ? `${l.tourBy} touring` : '', l.assignedTo ? `${l.assignedTo}'s lead` : '']
       .filter(Boolean).join(' · ');
   }
-  if (step.key === 'assessed') return l.assessedBy ? `Assessed by ${l.assessedBy}` : '';
-  if (step.key === 'outcome') return l.outcomeReason || '';
+  if (step.key === 'completed') return l.assessedBy ? `Assessed by ${l.assessedBy}` : '';
+  if (step.key === 'enrolment') return l.assignedTo ? `Sent by ${l.assignedTo}` : '';
+  if (step.key === 'enrolled') return l.outcomeReason || '';
   return '';
 }
 
@@ -179,7 +180,7 @@ export function LeadStorySpine({ lead, tone = 'slate' }) {
         // A step that hasn't happened says nothing about itself unless
         // it is the one they're standing on.
         const speaks = step.state !== 'todo' || step.now;
-        const showWriteUp = step.key === 'assessed' && writeUp.length > 0;
+        const showWriteUp = step.key === 'completed' && writeUp.length > 0;
 
         return (
           <li key={step.key} className="grid" style={{ gridTemplateColumns: '34px minmax(0,1fr)', columnGap: 10 }}>
@@ -214,12 +215,12 @@ export function LeadStorySpine({ lead, tone = 'slate' }) {
                 {step.now && !step.on ? (
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-sky-700">next</span>
                 ) : null}
-                {step.key === 'assessment' && step.waitDays !== null ? (
+                {step.key === 'booked' && step.waitDays !== null ? (
                   <span className={`text-[10px] font-semibold ${step.late ? 'text-amber-700' : 'text-gray-400'}`}>
-                    {step.waitDays}d from enquiry{step.late ? ' · over the 4-day goal' : ''}
+                    {step.waitDays}d from inquiry{step.late ? ' · over the 4-day goal' : ''}
                   </span>
                 ) : null}
-                {step.key === 'assessment' && step.unrecorded ? (
+                {step.key === 'booked' && step.unrecorded ? (
                   <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 ring-1 ring-amber-200">
                     outcome not recorded
                   </span>
@@ -243,13 +244,13 @@ export function LeadStorySpine({ lead, tone = 'slate' }) {
                 </div>
               ) : null}
 
-              {step.key === 'assessed' && !showWriteUp && step.done ? (
+              {step.key === 'completed' && !showWriteUp && step.done ? (
                 <p className="mt-0.5 text-[12px] italic text-gray-400">
                   No write-up yet — the thing everyone re-reads before ringing back.
                 </p>
               ) : null}
 
-              {step.key === 'enquiry' && lead?.notes ? (
+              {step.key === 'inquiry' && lead?.notes ? (
                 <p className="mt-1 border-l-2 border-gray-200 pl-2 text-[12px] leading-relaxed text-gray-600">
                   {lead.notes}
                 </p>

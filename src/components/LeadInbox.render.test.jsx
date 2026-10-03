@@ -131,7 +131,8 @@ describe('the story', () => {
   it('draws the five events whether or not they have happened', () => {
     setup();
     const story = screen.getByText('Their story').closest('section');
-    for (const label of ['Enquiry in', 'Reached', 'Assessment', 'Assessed', 'Enrolled']) {
+    for (const label of ['Inquiry', 'Lead Call', 'Assessment Booked',
+      'Assessment Completed', 'Enrolment Link Sent']) {
       expect(within(story).getByText(label)).toBeTruthy();
     }
   });
@@ -141,7 +142,7 @@ describe('the story', () => {
     fireEvent.click(screen.getByText('Hassan Qureshi'));
     const story = screen.getByText('Their story').closest('section');
     expect(within(story).getByText('No show')).toBeTruthy();
-    expect(within(story).queryByText('Assessment')).toBeNull();
+    expect(within(story).queryByText('Assessment Booked')).toBeNull();
   });
 
   it('flags an assessment whose outcome nobody recorded', () => {
@@ -152,7 +153,7 @@ describe('the story', () => {
   it('shows the wait against the four-day goal, and says when it is over', () => {
     setup([lead({ id: 'slow', createdAt: '2026-09-25T10:00:00',
       assessmentOn: '2026-10-06', assessmentOutcome: 'booked' })]);
-    expect(screen.getByText(/11d from enquiry/)).toBeTruthy();
+    expect(screen.getByText(/11d from inquiry/)).toBeTruthy();
     expect(screen.getByText(/over the 4-day goal/)).toBeTruthy();
   });
 

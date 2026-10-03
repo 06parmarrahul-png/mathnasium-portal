@@ -26,8 +26,21 @@
  */
 
 import { whenOf } from './leadAnalytics';
-import { daysToAssessment, scoreboard } from './leadFollowUp';
+import { daysToAssessment, scoreboard, splitPeople } from './leadFollowUp';
 import { ymdOf } from './leadStory';
+
+/**
+ * The first month the tracker shows.
+ *
+ * Importing eleven years of Radius history gave this screen 130 monthly
+ * tabs going back to December 2015 — two hundred pixels of tab list above
+ * the thing anybody opened it for. June 2026 is where Vin's own workbook
+ * starts, so it is where the tabs start. Nothing is hidden: `all` brings
+ * the whole archive back.
+ *
+ * Raise it when the workbook rolls over to a new year.
+ */
+export const TRACKER_FROM = '2026-06';
 
 /** The sheet's columns, left to right, exactly as its header row reads. */
 export const TRACKER_COLUMNS = [
@@ -69,6 +82,11 @@ export function weekEndingOf(ymd) {
  * blank there too.
  */
 export function enrolledCell(lead) {
+  // An imported row prints the word the sheet printed. "Cold" is a value
+  // Ratio has no status for — the family stopped answering rather than
+  // said no — and rendering it as "No" would quietly rewrite his data.
+  const raw = clean(lead?.tracker?.enrolled);
+  if (raw) return raw;
   if (lead?.status === 'enrolled') return 'Yes';
   if (lead?.status === 'lost') return 'No';
   if (lead?.status === 'assessed') return 'Pending';
@@ -80,6 +98,8 @@ export function enrolledCell(lead) {
  * sheet, not missing dates — a no-show and a family who never booked
  * looked identical before Ratio had somewhere to put the difference.
  */
+const clean = (v) => String(v === null || v === undefined ? '' : v).trim();
+
 export function assessmentCell(lead) {
   if (lead?.assessmentOutcome === 'no-show') return 'NS';
   if (lead?.assessmentOutcome === 'cancelled') return 'CA';
@@ -113,8 +133,11 @@ export function trackerRow(lead) {
     name: parent && child ? `${parent} / ${child}` : parent || child || '',
     created,
     week: weekEndingOf(created),
-    contact: lead?.lastContactOn || '',
-    reason: lead?.reason || '',
+    // "VB 7/16" is a person and a date in one cell, and "Remedial,
+    // ex-Kumon" is richer than the dropdown. Both print as typed.
+    contact: clean(lead?.tracker?.lastContact) || lead?.lastContactOn || '',
+    contactIsDate: !clean(lead?.tracker?.lastContact),
+    reason: clean(lead?.tracker?.reason) || lead?.reason || '',
     assess: assessmentCell(lead),
     notes: notesCell(lead),
     tour: lead?.tourBy || '',
@@ -127,17 +150,39 @@ export function trackerRow(lead) {
   };
 }
 
-/** 'YYYY-MM' of the day a lead came in. */
-export const monthOf = (lead) => ymdOf(lead?.createdAt).slice(0, 7);
+/**
+ * Which month's tab a lead belongs on.
+ *
+ * For an imported row that is the tab it was typed on, not the day it
+ * came in: his June tab carries families who enquired on 26 May and were
+ * worked in June, and filing those under May would split his month in
+ * two and make the totals disagree with the ones he reads. Everything
+ * else falls back to the day it came in.
+ */
+export const monthOf = (lead) => clean(lead?.tracker?.month) || ymdOf(lead?.createdAt).slice(0, 7);
 
-/** Every month that has leads in it, newest first — the sheet's tabs. */
-export function trackerMonths(leads) {
+/**
+ * Every month that has leads in it, newest first — the sheet's tabs.
+ * Floored at TRACKER_FROM unless `all`, which reveals the imported
+ * archive behind it.
+ */
+export function trackerMonths(leads, { all = false } = {}) {
   const seen = new Set();
   for (const l of leads || []) {
     const m = monthOf(l);
-    if (m) seen.add(m);
+    if (m && (all || m >= TRACKER_FROM)) seen.add(m);
   }
   return [...seen].sort().reverse();
+}
+
+/** How many months the floor is holding back, so the toggle can say so. */
+export function monthsBefore(leads) {
+  const seen = new Set();
+  for (const l of leads || []) {
+    const m = monthOf(l);
+    if (m && m < TRACKER_FROM) seen.add(m);
+  }
+  return seen.size;
 }
 
 /** 'YYYY-MM' → 'September 2026'. */
@@ -162,31 +207,97 @@ export function trackerRows(leads, monthKey) {
 const rate = (n, d) => (d > 0 ? n / d : null);
 
 /**
- * The block under the rows. Two counts the sheet prints as "N out of M",
- * and the tours table, which is the thing the staff actually read.
+ * The block under the rows — HIS numbers, by HIS definitions.
+ *
+ * Every one of these is a formula read out of the June tab rather than a
+ * sensible-looking metric invented to sit near them, because these are
+ * the numbers the centre is judged on and a dashboard that quietly means
+ * something slightly different is worse than no dashboard:
+ *
+ *   No assessment booked      COUNTBLANK(Assessment Date)   out of LEADS
+ *   Cancellations / no shows  COUNTIF("*NS*") + ("*CA*")    out of ASSESSMENTS
+ *   Days to assessment        AVERAGE(Days to Assessment)
+ *   Leads Assessed Rate       (assessments - broken) / leads
+ *   Leads Converted           COUNTIF(Enrolled?, "Yes")
+ *   Lead Conversion Rate      converted / assessments
+ *   Assessment Conversion     converted / non-blank Enrolled?
+ *
+ * NOTE THE TWO DENOMINATORS ARE DIFFERENT, and deliberately so: the sheet
+ * prints "2 out of 48" against one and "7 out of 46" against the other.
+ * Assessments is every row with ANYTHING in the assessment column — a
+ * date, an NS or a CA — which is why a no-show counts towards it.
  */
 export function trackerSummary(rows) {
   const leads = (rows || []).map(r => r.lead).filter(Boolean);
   const total = leads.length;
-  const noAssessment = leads.filter(l => !l.assessmentOn && !l.assessmentOutcome).length;
+
+  // Anything typed in the assessment column: a date, NS, or CA.
+  const assessments = leads.filter(l => (
+    Boolean(l.assessmentOn)
+    || l.assessmentOutcome === 'no-show'
+    || l.assessmentOutcome === 'cancelled'
+  )).length;
+  const noAssessment = total - assessments;
   const broken = leads.filter(l => l.assessmentOutcome === 'no-show' || l.assessmentOutcome === 'cancelled').length;
-  const enrolled = leads.filter(l => l.status === 'enrolled').length;
+
+  // "Yes" in the enrolled column — the sheet's own word, so an imported
+  // row counts exactly as it counted there.
+  const converted = (rows || []).filter(r => r.enrolled === 'Yes').length;
+  const decided = (rows || []).filter(r => clean(r.enrolled)).length;
+
   const waits = (rows || []).map(r => r.days).filter(n => n !== null && n >= 0);
 
   return {
+    leads: total,
     total,
+    assessments,
     noAssessment,
-    noAssessmentRate: rate(noAssessment, total),
     broken,
-    brokenRate: rate(broken, total),
-    enrolled,
-    enrolledRate: rate(enrolled, total),
-    // Null, never 0, when there is nothing to average.
+    converted,
+    decided,
+    // Rates are null, never 0, when there is nothing to divide by —
+    // "0%" and "nothing happened yet" are different facts.
+    leadsAssessedRate:       rate(assessments - broken, total),
+    leadConversionRate:      rate(converted, assessments),
+    assessmentConversionRate: rate(converted, decided),
+    noAssessmentRate:        rate(noAssessment, total),
+    brokenRate:              rate(broken, assessments),
     daysToAssessment: waits.length > 0 ? waits.reduce((a, b) => a + b, 0) / waits.length : null,
     daysToAssessmentSample: waits.length,
     tours: scoreboard(leads, 'tourBy'),
     assessors: scoreboard(leads, 'assessedBy'),
   };
+}
+
+/**
+ * The KPI Tracking tab: tours and enrolments per person per month, with
+ * a total — the year at a glance rather than one month at a time.
+ *
+ * Its own tab in the workbook, because "how is Sabrina doing" is a
+ * question about the year and the monthly block cannot answer it.
+ */
+export function trackerKpis(leads, months) {
+  const want = [...(months || [])].sort();
+  const build = (field) => {
+    const byPerson = new Map();
+    for (const lead of leads || []) {
+      const month = monthOf(lead);
+      if (!want.includes(month)) continue;
+      // "Sabrina / Vin" credits both, which is what the two of them did.
+      // "N/A" credits nobody — see splitPeople().
+      for (const person of splitPeople(lead?.[field])) {
+        const row = byPerson.get(person) || { person, months: {}, total: 0, enrolled: 0 };
+        row.months[month] = (row.months[month] || 0) + 1;
+        row.total += 1;
+        if (lead.status === 'enrolled') row.enrolled += 1;
+        byPerson.set(person, row);
+      }
+    }
+    return [...byPerson.values()]
+      .map(r => ({ ...r, rate: rate(r.enrolled, r.total) }))
+      .sort((a, b) => b.total - a.total || a.person.localeCompare(b.person));
+  };
+  return { months: want, tours: build('tourBy'), assessments: build('assessedBy') };
 }
 
 /** Newest createdAt in a set — "last updated" for the month. */

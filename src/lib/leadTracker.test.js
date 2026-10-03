@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   weekEndingOf, enrolledCell, assessmentCell, notesCell, trackerRow,
   trackerMonths, trackerRows, trackerSummary, trackerCsv, monthLabel,
-  lastTouched, TRACKER_COLUMNS,
+  lastTouched, monthsBefore, trackerKpis, TRACKER_COLUMNS,
 } from './leadTracker';
 
 const NOW = new Date('2026-10-05T09:00:00');
@@ -198,21 +198,44 @@ describe('the tabs', () => {
   });
 });
 
-describe('the block under the rows', () => {
+describe('the block under the rows — his numbers, his definitions', () => {
   const month = [
-    lead({ id: 'a', assessmentOn: '2026-09-01', assessmentOutcome: 'attended', status: 'enrolled', tourBy: 'Rahul', assessedBy: 'Vin' }),
-    lead({ id: 'b', assessmentOn: '2026-09-02', assessmentOutcome: 'no-show', tourBy: 'Sabrina' }),
-    lead({ id: 'c', assessmentOn: '2026-09-03', assessmentOutcome: 'cancelled', tourBy: 'Sabrina' }),
-    lead({ id: 'd' }),
+    lead({ id: 'a', assessmentOn: '2026-09-01', assessmentOutcome: 'attended',
+      status: 'enrolled', enrolledAt: '2026-09-01T16:00:00', tourBy: 'Rahul', assessedBy: 'Vin' }),
+    lead({ id: 'b', assessmentOn: '2026-09-02', assessmentOutcome: 'attended',
+      status: 'enrolled', enrolledAt: '2026-09-02T16:00:00', tourBy: 'Sabrina', assessedBy: 'Vin' }),
+    lead({ id: 'c', assessmentOn: '2026-09-03', assessmentOutcome: 'attended',
+      status: 'enrolled', enrolledAt: '2026-09-03T16:00:00', tourBy: 'Sabrina', assessedBy: 'Vin' }),
+    lead({ id: 'd', assessmentOutcome: 'no-show', tourBy: 'Sabrina' }),
+    lead({ id: 'e', assessmentOutcome: 'cancelled' }),
+    lead({ id: 'f' }),
   ];
   const sum = () => trackerSummary(trackerRows(month, ''));
 
-  it('counts the ones nobody booked, out of the month', () => {
-    expect(sum()).toMatchObject({ total: 4, noAssessment: 1, noAssessmentRate: 0.25 });
+  it('counts an assessment as anything typed in that column — a date, NS or CA', () => {
+    // His COUNTA(Assessment Date). A no-show counts towards it, which is
+    // why "cancellations out of 46" is a different denominator from
+    // "no assessment booked out of 48" on the same block.
+    expect(sum()).toMatchObject({ leads: 6, assessments: 5, noAssessment: 1, broken: 2 });
   });
 
-  it('counts cancellations and no-shows together, as the sheet does', () => {
-    expect(sum()).toMatchObject({ broken: 2, brokenRate: 0.5 });
+  it('computes Leads Assessed Rate as (assessments - broken) / leads', () => {
+    expect(sum().leadsAssessedRate).toBeCloseTo(3 / 6, 10);
+  });
+
+  it('counts Leads Converted as the word Yes in the enrolled column', () => {
+    expect(sum().converted).toBe(3);
+  });
+
+  it('computes Lead Conversion Rate against assessments, as his formula does', () => {
+    expect(sum().leadConversionRate).toBeCloseTo(3 / 5, 10);
+  });
+
+  it('computes Assessment Conversion Rate against the rows somebody decided', () => {
+    // His COUNTIFS(J:J,"*") — the rows where the enrolled column says
+    // anything at all, which is not the same as the rows with an
+    // assessment.
+    expect(sum().assessmentConversionRate).toBeCloseTo(3 / 3, 10);
   });
 
   it('credits both names in a shared tour, the way the sheet is written', () => {
@@ -224,18 +247,99 @@ describe('the block under the rows', () => {
   });
 
   it('averages only the waits it actually has', () => {
-    // Three of the four have an assessment date; the fourth has none and
-    // is left out rather than counted as a nought-day wait.
     expect(sum().daysToAssessmentSample).toBe(3);
   });
 
   it('gives null, not nought per cent, when there is nothing to divide by', () => {
     const empty = trackerSummary([]);
-    expect(empty.total).toBe(0);
+    expect(empty.leads).toBe(0);
+    expect(empty.leadsAssessedRate).toBeNull();
+    expect(empty.leadConversionRate).toBeNull();
+    expect(empty.assessmentConversionRate).toBeNull();
     expect(empty.noAssessmentRate).toBeNull();
     expect(empty.brokenRate).toBeNull();
-    expect(empty.enrolledRate).toBeNull();
     expect(empty.daysToAssessment).toBeNull();
+  });
+});
+
+describe('what the spreadsheet said, verbatim', () => {
+  it('prints Cold, which Ratio has no status for', () => {
+    // Rendering it as "No" would quietly rewrite his data: a family who
+    // stopped answering is not a family who said no.
+    expect(enrolledCell({ status: 'lost', tracker: { enrolled: 'Cold' } })).toBe('Cold');
+  });
+
+  it('prints the reason as typed, not as the dropdown would say it', () => {
+    const row = trackerRow(lead({ reason: 'remedial', tracker: { reason: 'Remedial, ex-Kumon' } }));
+    expect(row.reason).toBe('Remedial, ex-Kumon');
+  });
+
+  it('prints a last contact that is a person and a date in one cell', () => {
+    const row = trackerRow(lead({ lastContactOn: '2026-07-16', tracker: { lastContact: 'VB 7/16' } }));
+    expect(row.contact).toBe('VB 7/16');
+    expect(row.contactIsDate).toBe(false);
+  });
+
+  it('falls back to Ratio-s own fields for a lead nobody imported', () => {
+    const row = trackerRow(lead({ reason: 'remedial', lastContactOn: '2026-07-16' }));
+    expect(row.reason).toBe('remedial');
+    expect(row.contact).toBe('2026-07-16');
+    expect(row.contactIsDate).toBe(true);
+  });
+});
+
+describe('the tabs stop at the month the workbook starts', () => {
+  const old = lead({ id: 'old', createdAt: '2015-12-11T10:00:00' });
+  const now = lead({ id: 'now', createdAt: '2026-09-02T10:00:00' });
+
+  it('hides eleven years of imported archive by default', () => {
+    expect(trackerMonths([old, now])).toEqual(['2026-09']);
+  });
+
+  it('brings it all back when asked', () => {
+    expect(trackerMonths([old, now], { all: true })).toEqual(['2026-09', '2015-12']);
+  });
+
+  it('says how many months are being held back', () => {
+    expect(monthsBefore([old, now])).toBe(1);
+    expect(monthsBefore([now])).toBe(0);
+  });
+
+  it('files an imported row under the tab it was typed on, not its created date', () => {
+    // His June tab carries families who enquired on 26 May. Filing those
+    // under May would split his month in two and make the totals under
+    // each tab disagree with the ones he reads.
+    const may = lead({ id: 'm', createdAt: '2026-05-26T10:00:00', tracker: { month: '2026-06' } });
+    expect(trackerMonths([may])).toEqual(['2026-06']);
+    expect(trackerRows([may], '2026-06')).toHaveLength(1);
+  });
+});
+
+describe('the KPI tab — the year, not one month', () => {
+  const leads = [
+    lead({ id: 'a', createdAt: '2026-06-02T10:00:00', tourBy: 'Sabrina', status: 'enrolled' }),
+    lead({ id: 'b', createdAt: '2026-06-03T10:00:00', tourBy: 'Sabrina' }),
+    lead({ id: 'c', createdAt: '2026-07-02T10:00:00', tourBy: 'Sabrina', status: 'enrolled' }),
+    lead({ id: 'd', createdAt: '2026-07-03T10:00:00', tourBy: 'Rahul', assessedBy: 'Vin' }),
+  ];
+
+  it('counts each person per month, with a total across them', () => {
+    const got = trackerKpis(leads, ['2026-06', '2026-07']);
+    const sabrina = got.tours.find(t => t.person === 'Sabrina');
+    expect(sabrina.months).toEqual({ '2026-06': 2, '2026-07': 1 });
+    expect(sabrina.total).toBe(3);
+    expect(sabrina.enrolled).toBe(2);
+  });
+
+  it('leaves out months nobody asked for', () => {
+    const got = trackerKpis(leads, ['2026-07']);
+    expect(got.tours.find(t => t.person === 'Sabrina').total).toBe(1);
+  });
+
+  it('keeps tours and assessments apart, as the tab does', () => {
+    const got = trackerKpis(leads, ['2026-06', '2026-07']);
+    expect(got.tours.map(t => t.person).sort()).toEqual(['Rahul', 'Sabrina']);
+    expect(got.assessments.map(t => t.person)).toEqual(['Vin']);
   });
 });
 

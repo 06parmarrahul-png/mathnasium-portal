@@ -35,6 +35,7 @@ import LeadStageTable from '../components/LeadStageTable';
 import LeadTracker from '../components/LeadTracker';
 import LeadTable from '../components/LeadTable';
 import RadiusLeadImport from '../components/RadiusLeadImport';
+import LeadTrackerImport from '../components/LeadTrackerImport';
 import FormerStudents from '../components/FormerStudents';
 import { buildStudentIndex } from '../lib/formerStudents';
 import {
@@ -267,7 +268,13 @@ export default function Leads() {
 
       {/* ── Tracker: the spreadsheet, month by month ────────────────── */}
       {view === 'tracker' && (
-        <LeadTracker leads={leads} onOpen={lead => setEditingId(lead.id)} />
+        <div className="space-y-4">
+          <LeadTracker leads={leads} onOpen={lead => setEditingId(lead.id)} />
+          {/* The layout is only half of it — the workbook's own families
+              go in here, which is what stops the sheet being kept open in
+              the other window. */}
+          <LeadTrackerImport centerId={centerId} />
+        </div>
       )}
 
       {/* ── Call backs: bringing the history across ─────────────────── */}

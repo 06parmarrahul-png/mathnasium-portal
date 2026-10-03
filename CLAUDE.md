@@ -1502,8 +1502,15 @@ can never disagree about how much work there is.
 
 ### The story — `src/lib/leadStory.js` + `components/LeadStory.jsx`
 
-A lead's five events — enquiry, reached, assessment, assessed, outcome —
-and which have happened. Drawn as dots on a line.
+Six events, in the centre's own words: **Inquiry → Lead Call → Assessment
+Booked → Assessment Completed → Enrolment Link Sent → Enrolled.** Drawn as
+dots on a line.
+
+Sending the link and them enrolling are **separate steps**, because the
+gap between the two is where families are lost — a link can sit unopened
+for a week, and before this "assessed" and "assessed, link sent, no
+answer" looked identical. `enrolmentLinkSentOn` is a real field; it is not
+the enrolled status wearing a different label.
 
 - **Filled** = it happened. **Hollow** = it hasn't. **Ring with a centre**
   = on the books, not confirmed. **Red** = no-show or cancelled. **Green**
@@ -1514,10 +1521,11 @@ and which have happened. Drawn as dots on a line.
 - **Booked is not done.** A filled dot has to mean it happened. This also
   catches the lead everyone loses: the date went by and nobody recorded an
   outcome, which draws as still-not-filled and carries `unrecorded`.
-- **Reached reads `contactedAt`, not `lastContactOn`.** The latter moves
+- **Lead Call reads `contactedAt`, not `lastContactOn`.** The latter moves
   every time somebody logs a call, so a family rung a week after their
-  assessment would draw Reached *after* Assessment — the story out of
-  order. The latest contact is still its own field in the detail panel.
+  assessment would draw the Lead Call *after* the Assessment — the story
+  out of order. The latest contact is still its own field in the detail
+  panel.
 - **Durations are measured, never estimated.** A connector is labelled
   only when both ends are real, and same-day gaps are dropped rather than
   printed as "0d". The four-day goal spans enquiry → assessment, which is
@@ -1550,6 +1558,61 @@ meeting it. Ratio counts the days the family actually waited.
 It still exports to CSV, because the spreadsheet is not going away on day
 one and a tracker you cannot get back out of is one people keep a parallel
 copy of — which is the problem this is meant to end.
+
+**The tabs are floored at `TRACKER_FROM` ('2026-06')** — where his workbook
+starts. Importing eleven years of Radius history gave this screen 130
+monthly tabs back to December 2015; the archive is one click away rather
+than always in the way. Raise the constant when the workbook rolls over.
+
+### The workbook's own families — `src/lib/trackerImport.js`
+
+The layout is only half of it. `LeadTrackerImport` reads the real
+**Lead Tracker.xlsx** — 198 families across June to October — so the screen
+is not a convincing empty copy of a sheet somebody still keeps open in the
+other window.
+
+- **Columns are found by name, never by position.** The tabs disagree:
+  June/August call column D "Lead Call Initial/Date", July calls it
+  "Column 4", September "Last Contact". August carries a "Why?" column
+  September dropped, which shifts everything after it. Reading by index
+  would silently import the wrong column for three tabs out of five.
+- **A row is a row only if it has a created date.** Under every tab sits a
+  summary block with text in the first column — "Tours:", then a name per
+  staff member. That rule is what separates Rahul the lead from Rahul the
+  row of the tours table.
+- **A row belongs to the tab it is on, not its created date.** His June tab
+  carries families who enquired on 26 May; filing those under May would
+  split his month and make each tab's totals disagree with the ones he
+  reads. `monthOf()` prefers `tracker.month`.
+- **What the sheet said is kept verbatim under `tracker`.** Three columns
+  hold more than Ratio's fields can: "Cold" is an Enrolled? value with no
+  status behind it, "Remedial, ex-Kumon" is richer than the reason
+  dropdown, and "VB 7/16" is a person AND a date in one cell. The tracker
+  prints the raw value; Ratio's own fields carry the version the app can
+  reason about.
+
+### Three places his sheet is wrong, and Ratio is not
+
+Each measured against the real workbook, not assumed:
+
+1. **Days to Assessment uses `DAYS360`**, a thirty-day-month accounting
+   count: 29 Aug → 1 Sep reads as 2. It understates **15 of 241 rows by
+   1.67 days on average** (one by 11) and flips one row from missing the
+   four-day goal to meeting it.
+2. **Assessment Conversion Rate is diluted.** `K56 = converted /
+   COUNTIFS(J:J,"*")` scans the whole column, so it also counts his own
+   five summary labels and the header. June: 39 decided rows counted as
+   45, so the rate reads **55.6% when it is 64.1%** — it understates his
+   own team.
+3. **Shared tours are credited to nobody.** `COUNTIF(H:H,"Rahul")` is an
+   exact match, so "Sabrina/Rahul" counts for neither — while the assessor
+   formula beside it uses `"*Vin*"` and does count shares. June: Rahul 5→7,
+   Sabrina 12→14. `splitPeople()` in leadFollowUp credits both, and reads
+   "N/A" as nobody rather than as two people called N and A.
+
+Everything else — leads, assessments, no-shows, Leads Assessed Rate, Leads
+Converted, Lead Conversion Rate, and both scoreboards — reproduces his June
+figures exactly.
 
 ### Gone
 

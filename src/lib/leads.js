@@ -150,6 +150,23 @@ export function leadDocFrom(partial, actor) {
     // Why they said no, or why they are still thinking. The column the
     // centre reads back when it wants to know what it keeps losing on.
     outcomeReason: data.outcomeReason || '',
+    // WHEN THE ENROLMENT LINK WENT OUT — an event, not a status.
+    //
+    // A family can have had the link sitting in their inbox for a week
+    // without using it, and that is a phone call nobody was making
+    // because "assessed" and "assessed, link sent, no answer" looked
+    // identical. It is the last step of the story for that reason.
+    enrolmentLinkSentOn: data.enrolmentLinkSentOn || '',
+    // WHAT THE SPREADSHEET SAID, VERBATIM.
+    //
+    // Three of the tracker's columns hold more than Ratio's own fields
+    // can: "Cold" is an Enrolled? value with no status behind it,
+    // "Remedial, ex-Kumon" is richer than the reason dropdown, and
+    // "VB 7/16" is a person and a date in one cell. Kept raw so an
+    // imported row prints exactly what it printed in the workbook,
+    // while Ratio's own fields carry the version the app can reason
+    // about. See lib/trackerImport.js.
+    tracker: (data.tracker && typeof data.tracker === 'object') ? data.tracker : null,
     // THE WRITE-UP, kept apart from `history`.
     //
     // History is every event on the lead — created, status moved, call
