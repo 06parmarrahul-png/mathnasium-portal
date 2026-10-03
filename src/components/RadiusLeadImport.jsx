@@ -35,6 +35,10 @@ export default function RadiusLeadImport({ centerId }) {
   const [writing, setWriting] = useState(false);
   const [done, setDone] = useState(null);
   const [error, setError] = useState('');
+  // The cut-off, and it defaults to something rather than nothing: the
+  // first of July is what the centre picked, and 57 leads is a pipeline
+  // where 926 is a scroll.
+  const [since, setSince] = useState('2026-07-01');
 
   const pick = async (e) => {
     const file = e.target.files?.[0];
@@ -49,7 +53,7 @@ export default function RadiusLeadImport({ centerId }) {
       // being wrong at once.
       const wb = XLSX.read(buf, { type: 'array', cellDates: true });
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-      const got = readExport(rows);
+      const got = readExport(rows, { since: since || null });
       if (got.leads.length === 0) {
         setError('Nothing in that file looked like a lead. Expected the Radius export, with a Lead Name column.');
         setSummary(null);
@@ -62,6 +66,13 @@ export default function RadiusLeadImport({ centerId }) {
     } finally {
       setReading(false);
     }
+  };
+
+  // Re-read when the date moves, so the counts answer the date on screen.
+  const reread = (next) => {
+    setSince(next);
+    setSummary(null);
+    setFileName('');
   };
 
   const write = async () => {
@@ -117,7 +128,19 @@ export default function RadiusLeadImport({ centerId }) {
             written until you press the button, and running it twice is safe: each lead keeps
             its Radius id, so a second import updates the same rows rather than duplicating them.
             Grade <b>College</b> is dropped — it is Radius&rsquo;s catch-all, not a school grade.
+            Pick a date below: only leads from then on come across, and they arrive as live
+            work rather than history.
           </p>
+
+          <label className="mb-3 block max-w-xs">
+            <span className="mb-1 block text-xs font-medium text-gray-700">Only leads created on or after</span>
+            <input type="date" value={since} onChange={e => reread(e.target.value)}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+            <span className="mt-1 block text-[11px] text-gray-500">
+              Everything before this stays in Radius and is not brought over at all.
+              Clear the date to import the whole file.
+            </span>
+          </label>
 
           <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border-2 border-dashed border-blue-300 bg-blue-50 px-4 py-2.5 text-sm font-medium text-blue-700 hover:bg-blue-100">
             {reading ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />}
@@ -135,9 +158,9 @@ export default function RadiusLeadImport({ centerId }) {
             <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <Stat n={summary.leads.length} label="will be imported" strong />
+                <Stat n={summary.skipped['before-cutoff'] || 0} label="before the date — left out" />
                 <Stat n={summary.skipped.college || 0} label="College — dropped" />
-                <Stat n={summary.withPhone} label="with a phone" />
-                <Stat n={summary.withGrade} label="with a grade" />
+                <Stat n={summary.assessedAlready} label="already assessed" />
               </div>
               <p className="mt-2 text-[11.5px] text-gray-600">
                 {summary.from} → {summary.to} ·{' '}

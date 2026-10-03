@@ -145,13 +145,38 @@ describe('one row', () => {
   });
 });
 
-describe('an import is reference data, not a to-do list', () => {
-  it('arrives archived, every row of it', () => {
-    // 687 families on the call sheet without this, 48 with a 90-day
-    // window — and those 48 were Radius rows nobody in Ratio had ever
-    // worked. The call sheet is for what happens next.
-    expect(readRow(row()).lead.archived).toBe(true);
-    expect(readRow(row({ 'Created Date': '01/10/2026' })).lead.archived).toBe(true);
+describe('only what is still the pipeline', () => {
+  it('leaves everything before the cut-off out of the file entirely', () => {
+    const got = readExport([
+      row({ 'Lead Id': '1', 'Created Date': '27/01/2016' }),
+      row({ 'Lead Id': '2', 'Created Date': '15/09/2026' }),
+    ], { since: '2026-07-01' });
+    expect(got.leads).toHaveLength(1);
+    expect(got.leads[0].source_radiusId).toBe('2');
+    expect(got.skipped['before-cutoff']).toBe(1);
+  });
+
+  it('drops a row with no readable date, since a recent one would have one', () => {
+    const got = readExport([row({ 'Created Date': '' })], { since: '2026-07-01' });
+    expect(got.leads).toHaveLength(0);
+    expect(got.skipped['before-cutoff']).toBe(1);
+  });
+
+  it('takes the lot when no cut-off is given', () => {
+    expect(readExport([row({ 'Created Date': '27/01/2016' })]).leads).toHaveLength(1);
+  });
+
+  it('arrives live, because inside the cut-off IS the pipeline', () => {
+    expect(readRow(row()).lead.archived).toBe(false);
+  });
+
+  it('knows an assessment happened even with no date column to prove it', () => {
+    // Radius has a status and no assessment date. Without this, 28 of
+    // the 57 read as "nobody has booked them in" — families already sat
+    // down with Vin.
+    expect(readRow(row({ 'Lead Status': 'Assessed' })).lead.assessmentOutcome).toBe('attended');
+    expect(readRow(row({ 'Lead Status': 'Assessed - Declined Enrolment' })).lead.assessmentOutcome).toBe('attended');
+    expect(readRow(row({ 'Lead Status': 'Open' })).lead.assessmentOutcome).toBe('');
   });
 
   it('keeps every field, so nothing is lost by archiving it', () => {

@@ -128,7 +128,20 @@ export function mapSource(raw) {
 }
 
 /**
- * EVERY IMPORTED LEAD ARRIVES ARCHIVED. All 926 of them.
+ * THE IMPORT TAKES A CUT-OFF, AND THAT IS THE REAL ANSWER.
+ *
+ * Archiving eleven years was the second attempt; the centre's own was
+ * better: only bring in what is still the pipeline. From 1 July 2026
+ * that is 57 leads — all of them with a phone number, 53 still open, 28
+ * already assessed. A number a person can work.
+ *
+ * Everything before the cut-off is not imported AT ALL. Not archived,
+ * not hidden — absent. It stays in Radius, which is where it has been
+ * all along and which nobody has stopped having access to. A Ratio
+ * holding 869 leads nobody will ever ring is a Ratio people scroll past.
+ *
+ * Leads inside the window arrive LIVE, because they are the live
+ * pipeline. That is the whole point of choosing a recent cut-off.
  *
  * This started as a 90-day window and the window was the wrong idea.
  * Measured: 687 families on the call sheet with no window, 48 with one —
@@ -165,10 +178,15 @@ export function readRow(row) {
 
   const status = mapStatus(row['Lead Status']);
   const createdOn = readDate(row['Created Date']);
+  // RADIUS HAS NO ASSESSMENT DATE COLUMN, only a status that says one
+  // happened. Without this every assessed lead reads as "nobody has
+  // booked them in" — 28 of the 57, told to chase families who have
+  // already been in and sat down with Vin.
+  const assessed = /^assessed/i.test(clean(row['Lead Status']));
   return {
     lead: {
-      // Reference data, not work. See the note at the top of the file.
-      archived: true,
+      // Inside the cut-off is the live pipeline, so it arrives workable.
+      archived: false,
       parentName:  name,
       parentEmail: clean(row['Email']).toLowerCase(),
       parentPhone: clean(row['Mobile Phone']),
@@ -179,6 +197,7 @@ export function readRow(row) {
       sourceDetail: clean(row['Lead Source']),
       assignedTo:   '',
       lastContactOn: readDate(row['Last Contacted']) || '',
+      assessmentOutcome: assessed ? 'attended' : '',
       // Everything Radius knew that Ratio has no column for, said in
       // words rather than dropped. The status especially: "Assessed -
       // Declined Enrolment" is not the same fact as "Do Not Contact",
@@ -216,13 +235,19 @@ export function importId(lead) {
  * Read the whole export: what would be written, what would be skipped,
  * and the counts somebody should see BEFORE anything is written.
  */
-export function readExport(rows) {
+export function readExport(rows, { since = null } = {}) {
   const leads = [];
-  const skipped = { college: 0, 'no-name': 0 };
+  const skipped = { college: 0, 'no-name': 0, 'before-cutoff': 0 };
   const byStatus = {};
   for (const row of rows || []) {
     const got = readRow(row);
     if (got.skip) { skipped[got.skip] = (skipped[got.skip] || 0) + 1; continue; }
+    // A row with no readable date is older than any cut-off worth
+    // setting: if it were recent, Radius would know when.
+    if (since && (!got.lead.createdOn || got.lead.createdOn < since)) {
+      skipped['before-cutoff'] += 1;
+      continue;
+    }
     leads.push(got.lead);
     byStatus[got.lead.status] = (byStatus[got.lead.status] || 0) + 1;
   }
@@ -235,8 +260,7 @@ export function readExport(rows) {
     withPhone: leads.filter(l => l.parentPhone).length,
     withEmail: leads.filter(l => l.parentEmail).length,
     withGrade: leads.filter(l => l.importedGrade !== null).length,
-    live: leads.filter(l => !l.archived).length,
-    archived: leads.filter(l => l.archived).length,
+    assessedAlready: leads.filter(l => l.assessmentOutcome === 'attended').length,
     doNotContact: leads.filter(l => l.doNotContact).length,
     from: dates[0] || null,
     to: dates[dates.length - 1] || null,
