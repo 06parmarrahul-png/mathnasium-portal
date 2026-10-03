@@ -4,6 +4,7 @@ import { LEAD_STATUS_LABELS, LEAD_STATUS_STYLES } from '../lib/leads';
 import {
   worklist, daysSince, daysUntil, LEAD_REASON_LABELS, ASSESSMENT_OUTCOME_LABELS,
 } from '../lib/leadFollowUp';
+import { familyKind } from '../lib/formerStudents';
 
 /**
  * The tracker — Vin's sheet, as a table, with a column for what needs doing.
@@ -48,14 +49,24 @@ const NEEDS_TONE = ['bg-rose-100 text-rose-800', 'bg-amber-100 text-amber-800',
 
 const Dash = () => <span className="text-gray-300">—</span>;
 
-export default function LeadTable({ leads, onOpen, emptyNote }) {
+export default function LeadTable({
+  leads, studentIndex, showArchived, onToggleArchived, onOpen, emptyNote,
+}) {
   const [sortKey, setSortKey] = useState('needs');
   const [asc, setAsc] = useState(true);
 
-  const needs = useMemo(() => new Map(worklist(leads).map(i => [i.id, i])), [leads]);
+  // Eleven years of imported history lives here and is hidden by
+  // default: the table is for working the pipeline, and 875 archived
+  // leads on top of it is an archive with a pipeline buried in it.
+  const rowsIn = useMemo(
+    () => (showArchived ? leads : (leads || []).filter(l => l.archived !== true)),
+    [leads, showArchived],
+  );
+  const archivedCount = (leads || []).filter(l => l.archived === true).length;
+  const needs = useMemo(() => new Map(worklist(rowsIn).map(i => [i.id, i])), [rowsIn]);
 
   const rows = useMemo(() => {
-    const list = [...(leads || [])];
+    const list = [...rowsIn];
     const col = COLS.find(c => c.key === sortKey);
     if (!col?.sort) {
       // The default: whatever needs doing most, then the rest in the
@@ -72,7 +83,7 @@ export default function LeadTable({ leads, onOpen, emptyNote }) {
       const cmp = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv));
       return asc ? cmp : -cmp;
     });
-  }, [leads, sortKey, asc, needs]);
+  }, [rowsIn, sortKey, asc, needs]);
 
   const click = (col) => {
     if (!col.sort) { setSortKey('needs'); return; }
@@ -89,6 +100,17 @@ export default function LeadTable({ leads, onOpen, emptyNote }) {
   }
 
   return (
+    <div>
+      {archivedCount > 0 && (
+        <div className="mb-1.5 flex justify-end">
+          <button type="button" onClick={onToggleArchived}
+            className="text-xs font-semibold text-gray-500 hover:text-gray-900">
+            {showArchived
+              ? `Hide ${archivedCount} archived`
+              : `Show ${archivedCount} archived from Radius`}
+          </button>
+        </div>
+      )}
     <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white shadow-sm">
       <table className="w-full min-w-[980px] text-[12.5px]">
         <thead className="border-b border-gray-200 bg-gray-50">
@@ -116,7 +138,14 @@ export default function LeadTable({ leads, onOpen, emptyNote }) {
               <tr key={lead.id} onClick={() => onOpen?.(lead)}
                 className={`cursor-pointer hover:bg-gray-50 ${it?.urgency === 0 ? 'bg-rose-50/40' : ''}`}>
                 <td className="px-2.5 py-2">
-                  <b className="block text-gray-900">{lead.parentName || lead.childName || 'Unnamed lead'}</b>
+                  <b className="block text-gray-900">
+                    {lead.parentName || lead.childName || 'Unnamed lead'}
+                    {familyKind(lead, studentIndex) === 'returning' && (
+                      <span className="ml-1.5 rounded-full bg-violet-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-violet-800">
+                        Returning
+                      </span>
+                    )}
+                  </b>
                   {lead.childName && lead.parentName && (
                     <span className="text-[11.5px] text-gray-500">
                       {lead.childName}{lead.childGrade ? ` · Gr ${lead.childGrade}` : ''}
@@ -165,6 +194,7 @@ export default function LeadTable({ leads, onOpen, emptyNote }) {
           })}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

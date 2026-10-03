@@ -30,6 +30,7 @@ import LeadWorklist from '../components/LeadWorklist';
 import LeadTable from '../components/LeadTable';
 import RadiusLeadImport from '../components/RadiusLeadImport';
 import FormerStudents from '../components/FormerStudents';
+import { buildStudentIndex } from '../lib/formerStudents';
 import { todayISO } from '../lib/payProjection';
 import {
   LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
@@ -47,6 +48,11 @@ export default function Leads() {
   // after a call is write one sentence, and making them scroll a form to
   // do it is how a worklist becomes a list nobody updates.
   const [logging, setLogging] = useState(null);
+  // Former students, read once for the page so every row can say whether
+  // this family has been here before. Empty until the export is
+  // imported, and familyKind() answers null rather than guessing.
+  const [formerStudents, setFormerStudents] = useState([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     if (!centerId) return;
@@ -74,6 +80,7 @@ export default function Leads() {
     return list;
   }, [leads, statusFilter, search]);
 
+  const studentIndex = useMemo(() => buildStudentIndex(formerStudents), [formerStudents]);
   const editing = editingId ? leads.find(l => l.id === editingId) : null;
   const loggingLead = logging ? leads.find(l => l.id === logging) : null;
 
@@ -98,6 +105,7 @@ export default function Leads() {
           what to do about it, which is what the page is opened for. */}
       <LeadWorklist
         leads={leads}
+        studentIndex={studentIndex}
         me={profile?.displayName || ''}
         onOpen={lead => setEditingId(lead.id)}
         onLogContact={lead => setLogging(lead.id)}
@@ -158,13 +166,15 @@ export default function Leads() {
           Vin's own sheet, as a table. It replaced a stack of cards that
           showed a status pill, a name and an email — everything the
           centre decides on was a click away, one lead at a time. */}
-      <LeadTable leads={visible} onOpen={lead => setEditingId(lead.id)}
+      <LeadTable leads={visible} studentIndex={studentIndex}
+        showArchived={showArchived} onToggleArchived={() => setShowArchived(v => !v)}
+        onOpen={lead => setEditingId(lead.id)}
         emptyNote={leads.length === 0
           ? "No leads yet. Add one, or wait for an assessment booking — every booking, through Ratio or Apptoto, writes a lead."
           : 'No leads match this filter.'} />
 
       {/* ── Bringing the history across ───────────────────────────── */}
-      <FormerStudents centerId={centerId} />
+      <FormerStudents centerId={centerId} onLoaded={setFormerStudents} />
       <RadiusLeadImport centerId={centerId} />
 
       {/* ── Source breakdown ──────────────────────────────────────── */}

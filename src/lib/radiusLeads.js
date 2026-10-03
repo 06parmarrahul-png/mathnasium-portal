@@ -127,6 +127,21 @@ export function mapSource(raw) {
   return 'other';
 }
 
+/**
+ * How recent a lead has to be to arrive as live work.
+ *
+ * MEASURED. Imported without this, the call sheet came back with 687
+ * families — the whole file minus the ones Radius had already closed —
+ * stretching to 2015, every one of them reading "nobody has booked them
+ * in". The centre works a lead in days; one sitting unbooked since 2016
+ * is history, and history belongs in the tracker rather than on a phone
+ * list. Ninety days is a generous read of "still live".
+ *
+ * Nothing is thrown away: an archived lead keeps every field, shows in
+ * the table, and can be un-archived by anybody who disagrees.
+ */
+export const ACTIVE_WITHIN_DAYS = 90;
+
 const clean = (v) => String(v ?? '').trim();
 
 /**
@@ -134,7 +149,21 @@ const clean = (v) => String(v ?? '').trim();
  * skipped. Never both, and never a half-filled lead: a row with no name
  * at all is a row nobody can act on.
  */
-export function readRow(row) {
+/**
+ * Is this import row live work, or is it history?
+ *
+ * Live means: Radius had not already closed it, AND either the family is
+ * recent or there is an assessment in play. An old lead that reached
+ * `assessed` is still archived — whatever happened, happened years ago.
+ */
+export function isArchivable(status, createdOn, today) {
+  if (status === 'enrolled' || status === 'lost') return true;
+  if (!createdOn) return true;
+  const age = (new Date(`${today}T12:00:00`) - new Date(`${createdOn}T12:00:00`)) / 86400000;
+  return age > ACTIVE_WITHIN_DAYS;
+}
+
+export function readRow(row, today = null) {
   const name = clean(row['Lead Name']);
   const child = clean(row['Student Name']);
   const grade = clean(row['Grade']);
@@ -144,8 +173,11 @@ export function readRow(row) {
 
   const status = mapStatus(row['Lead Status']);
   const createdOn = readDate(row['Created Date']);
+  const asOf = today || new Date().toISOString().slice(0, 10);
   return {
     lead: {
+      // Off the call sheet, still in the tracker. See ACTIVE_WITHIN_DAYS.
+      archived: isArchivable(status, createdOn, asOf),
       parentName:  name,
       parentEmail: clean(row['Email']).toLowerCase(),
       parentPhone: clean(row['Mobile Phone']),
@@ -193,12 +225,12 @@ export function importId(lead) {
  * Read the whole export: what would be written, what would be skipped,
  * and the counts somebody should see BEFORE anything is written.
  */
-export function readExport(rows) {
+export function readExport(rows, today = null) {
   const leads = [];
   const skipped = { college: 0, 'no-name': 0 };
   const byStatus = {};
   for (const row of rows || []) {
-    const got = readRow(row);
+    const got = readRow(row, today);
     if (got.skip) { skipped[got.skip] = (skipped[got.skip] || 0) + 1; continue; }
     leads.push(got.lead);
     byStatus[got.lead.status] = (byStatus[got.lead.status] || 0) + 1;
@@ -212,6 +244,8 @@ export function readExport(rows) {
     withPhone: leads.filter(l => l.parentPhone).length,
     withEmail: leads.filter(l => l.parentEmail).length,
     withGrade: leads.filter(l => l.importedGrade !== null).length,
+    live: leads.filter(l => !l.archived).length,
+    archived: leads.filter(l => l.archived).length,
     doNotContact: leads.filter(l => l.doNotContact).length,
     from: dates[0] || null,
     to: dates[dates.length - 1] || null,

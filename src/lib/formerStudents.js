@@ -247,3 +247,64 @@ export function readStudentExport(rows, today) {
 }
 
 export const studentImportId = (student) => `radius_s_${clean(student.source_radiusId)}`;
+
+// ─── Is this family new, or have we had them before? ────────────────────
+
+const fold = (name) => clean(name).toLowerCase().replace(/\s+/g, ' ');
+
+/**
+ * Names → the former students who answer to them.
+ *
+ * Built once and handed to every lead, because the alternative is a scan
+ * of 1,763 students per row. Both the child's name and the household
+ * account go in, since a lead is sometimes filed under the parent.
+ */
+export function buildStudentIndex(students) {
+  const index = new Map();
+  const add = (key, student) => {
+    if (!key) return;
+    const at = index.get(key);
+    if (at) at.push(student); else index.set(key, [student]);
+  };
+  for (const student of students || []) {
+    add(fold(student.name), student);
+    add(fold(student.account), student);
+    if (student.preferredName && student.name) {
+      // "Jieun (Joanne) Lee" is booked as Joanne as often as Jieun.
+      add(fold(`${student.preferredName} ${student.name.split(' ').slice(-1)[0]}`), student);
+    }
+  }
+  return index;
+}
+
+/**
+ * Has this family been here before?
+ *
+ * EXACT NAMES, AND ONLY WHEN THERE IS ONE ANSWER. A lead wrongly labelled
+ * "returning" sends somebody into a call saying "lovely to hear from you
+ * again" to a stranger, which is worse than the label being absent — the
+ * same rule the side assignments follow for the same reason. Two students
+ * called Emma Smith means neither is the match.
+ */
+export function matchFormerStudent(lead, index) {
+  if (!lead || !index) return null;
+  for (const key of [fold(lead.childName), fold(lead.parentName)]) {
+    if (!key) continue;
+    const hits = index.get(key);
+    if (hits && hits.length === 1) return hits[0];
+  }
+  return null;
+}
+
+/**
+ * 'returning' | 'new' — what a lead is, for the one word on the row.
+ *
+ * Unknown is NOT a third answer. Without the student export imported
+ * there is nothing to match against, and labelling every lead "new" on
+ * the strength of an empty index would be a confident lie; the caller
+ * gets null and shows nothing.
+ */
+export function familyKind(lead, index) {
+  if (!index || index.size === 0) return null;
+  return matchFormerStudent(lead, index) ? 'returning' : 'new';
+}

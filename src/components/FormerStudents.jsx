@@ -37,7 +37,7 @@ const KIND = {
   recent:       { label: 'Recent leaver',        tone: 'bg-sky-100 text-sky-800' },
 };
 
-export default function FormerStudents({ centerId }) {
+export default function FormerStudents({ centerId, onLoaded }) {
   const today = useMemo(() => todayISO(), []);
   const [students, setStudents] = useState(null);
   const [open, setOpen] = useState(false);
@@ -52,10 +52,14 @@ export default function FormerStudents({ centerId }) {
     if (!centerId) return undefined;
     return onSnapshot(
       collection(db, 'centers', centerId, 'formerStudents'),
-      snap => setStudents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
-      () => setStudents([]),
+      snap => {
+        const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setStudents(rows);
+        onLoaded?.(rows);
+      },
+      () => { setStudents([]); onLoaded?.([]); },
     );
-  }, [centerId]);
+  }, [centerId, onLoaded]);
 
   const calls = useMemo(() => callBackList(students || [], today), [students, today]);
   const shown = showAll ? calls : calls.slice(0, 12);

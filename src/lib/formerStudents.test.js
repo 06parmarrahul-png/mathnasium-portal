@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   readDate, schoolYearStart, gradeNow, gradeLabel, stageOf, yearsBetween,
   readStudentRow, reengagement, callBackList, readStudentExport, studentImportId,
-  MAX_AWAY_YEARS,
+  MAX_AWAY_YEARS, buildStudentIndex, matchFormerStudent, familyKind,
 } from './formerStudents';
 
 const TODAY = '2026-10-03';
@@ -208,5 +208,39 @@ describe('the whole file', () => {
 
   it('survives nothing at all', () => {
     expect(readStudentExport(null, TODAY).students).toEqual([]);
+  });
+});
+
+describe('new family, or one we have had before', () => {
+  const students = [
+    readStudentRow(row({ 'Student Id': '1', 'First Name': 'Viola', 'Last Name': 'Konjuhi', 'Account': 'Geci, Valdete' }), TODAY).student,
+    readStudentRow(row({ 'Student Id': '2', 'First Name': 'Emma', 'Last Name': 'Smith' }), TODAY).student,
+    readStudentRow(row({ 'Student Id': '3', 'First Name': 'Emma', 'Last Name': 'Smith' }), TODAY).student,
+  ];
+  const index = buildStudentIndex(students);
+
+  it('knows a family we have had, by the child', () => {
+    expect(matchFormerStudent({ childName: 'viola  konjuhi' }, index).name).toBe('Viola Konjuhi');
+    expect(familyKind({ childName: 'Viola Konjuhi' }, index)).toBe('returning');
+  });
+
+  it('matches on the household too, since a lead is often filed under the parent', () => {
+    expect(matchFormerStudent({ parentName: 'Valdete Geci' }, index).name).toBe('Viola Konjuhi');
+  });
+
+  it('refuses to guess when two children share a name', () => {
+    // "Lovely to hear from you again" said to a stranger is worse than
+    // no label at all.
+    expect(matchFormerStudent({ childName: 'Emma Smith' }, index)).toBeNull();
+    expect(familyKind({ childName: 'Emma Smith' }, index)).toBe('new');
+  });
+
+  it('says nothing at all until the students are imported', () => {
+    expect(familyKind({ childName: 'Viola Konjuhi' }, buildStudentIndex([]))).toBeNull();
+    expect(familyKind({ childName: 'Anyone' }, null)).toBeNull();
+  });
+
+  it('calls an unseen family new', () => {
+    expect(familyKind({ childName: 'Nobody Here' }, index)).toBe('new');
   });
 });

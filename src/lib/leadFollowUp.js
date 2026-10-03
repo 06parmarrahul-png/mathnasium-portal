@@ -163,6 +163,11 @@ export const URGENCY = {
  */
 export function actionFor(lead, now = Date.now()) {
   if (!lead || lead.status === 'enrolled' || lead.status === 'lost') return null;
+  // ARCHIVED IS NOT WORK. Importing eleven years of Radius leads put 687
+  // families on this list, every one of them "nobody has booked them in",
+  // going back to 2015 — a call sheet nobody can use and therefore
+  // nobody does. History stays in the tracker; it does not ring a phone.
+  if (lead.archived === true) return null;
 
   const name = familyLabel(lead);
   const who = firstName(lead.parentName) || name;

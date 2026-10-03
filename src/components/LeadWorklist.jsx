@@ -6,6 +6,7 @@ import {
 import {
   worklist, ownedBy, unassigned, monthKpis, DAYS_TO_ASSESSMENT_GOAL,
 } from '../lib/leadFollowUp';
+import { familyKind } from '../lib/formerStudents';
 
 /**
  * The call sheet — who needs you, grouped by when.
@@ -52,7 +53,7 @@ const GROUPS = [
 const initialsOf = (name) => String(name || '').trim().split(/\s+/)
   .slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
 
-export default function LeadWorklist({ leads, me, onOpen, onLogContact, onBook }) {
+export default function LeadWorklist({ leads, me, studentIndex, onOpen, onLogContact, onBook }) {
   const [mineOnly, setMineOnly] = useState(false);
   const all = useMemo(() => worklist(leads), [leads]);
   const mine = useMemo(() => ownedBy(all, me), [all, me]);
@@ -98,7 +99,8 @@ export default function LeadWorklist({ leads, me, onOpen, onLogContact, onBook }
           </h3>
           <ul className="divide-y divide-gray-100 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
             {group.items.map(it => (
-              <Row key={it.id} item={it} onOpen={onOpen} onLogContact={onLogContact} onBook={onBook} />
+              <Row key={it.id} item={it} kind={familyKind(it.lead, studentIndex)}
+              onOpen={onOpen} onLogContact={onLogContact} onBook={onBook} />
             ))}
           </ul>
         </div>
@@ -114,7 +116,7 @@ export default function LeadWorklist({ leads, me, onOpen, onLogContact, onBook }
   );
 }
 
-function Row({ item, onOpen, onLogContact, onBook }) {
+function Row({ item, kind, onOpen, onLogContact, onBook }) {
   const { lead } = item;
   const Icon = ICON[item.kind] || Phone;
   return (
@@ -130,6 +132,14 @@ function Row({ item, onOpen, onLogContact, onBook }) {
             {lead.childName && lead.parentName && (
               <span className="text-[12.5px] text-gray-500">
                 {lead.childName}{lead.childGrade ? ` · Gr ${lead.childGrade}` : ''}
+              </span>
+            )}
+            {/* Returning is worth saying; "new" is the default and a badge
+                on every row is noise. Nothing at all until the student
+                export is in, because then there is nothing to know. */}
+            {kind === 'returning' && (
+              <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-violet-800">
+                Returning
               </span>
             )}
             {!lead.assignedTo && (
