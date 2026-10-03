@@ -302,6 +302,16 @@ async function handleWebhook(req, res) {
     centerId,
   });
 
+  // Who owns it, from the centre's own setting. One extra document read
+  // on a path that already does several, and it is the difference between
+  // a lead that appears on somebody's list tomorrow morning and one that
+  // waits for a person to notice it.
+  let leadOwner = '';
+  try {
+    const cfg = await fs.doc(`centers/${centerId}/config/main`).get();
+    leadOwner = String(cfg.exists ? (cfg.data().intakeSettings?.leadOwner || '') : '').trim();
+  } catch { /* an unassigned lead is still a lead */ }
+
   // As on the native path, a failed lead must not fail the booking: the
   // assessment is real and already written.
   let leadWritten = false;
@@ -318,8 +328,19 @@ async function handleWebhook(req, res) {
       source:       'apptoto',
       sourceDetail: `Booked in Apptoto for ${new Date(ev.startISO).toLocaleString()}`,
       notes:        '',
-      assignedTo:   '',
-      history: [{ at: now, by: 'system', text: 'Created from an Apptoto booking' }],
+      assignedTo:   leadOwner,
+      // The assessment is the whole reason this lead exists, so it
+      // arrives already carrying its date and outcome. Without them the
+      // follow-up list reads an Apptoto booking as a lead nobody has
+      // booked in — the opposite of what happened.
+      assessmentOn:      String(ev.startISO).slice(0, 10),
+      assessmentOutcome: 'booked',
+      history: [{
+        at: now, by: 'system',
+        text: leadOwner
+          ? `Created from an Apptoto booking, assigned to ${leadOwner}`
+          : 'Created from an Apptoto booking',
+      }],
       intakeId,
       apptotoEventId: ev.eventId,
       createdAt: new Date(),

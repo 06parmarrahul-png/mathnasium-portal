@@ -26,6 +26,10 @@ import {
   funnelCounts, conversionRate, sourceBreakdown,
 } from '../lib/leads';
 import { toast, confirmDialog } from '../lib/notify';
+import LeadWorklist from '../components/LeadWorklist';
+import {
+  LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
+} from '../lib/leadFollowUp';
 
 export default function Leads() {
   const { activeCenterId: centerId, profile } = useAuth();
@@ -78,6 +82,12 @@ export default function Leads() {
           <Plus size={16} /> Add lead
         </button>
       </div>
+
+      {/* ── Who needs a call, before anything else on the page ─────
+          The funnel strip below says how the pipeline LOOKS; this says
+          what to do about it, which is what the page is opened for. */}
+      <LeadWorklist leads={leads} me={profile?.displayName || ''}
+        onOpen={lead => setEditingId(lead.id)} />
 
       {/* ── Funnel stats strip ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -229,6 +239,15 @@ function LeadModal({ centerId, actor, lead, onClose }) {
     notes:        lead?.notes        || '',
     assignedTo:   lead?.assignedTo   || '',
     status:       lead?.status       || 'new',
+    // The tracker's own columns. Blank on an older lead, which is the
+    // truth about it rather than a gap to apologise for.
+    reason:            lead?.reason            || '',
+    assessmentOn:      lead?.assessmentOn      || '',
+    assessmentOutcome: lead?.assessmentOutcome || '',
+    tourBy:            lead?.tourBy            || '',
+    assessedBy:        lead?.assessedBy        || '',
+    followUpOn:        lead?.followUpOn        || '',
+    outcomeReason:     lead?.outcomeReason     || '',
   }));
   const [noteDraft, setNoteDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -390,6 +409,59 @@ function LeadModal({ centerId, actor, lead, onClose }) {
               <input value={form.assignedTo} onChange={e => set({ assignedTo: e.target.value })}
                 className={inputCls} placeholder="Staff member tracking this lead" />
             </Field>
+          </div>
+
+          {/* ── The assessment, and what to do next ──────────────────
+              These are the columns the Lead Tracker is actually worked
+              in. Between them they are what the follow-up list reads:
+              a date with no outcome becomes "did they come in?", a
+              no-show becomes "rebook it", a follow-up date becomes a
+              call due that morning. */}
+          <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3">
+            <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-gray-500">
+              The assessment
+            </p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Why they called">
+                <select value={form.reason} onChange={e => set({ reason: e.target.value })}
+                  className={inputCls}>
+                  <option value="">Not recorded</option>
+                  {LEAD_REASONS.map(r => (
+                    <option key={r} value={r}>{LEAD_REASON_LABELS[r]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Assessment date">
+                <input type="date" value={form.assessmentOn}
+                  onChange={e => set({ assessmentOn: e.target.value })} className={inputCls} />
+              </Field>
+              <Field label="What happened">
+                <select value={form.assessmentOutcome}
+                  onChange={e => set({ assessmentOutcome: e.target.value })} className={inputCls}>
+                  <option value="">Not recorded</option>
+                  {ASSESSMENT_OUTCOMES.map(o => (
+                    <option key={o} value={o}>{ASSESSMENT_OUTCOME_LABELS[o]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Next follow-up">
+                <input type="date" value={form.followUpOn}
+                  onChange={e => set({ followUpOn: e.target.value })} className={inputCls} />
+              </Field>
+              <Field label="Toured by">
+                <input value={form.tourBy} onChange={e => set({ tourBy: e.target.value })}
+                  className={inputCls} placeholder="e.g. Sabrina" />
+              </Field>
+              <Field label="Assessed by">
+                <input value={form.assessedBy} onChange={e => set({ assessedBy: e.target.value })}
+                  className={inputCls} placeholder="e.g. Vin — or Sabrina / Vin for both" />
+              </Field>
+              <Field label="Why they did or didn't" className="md:col-span-2">
+                <input value={form.outcomeReason} onChange={e => set({ outcomeReason: e.target.value })}
+                  className={inputCls}
+                  placeholder="e.g. Enrolled on the spot · Needs to discuss with wife · Went with Kumon on price" />
+              </Field>
+            </div>
           </div>
 
           {/* Notes — persistent free text */}

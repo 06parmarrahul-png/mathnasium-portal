@@ -125,6 +125,29 @@ export function leadDocFrom(partial, actor) {
     sourceDetail: data.sourceDetail || '',
     notes:        data.notes        || '',
     assignedTo:   data.assignedTo   || '',
+
+    // ── The columns Vin's Lead Tracker actually works in ──────────────
+    // All optional, all blank by default: a lead written before these
+    // existed is a lead with nothing to say about them, which is the
+    // truth. See lib/leadFollowUp.js for what reads them.
+    //
+    // Why the family called — the most useful marketing field in the
+    // sheet, and the one Ratio had nowhere to put.
+    reason:       data.reason       || '',
+    // The assessment as an EVENT with an outcome, not just a date. A
+    // no-show and a family who never booked used to look identical here.
+    assessmentOn:      data.assessmentOn      || '',
+    assessmentOutcome: data.assessmentOutcome || '',
+    // Who toured them and who assessed them. The sheet credits two names
+    // in one cell ("Sabrina / Vin") and both of them were in the room.
+    tourBy:     data.tourBy     || '',
+    assessedBy: data.assessedBy || '',
+    // When to come back to them, and when somebody last did.
+    followUpOn:    data.followUpOn    || '',
+    lastContactOn: data.lastContactOn || '',
+    // Why they said no, or why they are still thinking. The column the
+    // centre reads back when it wants to know what it keeps losing on.
+    outcomeReason: data.outcomeReason || '',
     // The intake this lead was born from, so an assessment edited on the
     // Calendar can show the family it belongs to and vice versa.
     intakeId:     data.intakeId     || null,

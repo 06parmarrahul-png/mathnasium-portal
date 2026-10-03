@@ -38,6 +38,17 @@ const manageUrl = (id, token) => `${SITE}/booking/${id}?k=${encodeURIComponent(t
 const truthy  = (s) => typeof s === 'string' && s.trim().length > 0;
 
 // Shared loader — pulls centre identity + intake settings in one round.
+/**
+ * Who a lead born from a booking belongs to.
+ *
+ * `intakeSettings.leadOwner`, set in Centre Settings → Online Booking.
+ * Blank means nobody, which is exactly what every lead was before this
+ * and is still a valid answer for a centre that shares them out by hand.
+ */
+function defaultLeadOwner(settings) {
+  return String((settings || {}).leadOwner || '').trim();
+}
+
 async function loadCentreContext(fs, centerId) {
   const [centerSnap, configSnap] = await Promise.all([
     fs.doc(`centers/${centerId}`).get(),
@@ -280,7 +291,16 @@ async function handleCreate(req, res) {
       source:       'intake-form',
       sourceDetail: `Booked assessment for ${new Date(payload.slot).toLocaleString()}`,
       notes:        payload.notes || '',
-      assignedTo:   '',
+      // Somebody owns it from the moment it lands. An unowned lead is the
+      // one nobody rings, and "who is on this" was a column in the
+      // tracker long before it was a field here. Blank when the centre
+      // has not named anyone, which is the old behaviour.
+      assignedTo:   defaultLeadOwner(settings),
+      // The assessment IS booked — this lead was born from one. Writing
+      // it here is what lets the follow-up list say "assessment today,
+      // nobody is down to tour them" instead of "lead, 0 days old".
+      assessmentOn:      String(payload.slot).slice(0, 10),
+      assessmentOutcome: 'booked',
       // Same shape as src/lib/leads.js createLead() writes. Timestamps
       // use FieldValue.serverTimestamp() so they sort consistently with
       // leads created from the website UI.

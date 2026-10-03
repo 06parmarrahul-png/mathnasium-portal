@@ -37,6 +37,9 @@ const DEFAULTS = {
     Thursday: '', Friday: '', Saturday: '',
   },
   address:     '',
+  // Who a lead born from a booking is assigned to. Blank = nobody, which
+  // is how every booking behaved before this existed.
+  leadOwner:   '',
   // Times opened and closed by hand on the week grid, keyed by date then
   // by time. Empty by default: nothing is shut until somebody shuts it.
   slotRules:   {},
@@ -191,6 +194,16 @@ export default function IntakeBookingSettings({ activeCenterId, centerConfig }) 
             Shown on the booking page and in the confirmation, under a note that the
             assessment is in person. Leave blank and the note still appears, without a
             street address.
+          </p>
+        </Field>
+        <Field label="New leads are assigned to">
+          <input type="text" value={s.leadOwner || ''}
+            placeholder="e.g. Vin Bandla — leave blank for nobody"
+            onChange={e => setField('leadOwner', e.target.value)}
+            className="w-full rounded border border-gray-300 px-3 py-2 text-sm" />
+          <p className="mt-1 text-xs text-gray-500">
+            Every booking — through Ratio or through Apptoto — writes a lead. This is
+            whose follow-up list it lands on. An unassigned lead is the one nobody rings.
           </p>
         </Field>
       </Card>
