@@ -48,6 +48,10 @@ export const PER_CENTRE_FIELDS = [
   'approved',
   'maxDaysPerWeek',
   'isVolunteer',
+  // Permissions given to this person rather than to their title, at this
+  // centre only — Manage Staff → Individuals. Read it through
+  // individualGrants.grantsFor(), which validates the ids.
+  'extraPermissions',
 ];
 
 /**
@@ -70,6 +74,7 @@ export function getMembership(user, centerId) {
     approved:        user.approved,
     maxDaysPerWeek:  user.maxDaysPerWeek,
     isVolunteer:     user.isVolunteer,
+    extraPermissions: user.extraPermissions,
   };
   if (!centerId) return top;
   const m = user.centerMemberships?.[centerId];
@@ -81,6 +86,7 @@ export function getMembership(user, centerId) {
     approved:        m.approved        ?? top.approved,
     maxDaysPerWeek:  m.maxDaysPerWeek  ?? top.maxDaysPerWeek,
     isVolunteer:     m.isVolunteer     ?? top.isVolunteer,
+    extraPermissions: m.extraPermissions ?? top.extraPermissions,
   };
 }
 

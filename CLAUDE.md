@@ -2014,6 +2014,41 @@ Lib functions that build a sentence for the screen (`doubleBooking`,
 `availabilityLog`, `availabilityFit`) take the format as a last argument and
 default to 12-hour.
 
+## Individual grants — access for a person, not a title
+
+**Manage Staff → Individuals**, the third sub-tab beside Edit Staff and Edit
+Role Permissions. `src/lib/individualGrants.js`,
+`src/components/IndividualGrantsTab.jsx`, stored at
+`users/{uid}.centerMemberships[centerId].extraPermissions`.
+
+**The gap it fills**: everything a person can do came from their title, so
+"these three senior instructors run the Student Scheduler and nobody else at
+their level does" had two bad answers — promote all three, or hand the
+scheduler to every instructor to reach three.
+
+- **Additive only, and the screen says so.** A grant gives somebody something
+  their title does not; it can never take away something it does. Taking away
+  belongs on the role, where it is visible to everyone at once instead of
+  hidden on one person's record.
+- **Per centre.** Trusted with the scheduler at Langley is not trusted with it
+  at Burnaby, and a grant that followed somebody between centres would be a
+  surprise to the second centre's owner.
+- **The escalation boundary is the one roles already have.**
+  `grantablePermissions()` is literally `assignablePermissions()`, so
+  `roles.manage` and `district.view` are not on offer — and
+  `resolvePermissions()` filters them again when resolving, so a grant written
+  by hand in the console still grants nothing.
+- **The employment-state rules still win.** They are applied last in
+  `resolvePermissions`, so no grant can put a volunteer or a trainee on a
+  shift.
+- **Nobody can grant themselves anything.** The self-update path in
+  `firestore.rules` requires `centerMemberships` to be unchanged; a Manager or
+  Host can grant somebody else, which is the same power they already have to
+  change a title. Covered in `directorTitles.rules.test.js`.
+- The row says **"Their title already includes this"** on a grant that would
+  add nothing — not wrong, but it looks like the reason somebody has access
+  when it isn't.
+
 ## A family managing their own assessment (`/booking`)
 
 The Apptoto reminder offers "1 to confirm, 2 to cancel, 3 to reschedule", and

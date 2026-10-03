@@ -464,10 +464,16 @@ export function findRole(roles, instructorType) {
  *        isDirector() check has always honoured as a third way to be a
  *        director. Keeping it as an extra grant source preserves that
  *        exactly instead of quietly dropping a path someone may rely on.
+ * @param {string[]} [args.extraPermissions] permissions granted to this
+ *        PERSON rather than to their title — Manage Staff → Individuals,
+ *        stored on their per-centre membership. Additive only, held to the
+ *        same escalation boundary as a role grant, and still beaten by the
+ *        employment-state rules below. See individualGrants.js.
  * @returns {Set<string>} permission ids
  */
 export function resolvePermissions({
-  platformRole, instructorType, isVolunteer = false, roles = [], extraRoleNames = [],
+  platformRole, instructorType, isVolunteer = false, roles = [],
+  extraRoleNames = [], extraPermissions = [],
 } = {}) {
   const out = new Set(PLATFORM_ROLE_PERMISSIONS[platformRole] || PLATFORM_ROLE_PERMISSIONS.instructor);
 
@@ -481,6 +487,15 @@ export function resolvePermissions({
       if (PLATFORM_ONLY_PERMISSIONS.has(p)) continue;   // escalation boundary
       out.add(p);
     }
+  }
+
+  // Granted to the person rather than the title. Same two filters the
+  // role grants above go through: a permission nobody has heard of grants
+  // nothing, and the platform-only ones cannot be reached this way either.
+  for (const p of (extraPermissions || [])) {
+    if (!PERMISSION_ID_SET.has(p)) continue;
+    if (PLATFORM_ONLY_PERMISSIONS.has(p)) continue;
+    out.add(p);
   }
 
   // Admin-panel access always implies the operational routes. Stated once

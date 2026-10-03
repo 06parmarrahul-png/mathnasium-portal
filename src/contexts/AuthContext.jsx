@@ -14,6 +14,7 @@ import { logAuditEvent, AUDIT_ACTIONS } from '../lib/audit';
 import { buildInitialMembership, resolveUserForCenter } from '../lib/centerMembership';
 import { expandSubRoles } from '../lib/subRoles';
 import { resolveRoles, resolvePermissions, can as hasPermission } from '../lib/roles';
+import { grantsFor } from '../lib/individualGrants';
 import { staffTypeColorHex } from '../lib/centerConfig';
 import { resolveMascotId } from '../lib/mascots';
 import { centreDisplayName } from '../lib/portalIdentity';
@@ -307,6 +308,8 @@ export function AuthProvider({ children }) {
     // centerConfig.fixedStaff rather than on the user. Empty at every
     // centre today, but isDirector() honoured it, so this does too.
     extraRoleNames: [fixedStaffTitle].filter(Boolean),
+    // Given to them personally at this centre — Manage Staff → Individuals.
+    extraPermissions: grantsFor(profile, activeCenterId),
   }), [role, profile, activeCenterId, isVolunteerAtCentre, centreRoles, fixedStaffTitle]);
 
   /** Does the signed-in user hold this permission at the active centre? */

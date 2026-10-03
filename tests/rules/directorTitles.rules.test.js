@@ -200,6 +200,22 @@ describe('self-service', () => {
     await assertFails(updateDoc(doc(as('staff'), 'users', 'staff'), { instructorType: 'Host' }));
   });
 
+  it('an instructor cannot grant themselves a permission on their own membership', async () => {
+    // Manage Staff → Individuals writes extraPermissions into the
+    // membership row. The self-update path requires centerMemberships to
+    // be untouched, which is what stops somebody handing themselves the
+    // Student Scheduler — or anything else — from the console.
+    await assertFails(updateDoc(doc(as('staff'), 'users', 'staff'), {
+      [`centerMemberships.${CENTRE}.extraPermissions`]: ['scheduler.run'],
+    }));
+  });
+
+  it('a Manager can grant one to somebody else, the way they can set a title', async () => {
+    await assertSucceeds(updateDoc(doc(as('mgr'), 'users', 'staff'), {
+      [`centerMemberships.${CENTRE}.extraPermissions`]: ['scheduler.run'],
+    }));
+  });
+
   it('an instructor can still edit their own profile', async () => {
     await assertSucceeds(updateDoc(doc(as('staff'), 'users', 'staff'), { bio: 'Hi', mascot: 'coach' }));
     await assertSucceeds(updateDoc(doc(as('dirTitled'), 'users', 'dirTitled'), { bio: 'Still here' }));

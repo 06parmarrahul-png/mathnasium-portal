@@ -38,6 +38,7 @@ import {
 } from '../lib/centerConfig';
 import CoverageGrid from '../components/CoverageGrid';
 import CentreRolesTab from '../components/CentreRolesTab';
+import IndividualGrantsTab from '../components/IndividualGrantsTab';
 import TerminateStaffModal from '../components/TerminateStaffModal';
 import ApptotoAppointmentsCard from '../components/ApptotoAppointmentsCard';
 import { buildTimeOffIndex, timeOffOn, withoutApprovedTimeOff } from '../lib/timeOff';
@@ -6496,7 +6497,24 @@ export default function Admin() {
                 <Shield size={16} /> Edit Role Permissions &amp; Accessibility
               </button>
             )}
+            {/* Access for ONE person, where the role editor would change it
+                for everyone holding a title. Same gate as the role editor:
+                this is the same kind of decision, made one name at a time. */}
+            {canSeeCenterSettings && (
+              <button onClick={() => setUsersSubtab('individuals')}
+                className={`flex items-center gap-2 rounded-t-lg px-4 py-2 text-sm font-medium transition-colors ${
+                  usersSubtab === 'individuals'
+                    ? 'border-b-2 border-blue-600 text-blue-700 bg-white'
+                    : 'text-gray-500 hover:text-gray-800'
+                }`}>
+                <UserCheck size={16} /> Individuals
+              </button>
+            )}
           </div>
+
+          {usersSubtab === 'individuals' && canSeeCenterSettings && (
+            <IndividualGrantsTab users={users} />
+          )}
 
           {usersSubtab === 'roles' && canSeeCenterSettings && (
             /* No centre picker here: the Admin panel is already scoped to
