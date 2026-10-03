@@ -20,7 +20,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useTimeFormat } from '../lib/useTimeFormat';
 import {
   watchLeads, createLead, updateLead, setLeadStatus, deleteLead,
-  appendLeadNote, convertLeadToStudent,
+  appendLeadNote, appendAssessmentNote, convertLeadToStudent,
   LEAD_STATUSES, LEAD_STATUS_LABELS, LEAD_STATUS_STYLES,
   LEAD_SOURCES, LEAD_SOURCE_LABELS,
   funnelCounts, conversionRate, sourceBreakdown,
@@ -174,7 +174,7 @@ export default function Leads() {
           : 'No leads match this filter.'} />
 
       {/* ── Bringing the history across ───────────────────────────── */}
-      <FormerStudents centerId={centerId} onLoaded={setFormerStudents} />
+      <FormerStudents centerId={centerId} actor={profile} onLoaded={setFormerStudents} />
       <RadiusLeadImport centerId={centerId} />
 
       {/* ── Source breakdown ──────────────────────────────────────── */}
@@ -314,6 +314,7 @@ function LeadModal({ centerId, actor, lead, onClose }) {
     outcomeReason:     lead?.outcomeReason     || '',
   }));
   const [noteDraft, setNoteDraft] = useState('');
+  const [assessDraft, setAssessDraft] = useState('');
   const [saving, setSaving] = useState(false);
 
   const set = (patch) => setForm(s => ({ ...s, ...patch }));
@@ -520,6 +521,44 @@ function LeadModal({ centerId, actor, lead, onClose }) {
                 <input value={form.assessedBy} onChange={e => set({ assessedBy: e.target.value })}
                   className={inputCls} placeholder="e.g. Vin — or Sabrina / Vin for both" />
               </Field>
+              {/* THE WRITE-UP. Its own field rather than a line in the
+                  event log, because it is the one entry anybody re-reads
+                  before picking up the phone — and in the log it sits
+                  three scrolls under "Status moved to Assessed". */}
+              {isEdit && (
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-gray-700">
+                    What the assessment found
+                  </label>
+                  {(lead.assessmentNotes || []).length > 0 && (
+                    <ul className="mb-2 space-y-1.5 rounded-lg border border-gray-200 bg-white p-2">
+                      {lead.assessmentNotes.map((n, i) => (
+                        <li key={i} className="text-xs leading-snug text-gray-700">
+                          <span className="font-semibold text-gray-500">
+                            {String(n.at).slice(0, 10)} · {n.by}
+                          </span>
+                          <span className="mt-0.5 block whitespace-pre-wrap">{n.text}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <textarea rows={3} value={assessDraft} onChange={e => setAssessDraft(e.target.value)}
+                    className={inputCls}
+                    placeholder="e.g. Two grades behind on fractions, strong on mental maths. Mum was sold; dad needs convincing on price." />
+                  <button type="button" disabled={!assessDraft.trim()}
+                    onClick={async () => {
+                      await appendAssessmentNote(centerId, lead.id, assessDraft, actor);
+                      setAssessDraft('');
+                      toast.success('Added to the write-up.');
+                    }}
+                    className="mt-1.5 rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+                    Add to the write-up
+                  </button>
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Appended, never overwritten — a second visit reads under the first.
+                  </p>
+                </div>
+              )}
               <Field label="Why they did or didn't" className="md:col-span-2">
                 <input value={form.outcomeReason} onChange={e => set({ outcomeReason: e.target.value })}
                   className={inputCls}

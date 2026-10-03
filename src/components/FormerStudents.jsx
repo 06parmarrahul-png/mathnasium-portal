@@ -9,7 +9,9 @@ import { toast } from '../lib/notify';
 import { todayISO } from '../lib/payProjection';
 import {
   readStudentExport, callBackList, studentImportId, gradeLabel, MAX_AWAY_YEARS,
+  leadFromCallBack,
 } from '../lib/formerStudents';
+import { createLead } from '../lib/leads';
 
 /**
  * Worth a call back — the families who already know you.
@@ -37,7 +39,7 @@ const KIND = {
   recent:       { label: 'Recent leaver',        tone: 'bg-sky-100 text-sky-800' },
 };
 
-export default function FormerStudents({ centerId, onLoaded }) {
+export default function FormerStudents({ centerId, onLoaded, actor }) {
   const today = useMemo(() => todayISO(), []);
   const [students, setStudents] = useState(null);
   const [open, setOpen] = useState(false);
@@ -47,6 +49,22 @@ export default function FormerStudents({ centerId, onLoaded }) {
   const [error, setError] = useState('');
   const [done, setDone] = useState(null);
   const [showAll, setShowAll] = useState(false);
+  const [making, setMaking] = useState('');
+
+  // Turning a call-back into a lead is what gets it WORKED: it lands on
+  // the call sheet due today and is chased like any other. The former
+  // student stays exactly where it is — that record is history, and the
+  // lead is the conversation about it.
+  const makeLead = async (call) => {
+    const id = call.student.id || call.student.source_radiusId;
+    setMaking(id);
+    try {
+      await createLead(centerId, leadFromCallBack(call, today), actor);
+      toast.success(`${call.student.name} is on the call sheet.`);
+    } catch (err) {
+      toast.error(err.message || 'Could not make that lead.');
+    } finally { setMaking(''); }
+  };
 
   useEffect(() => {
     if (!centerId) return undefined;
@@ -152,6 +170,11 @@ export default function FormerStudents({ centerId, onLoaded }) {
                         </span>
                         <span className="mt-0.5 block text-[12.5px] leading-snug text-gray-600">{c.why}</span>
                       </span>
+                      <button type="button" onClick={() => makeLead(c)}
+                        disabled={making === (c.student.id || c.student.source_radiusId)}
+                        className="shrink-0 self-center rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-40">
+                        {making === (c.student.id || c.student.source_radiusId) ? 'Adding…' : 'Make a lead'}
+                      </button>
                     </li>
                   );
                 })}

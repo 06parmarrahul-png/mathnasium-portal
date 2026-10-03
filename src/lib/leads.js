@@ -50,6 +50,7 @@ export const LEAD_STATUS_STYLES = {
 };
 
 export const LEAD_SOURCES = [
+  'former-student',
   'website',
   'referral',
   'walk-in',
@@ -62,6 +63,7 @@ export const LEAD_SOURCES = [
 ];
 
 export const LEAD_SOURCE_LABELS = {
+  'former-student': 'Former student',
   website:       'Website',
   referral:      'Referral',
   'walk-in':     'Walk-in',
@@ -148,6 +150,22 @@ export function leadDocFrom(partial, actor) {
     // Why they said no, or why they are still thinking. The column the
     // centre reads back when it wants to know what it keeps losing on.
     outcomeReason: data.outcomeReason || '',
+    // THE WRITE-UP, kept apart from `history`.
+    //
+    // History is every event on the lead — created, status moved, call
+    // logged — and the assessment is the one entry anybody re-reads
+    // before picking up the phone. In Vin's tracker it has its own
+    // column for that reason: "9/1: Extremely pleasant family, two
+    // grades behind on fractions, mum was sold, dad needs convincing on
+    // price." Mixed into the event log it would be three scrolls down
+    // under "Status moved to Assessed".
+    //
+    // An ARRAY, appended to, never overwritten — a second visit is a
+    // second note, and the first one is what the second is compared
+    // against.
+    assessmentNotes: Array.isArray(data.assessmentNotes) ? data.assessmentNotes : [],
+    // Where this lead came from, when it came from the call-back list.
+    formerStudentId: data.formerStudentId || null,
     // The intake this lead was born from, so an assessment edited on the
     // Calendar can show the family it belongs to and vice versa.
     intakeId:     data.intakeId     || null,
@@ -211,6 +229,28 @@ export async function appendLeadNote(centerId, leadId, text, actor) {
   };
   await setDoc(doc(db, 'centers', centerId, 'leads', leadId), {
     history: [...(existing.history || []), entry],
+    updatedAt: serverTimestamp(),
+  }, { merge: true });
+}
+
+/**
+ * Add to the assessment write-up.
+ *
+ * Same append-only shape as a history entry, in its own field. Each note
+ * carries the day it was written, so a second visit reads under the
+ * first rather than replacing it.
+ */
+export async function appendAssessmentNote(centerId, leadId, text, actor) {
+  if (!text?.trim()) return;
+  const existing = await getLead(centerId, leadId);
+  if (!existing) throw new Error('Lead not found.');
+  const entry = {
+    at: new Date().toISOString(),
+    by: actor?.displayName || actor?.email || 'system',
+    text: text.trim(),
+  };
+  await setDoc(doc(db, 'centers', centerId, 'leads', leadId), {
+    assessmentNotes: [...(existing.assessmentNotes || []), entry],
     updatedAt: serverTimestamp(),
   }, { merge: true });
 }

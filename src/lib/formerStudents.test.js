@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   readDate, schoolYearStart, gradeNow, gradeLabel, stageOf, yearsBetween,
   readStudentRow, reengagement, callBackList, readStudentExport, studentImportId,
-  MAX_AWAY_YEARS, buildStudentIndex, matchFormerStudent, familyKind,
+  MAX_AWAY_YEARS, buildStudentIndex, matchFormerStudent, familyKind, leadFromCallBack,
 } from './formerStudents';
 
 const TODAY = '2026-10-03';
@@ -242,5 +242,35 @@ describe('new family, or one we have had before', () => {
 
   it('calls an unseen family new', () => {
     expect(familyKind({ childName: 'Nobody Here' }, index)).toBe('new');
+  });
+});
+
+describe('turning a call-back into a lead', () => {
+  const student = readStudentRow(row({
+    'Date of Birth': '01/03/2012', 'Last Attendance Date': '01/10/2024',
+  }), TODAY).student;
+  const call = { student: { ...student, id: 'radius_s_326183' }, why: 'Grade 7 then, Grade 9 now.' };
+
+  it('carries what the record already knows, so nobody retypes it', () => {
+    expect(leadFromCallBack(call, TODAY)).toMatchObject({
+      parentName: 'Nicole Longacre',
+      childName: 'Brayden Longacre',
+      childGrade: '9',
+      source: 'former-student',
+      reason: 'returning',
+      formerStudentId: 'radius_s_326183',
+    });
+  });
+
+  it('is due today, which is the point of pressing the button', () => {
+    expect(leadFromCallBack(call, TODAY).followUpOn).toBe(TODAY);
+  });
+
+  it('says where they came from and when they were last in', () => {
+    expect(leadFromCallBack(call, TODAY).sourceDetail).toBe('Former student, last in 2024-10-01');
+  });
+
+  it('survives a half-empty record', () => {
+    expect(leadFromCallBack({}, TODAY)).toMatchObject({ childName: '', status: 'new' });
   });
 });

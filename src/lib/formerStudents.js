@@ -248,6 +248,32 @@ export function readStudentExport(rows, today) {
 
 export const studentImportId = (student) => `radius_s_${clean(student.source_radiusId)}`;
 
+/**
+ * The lead a call-back becomes.
+ *
+ * Pre-filled with everything the record already knows, so the person
+ * ringing is not retyping a child's name off the row above. `reason` is
+ * 'returning' because that IS why this call is happening, and the
+ * follow-up is today: the point of pressing the button is that it lands
+ * on the call sheet now rather than becoming a thing to remember.
+ */
+export function leadFromCallBack(call, today) {
+  const s = call?.student || {};
+  return {
+    parentName:  s.account || '',
+    childName:   s.name || '',
+    childGrade:  s.grade === null || s.grade === undefined ? '' : String(s.grade),
+    childSchool: s.school || '',
+    status:      'new',
+    source:      'former-student',
+    sourceDetail: s.lastSeen ? `Former student, last in ${s.lastSeen}` : 'Former student',
+    reason:      'returning',
+    followUpOn:  today,
+    formerStudentId: s.id || null,
+    notes: call?.why || '',
+  };
+}
+
 // ─── Is this family new, or have we had them before? ────────────────────
 
 const fold = (name) => clean(name).toLowerCase().replace(/\s+/g, ' ');
