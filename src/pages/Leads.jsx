@@ -28,6 +28,7 @@ import {
 import { toast, confirmDialog } from '../lib/notify';
 import LeadWorklist from '../components/LeadWorklist';
 import LeadTable from '../components/LeadTable';
+import RadiusLeadImport from '../components/RadiusLeadImport';
 import { todayISO } from '../lib/payProjection';
 import {
   LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
@@ -160,6 +161,9 @@ export default function Leads() {
         emptyNote={leads.length === 0
           ? "No leads yet. Add one, or wait for an assessment booking — every booking, through Ratio or Apptoto, writes a lead."
           : 'No leads match this filter.'} />
+
+      {/* ── Bringing the history across ───────────────────────────── */}
+      <RadiusLeadImport centerId={centerId} />
 
       {/* ── Source breakdown ──────────────────────────────────────── */}
       {leads.length > 0 && (
