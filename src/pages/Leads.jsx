@@ -27,6 +27,8 @@ import {
 } from '../lib/leads';
 import { toast, confirmDialog } from '../lib/notify';
 import LeadWorklist from '../components/LeadWorklist';
+import LeadTable from '../components/LeadTable';
+import { todayISO } from '../lib/payProjection';
 import {
   LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
 } from '../lib/leadFollowUp';
@@ -38,6 +40,11 @@ export default function Leads() {
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
+  // A contact being logged from the call sheet. Its own small dialog
+  // rather than the whole lead drawer: the thing somebody does straight
+  // after a call is write one sentence, and making them scroll a form to
+  // do it is how a worklist becomes a list nobody updates.
+  const [logging, setLogging] = useState(null);
 
   useEffect(() => {
     if (!centerId) return;
@@ -66,6 +73,7 @@ export default function Leads() {
   }, [leads, statusFilter, search]);
 
   const editing = editingId ? leads.find(l => l.id === editingId) : null;
+  const loggingLead = logging ? leads.find(l => l.id === logging) : null;
 
   return (
     <div className="space-y-5">
@@ -86,8 +94,13 @@ export default function Leads() {
       {/* ── Who needs a call, before anything else on the page ─────
           The funnel strip below says how the pipeline LOOKS; this says
           what to do about it, which is what the page is opened for. */}
-      <LeadWorklist leads={leads} me={profile?.displayName || ''}
-        onOpen={lead => setEditingId(lead.id)} />
+      <LeadWorklist
+        leads={leads}
+        me={profile?.displayName || ''}
+        onOpen={lead => setEditingId(lead.id)}
+        onLogContact={lead => setLogging(lead.id)}
+        onBook={lead => setEditingId(lead.id)}
+      />
 
       {/* ── Funnel stats strip ─────────────────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -139,22 +152,14 @@ export default function Leads() {
         )}
       </div>
 
-      {/* ── List ───────────────────────────────────────────────────── */}
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-        {visible.length === 0 ? (
-          <div className="p-10 text-center text-sm text-gray-500">
-            {leads.length === 0
-              ? "No leads yet. Click 'Add lead' to start tracking your first one — or wait for an intake assessment booking, which auto-creates a lead."
-              : 'No leads match this filter.'}
-          </div>
-        ) : (
-          <ul className="divide-y divide-gray-100">
-            {visible.map(l => (
-              <LeadRow key={l.id} lead={l} onOpen={() => setEditingId(l.id)} />
-            ))}
-          </ul>
-        )}
-      </div>
+      {/* ── The tracker ────────────────────────────────────────────
+          Vin's own sheet, as a table. It replaced a stack of cards that
+          showed a status pill, a name and an email — everything the
+          centre decides on was a click away, one lead at a time. */}
+      <LeadTable leads={visible} onOpen={lead => setEditingId(lead.id)}
+        emptyNote={leads.length === 0
+          ? "No leads yet. Add one, or wait for an assessment booking — every booking, through Ratio or Apptoto, writes a lead."
+          : 'No leads match this filter.'} />
 
       {/* ── Source breakdown ──────────────────────────────────────── */}
       {leads.length > 0 && (
@@ -173,6 +178,20 @@ export default function Leads() {
         />
       )}
 
+      {/* ── Log a call, without opening the whole lead ─────────────
+          The thing somebody does straight after a call is write one
+          sentence and pick when to ring back. Making them scroll a
+          twelve-field form to do it is how a worklist becomes a list
+          nobody updates. */}
+      {loggingLead && (
+        <LogContactModal
+          centerId={centerId}
+          actor={profile}
+          lead={loggingLead}
+          onClose={() => setLogging(null)}
+        />
+      )}
+
       {/* ── Edit / detail modal ───────────────────────────────────── */}
       {editing && (
         <LeadModal
@@ -186,40 +205,69 @@ export default function Leads() {
   );
 }
 
-// ─── List row ─────────────────────────────────────────────────────────
-function LeadRow({ lead, onOpen }) {
-  const styles = LEAD_STATUS_STYLES[lead.status] || LEAD_STATUS_STYLES.new;
-  const name = lead.childName || lead.parentName || '(unnamed)';
-  const sub = lead.childName && lead.parentName ? `Parent: ${lead.parentName}` : '';
+// ─── Log a contact ───────────────────────────────────────────────────
+//
+// One sentence and a date. It writes the note to the lead's history, the
+// day onto lastContactOn, and the next follow-up — which is what turns a
+// call into the thing that puts them back on the list at the right time
+// instead of in three days by default.
+function LogContactModal({ centerId, actor, lead, onClose }) {
+  const [text, setText] = useState('');
+  const [next, setNext] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const save = async () => {
+    if (!text.trim() && !next) { onClose(); return; }
+    setSaving(true);
+    try {
+      if (text.trim()) await appendLeadNote(centerId, lead.id, text, actor);
+      await updateLead(centerId, lead.id, {
+        lastContactOn: todayISO(),
+        // Only written when they picked one: clearing it by accident would
+        // take the family off the list rather than putting them on it.
+        ...(next ? { followUpOn: next } : {}),
+      });
+      toast.success('Logged.');
+      onClose();
+    } catch (e) {
+      toast.error(e.message || 'Could not save that.');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <li onClick={onOpen}
-      className="flex cursor-pointer items-center gap-3 px-4 py-3 hover:bg-gray-50">
-      <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${styles.bg} ${styles.text}`}>
-        <span className={`h-1.5 w-1.5 rounded-full ${styles.dot}`} />
-        {LEAD_STATUS_LABELS[lead.status]}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium text-gray-900">
-          {name}
-          {lead.childGrade && (
-            <span className="ml-1.5 text-xs font-normal text-gray-500">· Grade {lead.childGrade}</span>
-          )}
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+      onClick={onClose}>
+      <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={e => e.stopPropagation()}>
+        <h2 className="text-base font-semibold text-gray-900">
+          Log a call — {lead.parentName || lead.childName}
+        </h2>
+        <p className="mt-0.5 text-xs text-gray-500">
+          Goes on the lead&rsquo;s history, with today as the last contact.
+        </p>
+        <textarea autoFocus rows={3} value={text} onChange={e => setText(e.target.value)}
+          placeholder="e.g. Left a voicemail · Mum will discuss with dad and call back"
+          className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+        <label className="mt-3 block">
+          <span className="mb-1 block text-xs font-medium text-gray-700">Ring them back on</span>
+          <input type="date" value={next} onChange={e => setNext(e.target.value)}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
+          <span className="mt-1 block text-[11px] text-gray-500">
+            Leave blank and they stay on the list for the reason they are already on it.
+          </span>
+        </label>
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+            Cancel
+          </button>
+          <button onClick={save} disabled={saving}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+            {saving ? 'Saving…' : 'Log it'}
+          </button>
         </div>
-        {sub && <div className="truncate text-xs text-gray-500">{sub}</div>}
       </div>
-      <div className="hidden gap-3 text-xs text-gray-500 sm:flex sm:items-center">
-        {lead.parentEmail && (
-          <span className="inline-flex items-center gap-1"><Mail size={11} />{lead.parentEmail}</span>
-        )}
-        {lead.parentPhone && (
-          <span className="inline-flex items-center gap-1"><Phone size={11} />{lead.parentPhone}</span>
-        )}
-      </div>
-      <div className="hidden md:block text-xs text-gray-400">
-        {LEAD_SOURCE_LABELS[lead.source] || lead.source}
-      </div>
-    </li>
+    </div>
   );
 }
 
