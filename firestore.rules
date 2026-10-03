@@ -895,6 +895,21 @@ service cloud.firestore {
       // this is the collection the old catchall was quietly exposing.
       // Server-side intake mirroring writes via firebase-admin and
       // bypasses rules entirely, so the auto-create flow is unaffected.
+      // ─── Former students, imported from Radius ──────────────────
+      // Name, date of birth, the day they were last in, and the family
+      // account. That is a child's personal data, so it sits exactly
+      // where leads do — owner tier reads and writes, and a district
+      // manager may read the roll-up without working it.
+      //
+      // The whole collection is written by one import, in batches, from
+      // a browser — so the write rule is the collection's, not a
+      // per-document shape check. The import only ever writes documents
+      // whose id it derived from the export.
+      match /formerStudents/{studentId} {
+        allow read:  if isOwnerLike() || isSuperAdmin() || isDistrictManagerAt(centerId);
+        allow write: if isOwnerLike() || isSuperAdmin();
+      }
+
       match /leads/{leadId} {
         allow read:  if isOwnerLike() || isSuperAdmin() || isDistrictManagerAt(centerId);
         // Deliberately NOT widened: a district manager reads the funnel to

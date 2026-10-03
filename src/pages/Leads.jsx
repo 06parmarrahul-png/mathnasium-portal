@@ -29,6 +29,7 @@ import { toast, confirmDialog } from '../lib/notify';
 import LeadWorklist from '../components/LeadWorklist';
 import LeadTable from '../components/LeadTable';
 import RadiusLeadImport from '../components/RadiusLeadImport';
+import FormerStudents from '../components/FormerStudents';
 import { todayISO } from '../lib/payProjection';
 import {
   LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
@@ -163,6 +164,7 @@ export default function Leads() {
           : 'No leads match this filter.'} />
 
       {/* ── Bringing the history across ───────────────────────────── */}
+      <FormerStudents centerId={centerId} />
       <RadiusLeadImport centerId={centerId} />
 
       {/* ── Source breakdown ──────────────────────────────────────── */}
