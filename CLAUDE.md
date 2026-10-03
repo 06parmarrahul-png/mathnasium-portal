@@ -1482,6 +1482,81 @@ made when the gift card is handed over, so it can change without a deploy.
 - **Never a performance measure.** Optional, on their own time, and the page says
   so — staff are hourly, and a contest that feels expected is unpaid work.
 
+## Leads — four views, one question each
+
+`src/pages/Leads.jsx`. It used to be seven stacked panels of equal weight
+— day bar, call sheet, funnel strip, search, call-backs, Radius import,
+tracker table, source breakdown — all shouting at once, so none of them
+was read first. It is now four views behind a switcher:
+
+| View | The question it answers |
+| --- | --- |
+| **Inbox** (default) | Who do I ring, right now? |
+| **Pipeline** | Where is everybody standing? |
+| **Tracker** | Vin's spreadsheet, month by month, with his KPIs. |
+| **Call backs** | Former students worth another call; Radius import. |
+
+Only the Inbox tab carries a badge, and it is `worklist(leads).length` —
+the same rule the tracker's Needs column uses, so the badge and the queue
+can never disagree about how much work there is.
+
+### The story — `src/lib/leadStory.js` + `components/LeadStory.jsx`
+
+A lead's five events — enquiry, reached, assessment, assessed, outcome —
+and which have happened. Drawn as dots on a line.
+
+- **Filled** = it happened. **Hollow** = it hasn't. **Ring with a centre**
+  = on the books, not confirmed. **Red** = no-show or cancelled. **Green**
+  = enrolled. A **halo** marks where the family is standing now.
+- **Colour encodes state, not stage.** Position already says which event a
+  dot is; a colour per stage spends the one channel that could have said
+  whether it is done.
+- **Booked is not done.** A filled dot has to mean it happened. This also
+  catches the lead everyone loses: the date went by and nobody recorded an
+  outcome, which draws as still-not-filled and carries `unrecorded`.
+- **Reached reads `contactedAt`, not `lastContactOn`.** The latter moves
+  every time somebody logs a call, so a family rung a week after their
+  assessment would draw Reached *after* Assessment — the story out of
+  order. The latest contact is still its own field in the detail panel.
+- **Durations are measured, never estimated.** A connector is labelled
+  only when both ends are real, and same-day gaps are dropped rather than
+  printed as "0d". The four-day goal spans enquiry → assessment, which is
+  one hop or two depending on whether anybody logged a call, so it lives
+  on the assessment step as `waitDays` / `late` — not on a connector.
+- Three shapes, one model: `LeadStoryRail` (inline, in a row),
+  `LeadStoryGrid` (stages in fixed columns, so a list lines up and you
+  scan DOWN to see where people stall), `LeadStorySpine` (vertical, with
+  the assessment write-up hanging off its own dot).
+
+### The Tracker is a carbon copy — `src/lib/leadTracker.js`
+
+Vin's Lead Tracker spreadsheet, rendered out of Ratio: one tab per month,
+his twelve columns in his order, his shorthand in the cells (`NS`, `CA`,
+`Yes` / `Pending` / `No`), and the summary block underneath — "N out of
+M", plus the Tours and Assessments scoreboards.
+
+**It needed no new fields.** Ratio already stored all twelve; they had
+never been shown together in the arrangement the centre thinks in. Week
+Ending is the only derived column (the Saturday on or after the created
+date, read off the real tabs).
+
+**One number is deliberately not a copy.** The sheet computes Days to
+Assessment with `DAYS360`, a thirty-day-month accounting count — it reads
+29 Aug → 1 Sep as two days because it collapses the 30th and 31st. Across
+the real tracker that understates **15 of 241 rows, by 1.67 days on
+average** (one by 11), and flips one row from missing the four-day goal to
+meeting it. Ratio counts the days the family actually waited.
+
+It still exports to CSV, because the spreadsheet is not going away on day
+one and a tracker you cannot get back out of is one people keep a parallel
+copy of — which is the problem this is meant to end.
+
+### Gone
+
+`LeadWorklist.jsx` was deleted; the Inbox queue replaces it, from the same
+`worklist()`. `LogContactModal` went with it — the Inbox logs a call
+inline, which is the point of not having a modal.
+
 ## The public booking page (`/book/:centerId`)
 
 Parent-facing, no login, no auth: a week-view slot grid plus the intake

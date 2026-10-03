@@ -1,21 +1,25 @@
 // Leads — the top of the funnel.
 //
-// People who've expressed interest in the centre but haven't enrolled
-// yet. This page is the closest thing Ratio has to a CRM: it tracks
-// who they are, where they came from, how warm they are, and lets
-// staff move them through the funnel in one click.
+// FOUR VIEWS, ONE QUESTION EACH.
 //
-// Why this matters from an analytics standpoint: every other "demand"
-// page on the site shows you what already happened. Leads shows you
-// what MIGHT happen — the pipeline. Combined with the conversion rate
-// at the top, an owner can finally answer "is my marketing working?"
-// without exporting four spreadsheets.
+//   Inbox      who do I ring, right now?
+//   Pipeline   where is everybody standing?
+//   Tracker    Vin's spreadsheet, month by month, with his KPIs.
+//   Call backs families who were here before and are worth another call.
+//
+// It replaced a single page of seven stacked panels — day bar, call
+// sheet, funnel strip, search, call-backs, import, tracker table, source
+// breakdown — all the same size and all demanding attention at once, so
+// none of them got it. The work is a list of phone calls; everything
+// else is reference you visit on purpose.
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Plus, Search, X, ArrowRight, UserPlus, Trash2, Mail, Phone, Building2,
-  TrendingUp, Filter,
+  Plus, Search, X, ArrowRight, UserPlus, Trash2, TrendingUp, Filter,
+  Inbox, GitBranch, Table2, History,
 } from 'lucide-react';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { useTimeFormat } from '../lib/useTimeFormat';
 import {
@@ -26,28 +30,33 @@ import {
   funnelCounts, conversionRate, sourceBreakdown,
 } from '../lib/leads';
 import { toast, confirmDialog } from '../lib/notify';
-import LeadWorklist from '../components/LeadWorklist';
+import LeadInbox from '../components/LeadInbox';
+import LeadStageTable from '../components/LeadStageTable';
+import LeadTracker from '../components/LeadTracker';
 import LeadTable from '../components/LeadTable';
 import RadiusLeadImport from '../components/RadiusLeadImport';
 import FormerStudents from '../components/FormerStudents';
 import { buildStudentIndex } from '../lib/formerStudents';
-import { todayISO } from '../lib/payProjection';
 import {
-  LEAD_REASONS, LEAD_REASON_LABELS, ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
+  worklist, LEAD_REASONS, LEAD_REASON_LABELS,
+  ASSESSMENT_OUTCOMES, ASSESSMENT_OUTCOME_LABELS,
 } from '../lib/leadFollowUp';
+
+const VIEWS = [
+  { key: 'inbox',     label: 'Inbox',      icon: Inbox },
+  { key: 'pipeline',  label: 'Pipeline',   icon: GitBranch },
+  { key: 'tracker',   label: 'Tracker',    icon: Table2 },
+  { key: 'callbacks', label: 'Call backs', icon: History },
+];
 
 export default function Leads() {
   const { activeCenterId: centerId, profile } = useAuth();
   const [leads, setLeads] = useState([]);
+  const [view, setView] = useState('inbox');
   const [statusFilter, setStatusFilter] = useState('all'); // 'all' | status
   const [search, setSearch] = useState('');
   const [showAdd, setShowAdd] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  // A contact being logged from the call sheet. Its own small dialog
-  // rather than the whole lead drawer: the thing somebody does straight
-  // after a call is write one sentence, and making them scroll a form to
-  // do it is how a worklist becomes a list nobody updates.
-  const [logging, setLogging] = useState(null);
   // Former students, read once for the page so every row can say whether
   // this family has been here before. Empty until the export is
   // imported, and familyKind() answers null rather than guessing.
@@ -59,9 +68,27 @@ export default function Leads() {
     return watchLeads(centerId, setLeads);
   }, [centerId]);
 
+  // Read here rather than inside the Call backs tab: every view wants to
+  // know whether a family has been here before, and a badge that only
+  // appears once you have visited another tab is a badge nobody trusts.
+  useEffect(() => {
+    if (!centerId) return undefined;
+    return onSnapshot(
+      collection(db, 'centers', centerId, 'formerStudents'),
+      snap => setFormerStudents(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      // A centre that has never imported the export, or a reader without
+      // the rule for it, gets an empty index — and familyKind() answers
+      // null rather than guessing that everybody is new.
+      () => setFormerStudents([]),
+    );
+  }, [centerId]);
+
   const counts = useMemo(() => funnelCounts(leads), [leads]);
   const conv = useMemo(() => conversionRate(leads), [leads]);
   const sources = useMemo(() => sourceBreakdown(leads), [leads]);
+  // The same count the Inbox shows, from the same rule, so the tab badge
+  // and the queue can never disagree about how much work there is.
+  const todo = useMemo(() => worklist(leads).length, [leads]);
 
   // Newest-first list, narrowed by status + free-text search.
   const visible = useMemo(() => {
@@ -82,16 +109,44 @@ export default function Leads() {
 
   const studentIndex = useMemo(() => buildStudentIndex(formerStudents), [formerStudents]);
   const editing = editingId ? leads.find(l => l.id === editingId) : null;
-  const loggingLead = logging ? leads.find(l => l.id === logging) : null;
+
+  // Enrolling and losing a lead are the two endings, and both are worth
+  // a confirm — one writes a student onto the roster, the other takes a
+  // family off every list the centre looks at.
+  const handleConvert = async (lead) => {
+    const ok = await confirmDialog({
+      title: 'Convert to student?',
+      message: `This creates a row in your Student Scheduler roster for "${lead.childName || lead.parentName}" and marks this lead Enrolled.`,
+      confirmText: 'Convert',
+    });
+    if (!ok) return;
+    try {
+      await convertLeadToStudent(centerId, lead.id, profile);
+      toast.success('Converted to student and marked enrolled.');
+    } catch (e) { toast.error(e.message); }
+  };
+
+  const handleLose = async (lead) => {
+    const ok = await confirmDialog({
+      title: 'Close this lead?',
+      message: `"${lead.childName || lead.parentName}" comes off the call sheet. The record stays in the tracker.`,
+      confirmText: 'Close it',
+    });
+    if (!ok) return;
+    try {
+      await setLeadStatus(centerId, lead.id, 'lost', profile);
+      toast.success('Closed.');
+    } catch (e) { toast.error(e.message); }
+  };
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* ── Header ─────────────────────────────────────────────────── */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Leads</h1>
           <p className="text-sm text-gray-500">
-            People who've shown interest but haven't enrolled yet. Move them through the funnel.
+            Who to ring, where everyone is standing, and the tracker behind it.
           </p>
         </div>
         <button onClick={() => setShowAdd(true)}
@@ -100,88 +155,126 @@ export default function Leads() {
         </button>
       </div>
 
-      {/* ── Who needs a call, before anything else on the page ─────
-          The funnel strip below says how the pipeline LOOKS; this says
-          what to do about it, which is what the page is opened for. */}
-      <LeadWorklist
-        leads={leads}
-        studentIndex={studentIndex}
-        me={profile?.displayName || ''}
-        onOpen={lead => setEditingId(lead.id)}
-        onLogContact={lead => setLogging(lead.id)}
-        onBook={lead => setEditingId(lead.id)}
-      />
+      {/* ── One view at a time ─────────────────────────────────────
+          Seven panels of equal weight said everything at once and so
+          said nothing first. These are four doors, and the badge on the
+          first one is the only number that needs to be seen on arrival. */}
+      <div className="flex flex-wrap items-center gap-1 rounded-xl bg-white p-1 ring-1 ring-gray-200">
+        {VIEWS.map(v => {
+          const on = view === v.key;
+          const Icon = v.icon;
+          return (
+            <button key={v.key} type="button" onClick={() => setView(v.key)}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-semibold transition ${
+                on ? 'bg-gray-900 text-white' : 'text-gray-600 hover:bg-gray-50'}`}>
+              <Icon size={14} />
+              {v.label}
+              {v.key === 'inbox' && todo > 0 ? (
+                <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-bold tabular-nums ${
+                  on ? 'bg-rose-500 text-white' : 'bg-rose-100 text-rose-700'}`}>
+                  {todo}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
 
-      {/* ── Funnel stats strip ─────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {LEAD_STATUSES.map(s => (
-          <button key={s}
-            onClick={() => setStatusFilter(statusFilter === s ? 'all' : s)}
-            className={`rounded-lg border bg-white p-3 text-left transition-colors ${
-              statusFilter === s
-                ? `${LEAD_STATUS_STYLES[s].ring} ring-2 border-transparent`
-                : 'border-gray-200 hover:border-gray-300'
-            }`}>
-            <div className="flex items-center justify-between">
-              <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${LEAD_STATUS_STYLES[s].text}`}>
-                <span className={`h-2 w-2 rounded-full ${LEAD_STATUS_STYLES[s].dot}`} />
-                {LEAD_STATUS_LABELS[s]}
+      {/* ── Inbox: queue left, the whole family right ───────────────── */}
+      {view === 'inbox' && (
+        <LeadInbox
+          leads={leads}
+          centerId={centerId}
+          actor={profile}
+          me={profile?.displayName || ''}
+          studentIndex={studentIndex}
+          onEdit={lead => setEditingId(lead.id)}
+          onConvert={handleConvert}
+          onLose={handleLose}
+        />
+      )}
+
+      {/* ── Pipeline: where everybody is standing ───────────────────── */}
+      {view === 'pipeline' && (
+        <div className="space-y-4">
+          <LeadStageTable leads={leads} onOpen={lead => setEditingId(lead.id)} />
+
+          {/* Funnel stats strip */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+            {LEAD_STATUSES.map(s => (
+              <button key={s}
+                onClick={() => setStatusFilter(statusFilter === s ? 'all' : s)}
+                className={`rounded-lg border bg-white p-3 text-left transition-colors ${
+                  statusFilter === s
+                    ? `${LEAD_STATUS_STYLES[s].ring} ring-2 border-transparent`
+                    : 'border-gray-200 hover:border-gray-300'
+                }`}>
+                <div className="flex items-center justify-between">
+                  <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${LEAD_STATUS_STYLES[s].text}`}>
+                    <span className={`h-2 w-2 rounded-full ${LEAD_STATUS_STYLES[s].dot}`} />
+                    {LEAD_STATUS_LABELS[s]}
+                  </span>
+                </div>
+                <div className="mt-1 text-2xl font-bold text-gray-900">{counts[s]}</div>
+              </button>
+            ))}
+            {/* Conversion tile: enrolled / (enrolled + lost) */}
+            <div className="rounded-lg border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-3">
+              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
+                <TrendingUp size={12} /> Conversion
               </span>
+              <div className="mt-1 text-2xl font-bold text-emerald-700">
+                {conv == null ? '—' : `${Math.round(conv * 100)}%`}
+              </div>
+              <div className="text-[10px] text-emerald-700/70">enrolled / (enrolled + lost)</div>
             </div>
-            <div className="mt-1 text-2xl font-bold text-gray-900">{counts[s]}</div>
-          </button>
-        ))}
-        {/* Conversion tile: enrolled / (enrolled + lost) */}
-        <div className="rounded-lg border border-gray-200 bg-gradient-to-br from-emerald-50 to-white p-3">
-          <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700">
-            <TrendingUp size={12} /> Conversion
-          </span>
-          <div className="mt-1 text-2xl font-bold text-emerald-700">
-            {conv == null ? '—' : `${Math.round(conv * 100)}%`}
           </div>
-          <div className="text-[10px] text-emerald-700/70">enrolled / (enrolled + lost)</div>
+
+          {/* Search + filter row */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name, email, phone, notes…"
+                className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-8 pr-3 text-sm focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400"
+              />
+            </div>
+            {statusFilter !== 'all' && (
+              <button onClick={() => setStatusFilter('all')}
+                className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
+                <Filter size={12} /> {LEAD_STATUS_LABELS[statusFilter]} <X size={12} />
+              </button>
+            )}
+          </div>
+
+          <LeadTable leads={visible} studentIndex={studentIndex}
+            showArchived={showArchived} onToggleArchived={() => setShowArchived(v => !v)}
+            onOpen={lead => setEditingId(lead.id)}
+            emptyNote={leads.length === 0
+              ? "No leads yet. Add one, or wait for an assessment booking — every booking, through Ratio or Apptoto, writes a lead."
+              : 'No leads match this filter.'} />
+
+          {leads.length > 0 && (
+            <div className="rounded-lg border border-gray-200 bg-white p-4">
+              <h2 className="mb-3 text-sm font-semibold text-gray-900">Where leads come from</h2>
+              <SourceTable sources={sources} />
+            </div>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* ── Search + filter row ────────────────────────────────────── */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search name, email, phone, notes…"
-            className="w-full rounded-lg border border-gray-300 bg-white pl-8 pr-3 py-2 text-sm focus:border-red-400 focus:outline-none focus:ring-1 focus:ring-red-400"
-          />
-        </div>
-        {statusFilter !== 'all' && (
-          <button onClick={() => setStatusFilter('all')}
-            className="inline-flex items-center gap-1 rounded-lg border border-gray-300 bg-white px-3 py-2 text-xs text-gray-600 hover:bg-gray-50">
-            <Filter size={12} /> {LEAD_STATUS_LABELS[statusFilter]} <X size={12} />
-          </button>
-        )}
-      </div>
+      {/* ── Tracker: the spreadsheet, month by month ────────────────── */}
+      {view === 'tracker' && (
+        <LeadTracker leads={leads} onOpen={lead => setEditingId(lead.id)} />
+      )}
 
-      {/* ── The tracker ────────────────────────────────────────────
-          Vin's own sheet, as a table. It replaced a stack of cards that
-          showed a status pill, a name and an email — everything the
-          centre decides on was a click away, one lead at a time. */}
-      <LeadTable leads={visible} studentIndex={studentIndex}
-        showArchived={showArchived} onToggleArchived={() => setShowArchived(v => !v)}
-        onOpen={lead => setEditingId(lead.id)}
-        emptyNote={leads.length === 0
-          ? "No leads yet. Add one, or wait for an assessment booking — every booking, through Ratio or Apptoto, writes a lead."
-          : 'No leads match this filter.'} />
-
-      {/* ── Bringing the history across ───────────────────────────── */}
-      <FormerStudents centerId={centerId} actor={profile} onLoaded={setFormerStudents} />
-      <RadiusLeadImport centerId={centerId} />
-
-      {/* ── Source breakdown ──────────────────────────────────────── */}
-      {leads.length > 0 && (
-        <div className="rounded-lg border border-gray-200 bg-white p-4">
-          <h2 className="mb-3 text-sm font-semibold text-gray-900">Where leads come from</h2>
-          <SourceTable sources={sources} />
+      {/* ── Call backs: bringing the history across ─────────────────── */}
+      {view === 'callbacks' && (
+        <div className="space-y-4">
+          <FormerStudents centerId={centerId} actor={profile} />
+          <RadiusLeadImport centerId={centerId} />
         </div>
       )}
 
@@ -194,20 +287,6 @@ export default function Leads() {
         />
       )}
 
-      {/* ── Log a call, without opening the whole lead ─────────────
-          The thing somebody does straight after a call is write one
-          sentence and pick when to ring back. Making them scroll a
-          twelve-field form to do it is how a worklist becomes a list
-          nobody updates. */}
-      {loggingLead && (
-        <LogContactModal
-          centerId={centerId}
-          actor={profile}
-          lead={loggingLead}
-          onClose={() => setLogging(null)}
-        />
-      )}
-
       {/* ── Edit / detail modal ───────────────────────────────────── */}
       {editing && (
         <LeadModal
@@ -217,72 +296,6 @@ export default function Leads() {
           onClose={() => setEditingId(null)}
         />
       )}
-    </div>
-  );
-}
-
-// ─── Log a contact ───────────────────────────────────────────────────
-//
-// One sentence and a date. It writes the note to the lead's history, the
-// day onto lastContactOn, and the next follow-up — which is what turns a
-// call into the thing that puts them back on the list at the right time
-// instead of in three days by default.
-function LogContactModal({ centerId, actor, lead, onClose }) {
-  const [text, setText] = useState('');
-  const [next, setNext] = useState('');
-  const [saving, setSaving] = useState(false);
-
-  const save = async () => {
-    if (!text.trim() && !next) { onClose(); return; }
-    setSaving(true);
-    try {
-      if (text.trim()) await appendLeadNote(centerId, lead.id, text, actor);
-      await updateLead(centerId, lead.id, {
-        lastContactOn: todayISO(),
-        // Only written when they picked one: clearing it by accident would
-        // take the family off the list rather than putting them on it.
-        ...(next ? { followUpOn: next } : {}),
-      });
-      toast.success('Logged.');
-      onClose();
-    } catch (e) {
-      toast.error(e.message || 'Could not save that.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-      onClick={onClose}>
-      <div className="w-full max-w-md rounded-xl bg-white p-4 shadow-xl" onClick={e => e.stopPropagation()}>
-        <h2 className="text-base font-semibold text-gray-900">
-          Log a call — {lead.parentName || lead.childName}
-        </h2>
-        <p className="mt-0.5 text-xs text-gray-500">
-          Goes on the lead&rsquo;s history, with today as the last contact.
-        </p>
-        <textarea autoFocus rows={3} value={text} onChange={e => setText(e.target.value)}
-          placeholder="e.g. Left a voicemail · Mum will discuss with dad and call back"
-          className="mt-3 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
-        <label className="mt-3 block">
-          <span className="mb-1 block text-xs font-medium text-gray-700">Ring them back on</span>
-          <input type="date" value={next} onChange={e => setNext(e.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-red-500 focus:outline-none" />
-          <span className="mt-1 block text-[11px] text-gray-500">
-            Leave blank and they stay on the list for the reason they are already on it.
-          </span>
-        </label>
-        <div className="mt-4 flex justify-end gap-2">
-          <button onClick={onClose} className="rounded-lg border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
-            Cancel
-          </button>
-          <button onClick={save} disabled={saving}
-            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
-            {saving ? 'Saving…' : 'Log it'}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
